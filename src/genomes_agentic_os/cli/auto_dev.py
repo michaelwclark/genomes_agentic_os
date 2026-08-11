@@ -146,11 +146,12 @@ def _everything_execution_status(launch_result: dict) -> dict | None:
             "status": status,
             "executed": False,
             "reason": (
-                "No configured managed executor accepted the post-materialization handoff; "
-                "no Auto-Dev stage was executed or receipted."
+                "No recorded executor acceptance or bounded synchronous stage attempt followed "
+                "the post-materialization handoff; no Auto-Dev stage was executed or receipted."
                 if status == "pending"
-                else "No configured managed executor accepted the post-materialization handoff "
-                "before the retry budget was exhausted; no Auto-Dev stage was executed or receipted."
+                else "No recorded executor acceptance or bounded synchronous stage attempt followed "
+                "the post-materialization handoff before the retry budget was exhausted; no Auto-Dev "
+                "stage was executed or receipted."
             ),
             "next_actions": next_actions,
             "handoffs": handoffs,

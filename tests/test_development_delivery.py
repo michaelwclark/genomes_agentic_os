@@ -71,7 +71,9 @@ def _work_item_packets(project: Path) -> list[Path]:
     return sorted(packets)
 
 
-def _project(root: Path, repo: Path, *, canonical: bool = True) -> Path:
+def _project(
+    root: Path, repo: Path, *, canonical: bool = True, managed_runtime: bool = False
+) -> Path:
     create_project(root, "acme", "app", repo=str(repo))
     project = root / "domains" / "acme" / "02-projects" / "app"
     profile = {
@@ -85,7 +87,17 @@ def _project(root: Path, repo: Path, *, canonical: bool = True) -> Path:
         },
         "worktrees": {"directory": "worktrees", "branch_template": "feature/{ticket}-{slug}"},
         "work_items": {"active_status": "building"},
-        "runtime": {"ownership": "not_managed", "provider": "none", "identity": "not-managed"},
+        "runtime": (
+            {
+                "ownership": "managed",
+                "provider": "test-managed-runtime",
+                "identity_template": "{domain}-{project}-{worktree}",
+                "teardown_command": "true {runtime_identity}",
+                "readback_command": "true {runtime_identity}",
+            }
+            if managed_runtime
+            else {"ownership": "not_managed", "provider": "none", "identity": "not-managed"}
+        ),
         "validation": {
             "commands": ["python3 -m pytest tests -q"],
             "test_policy": "risk_based_triangle",
@@ -2493,12 +2505,14 @@ def test_auto_dev_plain_english_cli_dry_run(tmp_path: Path, capsys: pytest.Captu
     assert not (root / "domains" / "acme" / "02-projects" / "app" / "state" / "development-runs").exists()
 
 
+@pytest.mark.parametrize("managed_runtime", (False, True), ids=("unmanaged", "managed"))
 def test_everything_apply_records_pending_executor_handoff(
+    managed_runtime: bool,
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     repo, base_sha = _repository(tmp_path)
     root = tmp_path / "os"
-    _project(root, repo)
+    _project(root, repo, managed_runtime=managed_runtime)
     monkeypatch.setattr(
         delivery,
         "create_isolated_worktree",
@@ -2548,6 +2562,7 @@ def test_everything_apply_records_pending_executor_handoff(
     ]
     task = TaskState(Path(output["tasks"][0]["state_ref"])).read()
     assert task["state"] == "worktree_ready"
+    assert task["runtime"]["ownership"] == ("managed" if managed_runtime else "not_managed")
     assert task["failure"]["kind"] == "executor_unavailable"
     assert task["failure"]["recoverable"] is True
     handoff = json.loads(Path(task["failure"]["receipt"]).read_text(encoding="utf-8"))
@@ -2576,6 +2591,7 @@ def test_everything_apply_records_pending_executor_handoff(
     assert resumed["state"] == "pending"
     resumed_task = TaskState(Path(resumed["tasks"][0]["state_ref"])).read()
     assert resumed_task["state"] == "worktree_ready"
+    assert resumed_task["runtime"]["ownership"] == ("managed" if managed_runtime else "not_managed")
     assert resumed_task["failure"]["kind"] == "executor_unavailable"
     assert resumed_task["failure"]["receipt"] == task["failure"]["receipt"]
     assert resumed_task["attempts"]["executor_unavailable"] == 1

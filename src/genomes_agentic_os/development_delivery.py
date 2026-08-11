@@ -1842,10 +1842,11 @@ class TaskState:
     def record_executor_unavailable(self, *, stage: str | None) -> dict[str, Any]:
         """Atomically bind one unaccepted post-materialization handoff to its task.
 
-        A not-managed project has no declared executor that can honestly accept
-        the next Auto-Dev stage.  Keep the provisioned worktree intact, but
-        make that boundary durable and retry-bounded instead of returning a
-        successful-looking dispatch result.
+        A runtime registration establishes only resource ownership; it is not
+        executor admission.  Keep the provisioned worktree intact until a
+        recorded acceptance or bounded synchronous stage attempt exists, but
+        make the missing handoff durable and retry-bounded instead of returning
+        a successful-looking dispatch result.
         """
 
         replayed = False
@@ -1892,18 +1893,19 @@ class TaskState:
                     },
                     "runtime": dict(runtime),
                     "reason": (
-                        "No configured managed executor accepted the post-materialization "
-                        "Auto-Dev handoff; no stage was executed or receipted."
-                        if recoverable
-                        else "No configured managed executor accepted the post-materialization "
-                        "Auto-Dev handoff before the retry budget was exhausted; no stage was "
+                        "No recorded executor acceptance or bounded synchronous stage attempt "
+                        "followed the post-materialization Auto-Dev handoff; no stage was "
                         "executed or receipted."
+                        if recoverable
+                        else "No recorded executor acceptance or bounded synchronous stage attempt "
+                        "followed the post-materialization Auto-Dev handoff before the retry "
+                        "budget was exhausted; no stage was executed or receipted."
                     ),
                     "next_action": (
-                        "Configure or restore a managed executor, then resume this exact task; "
-                        "do not infer completion from the preserved worktree."
+                        "Record executor acceptance or a bounded synchronous stage attempt, then "
+                        "resume this exact task; do not infer completion from the preserved worktree."
                         if recoverable
-                        else "Correct the executor configuration and explicitly reopen or recover "
+                        else "Correct the executor acceptance path and explicitly reopen or recover "
                         "this blocked task before attempting another handoff."
                     ),
                     "recorded_at": utc_now(),
@@ -2651,11 +2653,6 @@ def _record_post_materialization_handoff(
     if not require_executor_handoff:
         return None
     task = task_state.read()
-    runtime = task.get("runtime") if isinstance(task.get("runtime"), Mapping) else {}
-    if runtime.get("ownership") == "managed":
-        # A managed adapter owns its own acceptance/readback contract. This
-        # delivery layer must not pretend to submit or execute it.
-        return None
     projection_path = Path(str(task.get("autodev_path") or "")).expanduser()
     projection = read_auto_dev_state(projection_path) if projection_path.is_file() else {}
     result = task_state.record_executor_unavailable(
