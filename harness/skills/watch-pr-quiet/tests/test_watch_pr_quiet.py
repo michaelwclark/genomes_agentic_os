@@ -45,6 +45,15 @@ def completed_check(name: str, conclusion: str, sha: str = "expected-sha") -> di
     }
 
 
+def running_check(name: str, sha: str = "expected-sha") -> dict:
+    return {
+        "conclusion": None,
+        "headSha": sha,
+        "name": name,
+        "status": "in_progress",
+    }
+
+
 class WatchPrQuietTests(unittest.TestCase):
     def test_waits_for_expected_head_instead_of_accepting_stale_checks(self) -> None:
         state = watcher.summarize_checks(
@@ -89,10 +98,10 @@ class WatchPrQuietTests(unittest.TestCase):
         self.assertEqual(state["status"], "failure")
         self.assertEqual(state["failures"], ["PR head changed from expected SHA"])
 
-    def test_waits_for_required_check_even_when_other_checks_pass(self) -> None:
+    def test_waits_for_required_check_while_exact_head_context_is_not_settled(self) -> None:
         state = watcher.summarize_checks(
             pr(),
-            [successful_check("CodeQL")],
+            [successful_check("CodeQL"), running_check("Python suite and packaging")],
             min_checks=1,
             expected_head_sha="expected-sha",
             required_checks=["PR Smoke"],
@@ -100,6 +109,32 @@ class WatchPrQuietTests(unittest.TestCase):
 
         self.assertEqual(state["status"], "pending")
         self.assertEqual(state["missing_required_checks"], ["PR Smoke"])
+        self.assertEqual(state["invalid_required_checks"], [])
+
+    def test_rejects_stale_workflow_display_labels_after_exact_head_context_settles(self) -> None:
+        state = watcher.summarize_checks(
+            pr(),
+            [successful_check("Docs link policy"), successful_check("Python suite and packaging")],
+            min_checks=1,
+            expected_head_sha="expected-sha",
+            required_checks=["Docs", "Test", "Python suite"],
+        )
+
+        self.assertEqual(state["status"], "failure")
+        self.assertEqual(state["missing_required_checks"], ["Docs", "Python suite", "Test"])
+        self.assertEqual(state["invalid_required_checks"], ["Docs", "Python suite", "Test"])
+        self.assertEqual(
+            state["observed_check_names"],
+            ["Docs link policy", "Python suite and packaging"],
+        )
+        self.assertEqual(
+            state["failures"],
+            [
+                "required check label not emitted at exact head: Docs",
+                "required check label not emitted at exact head: Python suite",
+                "required check label not emitted at exact head: Test",
+            ],
+        )
 
     def test_succeeds_only_when_expected_head_and_required_checks_pass(self) -> None:
         state = watcher.summarize_checks(

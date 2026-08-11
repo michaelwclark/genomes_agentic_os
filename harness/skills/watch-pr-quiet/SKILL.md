@@ -58,9 +58,11 @@ The script prints nothing. It writes:
 
 1. Resolve and record the exact current PR head SHA before starting a
    delivery-grade watch.
-2. Name every workflow check required for the claimed outcome with repeatable
-   `--required-check` arguments. `--min-checks` alone cannot distinguish stale
-   or unrelated checks.
+2. Read the exact-head `check_run.name` values and name every required check
+   with repeatable `--required-check` arguments. These are job-context names,
+   not workflow display labels: use `Docs link policy` and `Python suite and
+   packaging`, not `Docs`, `Test`, or `Python suite`. `--min-checks` alone
+   cannot distinguish stale or unrelated checks.
 3. Put the watcher output in the task's durable artifact folder, not in `/tmp`.
 4. For a watch expected to exceed two minutes, start it through
    `agentic-os long-run`; direct background processes and raw `nohup` are not
@@ -112,5 +114,10 @@ Record the PR number and output folder in the Agentic OS work item so future age
   expected SHA is observed, any head change is terminal failure.
 - A named required check passes only with an explicit `success` conclusion;
   `neutral` and `skipped` are not delivery-grade success.
+- When the exact-head check context has settled, supplied `--required-check`
+  values that are not emitted `check_run.name` values fail immediately with
+  `invalid_required_checks` and the observed check names in the state receipt;
+  they must be corrected and the watcher restarted. Do not wait for a stale
+  workflow display label to time out.
 - Never paste full polling logs into chat. Reference the summary/state files instead.
 - Do not use this watcher for unrelated production monitoring. It is for PR check status only.

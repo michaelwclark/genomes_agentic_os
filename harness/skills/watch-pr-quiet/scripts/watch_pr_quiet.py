@@ -146,6 +146,23 @@ def get_workflow_runs(
     )
 
 
+def validate_required_check_contract(
+    required_checks: list[str],
+    workflow_runs: list[dict[str, Any]],
+) -> dict[str, list[str]]:
+    """Validate required labels against the settled exact-head check context."""
+    required_names = sorted(set(required_checks))
+    observed_names = sorted({str(run.get("name") or "unnamed check") for run in workflow_runs})
+    missing_required_checks = sorted(set(required_names) - set(observed_names))
+    context_is_settled = bool(workflow_runs) and all(run.get("status") == "completed" for run in workflow_runs)
+    invalid_required_checks = missing_required_checks if context_is_settled else []
+    return {
+        "observed_check_names": observed_names,
+        "missing_required_checks": missing_required_checks,
+        "invalid_required_checks": invalid_required_checks,
+    }
+
+
 def summarize_checks(
     pr: dict[str, Any],
     workflow_runs: list[dict[str, Any]],
@@ -160,7 +177,6 @@ def summarize_checks(
     checks: list[dict[str, str | None]] = []
     failures: list[str] = []
     pending: list[str] = []
-    observed_names: set[str] = set()
     required_check_names = set(required_checks)
 
     if pr.get("state") == "closed":
@@ -181,7 +197,6 @@ def summarize_checks(
 
     for run in relevant_workflow_runs:
         name = run.get("name") or "unnamed check"
-        observed_names.add(name)
         status = run.get("status")
         conclusion = run.get("conclusion")
         checks.append(
@@ -196,8 +211,17 @@ def summarize_checks(
         elif conclusion not in SUCCESS_CONCLUSIONS:
             pending.append(name)
 
-    missing_required_checks = sorted(set(required_checks) - observed_names)
-    pending.extend(f"required check not observed: {name}" for name in missing_required_checks)
+    required_check_contract = validate_required_check_contract(required_checks, relevant_workflow_runs)
+    missing_required_checks = required_check_contract["missing_required_checks"]
+    invalid_required_checks = required_check_contract["invalid_required_checks"]
+    failures.extend(
+        f"required check label not emitted at exact head: {name}" for name in invalid_required_checks
+    )
+    pending.extend(
+        f"required check not observed: {name}"
+        for name in missing_required_checks
+        if name not in invalid_required_checks
+    )
 
     if failures:
         status = "failure"
@@ -220,6 +244,8 @@ def summarize_checks(
         "failures": sorted(set(failures)),
         "pending": sorted(set(pending)),
         "missing_required_checks": missing_required_checks,
+        "invalid_required_checks": invalid_required_checks,
+        "observed_check_names": required_check_contract["observed_check_names"],
         "checks": sorted(checks, key=lambda item: (item.get("type") or "", item.get("name") or "")),
     }
 
