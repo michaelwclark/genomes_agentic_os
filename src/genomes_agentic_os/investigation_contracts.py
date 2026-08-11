@@ -5,10 +5,11 @@ from __future__ import annotations
 from contextlib import contextmanager
 from copy import deepcopy
 from datetime import datetime, timezone
+from fnmatch import fnmatchcase
 import fcntl
 import hashlib
 import json
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 import re
 from typing import Any, Iterable, Mapping, Sequence
 import uuid
@@ -24,6 +25,9 @@ INVESTIGATION_SCHEMA_VERSION = 1
 INVESTIGATION_KINDS = frozenset({"standard", "safety", "phase", "trigger", "source", "environment", "output"})
 KNOWN_TRIGGER_TYPES = frozenset({"bug", "qa-failure", "ticket-comment", "log-entry", "alert", "incident", "question"})
 KNOWN_OUTPUT_TYPES = frozenset({"investigation-report", "root-cause-analysis", "ticket-comment", "planning-evidence"})
+APPLIES_TO_FIELDS = frozenset(
+    {"triggers", "environments", "outputs", "domains", "projects", "touched_paths", "subjects"}
+)
 ALLOWED_FRONTMATTER = frozenset(
     {
         "schema_version",
@@ -69,6 +73,16 @@ RESUMABLE_PAUSE_REASONS = frozenset(
         "rate-limited",
         "decision-required",
     }
+)
+RULES_ENGINE_KIT_FILES = (
+    "contract.yml",
+    "dictionary.yml",
+    "checks.yml",
+    "coverage.yml",
+    "redundancy.yml",
+)
+RULES_ENGINE_READY_KIT_STATUSES = frozenset(
+    {"available", "complete", "completed", "deployed", "ready", "registered"}
 )
 
 
@@ -216,6 +230,754 @@ def _matches(values: Any, actual: str | None) -> bool:
     return actual is not None and _slug(actual, "scope value") in expected
 
 
+def _selector_values(value: Any, *, label: str, required: bool = False) -> list[str]:
+    """Return selector values without accepting ambiguous mapping/scalar input."""
+
+    if value is None:
+        values: list[Any] = []
+    elif isinstance(value, str):
+        values = [value]
+    elif isinstance(value, Iterable) and not isinstance(value, (bytes, bytearray, Mapping)):
+        values = list(value)
+    else:
+        raise InvestigationContractError(f"{label} must be a string or list of strings")
+    result: list[str] = []
+    for item in values:
+        if not isinstance(item, str) or not item.strip():
+            raise InvestigationContractError(f"{label} entries must be non-empty strings")
+        result.append(item.strip())
+    if required and not result:
+        raise InvestigationContractError(f"{label} must declare at least one value")
+    return result
+
+
+def _normalize_subjects(value: Any, *, label: str, required: bool = False) -> list[str]:
+    return sorted({_slug(item, label) for item in _selector_values(value, label=label, required=required)})
+
+
+def _normalize_touched_path(value: str, *, label: str, pattern: bool) -> str:
+    """Return one normalized relative POSIX path or glob without resolving it."""
+
+    if len(value) > 512 or "\x00" in value:
+        raise InvestigationContractError(f"{label} must be a non-empty normalized relative POSIX path")
+    if "\\" in value:
+        raise InvestigationContractError(f"{label} must use a relative POSIX path")
+    path = PurePosixPath(value)
+    windows_path = PureWindowsPath(value)
+    if (
+        path.is_absolute()
+        or windows_path.is_absolute()
+        or bool(windows_path.drive)
+        or value.startswith("~")
+        or not path.parts
+        or any(part in {".", ".."} for part in path.parts)
+        or path.as_posix() != value
+    ):
+        raise InvestigationContractError(f"{label} must be a normalized relative POSIX path")
+    if not pattern and any(character in value for character in "*?["):
+        raise InvestigationContractError(f"{label} must not contain glob characters")
+    return path.as_posix()
+
+
+def _normalize_touched_paths(
+    value: Any,
+    *,
+    label: str,
+    pattern: bool,
+    required: bool = False,
+) -> list[str]:
+    return sorted(
+        {
+            _normalize_touched_path(item, label=label, pattern=pattern)
+            for item in _selector_values(value, label=label, required=required)
+        }
+    )
+
+
+def _normalize_rulebook_ids(
+    value: Any,
+    *,
+    label: str,
+    required: bool = False,
+) -> list[str]:
+    """Return deterministic, path-safe Rules Engine rulebook identifiers.
+
+    Rulebook names are catalog identities rather than filesystem paths.  Keep
+    their human-readable punctuation, but canonicalize case so that callers
+    cannot select a different catalog entry merely by changing capitalization.
+    """
+
+    normalized: set[str] = set()
+    for item in _selector_values(value, label=label, required=required):
+        if (
+            len(item) > 256
+            or "\x00" in item
+            or "/" in item
+            or "\\" in item
+            or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 ._-]*", item)
+        ):
+            raise InvestigationContractError(
+                f"{label} entries must be path-safe Rules Engine rulebook identifiers"
+            )
+        normalized.add(item.casefold())
+    return sorted(normalized)
+
+
+def _root_relative_reference(
+    root: Path,
+    value: Any,
+    *,
+    label: str,
+) -> tuple[Path, str]:
+    """Resolve one declared root-relative reference without allowing escape."""
+
+    if not isinstance(value, str) or not value.strip():
+        raise InvestigationContractError(f"{label} must be a non-empty root-relative path")
+    reference = _normalize_touched_path(value.strip(), label=label, pattern=False)
+    path = (root / reference).resolve()
+    _relative(root, path)
+    return path, reference
+
+
+def _rules_engine_context_configuration(
+    value: Any,
+    *,
+    label: str,
+) -> dict[str, Any]:
+    """Validate the opt-in dynamic Rules Engine evidence configuration.
+
+    A policy file only declares where dynamic evidence *may* be found.  It
+    never materializes or assumes a kit.  The resolver below records an
+    explicit unavailable/insufficient state when those declared files are not
+    actually present and usable.
+    """
+
+    if not isinstance(value, Mapping):
+        raise InvestigationContractError(f"{label} must be a mapping")
+    allowed = {
+        "catalog_ref",
+        "snapshot_root_ref",
+        "findings_ref",
+        "rulebook_ids",
+        "required_kit_files",
+        "max_age_hours",
+    }
+    unknown = sorted(set(value) - allowed)
+    if unknown:
+        raise InvestigationContractError(
+            f"{label} has unknown fields: {', '.join(str(item) for item in unknown)}"
+        )
+    result: dict[str, Any] = {}
+    for field in ("catalog_ref", "snapshot_root_ref", "findings_ref"):
+        if field not in value or value[field] is None:
+            continue
+        if not isinstance(value[field], str) or not value[field].strip():
+            raise InvestigationContractError(f"{label}.{field} must be a non-empty root-relative path")
+        _normalize_touched_path(value[field].strip(), label=f"{label}.{field}", pattern=False)
+        result[field] = value[field].strip()
+    if "rulebook_ids" in value:
+        result["rulebook_ids"] = _normalize_rulebook_ids(
+            value["rulebook_ids"], label=f"{label}.rulebook_ids"
+        )
+    required_files = value.get("required_kit_files", RULES_ENGINE_KIT_FILES)
+    if not isinstance(required_files, Sequence) or isinstance(
+        required_files, (bytes, bytearray, str)
+    ):
+        raise InvestigationContractError(f"{label}.required_kit_files must be a list")
+    normalized_files = tuple(str(item) for item in required_files)
+    if normalized_files != RULES_ENGINE_KIT_FILES:
+        raise InvestigationContractError(
+            f"{label}.required_kit_files must declare exactly: "
+            + ", ".join(RULES_ENGINE_KIT_FILES)
+        )
+    result["required_kit_files"] = list(RULES_ENGINE_KIT_FILES)
+    max_age = value.get("max_age_hours", 72)
+    if not isinstance(max_age, (int, float)) or isinstance(max_age, bool) or max_age <= 0:
+        raise InvestigationContractError(f"{label}.max_age_hours must be a positive number")
+    result["max_age_hours"] = float(max_age)
+    return result
+
+
+def _sha256_file(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _load_dynamic_evidence_mapping(path: Path, *, label: str) -> dict[str, Any]:
+    """Read one local JSON/YAML evidence mapping without provider access."""
+
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise InvestigationContractError(f"unable to read {label}: {path}") from exc
+    try:
+        if path.suffix.casefold() == ".json":
+            value = json.loads(text)
+        else:
+            value = yaml.safe_load(text)
+    except (json.JSONDecodeError, yaml.YAMLError) as exc:
+        raise InvestigationContractError(f"invalid {label}: {path}") from exc
+    if not isinstance(value, Mapping):
+        raise InvestigationContractError(f"{label} must contain a mapping: {path}")
+    return dict(value)
+
+
+def _compact_snapshot_evidence(
+    root: Path,
+    configuration: Mapping[str, Any],
+    *,
+    environment: str | None,
+) -> dict[str, Any]:
+    """Return privacy-safe freshness/coverage evidence from local registries."""
+
+    raw_root = configuration.get("snapshot_root_ref")
+    if raw_root is None:
+        return {"status": "not-declared"}
+    snapshot_root, root_ref = _root_relative_reference(
+        root, raw_root, label="rules_engine_context.snapshot_root_ref"
+    )
+    if not snapshot_root.is_dir():
+        return {
+            "status": "unavailable",
+            "root_ref": root_ref,
+            "reason": "snapshot-root-missing",
+        }
+    candidates = sorted(snapshot_root.glob("*/rulesmeta.json"))
+    direct = snapshot_root / "rulesmeta.json"
+    if direct.is_file():
+        candidates = [direct, *candidates]
+    max_age_hours = float(configuration["max_age_hours"])
+    now = datetime.now(timezone.utc)
+    registries: list[dict[str, Any]] = []
+    malformed = False
+    for path in candidates:
+        try:
+            payload = _load_dynamic_evidence_mapping(path, label="Rules Engine snapshot registry")
+            registry_environment = str(payload.get("environment") or path.parent.name).strip()
+            if environment and registry_environment.casefold() != environment.casefold():
+                continue
+            captured_at = _parse_timestamp(
+                str(payload.get("last_successful_sync_at") or ""),
+                label="Rules Engine snapshot last_successful_sync_at",
+            )
+            tenants = payload.get("tenants")
+            if not isinstance(tenants, Mapping):
+                raise InvestigationContractError("Rules Engine snapshot tenants must be a mapping")
+            tenant_count = len(tenants)
+            rule_count = 0
+            for tenant in tenants.values():
+                if not isinstance(tenant, Mapping) or not isinstance(tenant.get("rule_count"), int):
+                    raise InvestigationContractError("Rules Engine snapshot tenant coverage is incomplete")
+                rule_count += int(tenant["rule_count"])
+            age_hours = max(0.0, (now - captured_at).total_seconds() / 3600)
+            registries.append(
+                {
+                    "environment": registry_environment,
+                    "rulesmeta_ref": _relative(root, path),
+                    "sha256": _sha256_file(path),
+                    "last_successful_sync_at": captured_at.replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+                    "age_hours": round(age_hours, 3),
+                    "freshness": "current" if age_hours <= max_age_hours else "stale",
+                    "tenant_count": tenant_count,
+                    "rule_count": rule_count,
+                }
+            )
+        except InvestigationContractError:
+            malformed = True
+    if not registries:
+        return {
+            "status": "unavailable",
+            "root_ref": root_ref,
+            "reason": "snapshot-registry-missing-or-invalid",
+        }
+    registries.sort(key=lambda item: str(item["environment"]).casefold())
+    coverage = {
+        "environment_count": len(registries),
+        "tenant_count": sum(int(item["tenant_count"]) for item in registries),
+        "rule_count": sum(int(item["rule_count"]) for item in registries),
+    }
+    complete = (
+        not malformed
+        and coverage["environment_count"] > 0
+        and coverage["tenant_count"] > 0
+        and coverage["rule_count"] > 0
+    )
+    current = complete and all(item["freshness"] == "current" for item in registries)
+    return {
+        "status": "usable" if current else "insufficient-evidence",
+        "root_ref": root_ref,
+        "max_age_hours": max_age_hours,
+        "coverage": {**coverage, "complete": complete},
+        "registries": registries,
+    }
+
+
+def _compact_known_findings(
+    root: Path,
+    configuration: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Bind a bounded findings envelope without copying raw tenant evidence."""
+
+    raw_ref = configuration.get("findings_ref")
+    if raw_ref is None:
+        return {"status": "not-declared"}
+    path, reference = _root_relative_reference(
+        root, raw_ref, label="rules_engine_context.findings_ref"
+    )
+    if not path.is_file():
+        return {"status": "unavailable", "ref": reference, "reason": "findings-file-missing"}
+    try:
+        payload = _load_dynamic_evidence_mapping(path, label="Rules Engine findings")
+    except InvestigationContractError:
+        return {"status": "unavailable", "ref": reference, "reason": "findings-file-invalid"}
+    raw_findings = payload.get("findings", payload.get("known_findings"))
+    if not isinstance(raw_findings, list):
+        return {"status": "unavailable", "ref": reference, "reason": "findings-list-missing"}
+    summaries: list[dict[str, str]] = []
+    severities: dict[str, int] = {}
+    for finding in raw_findings[:100]:
+        if not isinstance(finding, Mapping):
+            continue
+        stable = json.dumps(dict(finding), sort_keys=True, default=str, separators=(",", ":"))
+        row = {"fingerprint": hashlib.sha256(stable.encode("utf-8")).hexdigest()}
+        for key in ("classification", "severity", "status"):
+            item = finding.get(key)
+            if isinstance(item, str) and item.strip() and len(item.strip()) <= 96:
+                row[key] = item.strip()
+        severity = row.get("severity")
+        if severity:
+            severities[severity] = severities.get(severity, 0) + 1
+        summaries.append(row)
+    return {
+        "status": "available",
+        "ref": reference,
+        "sha256": _sha256_file(path),
+        "count": len(raw_findings),
+        "by_severity": dict(sorted(severities.items())),
+        "items": summaries,
+    }
+
+
+def _concrete_rules_engine_kit(
+    root: Path,
+    *,
+    kit_root: Path,
+    kit_id: str,
+    rulebook: str,
+) -> tuple[dict[str, Any] | None, list[str]]:
+    """Hash exactly the five required artifacts from one resolved kit root."""
+
+    artifacts: list[dict[str, str]] = []
+    missing: list[str] = []
+    for filename in RULES_ENGINE_KIT_FILES:
+        artifact_path = kit_root / filename
+        try:
+            artifact_ref = _relative(root, artifact_path)
+        except InvestigationContractError:
+            missing.append(filename)
+            continue
+        if not artifact_path.is_file():
+            missing.append(filename)
+            continue
+        artifacts.append(
+            {
+                "name": filename,
+                "ref": artifact_ref,
+                "sha256": _sha256_file(artifact_path),
+            }
+        )
+    if missing:
+        return None, sorted(missing)
+    kit = {
+        "id": kit_id,
+        "rulebook": rulebook,
+        "root_ref": _relative(root, kit_root),
+        "artifacts": artifacts,
+    }
+    kit["content_sha256"] = hashlib.sha256(
+        json.dumps(kit, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    return kit, []
+
+
+def _rules_engine_kit_header_errors(
+    *,
+    kit_root: Path,
+    kit_id: str,
+    rulebook: str,
+) -> list[str]:
+    """Return bounded structural errors for a source-owned ready kit.
+
+    The catalog is only a directory index.  Do not let a ready ``contract.yml``
+    make the other four files authoritative by implication: each concrete
+    artifact must declare the same v1 rulebook-kit header before its hashes can
+    support a loaded frozen context.  Full kit-domain validation remains owned
+    by the Rules Engine kit foundation; this resolver intentionally performs
+    just the cross-file identity/readiness gate it needs for a safe reference.
+    """
+
+    errors: list[str] = []
+    expected = {
+        "schema_version": 1,
+        "kit_id": kit_id,
+        "entity_kind": "rulebook",
+        "completion_state": "ready",
+    }
+    contract: Mapping[str, Any] | None = None
+    for filename in RULES_ENGINE_KIT_FILES:
+        path = kit_root / filename
+        try:
+            document = _load_dynamic_evidence_mapping(
+                path, label=f"Rules Engine kit {filename}"
+            )
+        except InvestigationContractError:
+            errors.append(f"{filename}:invalid")
+            continue
+        if filename == "contract.yml":
+            contract = document
+        for field, expected_value in expected.items():
+            if document.get(field) != expected_value:
+                errors.append(f"{filename}:{field}")
+    identity = contract.get("identity") if isinstance(contract, Mapping) else None
+    identity_key = identity.get("key") if isinstance(identity, Mapping) else None
+    if not isinstance(identity_key, str) or identity_key.strip().casefold() != rulebook.casefold():
+        errors.append("contract.yml:identity.key")
+    return sorted(set(errors))
+
+
+def _source_catalog_kit_rows(
+    root: Path,
+    *,
+    catalog_path: Path,
+    rows: Sequence[Any],
+) -> list[dict[str, Any]]:
+    """Read the ticket-scoped Agentic Library kit catalog shape.
+
+    The catalog identifies a directory; the authoritative rulebook key and
+    completion state live in that directory's ``contract.yml``.  Invalid rows
+    are retained as unusable rather than inferred from filename text.
+    """
+
+    resolved: list[dict[str, Any]] = []
+    for raw in rows:
+        if not isinstance(raw, Mapping):
+            continue
+        kit_id = str(raw.get("kit_id") or "").strip()
+        kit_path = raw.get("path")
+        if not kit_id or not isinstance(kit_path, str) or not kit_path.strip():
+            continue
+        try:
+            relative = _normalize_touched_path(
+                kit_path.strip(), label="Rules Engine source catalog path", pattern=False
+            )
+            root_path = (catalog_path.parent / relative).resolve()
+            _relative(root, root_path)
+        except InvestigationContractError:
+            continue
+        contract_path = root_path / "contract.yml"
+        contract: Mapping[str, Any] | None = None
+        if contract_path.is_file():
+            try:
+                contract = _load_dynamic_evidence_mapping(
+                    contract_path, label="Rules Engine kit contract"
+                )
+            except InvestigationContractError:
+                contract = None
+        identity = contract.get("identity") if isinstance(contract, Mapping) else None
+        key = str(identity.get("key") or "").strip() if isinstance(identity, Mapping) else ""
+        aliases = (
+            _normalize_rulebook_ids(identity.get("aliases"), label="Rules Engine kit aliases")
+            if isinstance(identity, Mapping) and identity.get("aliases") is not None
+            else []
+        )
+        resolved.append(
+            {
+                "kit_id": kit_id,
+                "kit_root": root_path,
+                "rulebook": key,
+                "aliases": aliases,
+                "kit_status": (
+                    str(contract.get("completion_state") or "").strip().casefold()
+                    if isinstance(contract, Mapping)
+                    else ""
+                ),
+                "entity_kind": (
+                    str(contract.get("entity_kind") or raw.get("entity_kind") or "").strip()
+                    if isinstance(contract, Mapping)
+                    else str(raw.get("entity_kind") or "").strip()
+                ),
+            }
+        )
+    return resolved
+
+
+def _rules_engine_context_from_document(
+    root: Path,
+    document: Mapping[str, Any],
+    *,
+    selection: Mapping[str, Any],
+    environment: str | None,
+    rulebook_ids: Sequence[str],
+) -> dict[str, Any] | None:
+    """Resolve a selected Rules Engine policy to concrete local evidence.
+
+    A selector match is only a candidate.  This function is deliberately
+    fail-closed: it reports ``kit-unavailable`` or ``insufficient-evidence``
+    unless the catalog identifies exactly one ready kit, all five files have
+    matching ready headers and hash, local snapshot coverage is current and
+    complete, and a compact known-findings receipt is available.
+    """
+
+    requirements = document.get("requirements")
+    if not isinstance(requirements, Mapping) or "rules_engine_context" not in requirements:
+        return None
+    configuration = _rules_engine_context_configuration(
+        requirements["rules_engine_context"], label="requirements.rules_engine_context"
+    )
+    source_refs = [
+        str(item)
+        for item in document.get("source_refs") or []
+        if isinstance(item, str) and item.strip()
+    ]
+    selection_rulebooks = list(rulebook_ids)
+    declared_rulebooks = list(configuration.get("rulebook_ids") or [])
+    if selection_rulebooks and declared_rulebooks and selection_rulebooks != declared_rulebooks:
+        raise InvestigationContractError(
+            "Rules Engine rulebook selection conflicts with the selected policy declaration"
+        )
+    candidate_rulebooks = selection_rulebooks or declared_rulebooks
+    snapshot = _compact_snapshot_evidence(root, configuration, environment=environment)
+    findings = _compact_known_findings(root, configuration)
+    value: dict[str, Any] = {
+        "schema": "rules-engine-frozen-context/v1",
+        "status": "kit-unavailable",
+        "source_refs": sorted(source_refs),
+        "selected_rulebook_ids": candidate_rulebooks,
+        "catalog": {"status": "not-declared"},
+        "kit": None,
+        "snapshot": snapshot,
+        "known_findings": findings,
+        "reason_codes": [],
+    }
+    catalog_raw = configuration.get("catalog_ref")
+    if catalog_raw is None:
+        value["reason_codes"] = ["catalog-not-declared"]
+    else:
+        catalog_path, catalog_ref = _root_relative_reference(
+            root, catalog_raw, label="rules_engine_context.catalog_ref"
+        )
+        if not catalog_path.is_file():
+            value["catalog"] = {
+                "status": "unavailable",
+                "ref": catalog_ref,
+                "reason": "catalog-file-missing",
+            }
+            value["reason_codes"] = ["catalog-unavailable"]
+        else:
+            try:
+                catalog = _load_dynamic_evidence_mapping(catalog_path, label="Rules Engine kit catalog")
+            except InvestigationContractError:
+                value["catalog"] = {
+                    "status": "unavailable",
+                    "ref": catalog_ref,
+                    "reason": "catalog-file-invalid",
+                }
+                value["reason_codes"] = ["catalog-invalid"]
+            else:
+                inventory_rows = catalog.get("rulebooks")
+                source_rows = catalog.get("kits")
+                matches: list[dict[str, Any]] = []
+                if isinstance(inventory_rows, list):
+                    value["catalog"] = {
+                        "status": "available",
+                        "shape": "inventory/v1",
+                        "ref": catalog_ref,
+                        "sha256": _sha256_file(catalog_path),
+                        "rulebook_count": len(inventory_rows),
+                    }
+                    for raw in inventory_rows:
+                        if not isinstance(raw, Mapping):
+                            continue
+                        rulebook = str(raw.get("rulebook") or "").strip()
+                        if rulebook.casefold() not in set(candidate_rulebooks):
+                            continue
+                        kit_root: Path | None = None
+                        raw_kit_path = raw.get("kit_path")
+                        if isinstance(raw_kit_path, str) and raw_kit_path.strip():
+                            kit_root, _ = _root_relative_reference(
+                                root, raw_kit_path, label="Rules Engine catalog kit_path"
+                            )
+                        matches.append(
+                            {
+                                "kit_id": str(raw.get("kit_id") or rulebook),
+                                "rulebook": rulebook,
+                                "kit_status": str(raw.get("kit_status") or "").strip().casefold(),
+                                "kit_root": kit_root,
+                                "entity_kind": str(raw.get("entity_kind") or "").strip(),
+                            }
+                        )
+                elif isinstance(source_rows, list):
+                    value["catalog"] = {
+                        "status": "available",
+                        "shape": "ticket-scoped-kits/v1",
+                        "ref": catalog_ref,
+                        "sha256": _sha256_file(catalog_path),
+                        "rulebook_count": len(source_rows),
+                    }
+                    for row in _source_catalog_kit_rows(
+                        root, catalog_path=catalog_path, rows=source_rows
+                    ):
+                        identities = {str(row.get("rulebook") or "").casefold()}
+                        identities.update(str(item).casefold() for item in row.get("aliases") or [])
+                        if identities.intersection(candidate_rulebooks):
+                            matches.append(row)
+                else:
+                    value["catalog"] = {
+                        "status": "invalid",
+                        "ref": catalog_ref,
+                        "sha256": _sha256_file(catalog_path),
+                    }
+                    value["reason_codes"] = ["catalog-rulebooks-missing"]
+
+                if value["catalog"]["status"] != "available":
+                    pass
+                elif not candidate_rulebooks:
+                    value["status"] = "insufficient-evidence"
+                    value["reason_codes"] = ["rulebook-identity-missing"]
+                elif len(matches) == 0:
+                    value["reason_codes"] = ["rulebook-not-in-catalog"]
+                elif len(matches) != 1 or len(candidate_rulebooks) != 1:
+                    value["status"] = "insufficient-evidence"
+                    value["reason_codes"] = ["ambiguous-rulebook-selection"]
+                else:
+                    match = matches[0]
+                    rulebook = str(match.get("rulebook") or "").strip()
+                    kit_status = str(match.get("kit_status") or "").strip().casefold()
+                    kit_root = match.get("kit_root")
+                    entity_kind = str(match.get("entity_kind") or "").strip().casefold()
+                    value["catalog"]["selected_rulebook"] = rulebook or None
+                    value["catalog"]["kit_status"] = kit_status or None
+                    if not rulebook:
+                        value["reason_codes"] = ["kit-identity-missing"]
+                    elif entity_kind and entity_kind != "rulebook":
+                        value["reason_codes"] = ["kit-entity-not-rulebook"]
+                    elif not isinstance(kit_root, Path):
+                        value["reason_codes"] = ["kit-path-missing"]
+                    else:
+                        kit, missing = _concrete_rules_engine_kit(
+                            root,
+                            kit_root=kit_root,
+                            kit_id=str(match.get("kit_id") or rulebook),
+                            rulebook=rulebook,
+                        )
+                        if missing:
+                            value["catalog"]["missing_artifacts"] = missing
+                            value["reason_codes"] = ["kit-artifacts-missing"]
+                        else:
+                            value["kit"] = kit
+                            if kit_status not in RULES_ENGINE_READY_KIT_STATUSES:
+                                value["reason_codes"] = ["kit-not-ready"]
+                            else:
+                                header_errors = _rules_engine_kit_header_errors(
+                                    kit_root=kit_root,
+                                    kit_id=str(match.get("kit_id") or rulebook),
+                                    rulebook=rulebook,
+                                )
+                                if header_errors:
+                                    value["catalog"]["kit_validation_errors"] = header_errors
+                                    value["reason_codes"] = ["kit-header-invalid"]
+                                elif snapshot.get("status") != "usable":
+                                    value["status"] = "insufficient-evidence"
+                                    value["reason_codes"] = ["snapshot-insufficient"]
+                                elif findings.get("status") != "available":
+                                    value["status"] = "insufficient-evidence"
+                                    value["reason_codes"] = [
+                                        "known-findings-not-declared"
+                                        if findings.get("status") == "not-declared"
+                                        else "known-findings-unavailable"
+                                    ]
+                                else:
+                                    value["status"] = "loaded"
+                                    value["reason_codes"] = []
+    if value["status"] == "loaded" and value["kit"] is None:
+        raise InvestigationContractError("Rules Engine context cannot be loaded without concrete kit artifacts")
+    value["content_sha256"] = hashlib.sha256(
+        json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    return value
+
+
+def _path_matches_pattern(path: str, pattern: str) -> bool:
+    """Match repo-relative paths component-wise, with ``**`` as recursive glob."""
+
+    path_parts = PurePosixPath(path).parts
+    pattern_parts = PurePosixPath(pattern).parts
+    cache: dict[tuple[int, int], bool] = {}
+
+    def matches(path_index: int, pattern_index: int) -> bool:
+        key = (path_index, pattern_index)
+        if key in cache:
+            return cache[key]
+        if pattern_index == len(pattern_parts):
+            result = path_index == len(path_parts)
+        elif pattern_parts[pattern_index] == "**":
+            result = any(matches(next_index, pattern_index + 1) for next_index in range(path_index, len(path_parts) + 1))
+        else:
+            result = (
+                path_index < len(path_parts)
+                and fnmatchcase(path_parts[path_index], pattern_parts[pattern_index])
+                and matches(path_index + 1, pattern_index + 1)
+            )
+        cache[key] = result
+        return result
+
+    return matches(0, 0)
+
+
+def _context_selector_match(
+    document: MarkdownPolicyDocument,
+    *,
+    touched_paths: Sequence[str],
+    subjects: Sequence[str],
+) -> tuple[bool, dict[str, Any] | None]:
+    """Return whether declared context selectors apply and their receipt provenance."""
+
+    applies = document.frontmatter.get("applies_to")
+    if applies is None:
+        applies = {}
+    if not isinstance(applies, Mapping):
+        return False, None
+
+    selectors: dict[str, dict[str, list[str]]] = {}
+    matched = True
+    if "touched_paths" in applies:
+        declared_paths = _normalize_touched_paths(
+            applies["touched_paths"], label="applies_to.touched_paths", pattern=True, required=True
+        )
+        matched_paths = sorted(
+            {
+                path
+                for path in touched_paths
+                if any(_path_matches_pattern(path, pattern) for pattern in declared_paths)
+            }
+        )
+        selectors["touched_paths"] = {"declared": declared_paths, "matched": matched_paths}
+        matched = matched and bool(matched_paths)
+    if "subjects" in applies:
+        declared_subjects = _normalize_subjects(
+            applies["subjects"], label="applies_to.subjects", required=True
+        )
+        matched_subjects = sorted(set(subjects).intersection(declared_subjects))
+        selectors["subjects"] = {"declared": declared_subjects, "matched": matched_subjects}
+        matched = matched and bool(matched_subjects)
+    if not selectors:
+        return True, None
+    return matched, {
+        "source_ref": document.source_ref,
+        "sha256": document.sha256,
+        "selectors": selectors,
+    }
+
+
 def _document_applies(
     document: MarkdownPolicyDocument,
     *,
@@ -224,14 +986,16 @@ def _document_applies(
     output_type: str,
     domain: str | None,
     project: str | None,
-) -> bool:
+    touched_paths: Sequence[str],
+    subjects: Sequence[str],
+) -> tuple[bool, dict[str, Any] | None]:
     metadata = document.frontmatter
     applies = metadata.get("applies_to")
     if applies is None:
         applies = {}
     if not isinstance(applies, Mapping):
-        return False
-    return all(
+        return False, None
+    if not all(
         (
             _matches(applies.get("triggers"), trigger),
             _matches(applies.get("environments"), environment),
@@ -239,7 +1003,9 @@ def _document_applies(
             _matches(applies.get("domains"), domain),
             _matches(applies.get("projects"), project),
         )
-    )
+    ):
+        return False, None
+    return _context_selector_match(document, touched_paths=touched_paths, subjects=subjects)
 
 
 def _validate_document(document: MarkdownPolicyDocument) -> list[dict[str, Any]]:
@@ -276,6 +1042,39 @@ def _validate_document(document: MarkdownPolicyDocument) -> list[dict[str, Any]]
     for field in ("applies_to", "authority", "freshness", "failure", "safety", "requirements"):
         if field in metadata and not isinstance(metadata[field], dict):
             add("invalid_field_type", f"{field} must be a mapping", field=field)
+    requirements = metadata.get("requirements")
+    if isinstance(requirements, Mapping) and "rules_engine_context" in requirements:
+        try:
+            _rules_engine_context_configuration(
+                requirements["rules_engine_context"],
+                label="requirements.rules_engine_context",
+            )
+        except InvestigationContractError as exc:
+            add(
+                "invalid_rules_engine_context",
+                str(exc),
+                field="requirements.rules_engine_context",
+            )
+    applies = metadata.get("applies_to")
+    if isinstance(applies, Mapping):
+        for field in sorted(set(applies) - APPLIES_TO_FIELDS):
+            add(
+                "unknown_applies_to_selector",
+                f"unknown applies_to selector: {field}",
+                field=f"applies_to.{field}",
+            )
+        if "touched_paths" in applies:
+            try:
+                _normalize_touched_paths(
+                    applies["touched_paths"], label="applies_to.touched_paths", pattern=True, required=True
+                )
+            except InvestigationContractError as exc:
+                add("invalid_touched_paths_selector", str(exc), field="applies_to.touched_paths")
+        if "subjects" in applies:
+            try:
+                _normalize_subjects(applies["subjects"], label="applies_to.subjects", required=True)
+            except InvestigationContractError as exc:
+                add("invalid_subjects_selector", str(exc), field="applies_to.subjects")
     if "priority" in metadata and not isinstance(metadata["priority"], int):
         add("invalid_field_type", "priority must be an integer", field="priority")
     for field in sorted(set(metadata) - ALLOWED_FRONTMATTER):
@@ -346,6 +1145,9 @@ def resolve_investigation_contract(
     domain: str | None = None,
     project: str | None = None,
     overlays: Iterable[str | Path] = (),
+    touched_paths: Iterable[str] = (),
+    subjects: Iterable[str] = (),
+    rulebook_ids: Iterable[str] = (),
 ) -> dict[str, Any]:
     """Compose the exact evidence plan for one investigation request."""
 
@@ -355,26 +1157,39 @@ def resolve_investigation_contract(
     environment_name = _slug(environment, "environment") if environment else None
     domain_name = normalize_domain(domain) if domain else None
     project_name = validate_name(project, "project") if project else None
+    touched_path_names = _normalize_touched_paths(
+        touched_paths, label="touched_paths", pattern=False
+    )
+    subject_names = _normalize_subjects(subjects, label="subjects")
+    rulebook_names = _normalize_rulebook_ids(rulebook_ids, label="rulebook_ids")
     layers = investigation_policy_roots(root, domain=domain_name, project=project_name)
     try:
         plane = resolve_markdown_plane(root, layers, explicit_files=overlays)
     except PolicyPlaneError as exc:
         raise InvestigationContractError(str(exc)) from exc
     diagnostics: list[dict[str, Any]] = []
-    documents: list[MarkdownPolicyDocument] = []
     for document in plane["documents"]:
         diagnostics.extend(_validate_document(document))
-        if _document_applies(
+    if any(item["severity"] == "error" for item in diagnostics):
+        raise InvestigationContractError("investigation policy contains validation errors; run detective doctor")
+
+    documents: list[MarkdownPolicyDocument] = []
+    selection_documents: list[dict[str, Any]] = []
+    for document in plane["documents"]:
+        applies, provenance = _document_applies(
             document,
             trigger=trigger_name,
             environment=environment_name,
             output_type=output_name,
             domain=domain_name,
             project=project_name,
-        ):
+            touched_paths=touched_path_names,
+            subjects=subject_names,
+        )
+        if applies:
             documents.append(document)
-    if any(item["severity"] == "error" for item in diagnostics):
-        raise InvestigationContractError("investigation policy contains validation errors; run detective doctor")
+            if provenance is not None:
+                selection_documents.append(provenance)
 
     groups: dict[tuple[str, str], dict[str, Any]] = {}
     for document in documents:
@@ -407,8 +1222,34 @@ def resolve_investigation_contract(
         {"source_ref": document.source_ref, "sha256": document.sha256, "scope": document.scope}
         for document in documents
     ]
+    selection = {
+        "touched_paths": touched_path_names,
+        "subjects": subject_names,
+        "rulebook_ids": rulebook_names,
+        "selected_documents": sorted(selection_documents, key=lambda item: item["source_ref"]),
+    }
+    rules_engine_documents = [
+        item
+        for item in selected
+        if isinstance(item.get("requirements"), Mapping)
+        and "rules_engine_context" in item["requirements"]
+    ]
+    if len(rules_engine_documents) > 1:
+        raise InvestigationContractError(
+            "more than one selected Rules Engine context declaration is ambiguous"
+        )
+    if rules_engine_documents:
+        context = _rules_engine_context_from_document(
+            root,
+            rules_engine_documents[0],
+            selection=selection,
+            environment=environment_name,
+            rulebook_ids=rulebook_names,
+        )
+        if context is not None:
+            selection["rules_engine_context"] = context
     fingerprint = hashlib.sha256(
-        json.dumps(digest, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        json.dumps({"documents": digest, "selection": selection}, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
     return {
         "schema": "investigation-policy-resolution/v1",
@@ -418,6 +1259,7 @@ def resolve_investigation_contract(
         "domain": domain_name,
         "project": project_name,
         "version_gate": "required_before_evidence" if environment_name else "environment_not_specified",
+        "selection": selection,
         "fingerprint": fingerprint,
         "layers": plane["layers"],
         "sources": [document.as_dict() for document in documents],
@@ -432,6 +1274,7 @@ def resolve_investigation_contract(
             "selected_documents": len(documents),
             "effective_groups": len(selected),
             "sources": len(selected_sources),
+            "selected_context_documents": len(selection_documents),
         },
     }
 
@@ -488,6 +1331,9 @@ def start_investigation(
     domain: str | None = None,
     project: str | None = None,
     overlays: Iterable[str | Path] = (),
+    touched_paths: Iterable[str] = (),
+    subjects: Iterable[str] = (),
+    rulebook_ids: Iterable[str] = (),
     run_id: str | None = None,
     run_dir: str | Path | None = None,
 ) -> dict[str, Any]:
@@ -503,6 +1349,9 @@ def start_investigation(
         domain=domain,
         project=project,
         overlays=overlays,
+        touched_paths=touched_paths,
+        subjects=subjects,
+        rulebook_ids=rulebook_ids,
     )
     now = datetime.now(timezone.utc).replace(microsecond=0)
     run_name = run_id or f"{now.strftime('%Y%m%dT%H%M%SZ')}-{uuid.uuid4().hex[:8]}"
@@ -519,6 +1368,9 @@ def start_investigation(
         "output_type": resolution["output_type"],
         "domain": resolution["domain"],
         "project": resolution["project"],
+        "touched_paths": resolution["selection"]["touched_paths"],
+        "subjects": resolution["selection"]["subjects"],
+        "rulebook_ids": resolution["selection"]["rulebook_ids"],
         "title": request.get("title") or request.get("summary") or "Investigation",
         "question": request.get("question") or request.get("summary"),
         "signal": request,
@@ -539,6 +1391,7 @@ def start_investigation(
     source_manifest = {
         "schema": "investigation-source-manifest/v1",
         "policy_fingerprint": resolution["fingerprint"],
+        "selection": deepcopy(resolution["selection"]),
         "sources": [
             {
                 "id": source["id"],
@@ -579,6 +1432,7 @@ def start_investigation(
         "tenant": tenant,
         "trigger": resolution["trigger"],
         "output_type": resolution["output_type"],
+        "selection": deepcopy(resolution["selection"]),
         "request_sha256": request_hash,
         "policy_fingerprint": resolution["fingerprint"],
         "pause": None,

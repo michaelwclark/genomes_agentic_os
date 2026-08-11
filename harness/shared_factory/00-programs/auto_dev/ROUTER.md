@@ -6,6 +6,7 @@
 | Take a ticket all the way / Auto-Dev Everything | Everything | `/auto-dev-everything` |
 | Idea/spec grooming before implementation | Groom | `/auto-dev-grooming` |
 | Reported bug, QA failure, log/error, ticket comment, alert, “why is this happening?”, or RCA | Detective | `/auto-dev-detective` |
+| LOS Rules Engine caller or rulebook signal | Rules Engine kit context, then the selected Auto-Dev workflow | `agentic-os detective resolve ... --touched-path ...` or `--subject rulebook` |
 | Create/update Jira, Linear, Notion, Confluence, GitHub, Slack, PR text, RCA, report, or local artifact | Create Artifacts | `/auto-dev-create-artifacts` |
 | Implement/fix/build one or many tracker items | Develop | `/auto-dev-develop` or `/auto-dev-implementation` |
 | Establish tracker/repository/policy context | Readiness and Context | `/auto-dev-readiness` |
@@ -26,3 +27,9 @@
 
 Route first to the target domain/project. Domain evidence and policy adapters
 extend the shared workflow; they do not fork it.
+
+For a matched LOS Rules Engine selector, freeze the selected kit provenance
+before the routed workflow begins. Read its canonical Django contract, snapshot
+freshness/coverage, and known validation findings at Readiness; carry that same
+selection through implementation, review, and QA rather than resolving a new
+ad hoc context per stage.

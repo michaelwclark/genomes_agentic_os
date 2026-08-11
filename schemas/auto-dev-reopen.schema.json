@@ -16,6 +16,7 @@
     "finished_autodev_sha256",
     "health_receipt",
     "health_sha256",
+    "context",
     "active_packet",
     "decision",
     "created_at"
@@ -51,6 +52,28 @@
     "finished_autodev_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "health_receipt": {"type": "string", "minLength": 1},
     "health_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "context": {
+      "type": "object",
+      "required": [
+        "mode",
+        "prior_content_sha256",
+        "selected_content_sha256",
+        "touched_paths",
+        "subjects",
+        "rulebook_ids",
+        "rules_engine_status"
+      ],
+      "properties": {
+        "mode": {"enum": ["carried", "reselected", "not-present"]},
+        "prior_content_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+        "selected_content_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+        "touched_paths": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "subjects": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "rulebook_ids": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "rules_engine_status": {"type": ["string", "null"]}
+      },
+      "additionalProperties": false
+    },
     "active_packet": {"type": "string", "minLength": 1},
     "decision": {"const": "preserve finished history and provision fresh resources"},
     "created_at": {"type": "string", "format": "date-time"}

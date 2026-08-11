@@ -36,6 +36,24 @@ def _scope(parser: argparse.ArgumentParser, *, include_context: bool = True) -> 
         parser.add_argument("--environment", help="Runtime environment whose deployed version must be resolved.")
         parser.add_argument("--output-type", default="investigation-report")
         parser.add_argument("--overlay", action="append", help="Invocation policy overlay Markdown; repeatable.")
+        parser.add_argument(
+            "--touched-path",
+            action="append",
+            help="Normalized repository-relative path touched by the investigation; repeatable.",
+        )
+        parser.add_argument(
+            "--subject",
+            action="append",
+            help="Declared semantic investigation subject, such as rulebook or caller; repeatable.",
+        )
+        parser.add_argument(
+            "--rulebook-id",
+            action="append",
+            help=(
+                "Exact Rules Engine rulebook identity used to resolve a concrete "
+                "catalog kit; repeatable only when one unambiguous rulebook is in scope."
+            ),
+        )
     parser.add_argument("--root", default=DEFAULT_ROOT)
 
 
@@ -48,6 +66,9 @@ def handle_resolve(args: argparse.Namespace) -> int:
         domain=args.domain,
         project=args.project,
         overlays=args.overlay or [],
+        touched_paths=args.touched_path or [],
+        subjects=args.subject or [],
+        rulebook_ids=args.rulebook_id or [],
     )
     if not args.explain:
         result = {
@@ -58,6 +79,7 @@ def handle_resolve(args: argparse.Namespace) -> int:
             "domain": result["domain"],
             "project": result["project"],
             "version_gate": result["version_gate"],
+            "selection": result["selection"],
             "fingerprint": result["fingerprint"],
             "source_ids": result["effective"]["source_ids"],
             "sources": [item["source_ref"] for item in result["sources"]],
@@ -77,6 +99,9 @@ def handle_start(args: argparse.Namespace) -> int:
         domain=args.domain,
         project=args.project,
         overlays=args.overlay or [],
+        touched_paths=args.touched_path or [],
+        subjects=args.subject or [],
+        rulebook_ids=args.rulebook_id or [],
         run_id=args.run_id,
         run_dir=args.run_dir,
     )

@@ -2106,6 +2106,20 @@ and cleared prior worktree pointers. It creates one new active packet and reopen
 receipt, then provisions a fresh worktree/runtime registration. Repeating the
 same run id returns the existing reopen; it does not create a second packet.
 
+The prior frozen context is carried unchanged by default. Passing a new
+`--touched-path`, `--subject`, or `--rulebook-id` without `--reselect-context`
+fails closed. An explicit reselect uses:
+
+```bash
+agentic-os auto-dev reopen --state <finished-packet-or-autodev.json> \
+  --run-id <new-run-id> --reason "<reason>" --stage qa \
+  --reselect-context --touched-path <repo-relative-path> \
+  --subject rulebook --rulebook-id <exact-rulebook-key> --apply
+```
+
+The reopen receipt binds both prior and selected context hashes, preserving
+path/subject provenance rather than recomputing or silently dropping it.
+
 Run one named workflow with the same state model:
 
 ```bash

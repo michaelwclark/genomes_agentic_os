@@ -13,6 +13,11 @@ agentic-os develop start <domain> <project> <ticket> --repository <repository-id
 agentic-os develop start <domain> <project> <ticket> \
   --base-branch <branch> --policy-overlay dev_standards=<file.md>
 
+# Frozen Rules Engine context candidate (does not imply a loaded kit)
+agentic-os develop start <domain> <project> <ticket> \
+  --touched-path <repo-relative-path> --subject rulebook \
+  --rulebook-id <exact-rulebook-key>
+
 # Provision portfolio, one active work item, and one isolated worktree per task
 agentic-os develop start <domain> <project> <ticket> [<ticket> ...] --apply
 
@@ -42,6 +47,13 @@ agentic-os develop policy <domain> <project> --plane environment_access --json
 The conventional folder order is root → domain → project. Projects may provide
 an ordered 1-N path list in `config/development.yml`; adding a Markdown file is
 picked up automatically on the next run.
+
+`--touched-path` and `--subject` are normalized and frozen in the effective
+policy receipt. `--rulebook-id` is required to resolve an exact Rules Engine
+catalog entry; a selector match without a usable catalog, concrete five-file
+kit with matching ready headers, usable local snapshot, and available compact
+known-findings receipt is recorded as `kit-unavailable` or
+`insufficient-evidence`, never as a loaded kit.
 
 Direct state transitions fail closed. Named workflow stages are the only normal
 advancement route; failures, recovery, and leases remain receipt-backed:
