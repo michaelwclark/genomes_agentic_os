@@ -52,9 +52,9 @@ states.
    identity.
 4. Require the evidence snapshot to live inside the work-item packet.
 5. Record the immutable compatibility receipt idempotently. If the same PR has
-   a new provider-read head, require explicit supersession evidence, preserve
-   the prior wrapper, append a new wrapper, and bind the task to that new
-   wrapper.
+   a new provider-read head while the task is still in `local_validation`,
+   require complete prior and new identity evidence, preserve the prior wrapper,
+   append a new wrapper, and bind the task to that new wrapper.
 6. Synchronize `autodev.json` so the same receipt is exposed as `pr_create`.
 7. Read back the stored receipt and projection.
 
@@ -67,10 +67,15 @@ states.
 - The evidence is packet-local and its SHA-256 matches the stored receipt.
 - Repeating the same idempotency key returns the same result; different input
   cannot overwrite it.
-- A head refresh must name the prior head, keep the same repository, base,
-  provider, PR, and source branch, and prove the new provider-read head.
+- A head refresh must name the prior head, include every repository, base,
+  provider, PR, and source-branch identity in both receipts, prove the new
+  provider-read head, and bind that identity to the selected task repository,
+  base branch, and registered worktree branch.
 - A head refresh cannot replace or alter the prior wrapper. The task binding
   moves only to the new append-only wrapper after both wrapper hashes verify.
+- A head refresh is rejected once the task has passed local validation. That
+  keeps Review Self, QA, and Finalize evidence from silently remaining bound to
+  an older commit.
 - No target resolution, branch mutation, pull-request write, check watch, or
   policy decision occurs in this recorder.
 
@@ -91,6 +96,8 @@ states.
 - Idempotency collision: preserve the original receipt and stop.
 - Head changed without explicit prior-head and provider readback evidence:
   keep the old wrapper current and return to PR Create to produce that proof.
+- Head changed after PR review began: preserve the current wrapper and start a
+  fresh delivery run so review, QA, and Finalize evidence are all exact-head.
 
 ## Events and receipts
 

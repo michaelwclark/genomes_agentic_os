@@ -5093,6 +5093,21 @@ def run_development_stage(
                     refreshed_head = str(refreshed_details.get("source_head_sha") or "").strip()
                     provider_observed = refreshed_details.get("provider_observed")
                     supersession = refreshed_details.get("supersession")
+                    identity_fields = (
+                        "repository",
+                        "base_branch",
+                        "provider",
+                        "pull_request",
+                        "source_branch",
+                    )
+                    previous_identity = {
+                        field: str(previous_details.get(field) or "").strip()
+                        for field in identity_fields
+                    }
+                    refreshed_identity = {
+                        field: str(refreshed_details.get(field) or "").strip()
+                        for field in identity_fields
+                    }
                     if not (
                         re.fullmatch(r"[a-fA-F0-9]{7,64}", previous_head)
                         and re.fullmatch(r"[a-fA-F0-9]{7,64}", refreshed_head)
@@ -5108,19 +5123,73 @@ def run_development_stage(
                         raise DevelopmentDeliveryError(
                             "release propagation refresh requires provider-read new head and explicit prior-head supersession"
                         )
-                    for field in (
-                        "repository",
-                        "base_branch",
-                        "provider",
-                        "pull_request",
-                        "source_branch",
-                    ):
-                        previous_value = str(previous_details.get(field) or "").strip()
-                        refreshed_value = str(refreshed_details.get(field) or "").strip()
-                        if previous_value and refreshed_value != previous_value:
+                    if not all(previous_identity.values()) or not all(refreshed_identity.values()):
+                        raise DevelopmentDeliveryError(
+                            "release propagation refresh requires complete prior and new PR identity"
+                        )
+                    for field in identity_fields:
+                        if refreshed_identity[field] != previous_identity[field]:
                             raise DevelopmentDeliveryError(
                                 "release propagation refresh must retain the same " + field
                             )
+                    task_repository = (
+                        task_value.get("repository")
+                        if isinstance(task_value.get("repository"), Mapping)
+                        else {}
+                    )
+                    expected_repository = str(task_repository.get("id") or "").strip()
+                    expected_base_branch = str(task_repository.get("base_branch") or "").strip()
+                    worktree = (
+                        task_value.get("worktree")
+                        if isinstance(task_value.get("worktree"), Mapping)
+                        else {}
+                    )
+                    expected_source_branch = str(worktree.get("branch") or "").strip()
+                    if not (
+                        expected_repository
+                        and expected_base_branch
+                        and expected_source_branch
+                        and previous_identity["repository"] == expected_repository
+                        and previous_identity["base_branch"] == expected_base_branch
+                        and previous_identity["source_branch"] == expected_source_branch
+                    ):
+                        raise DevelopmentDeliveryError(
+                            "release propagation refresh identity must match the selected task repository, base branch, and worktree branch"
+                        )
+                    expected_provider = ""
+                    if expected_repository.startswith(("github:", "git:github.com/")):
+                        expected_provider = "github"
+                    elif expected_repository.startswith(("gitlab:", "git:gitlab.com/")):
+                        expected_provider = "gitlab"
+                    elif expected_repository.startswith(("bitbucket:", "git:bitbucket.org/")):
+                        expected_provider = "bitbucket"
+                    if expected_provider and previous_identity["provider"].lower() != expected_provider:
+                        raise DevelopmentDeliveryError(
+                            "release propagation refresh provider must match the selected task repository"
+                        )
+                    pull_request_repository = expected_repository
+                    if expected_repository.startswith("git:github.com/"):
+                        pull_request_repository = "github:" + expected_repository.removeprefix(
+                            "git:github.com/"
+                        )
+                    elif expected_repository.startswith("git:gitlab.com/"):
+                        pull_request_repository = "gitlab:" + expected_repository.removeprefix(
+                            "git:gitlab.com/"
+                        )
+                    elif expected_repository.startswith("git:bitbucket.org/"):
+                        pull_request_repository = "bitbucket:" + expected_repository.removeprefix(
+                            "git:bitbucket.org/"
+                        )
+                    if not previous_identity["pull_request"].startswith(
+                        f"{pull_request_repository}#"
+                    ):
+                        raise DevelopmentDeliveryError(
+                            "release propagation refresh pull_request must be qualified by the selected task repository"
+                        )
+                    if task_value.get("state") != "local_validation":
+                        raise DevelopmentDeliveryError(
+                            "release propagation refresh is only allowed from local_validation; post-PR review evidence must be renewed for a changed head"
+                        )
                     payload["supersedes"] = {
                         "wrapper_ref": str(active_output),
                         "wrapper_sha256": hashlib.sha256(active_output.read_bytes()).hexdigest(),

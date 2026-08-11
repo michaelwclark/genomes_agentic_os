@@ -1,16 +1,17 @@
 id: release_propagation
-version: 3
+version: 4
 owner: development_delivery
 inputs: [pr_create_family_receipt, task_state, autodev_projection, idempotency_key]
 outputs: [release_propagation_stage_receipt, pr_create_projection]
 states: [compatibility_validation, recorded, blocked]
-steps: [require_autodev_linkage, require_pr_create_predecessors, validate_family_receipt, snapshot_packet_evidence, record_compatibility_receipt, append_exact_head_supersession, sync_pr_create_projection, read_back]
-validations: [exact_work_item_identity, allowed_delivery_state, packet_local_evidence, immutable_idempotency, evidence_sha256_match, explicit_prior_head_supersession, provider_read_new_head, no_provider_or_target_mutation]
+steps: [require_autodev_linkage, require_pr_create_predecessors, validate_family_receipt, snapshot_packet_evidence, record_compatibility_receipt, bind_exact_head_identity_to_task, append_exact_head_supersession, reject_post_review_refresh, sync_pr_create_projection, read_back]
+validations: [exact_work_item_identity, allowed_delivery_state, packet_local_evidence, immutable_idempotency, evidence_sha256_match, complete_prior_and_new_pr_identity, task_repository_and_worktree_identity, explicit_prior_head_supersession, provider_read_new_head, local_validation_only_for_refresh, no_provider_or_target_mutation]
 failure_modes:
   pr_create_receipt_missing: return_to_pr_create
   autodev_linkage_missing: reconcile_existing_work_item
   identity_or_hash_mismatch: block_on_exact_mismatch
   idempotency_collision: preserve_original_and_stop
   head_refresh_evidence_missing: preserve_prior_and_return_to_pr_create
+  post_review_head_refresh: preserve_prior_and_require_new_delivery_run
 events: [development.stage.release_propagated]
 receipts: [pr_create_family_receipt, release_propagation_stage_receipt]

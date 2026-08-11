@@ -72,7 +72,12 @@ def _work_item_packets(project: Path) -> list[Path]:
 
 
 def _project(
-    root: Path, repo: Path, *, canonical: bool = True, managed_runtime: bool = False
+    root: Path,
+    repo: Path,
+    *,
+    canonical: bool = True,
+    repository_id: str = "github:acme/app",
+    managed_runtime: bool = False,
 ) -> Path:
     create_project(root, "acme", "app", repo=str(repo))
     project = root / "domains" / "acme" / "02-projects" / "app"
@@ -81,7 +86,7 @@ def _project(
         "enabled": True,
         "tracker": {"primary": "linear"},
         "repository": {
-            "id": "github:acme/app",
+            "id": repository_id,
             "root": str(repo),
             "base_branch": "main",
         },
@@ -3713,7 +3718,7 @@ def test_release_propagation_appends_exact_head_supersession_without_rewriting_p
 
     repo, base_sha = _repository(tmp_path)
     root = tmp_path / "os"
-    _project(root, repo)
+    _project(root, repo, repository_id="git:github.com/acme/app")
     monkeypatch.setattr(
         delivery,
         "create_isolated_worktree",
@@ -3743,6 +3748,9 @@ def test_release_propagation_appends_exact_head_supersession_without_rewriting_p
         _record_standalone_stage(task, stage_name)
 
     work_item = Path(task.read()["work_item"])
+    task_value = task.read()
+    task_value["state"] = "local_validation"
+    task.path.write_text(json.dumps(task_value), encoding="utf-8")
 
     def family_receipt(
         name: str,
@@ -3752,7 +3760,7 @@ def test_release_propagation_appends_exact_head_supersession_without_rewriting_p
     ) -> Path:
         evidence: dict[str, object] = {
             "ticket": "CC-52",
-            "repository": "github:acme/app",
+            "repository": "git:github.com/acme/app",
             "base_branch": "main",
             "provider": "github",
             "pull_request": "github:acme/app#52",
@@ -3814,6 +3822,22 @@ def test_release_propagation_appends_exact_head_supersession_without_rewriting_p
         new_head,
         supersedes_source_head_sha=old_head,
     )
+    post_pr_task = task.read()
+    post_pr_task["state"] = "ready_for_merge"
+    task.path.write_text(json.dumps(post_pr_task), encoding="utf-8")
+    with pytest.raises(
+        DevelopmentDeliveryError,
+        match="only allowed from local_validation",
+    ):
+        run_development_stage(
+            task.path,
+            stage="release_propagation",
+            receipts={"release_propagation": str(refreshed_receipt)},
+            idempotency_prefix="cc-52:pr-create:new",
+        )
+    assert legacy_wrapper.read_bytes() == legacy_bytes
+    post_pr_task["state"] = "local_validation"
+    task.path.write_text(json.dumps(post_pr_task), encoding="utf-8")
     refreshed = run_development_stage(
         task.path,
         stage="release_propagation",
@@ -3855,6 +3879,87 @@ def test_release_propagation_appends_exact_head_supersession_without_rewriting_p
         idempotency_prefix="cc-52:pr-create:new",
     )
     assert replayed == refreshed
+
+    # A supersession is not a way to retarget this task. Both receipts can be
+    # internally consistent yet still name a different repository and branch.
+    task_mismatch = {
+        "repository": "github:other/app",
+        "base_branch": "trunk",
+        "provider": "github",
+        "pull_request": "github:other/app#52",
+        "source_branch": "feature/other",
+    }
+    current_wrapper_payload = json.loads(current_wrapper.read_text(encoding="utf-8"))
+    current_receipt_path = work_item / current_wrapper_payload["receipt"]
+    current_receipt = json.loads(current_receipt_path.read_text(encoding="utf-8"))
+    current_receipt["evidence"].update(task_mismatch)
+    current_receipt_path.write_text(json.dumps(current_receipt), encoding="utf-8")
+    current_wrapper_payload["evidence_sha256"] = hashlib.sha256(
+        json.dumps(current_receipt, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    current_wrapper.write_text(json.dumps(current_wrapper_payload), encoding="utf-8")
+    task_mismatch_state = task.read()
+    task_mismatch_state["stage_receipts"]["release_propagation"]["sha256"] = hashlib.sha256(
+        current_wrapper.read_bytes()
+    ).hexdigest()
+    task.path.write_text(json.dumps(task_mismatch_state), encoding="utf-8")
+    arbitrary_receipt = family_receipt(
+        "task-mismatch",
+        "c" * 40,
+        supersedes_source_head_sha=new_head,
+    )
+    arbitrary_payload = json.loads(arbitrary_receipt.read_text(encoding="utf-8"))
+    arbitrary_payload["evidence"].update(task_mismatch)
+    arbitrary_receipt.write_text(json.dumps(arbitrary_payload), encoding="utf-8")
+    with pytest.raises(
+        DevelopmentDeliveryError,
+        match="identity must match the selected task repository",
+    ):
+        run_development_stage(
+            task.path,
+            stage="release_propagation",
+            receipts={"release_propagation": str(arbitrary_receipt)},
+            idempotency_prefix="cc-52:pr-create:task-mismatch",
+        )
+
+    missing_identity_payload = json.loads(arbitrary_receipt.read_text(encoding="utf-8"))
+    del missing_identity_payload["evidence"]["provider"]
+    arbitrary_receipt.write_text(json.dumps(missing_identity_payload), encoding="utf-8")
+    with pytest.raises(
+        DevelopmentDeliveryError,
+        match="requires complete prior and new PR identity",
+    ):
+        run_development_stage(
+            task.path,
+            stage="release_propagation",
+            receipts={"release_propagation": str(arbitrary_receipt)},
+            idempotency_prefix="cc-52:pr-create:missing-new-identity",
+        )
+
+    missing_identity_payload["evidence"]["provider"] = "github"
+    arbitrary_receipt.write_text(json.dumps(missing_identity_payload), encoding="utf-8")
+    prior_missing_identity = json.loads(current_receipt_path.read_text(encoding="utf-8"))
+    del prior_missing_identity["evidence"]["provider"]
+    current_receipt_path.write_text(json.dumps(prior_missing_identity), encoding="utf-8")
+    current_wrapper_payload["evidence_sha256"] = hashlib.sha256(
+        json.dumps(prior_missing_identity, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    current_wrapper.write_text(json.dumps(current_wrapper_payload), encoding="utf-8")
+    prior_missing_state = task.read()
+    prior_missing_state["stage_receipts"]["release_propagation"]["sha256"] = hashlib.sha256(
+        current_wrapper.read_bytes()
+    ).hexdigest()
+    task.path.write_text(json.dumps(prior_missing_state), encoding="utf-8")
+    with pytest.raises(
+        DevelopmentDeliveryError,
+        match="requires complete prior and new PR identity",
+    ):
+        run_development_stage(
+            task.path,
+            stage="release_propagation",
+            receipts={"release_propagation": str(arbitrary_receipt)},
+            idempotency_prefix="cc-52:pr-create:missing-prior-identity",
+        )
 
 
 def test_heartbeat_does_not_refresh_milestone_evidence_timestamp(
@@ -4063,14 +4168,15 @@ def test_release_propagation_workflow_is_pr_create_compatibility_recorder() -> N
     contract = yaml.safe_load(
         (workflow_root / "workflow.yml").read_text(encoding="utf-8")
     )
-    assert contract["version"] == 3
+    assert contract["version"] == 4
     assert contract["inputs"][0] == "pr_create_family_receipt"
     assert contract["outputs"] == [
         "release_propagation_stage_receipt",
         "pr_create_projection",
     ]
     assert "append_exact_head_supersession" in contract["steps"]
-    assert "explicit_prior_head_supersession" in contract["validations"]
+    assert "complete_prior_and_new_pr_identity" in contract["validations"]
+    assert "local_validation_only_for_refresh" in contract["validations"]
     forbidden_steps = {
         "read_fix_version",
         "map_targets",
