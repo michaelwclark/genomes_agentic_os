@@ -2635,6 +2635,95 @@ def test_everything_apply_marks_four_unmanaged_tasks_pending_without_stage_recei
         assert projection["stages"]["groom"]["status"] == "not_started"
 
 
+def test_everything_executor_handoff_blocks_after_bounded_retries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    repo, base_sha = _repository(tmp_path)
+    root = tmp_path / "os"
+    _project(root, repo)
+    monkeypatch.setattr(
+        delivery,
+        "create_isolated_worktree",
+        lambda **kwargs: {
+            "name": kwargs["ticket"].lower(),
+            "path": f"/tmp/{kwargs['ticket'].lower()}",
+            "branch": f"feature/{kwargs['ticket'].lower()}",
+            "base_sha": base_sha,
+        },
+    )
+
+    assert main(
+        [
+            "auto-dev",
+            "everything",
+            "acme",
+            "app",
+            "CC-EXHAUST",
+            "--root",
+            str(root),
+            "--apply",
+            "--json",
+        ]
+    ) == 1
+    output = json.loads(capsys.readouterr().out)
+    state_ref = output["tasks"][0]["state_ref"]
+    autodev_path = TaskState(Path(state_ref)).read()["autodev_path"]
+
+    # The profile allows three attempts.  Explicit recovery is required before
+    # each subsequent exact-packet handoff, so the third refusal must be
+    # terminal rather than another pending result.
+    for attempt in (2, 3):
+        assert main(
+            [
+                "develop",
+                "recover",
+                state_ref,
+                "--receipt",
+                f"operator-recovery-{attempt}",
+                "--idempotency-key",
+                f"cc-exhaust:recover:{attempt}",
+                "--json",
+            ]
+        ) == 0
+        capsys.readouterr()
+        assert main(
+            [
+                "auto-dev",
+                "everything",
+                "--state",
+                autodev_path,
+                "--root",
+                str(root),
+                "--apply",
+                "--json",
+            ]
+        ) == 1
+        output = json.loads(capsys.readouterr().out)
+
+    assert output["state"] == "blocked"
+    assert output["execution"]["status"] == "blocked"
+    assert output["execution"]["executed"] is False
+    assert output["execution"]["handoffs"] == [
+        {
+            "ticket": "CC-EXHAUST",
+            "outcome": "executor_unavailable",
+            "receipt": output["tasks"][0]["handoff"]["receipt"],
+            "attempt": 3,
+            "recoverable": False,
+        }
+    ]
+    task = TaskState(Path(state_ref)).read()
+    assert task["state"] == "blocked"
+    assert task["failure"]["kind"] == "executor_unavailable"
+    assert task["failure"]["recoverable"] is False
+    handoff = json.loads(Path(task["failure"]["receipt"]).read_text(encoding="utf-8"))
+    assert handoff["status"] == "blocked"
+    assert handoff["attempt"] == 3
+    assert handoff["recoverable"] is False
+    portfolio = json.loads((Path(state_ref).parents[2] / "portfolio.json").read_text(encoding="utf-8"))
+    assert portfolio["state"] == "blocked"
+
+
 def test_everything_projection_creates_a_linked_program_run_packet(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

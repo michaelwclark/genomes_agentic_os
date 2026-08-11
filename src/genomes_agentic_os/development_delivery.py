@@ -1873,7 +1873,7 @@ class TaskState:
                 )
                 handoff = {
                     "schema": "development-executor-handoff/v1",
-                    "status": "pending",
+                    "status": "pending" if recoverable else "blocked",
                     "outcome": "executor_unavailable",
                     "attempt": attempt,
                     "max_attempts": maximum,
@@ -1894,10 +1894,17 @@ class TaskState:
                     "reason": (
                         "No configured managed executor accepted the post-materialization "
                         "Auto-Dev handoff; no stage was executed or receipted."
+                        if recoverable
+                        else "No configured managed executor accepted the post-materialization "
+                        "Auto-Dev handoff before the retry budget was exhausted; no stage was "
+                        "executed or receipted."
                     ),
                     "next_action": (
                         "Configure or restore a managed executor, then resume this exact task; "
                         "do not infer completion from the preserved worktree."
+                        if recoverable
+                        else "Correct the executor configuration and explicitly reopen or recover "
+                        "this blocked task before attempting another handoff."
                     ),
                     "recorded_at": utc_now(),
                 }
@@ -1927,7 +1934,11 @@ class TaskState:
             _sync_canonical_task_progress(self.path)
             return {"task": state, "handoff": handoff, "replayed": True}
         self.emit(
-            event_type="development.task.executor_handoff_pending",
+            event_type=(
+                "development.task.executor_handoff_pending"
+                if handoff["status"] == "pending"
+                else "development.task.executor_handoff_blocked"
+            ),
             idempotency_key=state["last_failure_key"],
             payload={
                 "ticket": state["ticket"],
@@ -3764,6 +3775,7 @@ def start_development_run(
     )
     task_rows = [merged_task_rows[ticket] for ticket in plan["tickets"] if ticket in merged_task_rows]
     task_states = [TaskState(Path(row["state_ref"])).read()["state"] for row in task_rows]
+    portfolio_state = _portfolio_rollup(task_states)
     pending_handoffs = [
         row
         for row in task_rows
@@ -3771,7 +3783,13 @@ def start_development_run(
         and row["handoff"].get("status") == "pending"
     ]
     plan.update({
-        "state": "pending" if pending_handoffs else _portfolio_rollup(task_states),
+        "state": (
+            "blocked"
+            if portfolio_state == "blocked"
+            else "pending"
+            if pending_handoffs
+            else portfolio_state
+        ),
         "tasks": task_rows,
         "updated_at": utc_now(),
     })

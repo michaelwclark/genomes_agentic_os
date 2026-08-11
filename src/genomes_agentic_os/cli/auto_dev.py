@@ -102,7 +102,7 @@ def _overlays(values: list[str] | None) -> dict[str, list[str]]:
 def _everything_execution_status(launch_result: dict) -> dict | None:
     """Describe a materialized Everything packet without claiming stage execution."""
 
-    if launch_result.get("state") not in {"dispatching", "pending"}:
+    if launch_result.get("state") not in {"dispatching", "pending", "blocked"}:
         return None
     next_actions: list[dict[str, object]] = []
     handoffs: list[dict[str, object]] = []
@@ -129,7 +129,7 @@ def _everything_execution_status(launch_result: dict) -> dict | None:
             }
         )
         handoff = row.get("handoff")
-        if isinstance(handoff, dict) and handoff.get("status") == "pending":
+        if isinstance(handoff, dict) and handoff.get("status") in {"pending", "blocked"}:
             handoffs.append(
                 {
                     "ticket": str(row["ticket"]),
@@ -140,13 +140,17 @@ def _everything_execution_status(launch_result: dict) -> dict | None:
                 }
             )
     if handoffs:
+        status = "blocked" if launch_result.get("state") == "blocked" else "pending"
         return {
             "schema": "auto-dev-everything-execution-status/v1",
-            "status": "pending",
+            "status": status,
             "executed": False,
             "reason": (
                 "No configured managed executor accepted the post-materialization handoff; "
                 "no Auto-Dev stage was executed or receipted."
+                if status == "pending"
+                else "No configured managed executor accepted the post-materialization handoff "
+                "before the retry budget was exhausted; no Auto-Dev stage was executed or receipted."
             ),
             "next_actions": next_actions,
             "handoffs": handoffs,
@@ -248,7 +252,7 @@ def handle_launch(args: argparse.Namespace) -> int:
         if execution is not None:
             result = {**result, "execution": execution}
     _print(result, json_output=args.json)
-    return 1 if result.get("state") == "pending" else 0
+    return 1 if result.get("state") in {"pending", "blocked"} else 0
 
 
 def handle_status(args: argparse.Namespace) -> int:
