@@ -641,8 +641,30 @@ def _load_stage_receipts(
         task_ref = link.get("task_state")
         if task_ref:
             task_path = Path(str(task_ref)).expanduser()
-            release_receipt = task_path.parent / "stages" / "release-propagation.json"
-            if release_receipt.is_file():
+            task = _read_json(task_path) if task_path.is_file() else {}
+            descriptor = (
+                task.get("stage_receipts", {}).get("release_propagation")
+                if isinstance(task.get("stage_receipts"), Mapping)
+                else None
+            )
+            release_receipt: Path | None = None
+            if isinstance(descriptor, Mapping):
+                resolved = _resolve_health_receipt(
+                    descriptor.get("ref"), work_item, task_path=task_path
+                )
+                expected_sha = str(descriptor.get("sha256") or "").strip().lower()
+                if (
+                    resolved is not None
+                    and resolved.is_file()
+                    and expected_sha
+                    and hashlib.sha256(resolved.read_bytes()).hexdigest() == expected_sha
+                ):
+                    release_receipt = resolved
+            else:
+                legacy_receipt = task_path.parent / "stages" / "release-propagation.json"
+                if legacy_receipt.is_file():
+                    release_receipt = legacy_receipt
+            if release_receipt is not None:
                 wrapper = _read_json(release_receipt)
                 evidence_ref = _resolve_health_receipt(
                     wrapper.get("receipt"), work_item, task_path=task_path

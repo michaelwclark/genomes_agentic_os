@@ -32,6 +32,7 @@ release_propagation ...`.
 
 - packet-local `release_propagation` compatibility receipt;
 - synchronized Auto-Dev `pr_create` projection referencing the same evidence;
+- an append-only exact-head supersession wrapper when the same PR is rewritten;
 - legacy Development Delivery event/readback for existing consumers.
 
 ## States
@@ -50,7 +51,10 @@ states.
 3. Validate the PR Create family receipt and exact work-item/provider/revision
    identity.
 4. Require the evidence snapshot to live inside the work-item packet.
-5. Record the immutable compatibility receipt idempotently.
+5. Record the immutable compatibility receipt idempotently. If the same PR has
+   a new provider-read head, require explicit supersession evidence, preserve
+   the prior wrapper, append a new wrapper, and bind the task to that new
+   wrapper.
 6. Synchronize `autodev.json` so the same receipt is exposed as `pr_create`.
 7. Read back the stored receipt and projection.
 
@@ -63,6 +67,10 @@ states.
 - The evidence is packet-local and its SHA-256 matches the stored receipt.
 - Repeating the same idempotency key returns the same result; different input
   cannot overwrite it.
+- A head refresh must name the prior head, keep the same repository, base,
+  provider, PR, and source branch, and prove the new provider-read head.
+- A head refresh cannot replace or alter the prior wrapper. The task binding
+  moves only to the new append-only wrapper after both wrapper hashes verify.
 - No target resolution, branch mutation, pull-request write, check watch, or
   policy decision occurs in this recorder.
 
@@ -71,6 +79,8 @@ states.
 - `recorded`: the lower-level receipt is stored and the Auto-Dev projection
   exposes the same evidence as completed PR Create.
 - `idempotent`: an identical prior receipt is read back without another write.
+- `superseded`: a new exact-head receipt is appended after an explicit,
+  provider-read PR-head rewrite; the earlier wrapper remains intact.
 
 ## Failure modes and recovery
 
@@ -79,6 +89,8 @@ states.
   never create a second packet.
 - Identity, revision, or evidence-hash mismatch: block on the exact mismatch.
 - Idempotency collision: preserve the original receipt and stop.
+- Head changed without explicit prior-head and provider readback evidence:
+  keep the old wrapper current and return to PR Create to produce that proof.
 
 ## Events and receipts
 

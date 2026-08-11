@@ -4962,6 +4962,7 @@ def run_development_stage(
                     "PR Create family recording requires a provider-read Jira QA "
                     "Automation Assessment subtask receipt for this project"
                 )
+        work_item: Path | None = None
         work_item_raw = str(current.get("work_item") or "").strip()
         if work_item_raw:
             work_item = Path(work_item_raw).expanduser().resolve()
@@ -4972,7 +4973,7 @@ def run_development_stage(
                     "release_propagation evidence must be snapshotted inside the work item"
                 ) from exc
         validated_payloads["release_propagation"] = receipt_payload
-        output = state.path.parent / "stages" / "release-propagation.json"
+        legacy_output = state.path.parent / "stages" / "release-propagation.json"
         payload = {
             "schema": "development-stage-receipt/v1",
             "stage": "release_propagation",
@@ -4984,22 +4985,184 @@ def run_development_stage(
             "idempotency_key": f"{idempotency_prefix}:release_propagation",
             "recorded_at": utc_now(),
         }
-        if output.is_file():
-            existing = json.loads(output.read_text(encoding="utf-8"))
-            if existing.get("idempotency_key") != payload["idempotency_key"] or existing.get("receipt") != receipt:
-                raise DevelopmentDeliveryError("release propagation receipt already exists with different input")
-            with _file_lock(state.path.with_suffix(state.path.suffix + ".lock")):
-                task_value = state.read()
-                task_value.setdefault("stage_receipts", {})["release_propagation"] = {
-                    "ref": str(output),
-                    "sha256": hashlib.sha256(output.read_bytes()).hexdigest(),
-                }
-                _atomic_json(state.path, task_value)
-            _sync_auto_dev_projection(state.path)
-            return existing
-        _atomic_json(output, payload)
+        output = legacy_output
         with _file_lock(state.path.with_suffix(state.path.suffix + ".lock")):
             task_value = state.read()
+            stage_receipts = (
+                task_value.get("stage_receipts")
+                if isinstance(task_value.get("stage_receipts"), Mapping)
+                else {}
+            )
+            descriptor = stage_receipts.get("release_propagation")
+            active_output: Path | None = None
+            if isinstance(descriptor, Mapping):
+                raw_ref = str(descriptor.get("ref") or "").strip()
+                candidate = Path(raw_ref).expanduser() if raw_ref else None
+                if candidate is None or not candidate.is_absolute():
+                    raise DevelopmentDeliveryError(
+                        "release propagation task binding must use an absolute immutable wrapper reference"
+                    )
+                candidate = candidate.resolve()
+                stages_root = legacy_output.parent.resolve()
+                if not candidate.is_relative_to(stages_root) or not candidate.is_file():
+                    raise DevelopmentDeliveryError(
+                        "release propagation task binding does not resolve inside its stage directory"
+                    )
+                expected_sha = str(descriptor.get("sha256") or "").strip().lower()
+                actual_sha = hashlib.sha256(candidate.read_bytes()).hexdigest()
+                if expected_sha != actual_sha:
+                    raise DevelopmentDeliveryError(
+                        "release propagation task binding no longer matches its immutable wrapper"
+                    )
+                active_output = candidate
+            elif legacy_output.is_file():
+                active_output = legacy_output
+
+            if active_output is not None:
+                try:
+                    existing = json.loads(active_output.read_text(encoding="utf-8"))
+                except json.JSONDecodeError as exc:
+                    raise DevelopmentDeliveryError(
+                        "release propagation wrapper must be valid JSON"
+                    ) from exc
+                if not isinstance(existing, Mapping):
+                    raise DevelopmentDeliveryError("release propagation wrapper must be an object")
+                if existing.get("idempotency_key") == payload["idempotency_key"]:
+                    if (
+                        existing.get("receipt") != payload["receipt"]
+                        or existing.get("evidence_sha256") != payload["evidence_sha256"]
+                    ):
+                        raise DevelopmentDeliveryError(
+                            "release propagation idempotency key is already bound to different evidence"
+                        )
+                    payload = dict(existing)
+                    output = active_output
+                elif (
+                    existing.get("receipt") == payload["receipt"]
+                    and existing.get("evidence_sha256") == payload["evidence_sha256"]
+                ):
+                    payload = dict(existing)
+                    output = active_output
+                else:
+                    previous_receipt = str(existing.get("receipt") or "").strip()
+                    if not Path(previous_receipt).is_absolute() and work_item is None:
+                        raise DevelopmentDeliveryError(
+                            "release propagation refresh requires packet-local prior evidence"
+                        )
+                    previous_evidence_path = (
+                        Path(previous_receipt).expanduser()
+                        if Path(previous_receipt).is_absolute()
+                        else work_item / previous_receipt
+                    )
+                    if not previous_evidence_path.is_file():
+                        raise DevelopmentDeliveryError(
+                            "release propagation prior wrapper does not reference readable evidence"
+                        )
+                    try:
+                        previous_evidence = json.loads(
+                            previous_evidence_path.read_text(encoding="utf-8")
+                        )
+                    except json.JSONDecodeError as exc:
+                        raise DevelopmentDeliveryError(
+                            "release propagation prior evidence must be valid JSON"
+                        ) from exc
+                    if not isinstance(previous_evidence, Mapping):
+                        raise DevelopmentDeliveryError(
+                            "release propagation prior evidence must be an object"
+                        )
+                    previous_evidence_hash = hashlib.sha256(
+                        json.dumps(
+                            previous_evidence, sort_keys=True, separators=(",", ":")
+                        ).encode("utf-8")
+                    ).hexdigest()
+                    if existing.get("evidence_sha256") != previous_evidence_hash:
+                        raise DevelopmentDeliveryError(
+                            "release propagation prior wrapper evidence no longer matches its digest"
+                        )
+                    previous_details = (
+                        previous_evidence.get("evidence")
+                        if isinstance(previous_evidence.get("evidence"), Mapping)
+                        else {}
+                    )
+                    refreshed_details = (
+                        receipt_payload.get("evidence")
+                        if isinstance(receipt_payload.get("evidence"), Mapping)
+                        else {}
+                    )
+                    previous_head = str(previous_details.get("source_head_sha") or "").strip()
+                    refreshed_head = str(refreshed_details.get("source_head_sha") or "").strip()
+                    provider_observed = refreshed_details.get("provider_observed")
+                    supersession = refreshed_details.get("supersession")
+                    if not (
+                        re.fullmatch(r"[a-fA-F0-9]{7,64}", previous_head)
+                        and re.fullmatch(r"[a-fA-F0-9]{7,64}", refreshed_head)
+                        and previous_head != refreshed_head
+                        and refreshed_details.get("readback_verified") is True
+                        and isinstance(provider_observed, Mapping)
+                        and str(provider_observed.get("head_sha") or "").strip() == refreshed_head
+                        and isinstance(supersession, Mapping)
+                        and str(supersession.get("supersedes_source_head_sha") or "").strip()
+                        == previous_head
+                        and str(supersession.get("reason") or "").strip()
+                    ):
+                        raise DevelopmentDeliveryError(
+                            "release propagation refresh requires provider-read new head and explicit prior-head supersession"
+                        )
+                    for field in (
+                        "repository",
+                        "base_branch",
+                        "provider",
+                        "pull_request",
+                        "source_branch",
+                    ):
+                        previous_value = str(previous_details.get(field) or "").strip()
+                        refreshed_value = str(refreshed_details.get(field) or "").strip()
+                        if previous_value and refreshed_value != previous_value:
+                            raise DevelopmentDeliveryError(
+                                "release propagation refresh must retain the same " + field
+                            )
+                    payload["supersedes"] = {
+                        "wrapper_ref": str(active_output),
+                        "wrapper_sha256": hashlib.sha256(active_output.read_bytes()).hexdigest(),
+                        "evidence_sha256": previous_evidence_hash,
+                        "source_head_sha": previous_head,
+                    }
+                    supersession_key = hashlib.sha256(
+                        json.dumps(
+                            {
+                                "idempotency_key": payload["idempotency_key"],
+                                "receipt": payload["receipt"],
+                                "evidence_sha256": payload["evidence_sha256"],
+                                "supersedes": payload["supersedes"],
+                            },
+                            sort_keys=True,
+                            separators=(",", ":"),
+                        ).encode("utf-8")
+                    ).hexdigest()
+                    output = (
+                        legacy_output.parent
+                        / "release-propagation"
+                        / f"{supersession_key[:20]}.json"
+                    )
+                    if output.is_file():
+                        stored = json.loads(output.read_text(encoding="utf-8"))
+                        stored_without_timestamp = (
+                            {key: value for key, value in stored.items() if key != "recorded_at"}
+                            if isinstance(stored, Mapping)
+                            else None
+                        )
+                        payload_without_timestamp = {
+                            key: value for key, value in payload.items() if key != "recorded_at"
+                        }
+                        if stored_without_timestamp != payload_without_timestamp:
+                            raise DevelopmentDeliveryError(
+                                "release propagation supersession wrapper collision"
+                            )
+                        payload = dict(stored)
+                    else:
+                        _atomic_json(output, payload)
+            else:
+                _atomic_json(output, payload)
             task_value.setdefault("stage_receipts", {})["release_propagation"] = {
                 "ref": str(output),
                 "sha256": hashlib.sha256(output.read_bytes()).hexdigest(),

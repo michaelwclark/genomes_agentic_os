@@ -3706,6 +3706,157 @@ def test_revision_sensitive_stage_receipts_can_supersede_stale_evidence(
     assert replayed_projection["subject_revision"] == "revision-b"
 
 
+def test_release_propagation_appends_exact_head_supersession_without_rewriting_prior_wrapper(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A rewritten PR head must replace the current binding, not history."""
+
+    repo, base_sha = _repository(tmp_path)
+    root = tmp_path / "os"
+    _project(root, repo)
+    monkeypatch.setattr(
+        delivery,
+        "create_isolated_worktree",
+        lambda **kwargs: {
+            "name": "cc-52",
+            "path": "/tmp/cc-52",
+            "branch": "feature/cc-52",
+            "base_sha": base_sha,
+        },
+    )
+    run = delivery.start_development_run(
+        root,
+        "acme",
+        "app",
+        ["CC-52"],
+        run_id="release-propagation-head-refresh",
+        auto_dev_mode="everything",
+        apply=True,
+    )
+    task = TaskState(Path(run["tasks"][0]["state_ref"]))
+    _advance_auto_dev_task_to_ready(
+        task,
+        subject_revision=base_sha,
+        pull_request="github:acme/app#52",
+    )
+    for stage_name in ("groom", "detective", "create_artifacts", "document"):
+        _record_standalone_stage(task, stage_name)
+
+    work_item = Path(task.read()["work_item"])
+
+    def family_receipt(
+        name: str,
+        source_head_sha: str,
+        *,
+        supersedes_source_head_sha: str | None = None,
+    ) -> Path:
+        evidence: dict[str, object] = {
+            "ticket": "CC-52",
+            "repository": "github:acme/app",
+            "base_branch": "main",
+            "provider": "github",
+            "pull_request": "github:acme/app#52",
+            "source_branch": "feature/cc-52",
+            "source_head_sha": source_head_sha,
+            "readback_verified": True,
+            "provider_observed": {"head_sha": source_head_sha},
+        }
+        if supersedes_source_head_sha:
+            evidence["supersession"] = {
+                "supersedes_source_head_sha": supersedes_source_head_sha,
+                "reason": "The PR head changed after a commit-message rewrite.",
+            }
+        path = work_item / "artifacts" / "auto-dev-pr-create" / f"family-{name}.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(
+                {
+                    "schema": "development-stage-evidence/v1",
+                    "state": "release_propagation",
+                    "status": "completed",
+                    "summary": f"PR family is current at {source_head_sha}",
+                    "verified_at": "2026-08-11T15:10:32Z",
+                    "evidence": evidence,
+                }
+            ),
+            encoding="utf-8",
+        )
+        return path
+
+    old_head = "a" * 40
+    new_head = "b" * 40
+    original_receipt = family_receipt("old", old_head)
+    first = run_development_stage(
+        task.path,
+        stage="release_propagation",
+        receipts={"release_propagation": str(original_receipt)},
+        idempotency_prefix="cc-52:pr-create:old",
+    )
+    legacy_wrapper = task.path.parent / "stages" / "release-propagation.json"
+    legacy_bytes = legacy_wrapper.read_bytes()
+    legacy_binding = dict(task.read()["stage_receipts"]["release_propagation"])
+
+    missing_supersession_receipt = family_receipt("new-without-proof", new_head)
+    with pytest.raises(
+        DevelopmentDeliveryError,
+        match="requires provider-read new head and explicit prior-head supersession",
+    ):
+        run_development_stage(
+            task.path,
+            stage="release_propagation",
+            receipts={"release_propagation": str(missing_supersession_receipt)},
+            idempotency_prefix="cc-52:pr-create:missing-supersession",
+        )
+    assert legacy_wrapper.read_bytes() == legacy_bytes
+
+    refreshed_receipt = family_receipt(
+        "new",
+        new_head,
+        supersedes_source_head_sha=old_head,
+    )
+    refreshed = run_development_stage(
+        task.path,
+        stage="release_propagation",
+        receipts={"release_propagation": str(refreshed_receipt)},
+        idempotency_prefix="cc-52:pr-create:new",
+    )
+
+    current = task.read()["stage_receipts"]["release_propagation"]
+    current_wrapper = Path(current["ref"])
+    assert legacy_wrapper.read_bytes() == legacy_bytes
+    assert current_wrapper != legacy_wrapper
+    assert current_wrapper.is_file()
+    assert refreshed["supersedes"]["wrapper_ref"] == str(legacy_wrapper)
+    assert refreshed["supersedes"]["source_head_sha"] == old_head
+    assert current["sha256"] == hashlib.sha256(current_wrapper.read_bytes()).hexdigest()
+    assert current_wrapper.parent.name == "release-propagation"
+    assert first["receipt"] != refreshed["receipt"]
+    projection = read_auto_dev_state(task.read()["autodev_path"])
+    assert projection["stages"]["pr_create"]["status"] == "completed"
+    assert projection["stages"]["pr_create"]["run_ref"].endswith(current_wrapper.name)
+
+    # Simulate interruption after the append-only wrapper write but before the
+    # task binding write. The same idempotency key must finish that transaction.
+    interrupted = task.read()
+    interrupted["stage_receipts"]["release_propagation"] = legacy_binding
+    task.path.write_text(json.dumps(interrupted), encoding="utf-8")
+    recovered = run_development_stage(
+        task.path,
+        stage="release_propagation",
+        receipts={"release_propagation": str(refreshed_receipt)},
+        idempotency_prefix="cc-52:pr-create:new",
+    )
+    assert recovered == refreshed
+
+    replayed = run_development_stage(
+        task.path,
+        stage="release_propagation",
+        receipts={"release_propagation": str(refreshed_receipt)},
+        idempotency_prefix="cc-52:pr-create:new",
+    )
+    assert replayed == refreshed
+
+
 def test_heartbeat_does_not_refresh_milestone_evidence_timestamp(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -3912,12 +4063,14 @@ def test_release_propagation_workflow_is_pr_create_compatibility_recorder() -> N
     contract = yaml.safe_load(
         (workflow_root / "workflow.yml").read_text(encoding="utf-8")
     )
-    assert contract["version"] == 2
+    assert contract["version"] == 3
     assert contract["inputs"][0] == "pr_create_family_receipt"
     assert contract["outputs"] == [
         "release_propagation_stage_receipt",
         "pr_create_projection",
     ]
+    assert "append_exact_head_supersession" in contract["steps"]
+    assert "explicit_prior_head_supersession" in contract["validations"]
     forbidden_steps = {
         "read_fix_version",
         "map_targets",

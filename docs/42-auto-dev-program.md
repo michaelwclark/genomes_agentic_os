@@ -137,6 +137,12 @@ Everything is the orchestrator, not another stage. It uses this one exact order:
 | 15 | Closeout | `/auto-dev-closeout` | `develop stage --stage closeout` |
 | 16 | Health | `/auto-dev-health` | strict Health receipt after cleanup and finished-state readback |
 
+When PR Create must refresh an existing PR after its commit ID changes, it
+does not rewrite the old record. It requires provider readback for the new
+head and an explicit link to the old head, appends a new compatibility wrapper,
+and makes that wrapper the current PR Create evidence. Later review stages use
+only the new exact-head wrapper.
+
 ### Documentation delivery
 
 For this source package, a completed Auto-Dev Document outcome includes the
