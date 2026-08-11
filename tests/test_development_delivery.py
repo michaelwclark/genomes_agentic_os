@@ -3176,6 +3176,8 @@ def test_progressed_run_resumes_and_single_stage_retargets_same_projection(
         idempotency_prefix="cc-48:readiness",
     )
     before_resume = read_auto_dev_state(TaskState(task_path).read()["autodev_path"])
+    assert before_resume["mode"] == "everything"
+    assert TaskState(task_path).read()["auto_dev_mode"] == "everything"
     resumed = delivery.start_development_run(
         root,
         "acme",
@@ -3191,6 +3193,8 @@ def test_progressed_run_resumes_and_single_stage_retargets_same_projection(
     assert TaskState(task_path).read()["state"] == "planned"
     assert resumed["state"] == "planned"
     projection = read_auto_dev_state(TaskState(task_path).read()["autodev_path"])
+    assert projection["mode"] == "everything"
+    assert TaskState(task_path).read()["auto_dev_mode"] == "everything"
     assert projection["requested_stage"] == "document"
     assert projection["current_stage"] == "document"
     assert projection["start_stage"] == before_resume["start_stage"]
@@ -3216,6 +3220,8 @@ def test_progressed_run_resumes_and_single_stage_retargets_same_projection(
     ) == 0
     capsys.readouterr()
     retargeted = read_auto_dev_state(TaskState(task_path).read()["autodev_path"])
+    assert retargeted["mode"] == "everything"
+    assert TaskState(task_path).read()["auto_dev_mode"] == "everything"
     assert retargeted["requested_stage"] == "groom"
     assert retargeted["current_stage"] == "groom"
     assert retargeted["start_stage"] == before_resume["start_stage"]
