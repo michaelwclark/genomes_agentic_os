@@ -2617,7 +2617,7 @@ def test_everything_apply_records_pending_executor_handoff(
 
     run_packet = read_auto_dev_state(task["autodev_path"])["run_packet"]
     run_summary = read_program_run_packet(root, run_packet["packet_id"])
-    assert run_summary["state"] == "running"
+    assert run_summary["state"] == "started"
     assert run_summary["running_workflows"] == []
     events = [
         json.loads(line)
@@ -2888,7 +2888,7 @@ def test_everything_projection_creates_a_linked_program_run_packet(
     summary = read_program_run_packet(root, link["packet_id"])
     assert link["program_ref"] == "00-program.json"
     assert summary["packet"]["program_id"] == "auto_dev"
-    assert summary["state"] == "running"
+    assert summary["state"] == "started"
     assert summary["running_workflows"] == []
     assert any(item["kind"] == "effective_policy" for item in summary["packet"]["config_refs"])
 
