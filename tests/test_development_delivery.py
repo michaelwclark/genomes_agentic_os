@@ -1302,6 +1302,48 @@ def test_failure_retries_then_blocks_and_recovery_resumes_owner_state(tmp_path: 
     assert blocked["failure"]["recoverable"] is False
 
 
+def test_executor_handoff_can_recover_after_retry_budget_exhaustion(tmp_path: Path) -> None:
+    task = _state(tmp_path, max_attempts=2)
+    first = task.record_executor_unavailable(stage="groom")
+    assert first["handoff"]["status"] == "pending"
+    task.recover(receipt="executor repaired", idempotency_key="recover-first-handoff")
+
+    exhausted = task.record_executor_unavailable(stage="groom")
+    assert exhausted["handoff"]["status"] == "blocked"
+    assert task.read()["state"] == "blocked"
+
+    recovered = task.recover(
+        receipt="executor admission restored", idempotency_key="recover-exhausted-handoff"
+    )
+    assert recovered["state"] == "discovered"
+    assert recovered["failure"] is None
+
+
+def test_executor_handoff_reuses_orphaned_receipt_after_interrupted_state_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    task = _state(tmp_path)
+    original_atomic_json = delivery._atomic_json
+
+    def interrupt_task_state_write(path: Path, value: dict[str, object]) -> None:
+        if path == task.path:
+            raise OSError("simulated interruption after handoff receipt")
+        original_atomic_json(path, value)
+
+    monkeypatch.setattr(delivery, "_atomic_json", interrupt_task_state_write)
+    with pytest.raises(OSError, match="simulated interruption"):
+        task.record_executor_unavailable(stage="groom")
+    receipt_path = task.path.parent / "handoffs" / "executor-unavailable-attempt-01.json"
+    assert receipt_path.is_file()
+    assert task.read()["failure"] is None
+
+    monkeypatch.setattr(delivery, "_atomic_json", original_atomic_json)
+    resumed = task.record_executor_unavailable(stage="groom")
+    assert resumed["replayed"] is False
+    assert resumed["handoff"] == json.loads(receipt_path.read_text(encoding="utf-8"))
+    assert task.read()["attempts"]["executor_unavailable"] == 1
+
+
 def test_stale_lease_is_classified_for_recovery(tmp_path: Path) -> None:
     task = _state(tmp_path)
     state = task.read()

@@ -1910,9 +1910,23 @@ class TaskState:
                     ),
                     "recorded_at": utc_now(),
                 }
-                if receipt_path.is_file() and _read_mapping(receipt_path) != handoff:
-                    raise DevelopmentDeliveryError("executor handoff receipt collision")
-                if not receipt_path.is_file():
+                if receipt_path.is_file():
+                    existing_handoff = _read_mapping(receipt_path)
+                    comparable_existing = {
+                        key: value
+                        for key, value in existing_handoff.items()
+                        if key != "recorded_at"
+                    }
+                    comparable_handoff = {
+                        key: value for key, value in handoff.items() if key != "recorded_at"
+                    }
+                    if comparable_existing != comparable_handoff:
+                        raise DevelopmentDeliveryError("executor handoff receipt collision")
+                    # A crash after the receipt write but before the state write
+                    # leaves this exact, valid receipt orphaned. Reuse it so the
+                    # retry can atomically finish binding the failure to its task.
+                    handoff = existing_handoff
+                else:
                     _atomic_json(receipt_path, handoff)
                 state.setdefault("attempts", {})["executor_unavailable"] = attempt
                 state["failure"] = {
@@ -1921,7 +1935,9 @@ class TaskState:
                     "receipt": str(receipt_path),
                     "recoverable": recoverable,
                     "failed_at": handoff["recorded_at"],
-                    "retry_state": state["state"] if recoverable else None,
+                    # A terminal executor refusal still has an operator-supported
+                    # recovery path once executor admission is repaired.
+                    "retry_state": state["state"],
                 }
                 if not recoverable:
                     state["state"] = "blocked"
@@ -1971,7 +1987,12 @@ class TaskState:
                     raise DevelopmentDeliveryError("recovery requires a receipt")
                 failure = state.get("failure") if isinstance(state.get("failure"), Mapping) else {}
                 retry_state = failure.get("retry_state")
-                if not failure.get("recoverable") or not retry_state:
+                terminal_executor_handoff = (
+                    failure.get("kind") == "executor_unavailable" and retry_state
+                )
+                if not retry_state or (
+                    not failure.get("recoverable") and not terminal_executor_handoff
+                ):
                     raise DevelopmentDeliveryError("task has no recoverable failure")
                 now = utc_now()
                 state["state"] = retry_state
