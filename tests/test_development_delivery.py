@@ -2024,6 +2024,7 @@ def test_multi_ticket_run_can_resume_one_explicitly_selected_packet(
     assert other_state.read_bytes() == other_before
     assert worktree_calls == ["CC-ONE", "CC-TWO"]
     selected_projection = read_auto_dev_state(selected_packet / "autodev.json")
+    assert selected_projection["mode"] == "everything"
     assert selected_projection["requested_stage"] == "document"
 
 
@@ -2492,7 +2493,7 @@ def test_auto_dev_plain_english_cli_dry_run(tmp_path: Path, capsys: pytest.Captu
     assert not (root / "domains" / "acme" / "02-projects" / "app" / "state" / "development-runs").exists()
 
 
-def test_everything_apply_declares_planned_not_executing_next_stage(
+def test_everything_apply_records_pending_executor_handoff(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     repo, base_sha = _repository(tmp_path)
@@ -2521,30 +2522,90 @@ def test_everything_apply_declares_planned_not_executing_next_stage(
             "--apply",
             "--json",
         ]
-    ) == 0
+    ) == 1
     output = json.loads(capsys.readouterr().out)
 
-    assert output["state"] == "dispatching"
-    assert output["execution"] == {
-        "schema": "auto-dev-everything-execution-status/v1",
-        "status": "planned_not_executing",
-        "executed": False,
-        "reason": (
-            "Everything --apply materializes or resumes the governed packet and worktree; "
-            "it does not execute an Auto-Dev stage or record a stage receipt."
-        ),
-        "next_actions": [
-            {
-                "ticket": "CC-175",
-                "stage": "groom",
-                "command": "/auto-dev-grooming",
-                "stage_receipt_recorded": False,
-            }
-        ],
-    }
+    assert output["state"] == "pending"
+    assert output["execution"]["schema"] == "auto-dev-everything-execution-status/v1"
+    assert output["execution"]["status"] == "pending"
+    assert output["execution"]["executed"] is False
+    assert output["execution"]["next_actions"] == [
+        {
+            "ticket": "CC-175",
+            "stage": "groom",
+            "command": "/auto-dev-grooming",
+            "stage_receipt_recorded": False,
+        }
+    ]
+    assert output["execution"]["handoffs"] == [
+        {
+            "ticket": "CC-175",
+            "outcome": "executor_unavailable",
+            "receipt": output["tasks"][0]["handoff"]["receipt"],
+            "attempt": 1,
+            "recoverable": True,
+        }
+    ]
     task = TaskState(Path(output["tasks"][0]["state_ref"])).read()
     assert task["state"] == "worktree_ready"
+    assert task["failure"]["kind"] == "executor_unavailable"
+    assert task["failure"]["recoverable"] is True
+    handoff = json.loads(Path(task["failure"]["receipt"]).read_text(encoding="utf-8"))
+    assert handoff["schema"] == "development-executor-handoff/v1"
+    assert handoff["status"] == "pending"
+    assert handoff["worktree"] == task["worktree"]
+    assert handoff["policy"]["fingerprint"] == task["policy_fingerprint"]
     assert read_auto_dev_state(task["autodev_path"])["stages"]["groom"]["status"] == "not_started"
+
+
+def test_everything_apply_marks_four_unmanaged_tasks_pending_without_stage_receipts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    repo, base_sha = _repository(tmp_path)
+    root = tmp_path / "os"
+    _project(root, repo)
+    monkeypatch.setattr(
+        delivery,
+        "create_isolated_worktree",
+        lambda **kwargs: {
+            "name": kwargs["ticket"].lower(),
+            "path": f"/tmp/{kwargs['ticket'].lower()}",
+            "branch": f"feature/{kwargs['ticket'].lower()}",
+            "base_sha": base_sha,
+        },
+    )
+
+    tickets = ["AGE-166", "AGE-168", "AGE-171", "AGE-172"]
+    assert main(
+        [
+            "auto-dev",
+            "everything",
+            "acme",
+            "app",
+            *tickets,
+            "--root",
+            str(root),
+            "--apply",
+            "--json",
+        ]
+    ) == 1
+    output = json.loads(capsys.readouterr().out)
+
+    assert output["state"] == "pending"
+    assert {row["ticket"] for row in output["tasks"]} == set(tickets)
+    assert {row["ticket"] for row in output["execution"]["handoffs"]} == set(tickets)
+    for row in output["tasks"]:
+        task = TaskState(Path(row["state_ref"])).read()
+        assert task["state"] == "worktree_ready"
+        assert task["attempts"]["executor_unavailable"] == 1
+        assert task["failure"]["kind"] == "executor_unavailable"
+        handoff = json.loads(Path(task["failure"]["receipt"]).read_text(encoding="utf-8"))
+        assert handoff["ticket"] == row["ticket"]
+        assert handoff["worktree"] == task["worktree"]
+        assert handoff["policy"]["receipt"] == task["policy_receipt"]
+        projection = read_auto_dev_state(task["autodev_path"])
+        assert projection["mode"] == "everything"
+        assert projection["stages"]["groom"]["status"] == "not_started"
 
 
 def test_everything_projection_creates_a_linked_program_run_packet(

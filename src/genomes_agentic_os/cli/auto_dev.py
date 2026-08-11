@@ -102,9 +102,10 @@ def _overlays(values: list[str] | None) -> dict[str, list[str]]:
 def _everything_execution_status(launch_result: dict) -> dict | None:
     """Describe a materialized Everything packet without claiming stage execution."""
 
-    if launch_result.get("state") != "dispatching":
+    if launch_result.get("state") not in {"dispatching", "pending"}:
         return None
     next_actions: list[dict[str, object]] = []
+    handoffs: list[dict[str, object]] = []
     for row in launch_result.get("tasks") or []:
         if not isinstance(row, dict) or not row.get("ticket") or not row.get("state_ref"):
             continue
@@ -127,6 +128,29 @@ def _everything_execution_status(launch_result: dict) -> dict | None:
                 "stage_receipt_recorded": stage_state.get("status") != "not_started",
             }
         )
+        handoff = row.get("handoff")
+        if isinstance(handoff, dict) and handoff.get("status") == "pending":
+            handoffs.append(
+                {
+                    "ticket": str(row["ticket"]),
+                    "outcome": str(handoff.get("outcome") or "executor_unavailable"),
+                    "receipt": handoff.get("receipt"),
+                    "attempt": handoff.get("attempt"),
+                    "recoverable": handoff.get("recoverable"),
+                }
+            )
+    if handoffs:
+        return {
+            "schema": "auto-dev-everything-execution-status/v1",
+            "status": "pending",
+            "executed": False,
+            "reason": (
+                "No configured managed executor accepted the post-materialization handoff; "
+                "no Auto-Dev stage was executed or receipted."
+            ),
+            "next_actions": next_actions,
+            "handoffs": handoffs,
+        }
     return {
         "schema": "auto-dev-everything-execution-status/v1",
         "status": "planned_not_executing",
@@ -148,6 +172,7 @@ def handle_launch(args: argparse.Namespace) -> int:
     tickets = list(args.tickets or [])
     run_id = args.run_id
     selected_work_item: Path | None = None
+    resumed_mode = ""
     if action in EXISTING_STATE_REQUIRED_ACTIONS and not args.state:
         raise DevelopmentDeliveryError(
             f"auto-dev {action} requires --state for an existing work item"
@@ -157,6 +182,7 @@ def handle_launch(args: argparse.Namespace) -> int:
         if selected_state.is_dir():
             selected_state = selected_state / "autodev.json"
         existing = read_auto_dev_state(args.state)
+        resumed_mode = str(existing.get("mode") or "")
         selected_work_item = selected_state.parent
         state_domain = str(existing.get("domain") or "")
         state_project = str(existing.get("project") or "")
@@ -204,6 +230,13 @@ def handle_launch(args: argparse.Namespace) -> int:
         provision_worktree=(mode in {"default", "everything"} or requested_stage in WORKTREE_REQUIRED_STAGES),
         selected_work_item=selected_work_item,
         existing_state_only=action in EXISTING_STATE_REQUIRED_ACTIONS,
+        require_executor_handoff=(
+            args.apply
+            and (
+                action == "everything"
+                or (action == "readiness" and resumed_mode == "everything")
+            )
+        ),
         apply=args.apply,
     )
     if action == "health":
@@ -215,7 +248,7 @@ def handle_launch(args: argparse.Namespace) -> int:
         if execution is not None:
             result = {**result, "execution": execution}
     _print(result, json_output=args.json)
-    return 0
+    return 1 if result.get("state") == "pending" else 0
 
 
 def handle_status(args: argparse.Namespace) -> int:
