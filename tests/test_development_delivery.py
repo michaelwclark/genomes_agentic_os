@@ -3880,6 +3880,25 @@ def test_release_propagation_appends_exact_head_supersession_without_rewriting_p
     )
     assert replayed == refreshed
 
+    malformed_new_receipt = family_receipt(
+        "malformed-new-pr",
+        "c" * 40,
+        supersedes_source_head_sha=new_head,
+    )
+    malformed_new_payload = json.loads(malformed_new_receipt.read_text(encoding="utf-8"))
+    malformed_new_payload["evidence"]["pull_request"] = "github:acme/app#"
+    malformed_new_receipt.write_text(json.dumps(malformed_new_payload), encoding="utf-8")
+    with pytest.raises(
+        DevelopmentDeliveryError,
+        match="new pull_request.*non-empty numeric identifier",
+    ):
+        run_development_stage(
+            task.path,
+            stage="release_propagation",
+            receipts={"release_propagation": str(malformed_new_receipt)},
+            idempotency_prefix="cc-52:pr-create:malformed-new-pr",
+        )
+
     # A supersession is not a way to retarget this task. Both receipts can be
     # internally consistent yet still name a different repository and branch.
     task_mismatch = {
@@ -3959,6 +3978,41 @@ def test_release_propagation_appends_exact_head_supersession_without_rewriting_p
             stage="release_propagation",
             receipts={"release_propagation": str(arbitrary_receipt)},
             idempotency_prefix="cc-52:pr-create:missing-prior-identity",
+        )
+
+    prior_missing_identity["evidence"].update(
+        {
+            "repository": "git:github.com/acme/app",
+            "base_branch": "main",
+            "provider": "github",
+            "pull_request": "github:acme/app#",
+            "source_branch": "feature/cc-52",
+        }
+    )
+    current_receipt_path.write_text(json.dumps(prior_missing_identity), encoding="utf-8")
+    current_wrapper_payload["evidence_sha256"] = hashlib.sha256(
+        json.dumps(prior_missing_identity, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    current_wrapper.write_text(json.dumps(current_wrapper_payload), encoding="utf-8")
+    malformed_prior_state = task.read()
+    malformed_prior_state["stage_receipts"]["release_propagation"]["sha256"] = hashlib.sha256(
+        current_wrapper.read_bytes()
+    ).hexdigest()
+    task.path.write_text(json.dumps(malformed_prior_state), encoding="utf-8")
+    malformed_prior_receipt = family_receipt(
+        "malformed-prior-pr",
+        "d" * 40,
+        supersedes_source_head_sha=new_head,
+    )
+    with pytest.raises(
+        DevelopmentDeliveryError,
+        match="prior pull_request.*non-empty numeric identifier",
+    ):
+        run_development_stage(
+            task.path,
+            stage="release_propagation",
+            receipts={"release_propagation": str(malformed_prior_receipt)},
+            idempotency_prefix="cc-52:pr-create:malformed-prior-pr",
         )
 
 
@@ -4168,7 +4222,7 @@ def test_release_propagation_workflow_is_pr_create_compatibility_recorder() -> N
     contract = yaml.safe_load(
         (workflow_root / "workflow.yml").read_text(encoding="utf-8")
     )
-    assert contract["version"] == 4
+    assert contract["version"] == 5
     assert contract["inputs"][0] == "pr_create_family_receipt"
     assert contract["outputs"] == [
         "release_propagation_stage_receipt",
@@ -4176,6 +4230,7 @@ def test_release_propagation_workflow_is_pr_create_compatibility_recorder() -> N
     ]
     assert "append_exact_head_supersession" in contract["steps"]
     assert "complete_prior_and_new_pr_identity" in contract["validations"]
+    assert "qualified_nonempty_pr_identifier" in contract["validations"]
     assert "local_validation_only_for_refresh" in contract["validations"]
     forbidden_steps = {
         "read_fix_version",

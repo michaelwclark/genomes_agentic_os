@@ -70,7 +70,8 @@ states.
 - A head refresh must name the prior head, include every repository, base,
   provider, PR, and source-branch identity in both receipts, prove the new
   provider-read head, and bind that identity to the selected task repository,
-  base branch, and registered worktree branch.
+  base branch, and registered worktree branch. Each PR identity must include a
+  non-empty numeric identifier after its repository prefix.
 - A head refresh cannot replace or alter the prior wrapper. The task binding
   moves only to the new append-only wrapper after both wrapper hashes verify.
 - A head refresh is rejected once the task has passed local validation. That

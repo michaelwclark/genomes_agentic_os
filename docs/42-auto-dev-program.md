@@ -141,8 +141,9 @@ When PR Create must refresh an existing PR after its commit ID changes, it
 does not rewrite the old record. It requires provider readback for the new
 head, an explicit link to the old head, and the same complete PR identity in
 both receipts. That identity must match the selected repository, base branch,
-and registered source branch. It appends a new compatibility wrapper and makes
-that wrapper the current PR Create evidence. A refresh is allowed only while
+and registered source branch, with a real PR identifier after the repository
+prefix. It appends a new compatibility wrapper and makes that wrapper the
+current PR Create evidence. A refresh is allowed only while
 the task is still in local validation; once PR review begins, a changed head
 requires a fresh delivery run so review, QA, and Finalize cannot stay attached
 to the old commit.

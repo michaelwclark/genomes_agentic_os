@@ -5127,6 +5127,15 @@ def run_development_stage(
                         raise DevelopmentDeliveryError(
                             "release propagation refresh requires complete prior and new PR identity"
                         )
+                    for label, identity in (
+                        ("prior", previous_identity),
+                        ("new", refreshed_identity),
+                    ):
+                        if not re.fullmatch(r".+#[1-9][0-9]*", identity["pull_request"]):
+                            raise DevelopmentDeliveryError(
+                                "release propagation refresh "
+                                f"{label} pull_request must contain a non-empty numeric identifier"
+                            )
                     for field in identity_fields:
                         if refreshed_identity[field] != previous_identity[field]:
                             raise DevelopmentDeliveryError(
@@ -5180,12 +5189,22 @@ def run_development_stage(
                         pull_request_repository = "bitbucket:" + expected_repository.removeprefix(
                             "git:bitbucket.org/"
                         )
-                    if not previous_identity["pull_request"].startswith(
-                        f"{pull_request_repository}#"
+                    pull_request_prefix = f"{pull_request_repository}#"
+                    for label, identity in (
+                        ("prior", previous_identity),
+                        ("new", refreshed_identity),
                     ):
-                        raise DevelopmentDeliveryError(
-                            "release propagation refresh pull_request must be qualified by the selected task repository"
-                        )
+                        pull_request = identity["pull_request"]
+                        identifier = pull_request.removeprefix(pull_request_prefix)
+                        if not (
+                            pull_request.startswith(pull_request_prefix)
+                            and re.fullmatch(r"[1-9][0-9]*", identifier)
+                        ):
+                            raise DevelopmentDeliveryError(
+                                "release propagation refresh "
+                                f"{label} pull_request must be qualified by the selected task repository "
+                                "and contain a non-empty numeric identifier"
+                            )
                     if task_value.get("state") != "local_validation":
                         raise DevelopmentDeliveryError(
                             "release propagation refresh is only allowed from local_validation; post-PR review evidence must be renewed for a changed head"
