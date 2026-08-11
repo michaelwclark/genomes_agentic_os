@@ -2488,7 +2488,63 @@ def test_auto_dev_plain_english_cli_dry_run(tmp_path: Path, capsys: pytest.Captu
     assert output["auto_dev"]["mode"] == "everything"
     assert output["auto_dev"]["requested_stage"] is None
     assert set(output["auto_dev"]["stage_order"]) == set(delivery.AUTO_DEV_STAGE_ORDER)
+    assert "execution" not in output
     assert not (root / "domains" / "acme" / "02-projects" / "app" / "state" / "development-runs").exists()
+
+
+def test_everything_apply_declares_planned_not_executing_next_stage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    repo, base_sha = _repository(tmp_path)
+    root = tmp_path / "os"
+    _project(root, repo)
+    monkeypatch.setattr(
+        delivery,
+        "create_isolated_worktree",
+        lambda **kwargs: {
+            "name": "cc-175",
+            "path": "/tmp/cc-175",
+            "branch": "feature/cc-175",
+            "base_sha": base_sha,
+        },
+    )
+
+    assert main(
+        [
+            "auto-dev",
+            "everything",
+            "acme",
+            "app",
+            "CC-175",
+            "--root",
+            str(root),
+            "--apply",
+            "--json",
+        ]
+    ) == 0
+    output = json.loads(capsys.readouterr().out)
+
+    assert output["state"] == "dispatching"
+    assert output["execution"] == {
+        "schema": "auto-dev-everything-execution-status/v1",
+        "status": "planned_not_executing",
+        "executed": False,
+        "reason": (
+            "Everything --apply materializes or resumes the governed packet and worktree; "
+            "it does not execute an Auto-Dev stage or record a stage receipt."
+        ),
+        "next_actions": [
+            {
+                "ticket": "CC-175",
+                "stage": "groom",
+                "command": "/auto-dev-grooming",
+                "stage_receipt_recorded": False,
+            }
+        ],
+    }
+    task = TaskState(Path(output["tasks"][0]["state_ref"])).read()
+    assert task["state"] == "worktree_ready"
+    assert read_auto_dev_state(task["autodev_path"])["stages"]["groom"]["status"] == "not_started"
 
 
 def test_everything_projection_creates_a_linked_program_run_packet(

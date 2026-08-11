@@ -61,6 +61,25 @@ WORKTREE_REQUIRED_STAGES = {
 }
 EXISTING_STATE_REQUIRED_ACTIONS = {"merge", "deploy", "closeout", "health"}
 
+_STAGE_COMMANDS = {
+    "groom": "/auto-dev-grooming",
+    "detective": "/auto-dev-detective",
+    "create_artifacts": "/auto-dev-create-artifacts",
+    "readiness": "/auto-dev-readiness",
+    "develop": "/auto-dev-develop",
+    "document": "/auto-dev-document",
+    "pr_create": "/auto-dev-pr-create",
+    "review_self": "/auto-dev-review-self",
+    "review_others": "/auto-dev-review-others",
+    "qa": "/auto-dev-qa",
+    "finalize": "/auto-dev-finalize",
+    "merge": "/auto-dev-merge",
+    "release": "/auto-dev-release",
+    "deploy": "/auto-dev-deploy",
+    "closeout": "/auto-dev-closeout",
+    "health": "/auto-dev-health",
+}
+
 
 def _print(value: dict, *, json_output: bool) -> None:
     print(json.dumps(value, sort_keys=True) if json_output else yaml_dump(value))
@@ -78,6 +97,46 @@ def _overlays(values: list[str] | None) -> dict[str, list[str]]:
             )
         overlays.setdefault(plane, []).append(path)
     return overlays
+
+
+def _everything_execution_status(launch_result: dict) -> dict | None:
+    """Describe a materialized Everything packet without claiming stage execution."""
+
+    if launch_result.get("state") != "dispatching":
+        return None
+    next_actions: list[dict[str, object]] = []
+    for row in launch_result.get("tasks") or []:
+        if not isinstance(row, dict) or not row.get("ticket") or not row.get("state_ref"):
+            continue
+        task_state = json.loads(Path(str(row["state_ref"])).read_text(encoding="utf-8"))
+        autodev_path = task_state.get("autodev_path")
+        if not autodev_path:
+            continue
+        projection = read_auto_dev_state(autodev_path)
+        stage = str(projection.get("current_stage") or "")
+        stage_state = (
+            projection.get("stages", {}).get(stage, {})
+            if isinstance(projection.get("stages"), dict)
+            else {}
+        )
+        next_actions.append(
+            {
+                "ticket": str(row["ticket"]),
+                "stage": stage or None,
+                "command": _STAGE_COMMANDS.get(stage),
+                "stage_receipt_recorded": stage_state.get("status") != "not_started",
+            }
+        )
+    return {
+        "schema": "auto-dev-everything-execution-status/v1",
+        "status": "planned_not_executing",
+        "executed": False,
+        "reason": (
+            "Everything --apply materializes or resumes the governed packet and worktree; "
+            "it does not execute an Auto-Dev stage or record a stage receipt."
+        ),
+        "next_actions": next_actions,
+    }
 
 
 def handle_launch(args: argparse.Namespace) -> int:
@@ -151,6 +210,10 @@ def handle_launch(args: argparse.Namespace) -> int:
         result = prepare_auto_dev_health(args.state, apply=args.apply)
     else:
         result = launch_result
+    if action == "everything" and args.apply:
+        execution = _everything_execution_status(launch_result)
+        if execution is not None:
+            result = {**result, "execution": execution}
     _print(result, json_output=args.json)
     return 0
 
