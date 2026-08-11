@@ -3479,6 +3479,12 @@ def start_development_run(
                 )
                 if handoff is not None:
                     row["handoff"] = handoff
+                else:
+                    # A recovery clears the task failure, so a later named-stage
+                    # resume must not keep the old pending handoff copied from
+                    # the portfolio projection. Pending status is current-task
+                    # state, not an append-only history marker.
+                    row.pop("handoff", None)
                 task_rows.append(row)
                 continue
             if current_index > FORWARD_STATES.index("work_item_ready"):

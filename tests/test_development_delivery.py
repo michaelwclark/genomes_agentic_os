@@ -2600,6 +2600,42 @@ def test_everything_apply_records_pending_executor_handoff(
         / "executor-unavailable-attempt-02.json"
     ).exists()
 
+    # Once an operator has explicitly recovered the task, a named stage must
+    # use its current state rather than retain the old pending handoff that is
+    # still present in the historical portfolio row.
+    assert main(
+        [
+            "develop",
+            "recover",
+            output["tasks"][0]["state_ref"],
+            "--receipt",
+            "executor accepted the recovered task",
+            "--idempotency-key",
+            "cc-175:recover-after-handoff",
+            "--json",
+        ]
+    ) == 0
+    capsys.readouterr()
+
+    assert main(
+        [
+            "auto-dev",
+            "develop",
+            "--state",
+            task["autodev_path"],
+            "--root",
+            str(root),
+            "--apply",
+            "--json",
+        ]
+    ) == 0
+    recovered_resume = json.loads(capsys.readouterr().out)
+    assert recovered_resume["state"] == "dispatching"
+    assert "handoff" not in recovered_resume["tasks"][0]
+    recovered_task = TaskState(Path(recovered_resume["tasks"][0]["state_ref"])).read()
+    assert recovered_task["state"] == "worktree_ready"
+    assert recovered_task["failure"] is None
+
 
 def test_everything_apply_marks_four_unmanaged_tasks_pending_without_stage_receipts(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
