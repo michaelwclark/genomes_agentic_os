@@ -894,6 +894,61 @@ describe.skipIf(!enabled)("PostgreSQL + Valkey integration", () => {
     );
   });
 
+  it("replays signed policy-override timestamps with equivalent offsets", async () => {
+    const currentFingerprint =
+      createTestPolicy().policy.snapshot().appliedFingerprint;
+    const candidateFingerprint = "c".repeat(64);
+    const leaderLedger = new PostgresLedger(pool, 45, "genomesbox");
+    await leaderLedger.activateLeadership({
+      clusterId: "test-fabric",
+      leaderHostId: "genomesbox",
+      fabricEpoch: 1,
+      receiptId: "offset-replay-epoch-1",
+      fenceDigest: "d".repeat(64),
+      leaseExpiresAt: new Date(Date.now() + 60_000).toISOString(),
+      recoveryHoldUntil: null,
+    });
+    const timestampWithOffset = (timestamp: number, offsetMinutes: number) => {
+      const shifted = new Date(timestamp + offsetMinutes * 60_000)
+        .toISOString()
+        .slice(0, -1);
+      const sign = offsetMinutes >= 0 ? "+" : "-";
+      const absoluteMinutes = Math.abs(offsetMinutes);
+      return `${shifted}${sign}${String(Math.floor(absoluteMinutes / 60)).padStart(2, "0")}:${String(absoluteMinutes % 60).padStart(2, "0")}`;
+    };
+    const now = Date.now();
+    const input = {
+      rotationId: randomUUID(),
+      preparationTokenHash: "2".repeat(64),
+      authorizationIssuedAt: timestampWithOffset(now - 5_000, 0),
+      authorizationExpiresAt: timestampWithOffset(now + 30_000, 330),
+      expectedEpoch: 1,
+      expectedCurrentFingerprint: currentFingerprint,
+      expectedCandidateFingerprint: candidateFingerprint,
+      operatorOverride: {
+        actor: "operator-1",
+        reason: "restore fenced standalone policy reload",
+        approvalReference: "AGE-161",
+        maintenanceWindow: {
+          startsAt: timestampWithOffset(now - 30_000, -420),
+          endsAt: timestampWithOffset(now + 60_000, 330),
+        },
+      },
+    };
+    const first = await leaderLedger.activatePolicyReload(input);
+    const retry = await leaderLedger.activatePolicyReload(input);
+
+    expect(retry.receiptId).toBe(first.receiptId);
+    expect(retry.rotationId).toBe(input.rotationId);
+    expect(retry.authorizedAt).toBe(
+      new Date(input.authorizationIssuedAt).toISOString(),
+    );
+    expect(retry.operatorOverride?.maintenanceWindow).toEqual({
+      startsAt: new Date(input.operatorOverride.maintenanceWindow.startsAt).toISOString(),
+      endsAt: new Date(input.operatorOverride.maintenanceWindow.endsAt).toISOString(),
+    });
+  });
+
   it("rejects a signed policy authorization that expires while its transaction waits", async () => {
     const currentFingerprint =
       createTestPolicy().policy.snapshot().appliedFingerprint;

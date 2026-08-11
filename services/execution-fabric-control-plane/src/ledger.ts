@@ -1519,7 +1519,7 @@ export class PostgresLedger implements LedgerPort {
         if (
           prior.preparation_token_hash !== input.preparationTokenHash ||
           (input.authorizationIssuedAt !== undefined &&
-            iso(prior.authorization_issued_at!) !== input.authorizationIssuedAt) ||
+            iso(prior.authorization_issued_at!) !== iso(input.authorizationIssuedAt)) ||
           Number(prior.fabric_epoch) !== input.expectedEpoch ||
           prior.expected_current_fingerprint !==
             input.expectedCurrentFingerprint ||
@@ -1531,9 +1531,9 @@ export class PostgresLedger implements LedgerPort {
               prior.override_reason !== input.operatorOverride.reason ||
               prior.approval_reference !== input.operatorOverride.approvalReference ||
               iso(prior.maintenance_window_start!) !==
-                input.operatorOverride.maintenanceWindow.startsAt ||
+                iso(input.operatorOverride.maintenanceWindow.startsAt) ||
               iso(prior.maintenance_window_end!) !==
-                input.operatorOverride.maintenanceWindow.endsAt))
+                iso(input.operatorOverride.maintenanceWindow.endsAt)))
         ) {
           throw new ConflictError(
             "configuration rotation id was already used by another request",
