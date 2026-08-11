@@ -21,12 +21,7 @@ import uuid
 import yaml
 from jsonschema import Draft202012Validator
 
-from .program_run_packets import (
-    begin_program_workflow,
-    read_program_run_packet,
-    record_program_workflow,
-    start_program_run_packet,
-)
+from .program_run_packets import read_program_run_packet, record_program_workflow, start_program_run_packet
 
 
 AUTO_DEV_SCHEMA = "auto-dev-work-item/v1"
@@ -941,16 +936,9 @@ def _sync_auto_dev_program_run_packet(
             finished_at=str(value.get("updated_at") or _utc_now()),
             receipt_refs=[str(failure.get("receipt") or "").strip()] if failure.get("receipt") else [],
         )
-    elif not pre_execution_handoff and current_stage and current_stage not in sealed_workflows:
-        begin_program_workflow(
-            os_root,
-            packet_id=packet_id,
-            workflow_id=current_stage,
-            transport=transport,
-            config_refs=_auto_dev_packet_config_refs(task),
-            idempotency_key=f"{run_id}:{ticket}:{current_stage}:started",
-            started_at=str(value.get("updated_at") or _utc_now()),
-        )
+    # Creating or resuming a packet does not execute its current stage. A
+    # workflow result is written only after terminal stage evidence exists or
+    # an actual non-handoff task failure is recorded above.
     return descriptor
 
 

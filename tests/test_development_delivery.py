@@ -2889,7 +2889,7 @@ def test_everything_projection_creates_a_linked_program_run_packet(
     assert link["program_ref"] == "00-program.json"
     assert summary["packet"]["program_id"] == "auto_dev"
     assert summary["state"] == "running"
-    assert summary["running_workflows"] == ["groom"]
+    assert summary["running_workflows"] == []
     assert any(item["kind"] == "effective_policy" for item in summary["packet"]["config_refs"])
 
 
