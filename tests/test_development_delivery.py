@@ -4714,6 +4714,18 @@ def test_release_propagation_normalizes_only_selected_legacy_flat_github_identit
             },
             "requires provider-read new head",
         ),
+        (
+            {"source_head_sha": "AbCd" * 10},
+            {
+                "source_head_sha": ("AbCd" * 10).lower(),
+                "provider_observed": {"head_sha": ("AbCd" * 10).lower()},
+                "supersession": {
+                    "supersedes_source_head_sha": "AbCd" * 10,
+                    "reason": "The successor must bind the exact prior head.",
+                },
+            },
+            "requires provider-read new head",
+        ),
     ],
 )
 def test_release_propagation_derives_only_blank_canonical_github_source_branch(

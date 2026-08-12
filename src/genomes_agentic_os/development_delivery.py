@@ -6065,8 +6065,15 @@ def run_development_stage(
                     )
                     previous_head = str(previous_details.get("source_head_sha") or "").strip()
                     refreshed_head = str(refreshed_details.get("source_head_sha") or "").strip()
+                    previous_head_identity = previous_head.lower()
+                    refreshed_head_identity = refreshed_head.lower()
                     provider_observed = refreshed_details.get("provider_observed")
                     supersession = refreshed_details.get("supersession")
+                    superseded_head_identity = (
+                        str(supersession.get("supersedes_source_head_sha") or "").strip().lower()
+                        if isinstance(supersession, Mapping)
+                        else ""
+                    )
                     identity_fields = (
                         "repository",
                         "base_branch",
@@ -6081,13 +6088,12 @@ def run_development_stage(
                     if not (
                         re.fullmatch(r"[a-fA-F0-9]{7,64}", previous_head)
                         and re.fullmatch(r"[a-fA-F0-9]{7,64}", refreshed_head)
-                        and previous_head != refreshed_head
+                        and previous_head_identity != refreshed_head_identity
                         and refreshed_details.get("readback_verified") is True
                         and isinstance(provider_observed, Mapping)
                         and str(provider_observed.get("head_sha") or "").strip() == refreshed_head
                         and isinstance(supersession, Mapping)
-                        and str(supersession.get("supersedes_source_head_sha") or "").strip()
-                        == previous_head
+                        and superseded_head_identity == previous_head_identity
                         and str(supersession.get("reason") or "").strip()
                     ):
                         raise DevelopmentDeliveryError(
