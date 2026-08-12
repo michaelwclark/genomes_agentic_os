@@ -2482,6 +2482,20 @@ def create_isolated_worktree(
     }
 
 
+@contextmanager
+def _task_provisioning_admission_lock(state_path: Path):
+    """Serialize correction of a failed selection with later provisioning.
+
+    A historical base-selection correction is valid only while the task has
+    produced no worktree, branch, or runtime effect.  Normal resume creates
+    those effects outside the task-state lock, so it must share this narrower
+    admission lock with correction rather than racing the preflight proof.
+    """
+
+    with _file_lock(state_path.with_suffix(state_path.suffix + ".provisioning-admission.lock")):
+        yield
+
+
 def _base_selection_correction_context(
     state_path: Path,
     *,
@@ -2622,6 +2636,104 @@ def _base_selection_correction_context(
     }
 
 
+def _complete_base_selection_correction(
+    state_path: Path,
+    *,
+    current: Mapping[str, Any],
+    correction: Mapping[str, Any],
+    apply: bool,
+) -> dict[str, Any]:
+    """Validate an immutable correction receipt and finish its idempotent effects.
+
+    A process can fail after task state is corrected but before the portfolio,
+    event, or Auto-Dev projection is updated.  The task row therefore is not a
+    completion marker by itself: replay verifies the immutable receipt and
+    completes each remaining derived effect.
+    """
+
+    receipt_path = Path(str(correction.get("receipt") or "")).expanduser()
+    if not receipt_path.is_file():
+        raise DevelopmentDeliveryError("base-selection correction receipt is missing")
+    receipt = _read_mapping(receipt_path)
+    digest = str(correction.get("sha256") or "")
+    if not digest or _json_sha256(receipt) != digest:
+        raise DevelopmentDeliveryError("base-selection correction receipt digest does not match task state")
+    if (
+        receipt.get("schema") != "development-base-selection-correction/v1"
+        or receipt.get("kind") != "retryable-pre-worktree-base-selection-correction"
+        or receipt.get("idempotency_key") != correction.get("idempotency_key")
+    ):
+        raise DevelopmentDeliveryError("base-selection correction receipt identity does not match task state")
+    original = receipt.get("original") if isinstance(receipt.get("original"), Mapping) else {}
+    corrected = receipt.get("corrected") if isinstance(receipt.get("corrected"), Mapping) else {}
+    original_repository = (
+        original.get("repository") if isinstance(original.get("repository"), Mapping) else {}
+    )
+    corrected_repository = (
+        corrected.get("repository") if isinstance(corrected.get("repository"), Mapping) else {}
+    )
+    if (
+        not original_repository
+        or original_repository.get("base_branch") != "origin/main"
+        or not corrected_repository
+        or corrected_repository.get("base_branch") != "main"
+        or current.get("repository") != corrected_repository
+        or correction.get("from_base_branch") != "origin/main"
+        or correction.get("to_base_branch") != "main"
+    ):
+        raise DevelopmentDeliveryError("base-selection correction receipt content does not match corrected task state")
+    matching_rows = [
+        row
+        for row in current.get("base_selection_corrections") or []
+        if isinstance(row, Mapping) and row.get("idempotency_key") == correction.get("idempotency_key")
+    ]
+    if len(matching_rows) != 1 or dict(matching_rows[0]) != dict(correction):
+        raise DevelopmentDeliveryError("base-selection correction task history is not replayable")
+    if not apply:
+        return receipt
+
+    run_dir = state_path.parent.parent.parent
+    portfolio_path = run_dir / "portfolio.json"
+    with _file_lock(portfolio_path.with_suffix(portfolio_path.suffix + ".lock")):
+        portfolio = _read_mapping(portfolio_path)
+        portfolio_repository = portfolio.get("repository")
+        if portfolio_repository not in (original_repository, corrected_repository):
+            raise DevelopmentDeliveryError(
+                "portfolio changed during base-selection correction; manual reconciliation required"
+            )
+        portfolio_rows = [
+            row
+            for row in portfolio.get("base_selection_corrections") or []
+            if isinstance(row, Mapping) and row.get("idempotency_key") == correction.get("idempotency_key")
+        ]
+        expected_portfolio_row = {**dict(correction), "task_state_ref": str(state_path)}
+        if len(portfolio_rows) > 1 or (portfolio_rows and dict(portfolio_rows[0]) != expected_portfolio_row):
+            raise DevelopmentDeliveryError("portfolio base-selection correction history is not replayable")
+        changed = portfolio_repository != corrected_repository or not portfolio_rows
+        if changed:
+            portfolio["repository"] = dict(corrected_repository)
+            if not portfolio_rows:
+                portfolio.setdefault("base_selection_corrections", []).append(expected_portfolio_row)
+            portfolio["updated_at"] = utc_now()
+            _atomic_json(portfolio_path, portfolio)
+
+    state = TaskState(state_path)
+    state.emit(
+        event_type="development.task.base_selection_corrected",
+        idempotency_key=str(correction["idempotency_key"]),
+        payload={
+            "ticket": current.get("ticket"),
+            "from_base_branch": "origin/main",
+            "to_base_branch": "main",
+            "base_sha": corrected.get("base_sha"),
+            "receipt": str(receipt_path),
+        },
+    )
+    _sync_auto_dev_projection(state_path)
+    _refresh_portfolio_state(state_path)
+    return receipt
+
+
 def correct_failed_base_selection(
     state_file: str | Path,
     *,
@@ -2638,124 +2750,119 @@ def correct_failed_base_selection(
     """
 
     state_path = Path(state_file).expanduser().resolve()
-    state = TaskState(state_path)
-    current = state.read()
-    corrections = current.get("base_selection_corrections")
-    if isinstance(corrections, list):
-        for correction in corrections:
-            if not isinstance(correction, Mapping) or correction.get("idempotency_key") != idempotency_key:
-                continue
-            if correction.get("to_base_branch") != corrected_base_branch.strip():
-                raise DevelopmentDeliveryError("idempotency key belongs to a different base-selection correction")
-            return {
-                "schema": "development-base-selection-correction-result/v1",
-                "result": "replayed",
-                "state": str(state_path),
-                "ticket": current.get("ticket"),
-                "correction": dict(correction),
-            }
     if not idempotency_key.strip():
         raise DevelopmentDeliveryError("base-selection correction requires an idempotency key")
-    context = _base_selection_correction_context(
-        state_path,
-        corrected_base_branch=corrected_base_branch,
-        runner=runner,
-    )
-    original_state_sha256 = hashlib.sha256(state_path.read_bytes()).hexdigest()
-    original_failure = context["failure"]
-    original_failure_sha256 = _json_sha256(original_failure)
-    receipt = {
-        "schema": "development-base-selection-correction/v1",
-        "kind": "retryable-pre-worktree-base-selection-correction",
-        "idempotency_key": idempotency_key,
-        "run_id": context["task"].get("run_id"),
-        "ticket": context["task"].get("ticket"),
-        "recorded_at": utc_now(),
-        "original": {
-            "repository": context["repository"],
-            "failure": original_failure,
-            "failure_sha256": original_failure_sha256,
-            "task_state_ref": str(state_path),
-            "task_state_sha256_before_correction": original_state_sha256,
-        },
-        "corrected": {
-            "repository": context["corrected_repository"],
-            "verified_remote_ref": "origin/main",
-            "base_sha": context["base_sha"],
-        },
-        "preflight": {
-            "task_branch": context["branch"],
-            "no_worktree_or_runtime_effect": True,
-            "no_local_task_branch": True,
-            "no_provider_task_branch": True,
-        },
-    }
-    digest = _json_sha256(receipt)
-    receipt_path = (
-        context["work_item"]
-        / "artifacts"
-        / "development-delivery"
-        / "base-selection-corrections"
-        / f"{digest}.json"
-    )
-    result = {
-        "schema": "development-base-selection-correction-result/v1",
-        "result": "planned" if not apply else "corrected",
-        "state": str(state_path),
-        "ticket": context["task"].get("ticket"),
-        "receipt": str(receipt_path),
-        "receipt_sha256": digest,
-        "corrected_base_branch": "main",
-        "base_sha": context["base_sha"],
-        "next_action": "resume the same Auto-Dev run after this receipt is recorded",
-    }
-    if not apply:
-        return result
-    with _file_lock(state_path.with_suffix(state_path.suffix + ".lock")):
-        latest = state.read()
-        if latest.get("updated_at") != context["task"].get("updated_at"):
-            raise DevelopmentDeliveryError("task changed during base-selection correction; rerun preflight")
-        _atomic_json(receipt_path, receipt)
-        latest["repository"] = context["corrected_repository"]
-        correction_row = {
+    state = TaskState(state_path)
+    with _task_provisioning_admission_lock(state_path):
+        current = state.read()
+        corrections = current.get("base_selection_corrections")
+        if isinstance(corrections, list):
+            for correction in corrections:
+                if not isinstance(correction, Mapping) or correction.get("idempotency_key") != idempotency_key:
+                    continue
+                if correction.get("to_base_branch") != corrected_base_branch.strip():
+                    raise DevelopmentDeliveryError("idempotency key belongs to a different base-selection correction")
+                receipt = _complete_base_selection_correction(
+                    state_path,
+                    current=current,
+                    correction=correction,
+                    apply=apply,
+                )
+                return {
+                    "schema": "development-base-selection-correction-result/v1",
+                    "result": "replayed",
+                    "state": str(state_path),
+                    "ticket": current.get("ticket"),
+                    "correction": dict(correction),
+                    "receipt": str(correction["receipt"]),
+                    "receipt_sha256": str(correction["sha256"]),
+                    "corrected_base_branch": "main",
+                    "base_sha": (receipt.get("corrected") or {}).get("base_sha"),
+                    "next_action": "resume the same Auto-Dev run after this receipt is recorded",
+                }
+        context = _base_selection_correction_context(
+            state_path,
+            corrected_base_branch=corrected_base_branch,
+            runner=runner,
+        )
+        original_state_sha256 = hashlib.sha256(state_path.read_bytes()).hexdigest()
+        original_failure = context["failure"]
+        original_failure_sha256 = _json_sha256(original_failure)
+        receipt = {
+            "schema": "development-base-selection-correction/v1",
+            "kind": "retryable-pre-worktree-base-selection-correction",
             "idempotency_key": idempotency_key,
-            "from_base_branch": "origin/main",
-            "to_base_branch": "main",
-            "receipt": str(receipt_path),
-            "sha256": digest,
-            "recorded_at": receipt["recorded_at"],
+            "run_id": context["task"].get("run_id"),
+            "ticket": context["task"].get("ticket"),
+            "recorded_at": utc_now(),
+            "original": {
+                "repository": context["repository"],
+                "failure": original_failure,
+                "failure_sha256": original_failure_sha256,
+                "task_state_ref": str(state_path),
+                "task_state_sha256_before_correction": original_state_sha256,
+            },
+            "corrected": {
+                "repository": context["corrected_repository"],
+                "verified_remote_ref": "origin/main",
+                "base_sha": context["base_sha"],
+            },
+            "preflight": {
+                "task_branch": context["branch"],
+                "no_worktree_or_runtime_effect": True,
+                "no_local_task_branch": True,
+                "no_provider_task_branch": True,
+            },
         }
-        latest.setdefault("base_selection_corrections", []).append(correction_row)
-        latest.setdefault("receipts", []).append(
-            {"state": latest["state"], "ref": str(receipt_path), "sha256": digest, "recorded_at": receipt["recorded_at"]}
+        digest = _json_sha256(receipt)
+        receipt_path = (
+            context["work_item"]
+            / "artifacts"
+            / "development-delivery"
+            / "base-selection-corrections"
+            / f"{digest}.json"
         )
-        latest["updated_at"] = utc_now()
-        latest["last_base_selection_correction_key"] = idempotency_key
-        _atomic_json(state_path, latest)
-    with _file_lock(context["portfolio_path"].with_suffix(".json.lock")):
-        portfolio = _read_mapping(context["portfolio_path"])
-        if portfolio.get("repository") != context["repository"]:
-            raise DevelopmentDeliveryError("portfolio changed during base-selection correction; manual reconciliation required")
-        portfolio["repository"] = context["corrected_repository"]
-        portfolio.setdefault("base_selection_corrections", []).append(
-            {**correction_row, "task_state_ref": str(state_path)}
-        )
-        portfolio["updated_at"] = utc_now()
-        _atomic_json(context["portfolio_path"], portfolio)
-    state.emit(
-        event_type="development.task.base_selection_corrected",
-        idempotency_key=idempotency_key,
-        payload={
-            "ticket": latest["ticket"],
-            "from_base_branch": "origin/main",
-            "to_base_branch": "main",
-            "base_sha": context["base_sha"],
+        result = {
+            "schema": "development-base-selection-correction-result/v1",
+            "result": "planned" if not apply else "corrected",
+            "state": str(state_path),
+            "ticket": context["task"].get("ticket"),
             "receipt": str(receipt_path),
-        },
-    )
-    _sync_auto_dev_projection(state_path)
-    _refresh_portfolio_state(state_path)
-    return result
+            "receipt_sha256": digest,
+            "corrected_base_branch": "main",
+            "base_sha": context["base_sha"],
+            "next_action": "resume the same Auto-Dev run after this receipt is recorded",
+        }
+        if not apply:
+            return result
+        with _file_lock(state_path.with_suffix(state_path.suffix + ".lock")):
+            latest = state.read()
+            if latest.get("updated_at") != context["task"].get("updated_at"):
+                raise DevelopmentDeliveryError("task changed during base-selection correction; rerun preflight")
+            _atomic_json(receipt_path, receipt)
+            latest["repository"] = context["corrected_repository"]
+            correction_row = {
+                "idempotency_key": idempotency_key,
+                "from_base_branch": "origin/main",
+                "to_base_branch": "main",
+                "receipt": str(receipt_path),
+                "sha256": digest,
+                "recorded_at": receipt["recorded_at"],
+            }
+            latest.setdefault("base_selection_corrections", []).append(correction_row)
+            latest.setdefault("receipts", []).append(
+                {"state": latest["state"], "ref": str(receipt_path), "sha256": digest, "recorded_at": receipt["recorded_at"]}
+            )
+            latest["updated_at"] = utc_now()
+            latest["last_base_selection_correction_key"] = idempotency_key
+            _atomic_json(state_path, latest)
+        _complete_base_selection_correction(
+            state_path,
+            current=latest,
+            correction=correction_row,
+            apply=True,
+        )
+        return result
 
 
 def _adopt_registered_worktree(
@@ -3591,23 +3698,24 @@ def start_development_run(
             )
             _atomic_json(state_path, seeded_state)
         task_state = TaskState(state_path)
-        current = task_state.read()
-        failure = current.get("failure") if isinstance(current.get("failure"), Mapping) else {}
-        # An unaccepted executor handoff is a durable, idempotent pending
-        # boundary.  Do not clear it merely because the same Everything
-        # packet is resumed: that would make the second invocation look like
-        # a fresh worktree-ready success while retaining no failed handoff
-        # evidence.  A distinct recovery after executor remediation remains
-        # the only way to advance this retry-bounded failure.
-        if failure.get("recoverable") and failure.get("kind") != "executor_unavailable":
-            task_state.recover(
-                receipt="automatic provisioning resume",
-                idempotency_key=f"{run_id}:{ticket}:auto-recover:{current.get('updated_at')}",
-            )
+        with _task_provisioning_admission_lock(state_path):
             current = task_state.read()
-        elif current.get("state") == "blocked":
-            task_rows.append(dict(prior_rows.get(ticket) or {"ticket": ticket, "state_ref": str(state_path), "error": failure}))
-            continue
+            failure = current.get("failure") if isinstance(current.get("failure"), Mapping) else {}
+            # An unaccepted executor handoff is a durable, idempotent pending
+            # boundary.  Do not clear it merely because the same Everything
+            # packet is resumed: that would make the second invocation look like
+            # a fresh worktree-ready success while retaining no failed handoff
+            # evidence.  A distinct recovery after executor remediation remains
+            # the only way to advance this retry-bounded failure.
+            if failure.get("recoverable") and failure.get("kind") != "executor_unavailable":
+                task_state.recover(
+                    receipt="automatic provisioning resume",
+                    idempotency_key=f"{run_id}:{ticket}:auto-recover:{current.get('updated_at')}",
+                )
+                current = task_state.read()
+            elif current.get("state") == "blocked":
+                task_rows.append(dict(prior_rows.get(ticket) or {"ticket": ticket, "state_ref": str(state_path), "error": failure}))
+                continue
         selected_projection: Mapping[str, Any] = {}
         if selected_packet is not None:
             work_items_root = (project_path / "work-items").resolve()
@@ -3966,25 +4074,26 @@ def start_development_run(
                 adopted_worktree_preflight if adoption_row is not None else None
             )
             if adopted_worktree is not None:
-                runtime_registration = adopted_runtime_preflight
-                if runtime_registration is None:
-                    raise DevelopmentDeliveryError(
-                        "adopted worktree passed preflight without a runtime ownership receipt"
+                with _task_provisioning_admission_lock(state_path):
+                    runtime_registration = adopted_runtime_preflight
+                    if runtime_registration is None:
+                        raise DevelopmentDeliveryError(
+                            "adopted worktree passed preflight without a runtime ownership receipt"
+                        )
+                    task_state.transition(
+                        "worktree_ready",
+                        receipt=adopted_worktree["path"],
+                        idempotency_key=f"{run_id}:{ticket}:adopt-worktree",
                     )
-                task_state.transition(
-                    "worktree_ready",
-                    receipt=adopted_worktree["path"],
-                    idempotency_key=f"{run_id}:{ticket}:adopt-worktree",
-                )
-                current = task_state.read()
-                current.update(
-                    {
-                        "work_item": str(work_item),
-                        "worktree": adopted_worktree,
-                        "runtime": runtime_registration,
-                    }
-                )
-                _atomic_json(state_path, current)
+                    current = task_state.read()
+                    current.update(
+                        {
+                            "work_item": str(work_item),
+                            "worktree": adopted_worktree,
+                            "runtime": runtime_registration,
+                        }
+                    )
+                    _atomic_json(state_path, current)
                 _sync_auto_dev_projection(state_path)
                 _sync_canonical_development_work(
                     root,
@@ -4026,31 +4135,32 @@ def start_development_run(
                     }
                 )
                 continue
-            worktree = create_isolated_worktree(
-                os_root=root,
-                domain=domain,
-                project=project,
-                profile=profile,
-                ticket=ticket,
-                title=title,
-            )
-            runtime_registration = _runtime_registration(
-                profile,
-                worktree,
-                domain=domain,
-                project=project,
-                ticket=ticket,
-            )
-            task_state.transition("worktree_ready", receipt=worktree["path"], idempotency_key=f"{run_id}:{ticket}:worktree")
-            current = task_state.read()
-            current.update(
-                {
-                    "work_item": str(work_item),
-                    "worktree": worktree,
-                    "runtime": runtime_registration,
-                }
-            )
-            _atomic_json(state_path, current)
+            with _task_provisioning_admission_lock(state_path):
+                worktree = create_isolated_worktree(
+                    os_root=root,
+                    domain=domain,
+                    project=project,
+                    profile=profile,
+                    ticket=ticket,
+                    title=title,
+                )
+                runtime_registration = _runtime_registration(
+                    profile,
+                    worktree,
+                    domain=domain,
+                    project=project,
+                    ticket=ticket,
+                )
+                task_state.transition("worktree_ready", receipt=worktree["path"], idempotency_key=f"{run_id}:{ticket}:worktree")
+                current = task_state.read()
+                current.update(
+                    {
+                        "work_item": str(work_item),
+                        "worktree": worktree,
+                        "runtime": runtime_registration,
+                    }
+                )
+                _atomic_json(state_path, current)
             _sync_auto_dev_projection(state_path)
             _sync_canonical_development_work(
                 root,

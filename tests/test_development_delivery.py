@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import re
 import subprocess
+import threading
 
 import pytest
 import yaml
@@ -2101,6 +2102,123 @@ def test_correct_failed_base_selection_preserves_failure_then_allows_retry(tmp_p
     assert recovered["state"] == "worktree_ready"
     assert recovered["failure"] is None
     assert recovered["base_selection_corrections"][0]["receipt"] == str(receipt)
+
+
+def test_correct_failed_base_selection_replay_completes_interrupted_portfolio_effect(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _, _, task_path, _ = _historical_origin_main_failure(tmp_path)
+    portfolio_path = task_path.parent.parent.parent / "portfolio.json"
+    original_atomic_json = delivery._atomic_json
+
+    def interrupt_portfolio_write(path: Path, value: dict[str, object]) -> None:
+        if path == portfolio_path:
+            raise OSError("simulated interruption before portfolio correction")
+        original_atomic_json(path, value)
+
+    monkeypatch.setattr(delivery, "_atomic_json", interrupt_portfolio_write)
+    with pytest.raises(OSError, match="simulated interruption"):
+        delivery.correct_failed_base_selection(
+            task_path,
+            corrected_base_branch="main",
+            idempotency_key="cc-179:recover-portfolio",
+            apply=True,
+        )
+    interrupted = TaskState(task_path).read()
+    correction = interrupted["base_selection_corrections"][0]
+    assert interrupted["repository"]["base_branch"] == "main"
+    assert json.loads(portfolio_path.read_text(encoding="utf-8"))["repository"]["base_branch"] == "origin/main"
+
+    monkeypatch.setattr(delivery, "_atomic_json", original_atomic_json)
+    replayed = delivery.correct_failed_base_selection(
+        task_path,
+        corrected_base_branch="main",
+        idempotency_key="cc-179:recover-portfolio",
+        apply=True,
+    )
+
+    assert replayed["result"] == "replayed"
+    selected = TaskState(task_path).read()
+    portfolio = json.loads(portfolio_path.read_text(encoding="utf-8"))
+    assert selected["repository"]["base_branch"] == "main"
+    assert portfolio["repository"]["base_branch"] == "main"
+    assert selected["base_selection_corrections"] == [correction]
+    assert portfolio["base_selection_corrections"] == [{**correction, "task_state_ref": str(task_path)}]
+    projection = json.loads(Path(selected["autodev_path"]).read_text(encoding="utf-8"))
+    assert projection["delivery"]["repository"]["base_branch"] == "main"
+    events = [json.loads(line) for line in (task_path.parent / "events.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert [event["type"] for event in events].count("development.task.base_selection_corrected") == 1
+
+
+def test_correct_failed_base_selection_cannot_race_resume_worktree_allocation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, _, task_path, base_sha = _historical_origin_main_failure(tmp_path)
+    portfolio_path = task_path.parent.parent.parent / "portfolio.json"
+    portfolio = json.loads(portfolio_path.read_text(encoding="utf-8"))
+    portfolio["repository"]["base_branch"] = "main"
+    portfolio_path.write_text(json.dumps(portfolio), encoding="utf-8")
+    allocation_started = threading.Event()
+    allow_allocation = threading.Event()
+    correction_finished = threading.Event()
+    result: dict[str, object] = {}
+
+    def provision(**kwargs: object) -> dict[str, object]:
+        allocation_started.set()
+        assert allow_allocation.wait(timeout=5)
+        return {
+            "name": "cc-179",
+            "path": "/tmp/cc-179",
+            "branch": "feature/cc-179-retry-selection",
+            "base_sha": base_sha,
+        }
+
+    monkeypatch.setattr(delivery, "create_isolated_worktree", provision)
+
+    def resume() -> None:
+        try:
+            result["resume"] = delivery.start_development_run(
+                root,
+                "acme",
+                "app",
+                ["CC-179"],
+                titles={"CC-179": "Retry selection"},
+                run_id="origin-main-retry",
+                apply=True,
+            )
+        except Exception as exc:  # pragma: no cover - asserted after joining
+            result["resume_error"] = exc
+
+    def correct() -> None:
+        try:
+            delivery.correct_failed_base_selection(
+                task_path,
+                corrected_base_branch="main",
+                idempotency_key="cc-179:race-resume",
+                apply=True,
+            )
+        except Exception as exc:
+            result["correction_error"] = exc
+        finally:
+            correction_finished.set()
+
+    resume_thread = threading.Thread(target=resume)
+    resume_thread.start()
+    assert allocation_started.wait(timeout=5), result
+    correction_thread = threading.Thread(target=correct)
+    correction_thread.start()
+    assert not correction_finished.wait(timeout=0.2)
+    allow_allocation.set()
+    resume_thread.join(timeout=10)
+    correction_thread.join(timeout=10)
+
+    assert not resume_thread.is_alive()
+    assert not correction_thread.is_alive()
+    assert "resume_error" not in result
+    assert isinstance(result.get("correction_error"), DevelopmentDeliveryError)
+    state = TaskState(task_path).read()
+    assert state["worktree"]["branch"] == "feature/cc-179-retry-selection"
+    assert not state.get("base_selection_corrections")
 
 
 @pytest.mark.parametrize("effect", ["worktree", "local_branch", "provider_branch"])
