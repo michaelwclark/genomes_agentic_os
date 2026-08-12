@@ -525,9 +525,12 @@ def _advance_auto_dev_task_to_ready(
 
 
 def _active_worktree_ready_recovery_fixture(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    post_review_self_admission: bool = False,
 ) -> tuple[TaskState, Path, Path, Path]:
-    """Build the one known legacy readiness shape without provider mutation."""
+    """Build either supported worktree-ready recovery shape without provider mutation."""
 
     repo, base_sha = _repository(tmp_path)
     root = tmp_path / "os"
@@ -547,30 +550,68 @@ def _active_worktree_ready_recovery_fixture(
             "resumed": False,
         },
     )
-    run = delivery.start_development_run(
-        root,
-        "acme",
-        "app",
-        ["CC-193"],
-        run_id="legacy-worktree-ready-recovery",
-        auto_dev_mode="single_stage",
-        requested_stage="readiness",
-        goal="readiness",
-        provision_worktree=True,
-        apply=True,
-    )
+    if post_review_self_admission:
+        run = delivery.start_development_run(
+            root,
+            "acme",
+            "app",
+            ["CC-193"],
+            run_id="legacy-worktree-ready-recovery",
+            auto_dev_mode="everything",
+            provision_worktree=True,
+            require_executor_handoff=True,
+            apply=True,
+        )
+    else:
+        run = delivery.start_development_run(
+            root,
+            "acme",
+            "app",
+            ["CC-193"],
+            run_id="legacy-worktree-ready-recovery",
+            auto_dev_mode="single_stage",
+            requested_stage="readiness",
+            goal="readiness",
+            provision_worktree=True,
+            apply=True,
+        )
     task = TaskState(Path(run["tasks"][0]["state_ref"]))
     assert task.read()["state"] == "worktree_ready"
     work_item = Path(task.read()["work_item"])
     portfolio_path = task.path.parent.parent.parent / "portfolio.json"
-    portfolio = json.loads(portfolio_path.read_text(encoding="utf-8"))
-    # This models the exact historical portfolio selector discrepancy: its task
-    # and projection are readiness-bound while the portfolio says detective.
-    portfolio["auto_dev"]["requested_stage"] = "detective"
-    portfolio["auto_dev"]["provision_worktree"] = False
-    portfolio_path.write_text(
-        json.dumps(portfolio, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
+    if post_review_self_admission:
+        # This is the supported production path that exposed the P1: an
+        # Everything packet has a first unaccepted dispatch, then a separately
+        # invoked Review Self admission that records its own unaccepted handoff.
+        delivery.start_development_run(
+            root,
+            "acme",
+            "app",
+            ["CC-193"],
+            run_id="legacy-worktree-ready-recovery",
+            auto_dev_mode="single_stage",
+            requested_stage="review_self",
+            provision_worktree=True,
+            selected_work_item=work_item,
+            existing_state_only=True,
+            require_executor_handoff=True,
+            apply=True,
+        )
+        admitted = task.read()
+        assert admitted["auto_dev_mode"] == "everything"
+        assert admitted["requested_stage"] == "review_self"
+        assert admitted["failure"]["kind"] == "executor_unavailable"
+        assert admitted["attempts"]["executor_unavailable"] == 2
+    else:
+        portfolio = json.loads(portfolio_path.read_text(encoding="utf-8"))
+        # This models the exact historical portfolio selector discrepancy: its
+        # task and projection are readiness-bound while the portfolio says
+        # detective.
+        portfolio["auto_dev"]["requested_stage"] = "detective"
+        portfolio["auto_dev"]["provision_worktree"] = False
+        portfolio_path.write_text(
+            json.dumps(portfolio, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
     head = "a" * 40
     evidence_dir = work_item / "artifacts" / "auto-dev-pr-create"
     evidence_dir.mkdir(parents=True)
@@ -6933,6 +6974,66 @@ def test_recover_active_worktree_ready_delivery_preserves_pr_evidence_and_requir
     assert work_item.is_dir()
 
 
+def test_recover_active_worktree_ready_delivery_accepts_only_the_post_review_self_executor_admission(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    task, portfolio_path, family_path, provider_path = _active_worktree_ready_recovery_fixture(
+        tmp_path, monkeypatch, post_review_self_admission=True
+    )
+    work_item = Path(task.read()["work_item"])
+    projection_path = Path(task.read()["autodev_path"])
+    original_task = task.path.read_bytes()
+    original_portfolio = portfolio_path.read_bytes()
+    original_family = family_path.read_bytes()
+    original_provider = provider_path.read_bytes()
+
+    planned = delivery.recover_active_worktree_ready_delivery(
+        task.path,
+        reason="recover the bounded unaccepted Review Self admission",
+        idempotency_key="cc-193:post-review-self",
+    )
+    assert planned["result"] == "planned"
+    assert task.path.read_bytes() == original_task
+    assert portfolio_path.read_bytes() == original_portfolio
+
+    recovered = delivery.recover_active_worktree_ready_delivery(
+        task.path,
+        reason="recover the bounded unaccepted Review Self admission",
+        idempotency_key="cc-193:post-review-self",
+        apply=True,
+    )
+    receipt = Path(recovered["receipt"])
+    receipt_payload = json.loads(receipt.read_text(encoding="utf-8"))
+    assert recovered["result"] == "recovered"
+    assert receipt_payload["original"]["recovery_shape"] == "post_review_self_executor_handoff"
+    assert receipt_payload["original"]["release_propagation"]["family_ref"] == str(family_path)
+    assert family_path.read_bytes() == original_family
+    assert provider_path.read_bytes() == original_provider
+
+    current = task.read()
+    assert current["state"] == "local_validation"
+    assert current["failure"] is None
+    assert current["auto_dev_mode"] == "everything"
+    assert current["requested_stage"] is None
+    assert current["auto_dev_start_stage"] == "review_self"
+    assert current["auto_dev_completion_stage"] == "merge"
+    assert current["attempts"]["executor_unavailable"] == 2
+    assert [row["state"] for row in current["receipts"]].count("local_validation") == 1
+
+    projection = read_auto_dev_state(projection_path)
+    assert projection["current_stage"] == "review_self"
+    assert projection["start_stage"] == "review_self"
+    assert all(
+        projection["stages"][stage]["status"] == "not_started"
+        and projection["stages"][stage]["receipt_refs"] == []
+        for stage in ("review_self", "review_others", "qa", "finalize", "merge")
+    )
+    assert len(
+        json.loads(portfolio_path.read_text(encoding="utf-8"))["active_worktree_ready_delivery_recoveries"]
+    ) == 1
+    assert work_item.is_dir()
+
+
 @pytest.mark.parametrize(
     "mutation",
     (
@@ -6942,13 +7043,21 @@ def test_recover_active_worktree_ready_delivery_preserves_pr_evidence_and_requir
         "stale_subject_revision",
         "stale_terminal_revision",
         "missing_stage",
+        "generic_everything",
+        "post_review_stage_receipt",
+        "post_review_subject_revision",
+        "post_review_terminal_revision",
+        "post_review_projection_authority",
     ),
 )
 def test_recover_active_worktree_ready_delivery_refuses_unsupported_or_tampered_shapes_without_mutation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mutation: str
 ) -> None:
     task, portfolio_path, family_path, provider_path = _active_worktree_ready_recovery_fixture(
-        tmp_path, monkeypatch
+        tmp_path,
+        monkeypatch,
+        post_review_self_admission=mutation.startswith("post_review")
+        or mutation == "generic_everything",
     )
     projection_path = Path(task.read()["autodev_path"])
     work_item = Path(task.read()["work_item"])
@@ -6957,9 +7066,20 @@ def test_recover_active_worktree_ready_delivery_refuses_unsupported_or_tampered_
         value["state"] = "blocked"
         value["failure"] = {"kind": "executor_unavailable", "recoverable": False}
         task.path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    elif mutation == "stage_receipt":
+    elif mutation in {"stage_receipt", "post_review_stage_receipt"}:
         value = task.read()
         value["stage_receipts"] = {"release_propagation": {"ref": "arbitrary"}}
+        task.path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    elif mutation == "generic_everything":
+        value = task.read()
+        value["failure"] = None
+        value["attempts"] = {}
+        task.path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    elif mutation in {"post_review_subject_revision", "post_review_terminal_revision"}:
+        value = task.read()
+        value[
+            "subject_revision" if mutation == "post_review_subject_revision" else "terminal_revision"
+        ] = "b" * 40
         task.path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     elif mutation == "provider_tamper":
         provider_path.write_text("{\"tampered\":true}", encoding="utf-8")
@@ -6969,6 +7089,11 @@ def test_recover_active_worktree_ready_delivery_refuses_unsupported_or_tampered_
             projection["subject_revision"] = "b" * 40
         elif mutation == "stale_terminal_revision":
             projection["terminal_revision"] = "c" * 40
+        elif mutation == "post_review_projection_authority":
+            projection["stages"]["review_self"] = {
+                "status": "completed",
+                "receipt_refs": ["arbitrary-review-self-receipt"],
+            }
         else:
             del projection["stages"]["merge"]
         projection_path.write_text(

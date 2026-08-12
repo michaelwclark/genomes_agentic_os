@@ -2998,18 +2998,120 @@ def _worktree_ready_recovery_release_identity(
     return candidates[0]
 
 
+def _worktree_ready_recovery_post_review_self_handoffs(
+    task: Mapping[str, Any], *, state_path: Path
+) -> None:
+    """Prove the one recoverable executor boundary emitted before Review Self.
+
+    The only extended compatibility shape is a packet that entered Everything
+    through the normal Review Self admission path, but could not obtain an
+    executor before any stage was recorded.  Its original Everything dispatch
+    may have one pending groom handoff; every later handoff must be the exact
+    pending Review Self retry.  Anything else is a generic Everything packet
+    and remains ineligible for this recovery.
+    """
+
+    failure = task.get("failure") if isinstance(task.get("failure"), Mapping) else {}
+    attempts = task.get("attempts") if isinstance(task.get("attempts"), Mapping) else {}
+    count = attempts.get("executor_unavailable")
+    maximum = task.get("max_attempts")
+    if not (
+        set(attempts) == {"executor_unavailable"}
+        and type(count) is int
+        and type(maximum) is int
+        and 1 <= count < maximum
+        and failure.get("kind") == "executor_unavailable"
+        and failure.get("recoverable") is True
+        and failure.get("retry_state") == "worktree_ready"
+        and task.get("last_failure_key")
+        == f"{task.get('run_id')}:{task.get('ticket')}:executor-unavailable:{count}"
+    ):
+        raise DevelopmentDeliveryError(
+            "worktree_ready delivery recovery requires only the bounded recoverable Review Self executor handoff"
+        )
+    handoff_root = state_path.parent / "handoffs"
+    try:
+        root_stat = handoff_root.lstat()
+        names = sorted(path.name for path in handoff_root.iterdir())
+    except OSError as exc:
+        raise DevelopmentDeliveryError(
+            "worktree_ready delivery recovery requires the exact pending executor handoff receipts"
+        ) from exc
+    expected_names = [f"executor-unavailable-attempt-{attempt:02d}.json" for attempt in range(1, count + 1)]
+    if not stat.S_ISDIR(root_stat.st_mode) or names != expected_names:
+        raise DevelopmentDeliveryError(
+            "worktree_ready delivery recovery requires only the exact pending executor handoff receipts"
+        )
+    worktree = task.get("worktree") if isinstance(task.get("worktree"), Mapping) else {}
+    runtime = task.get("runtime") if isinstance(task.get("runtime"), Mapping) else {}
+    for attempt, name in enumerate(expected_names, start=1):
+        receipt_path, receipt_bytes = _worktree_ready_recovery_read_file(
+            handoff_root / name, label="executor handoff"
+        )
+        handoff = _worktree_ready_recovery_mapping(receipt_bytes, label="executor handoff")
+        review_self_handoff = attempt > 1 or count == 1
+        requested_stage = "review_self" if review_self_handoff else None
+        next_stage = "review_self" if review_self_handoff else "groom"
+        if not (
+            receipt_path == (handoff_root / name).resolve()
+            and handoff.get("schema") == "development-executor-handoff/v1"
+            and handoff.get("status") == "pending"
+            and handoff.get("outcome") == "executor_unavailable"
+            and handoff.get("attempt") == attempt
+            and handoff.get("max_attempts") == maximum
+            and handoff.get("recoverable") is True
+            and handoff.get("run_id") == task.get("run_id")
+            and handoff.get("ticket") == task.get("ticket")
+            and handoff.get("canonical_work_id") == task.get("canonical_work_id")
+            and Path(str(handoff.get("task_state") or "")).expanduser().resolve() == state_path
+            and handoff.get("task_state_before_handoff") == "worktree_ready"
+            and handoff.get("requested_stage") == requested_stage
+            and handoff.get("next_stage") == next_stage
+            and handoff.get("worktree") == worktree
+            and handoff.get("runtime") == runtime
+            and isinstance(handoff.get("policy"), Mapping)
+            and handoff["policy"].get("fingerprint") == task.get("policy_fingerprint")
+            and handoff["policy"].get("receipt") == task.get("policy_receipt")
+            and str(handoff.get("recorded_at") or "").strip()
+        ):
+            raise DevelopmentDeliveryError(
+                "worktree_ready delivery recovery executor handoff does not match the exact Review Self admission"
+            )
+        if attempt == count and not (
+            Path(str(failure.get("receipt") or "")).expanduser().resolve() == receipt_path
+            and failure.get("failed_at") == handoff.get("recorded_at")
+        ):
+            raise DevelopmentDeliveryError(
+                "worktree_ready delivery recovery current executor handoff does not match task failure"
+            )
+
+
 def _worktree_ready_recovery_portfolio(
-    portfolio: Mapping[str, Any], *, task: Mapping[str, Any], state_path: Path
+    portfolio: Mapping[str, Any],
+    *,
+    task: Mapping[str, Any],
+    state_path: Path,
+    post_review_self_admission: bool,
 ) -> dict[str, Any]:
-    """Recognize only the original one-task readiness portfolio shape."""
+    """Recognize only the historical readiness or post-Review-Self shapes."""
 
     auto_dev = portfolio.get("auto_dev") if isinstance(portfolio.get("auto_dev"), Mapping) else {}
     rows = portfolio.get("tasks") if isinstance(portfolio.get("tasks"), list) else []
     ticket = str(task.get("ticket") or "")
-    if not (
-        portfolio.get("state") == "dispatching"
-        and portfolio.get("run_id") == task.get("run_id")
+    common = (
+        portfolio.get("run_id") == task.get("run_id")
         and portfolio.get("tickets") == [ticket]
+        and auto_dev.get("stage_order") == task.get("auto_dev_stage_order")
+        and auto_dev.get("stage_policies") == task.get("auto_dev_stage_policies")
+        and not portfolio.get("active_worktree_ready_delivery_recoveries")
+        and len(rows) == 1
+        and isinstance(rows[0], Mapping)
+        and rows[0].get("ticket") == ticket
+        and Path(str(rows[0].get("state_ref") or "")).expanduser().resolve() == state_path
+        and rows[0].get("canonical_work_id") == task.get("canonical_work_id")
+    )
+    legacy_readiness = (
+        portfolio.get("state") == "dispatching"
         and auto_dev.get("mode") == "single_stage"
         # This legacy shape was emitted with detective as the portfolio selector
         # while its task and completion boundary remained readiness.  Accepting
@@ -3019,17 +3121,21 @@ def _worktree_ready_recovery_portfolio(
         and auto_dev.get("start_stage") == "groom"
         and auto_dev.get("completion_stage") == "readiness"
         and auto_dev.get("provision_worktree") is False
-        and auto_dev.get("stage_order") == task.get("auto_dev_stage_order")
-        and auto_dev.get("stage_policies") == task.get("auto_dev_stage_policies")
-        and not portfolio.get("active_worktree_ready_delivery_recoveries")
-        and len(rows) == 1
-        and isinstance(rows[0], Mapping)
-        and rows[0].get("ticket") == ticket
-        and Path(str(rows[0].get("state_ref") or "")).expanduser().resolve() == state_path
-        and rows[0].get("canonical_work_id") == task.get("canonical_work_id")
+    )
+    post_review_self = (
+        portfolio.get("state") == "pending"
+        and auto_dev.get("mode") == "everything"
+        and auto_dev.get("requested_stage") is None
+        and auto_dev.get("goal") == "delivery_complete"
+        and auto_dev.get("start_stage") == "groom"
+        and auto_dev.get("completion_stage") == "health"
+        and auto_dev.get("provision_worktree") is True
+    )
+    if not common or not (
+        post_review_self if post_review_self_admission else legacy_readiness
     ):
         raise DevelopmentDeliveryError(
-            "worktree_ready delivery recovery requires the exact active one-task readiness portfolio"
+            "worktree_ready delivery recovery requires the exact active one-task portfolio boundary"
         )
     return dict(auto_dev)
 
@@ -3047,14 +3153,8 @@ def _active_worktree_ready_delivery_recovery_context(state_path: Path) -> dict[s
         state_path, label="task state"
     )
     task = _worktree_ready_recovery_mapping(task_bytes, label="task state")
-    if not (
+    common_task_shape = (
         task.get("state") == "worktree_ready"
-        and task.get("failure") is None
-        and task.get("auto_dev_mode") == "single_stage"
-        and task.get("requested_stage") == "readiness"
-        and task.get("goal") == "readiness"
-        and task.get("auto_dev_start_stage") == "groom"
-        and task.get("auto_dev_completion_stage") == "readiness"
         and task.get("stage_receipts") in (None, {})
         and not task.get("active_worktree_ready_delivery_recoveries")
         and not task.get("subject_supersessions")
@@ -3063,10 +3163,34 @@ def _active_worktree_ready_delivery_recovery_context(state_path: Path) -> dict[s
             task.get(field)
             for field in ("subject_revision", "terminal_revision", "deployed_revision")
         )
-    ):
+    )
+    legacy_readiness = (
+        common_task_shape
+        and task.get("failure") is None
+        and task.get("auto_dev_mode") == "single_stage"
+        and task.get("requested_stage") == "readiness"
+        and task.get("goal") == "readiness"
+        and task.get("auto_dev_start_stage") == "groom"
+        and task.get("auto_dev_completion_stage") == "readiness"
+    )
+    post_review_self_admission = (
+        common_task_shape
+        and isinstance(task.get("failure"), Mapping)
+        and task.get("auto_dev_mode") == "everything"
+        and task.get("requested_stage") == "review_self"
+        and task.get("goal") == "delivery_complete"
+        and task.get("auto_dev_start_stage") == "groom"
+        and task.get("auto_dev_completion_stage") == "health"
+    )
+    if post_review_self_admission:
+        _worktree_ready_recovery_post_review_self_handoffs(task, state_path=state_path)
+    if not legacy_readiness and not post_review_self_admission:
         raise DevelopmentDeliveryError(
-            "worktree_ready delivery recovery requires the exact active nonblocked single-stage readiness task"
+            "worktree_ready delivery recovery requires the exact active single-stage readiness or post-Review-Self admission task"
         )
+    recovery_shape = (
+        "post_review_self_executor_handoff" if post_review_self_admission else "single_stage_readiness"
+    )
     required = (
         "os_root",
         "domain",
@@ -3138,18 +3262,14 @@ def _active_worktree_ready_delivery_recovery_context(state_path: Path) -> dict[s
         projection.get("delivery") if isinstance(projection.get("delivery"), Mapping) else {}
     )
     stages = projection.get("stages") if isinstance(projection.get("stages"), Mapping) else {}
-    if not (
-        projection.get("mode") == "single_stage"
-        and projection.get("requested_stage") == "readiness"
-        and projection.get("start_stage") == "groom"
-        and projection.get("completion_stage") == "readiness"
-        and projection.get("current_stage") == "readiness"
-        and projection.get("canonical_work_id") == task["canonical_work_id"]
+    common_projection = (
+        projection.get("canonical_work_id") == task["canonical_work_id"]
         and projection.get("subject_revision") in (None, "")
         and projection.get("terminal_revision") in (None, "")
+        and projection.get("deployed_revision") in (None, "")
         and projection_delivery.get("state") == "worktree_ready"
-        and projection_delivery.get("goal") == "readiness"
         and projection_delivery.get("run_id") == task["run_id"]
+        and projection_delivery.get("subject_revision") in (None, "")
         and projection_delivery.get("terminal_revision") in (None, "")
         and projection_delivery.get("deployed_revision") in (None, "")
         and Path(str(projection_delivery.get("task_state_ref") or "")).expanduser().resolve()
@@ -3166,12 +3286,38 @@ def _active_worktree_ready_delivery_recovery_context(state_path: Path) -> dict[s
             and row.get("receipt_refs") == []
             for row in stages.values()
         )
+    )
+    legacy_projection = (
+        common_projection
+        and projection.get("mode") == "single_stage"
+        and projection.get("requested_stage") == "readiness"
+        and projection.get("start_stage") == "groom"
+        and projection.get("completion_stage") == "readiness"
+        and projection.get("current_stage") == "readiness"
+        and projection_delivery.get("goal") == "readiness"
+    )
+    post_review_self_projection = (
+        common_projection
+        and projection.get("mode") == "everything"
+        and projection.get("requested_stage") == "review_self"
+        and projection.get("start_stage") == "groom"
+        and projection.get("completion_stage") == "health"
+        and projection.get("current_stage") == "review_self"
+        and projection.get("status") == "paused"
+        and projection.get("blocker") == task.get("failure")
+        and projection_delivery.get("goal") == "delivery_complete"
+    )
+    if not (
+        post_review_self_projection if post_review_self_admission else legacy_projection
     ):
         raise DevelopmentDeliveryError(
-            "worktree_ready delivery recovery requires the exact single-stage readiness Auto-Dev projection"
+            "worktree_ready delivery recovery requires the exact eligible Auto-Dev projection"
         )
     stage_root = work_item / "artifacts" / "auto-dev-orchestration" / "stages"
-    for stage in _ACTIVE_WORKTREE_READY_DELIVERY_FRESH_STAGES:
+    stages_without_authority = (
+        AUTO_DEV_STAGE_ORDER if post_review_self_admission else _ACTIVE_WORKTREE_READY_DELIVERY_FRESH_STAGES
+    )
+    for stage in stages_without_authority:
         if any(
             path.exists() or path.is_symlink()
             for path in (stage_root / f"{stage}.json", stage_root / stage / "latest.json")
@@ -3196,7 +3342,10 @@ def _active_worktree_ready_delivery_recovery_context(state_path: Path) -> dict[s
     )
     portfolio = _worktree_ready_recovery_mapping(portfolio_bytes, label="portfolio")
     portfolio_auto_dev = _worktree_ready_recovery_portfolio(
-        portfolio, task=task, state_path=state_path
+        portfolio,
+        task=task,
+        state_path=state_path,
+        post_review_self_admission=post_review_self_admission,
     )
     canonical = _read_canonical_development_work(
         root,
@@ -3246,6 +3395,7 @@ def _active_worktree_ready_delivery_recovery_context(state_path: Path) -> dict[s
         "stage_order": stage_order,
         "stage_policies": stage_policies,
         "worktree": dict(worktree),
+        "recovery_shape": recovery_shape,
         "release": release,
     }
 
@@ -3263,6 +3413,7 @@ def _worktree_ready_recovery_original(context: Mapping[str, Any]) -> dict[str, A
         "canonical_sha256": context["canonical_sha256"],
         "work_item": str(context["work_item"]),
         "worktree": context["worktree"],
+        "recovery_shape": context["recovery_shape"],
         "release_propagation": {
             "family_ref": str(release["family"]),
             "family_sha256": release["family_sha256"],
@@ -3658,6 +3809,7 @@ def recover_active_worktree_ready_delivery(
                 latest.update(
                     {
                         "state": "local_validation",
+                        "failure": None,
                         "auto_dev_mode": "everything",
                         "requested_stage": None,
                         "goal": "merge",
