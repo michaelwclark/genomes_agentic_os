@@ -16,6 +16,7 @@ from ..auto_dev_orchestration import (
 from ..development_delivery import (
     DEVELOPMENT_POLICY_PLANES,
     DevelopmentDeliveryError,
+    correct_failed_base_selection,
     reconcile_historical_delivery,
     reopen_auto_dev_item,
     start_development_run,
@@ -280,6 +281,17 @@ def handle_sync(args: argparse.Namespace) -> int:
     return 0
 
 
+def handle_correct_base_selection(args: argparse.Namespace) -> int:
+    result = correct_failed_base_selection(
+        args.state,
+        corrected_base_branch=args.base_branch,
+        idempotency_key=args.idempotency_key,
+        apply=args.apply,
+    )
+    _print(result, json_output=args.json)
+    return 0
+
+
 def handle_record(args: argparse.Namespace) -> int:
     result = record_auto_dev_stage(
         args.state,
@@ -502,6 +514,26 @@ def register(subparsers) -> None:
     sync.add_argument("task_state", help="Canonical development task state.json.")
     _common_output(sync)
     sync.set_defaults(handler=handle_sync)
+
+    correct_base = sub.add_parser(
+        "correct-base-selection",
+        help="Record the only allowed correction for a historical pre-worktree origin/main failure.",
+    )
+    correct_base.add_argument("--state", required=True, help="Exact development task state.json.")
+    correct_base.add_argument(
+        "--base-branch",
+        required=True,
+        choices=("main",),
+        help="The only permitted corrected branch; it is verified as origin/main before apply.",
+    )
+    correct_base.add_argument("--idempotency-key", required=True)
+    correct_base.add_argument(
+        "--apply",
+        action="store_true",
+        help="Record the immutable correction receipt and update only the failed run selection; resume separately.",
+    )
+    _common_output(correct_base)
+    correct_base.set_defaults(handler=handle_correct_base_selection)
 
     record = sub.add_parser(
         "record",
