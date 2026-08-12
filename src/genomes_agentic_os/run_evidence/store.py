@@ -299,8 +299,12 @@ def build_run_log_store(config: RunLogStoreConfig, *, client: Any | None = None)
 def build_configured_run_log_store(
     root: Path, *, config: RunLogStoreConfig | None = None, client: Any | None = None
 ) -> RunLogStore:
-    """Construct the selected adapter and seed its required initial host once."""
+    """Construct the selected adapter, install indexes, then seed its initial host."""
     config = config or load_run_log_store_config(root)
     store = build_run_log_store(config, client=client)
+    # The Mongo adapter relies on its unique content-hash index to make the
+    # duplicate-key recovery path safe for concurrent first appends.  Install
+    # the configured indexes before this composition root performs any write.
+    store.ensure_indexes()
     seed_configured_host(root, store, config)
     return store

@@ -11,7 +11,13 @@ from typing import Any
 
 import pytest
 
-from genomes_agentic_os.run_evidence import EvidenceRecord, RunLogStoreError, load_run_log_store_config, seed_configured_host
+from genomes_agentic_os.run_evidence import (
+    EvidenceRecord,
+    RunLogStoreError,
+    build_configured_run_log_store,
+    load_run_log_store_config,
+    seed_configured_host,
+)
 from genomes_agentic_os.run_evidence.adapters.mongodb import MongoDBRunLogStore
 
 
@@ -68,13 +74,15 @@ def _matches(document: dict[str, Any], query: dict[str, Any]) -> bool:
 class _Collection:
     """In-memory Mongo collection double with unique-index conflict injection."""
 
-    def __init__(self):
+    def __init__(self, operations: list[str]):
         self.documents: list[dict[str, Any]] = []
         self.index_calls: list[tuple[list[tuple[str, int]], dict[str, Any]]] = []
         self.fail_insert = False
         self.inject_duplicate_once = False
+        self.operations = operations
 
     def update_one(self, query: dict[str, Any], update: dict[str, Any], *, upsert: bool) -> _Result:
+        self.operations.append("update_one")
         existing = self.find_one(query)
         if existing is None:
             assert upsert
@@ -87,6 +95,7 @@ class _Collection:
         return next((dict(row) for row in self.documents if _matches(row, query)), None)
 
     def insert_one(self, document: dict[str, Any]) -> _Result:
+        self.operations.append("insert_one")
         if self.inject_duplicate_once:
             self.inject_duplicate_once = False
             self.documents.append(dict(document))
@@ -120,6 +129,7 @@ class _Collection:
         return _Result(deleted)
 
     def create_index(self, fields: list[tuple[str, int]], **kwargs: Any) -> str:
+        self.operations.append("create_index")
         self.index_calls.append((fields, kwargs))
         return str(kwargs["name"])
 
@@ -130,9 +140,10 @@ class _Database:
     def __init__(self):
         self.collections: dict[str, _Collection] = {}
         self.ping_error: Exception | None = None
+        self.operations: list[str] = []
 
     def __getitem__(self, name: str) -> _Collection:
-        return self.collections.setdefault(name, _Collection())
+        return self.collections.setdefault(name, _Collection(self.operations))
 
     def command(self, command: str) -> dict[str, int]:
         assert command == "ping"
@@ -165,6 +176,20 @@ def _adapter() -> tuple[MongoDBRunLogStore, _Database]:
     adapter = MongoDBRunLogStore(config, database)
     seed_configured_host(REPO, adapter, config)
     return adapter, database
+
+
+def test_configured_mongodb_store_installs_indexes_before_host_seed_and_append() -> None:
+    config = load_run_log_store_config(REPO)
+    database = _Database()
+
+    store = build_configured_run_log_store(REPO, config=config, client={config.database: database})
+    assert isinstance(store, MongoDBRunLogStore)
+    store.append(_record())
+
+    assert database.operations.index("create_index") < database.operations.index("update_one")
+    assert database.operations.index("create_index") < database.operations.index("insert_one")
+    collection = database[config.models["run_log"]["collection"]]
+    assert collection.index_calls[0][1] == {"unique": True, "name": "content_hash_unique"}
 
 
 def test_mongodb_adapter_conforms_without_a_live_database() -> None:
