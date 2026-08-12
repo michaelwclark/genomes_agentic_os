@@ -342,6 +342,13 @@ def handle_bind_recovered_worktree_ready_pr_family(args: argparse.Namespace) -> 
 
 def handle_escalate_pr_create_delivery(args: argparse.Namespace) -> int:
     result = escalate_active_nonblocked_pr_create_delivery(
+        args.state,
+        reason=args.reason,
+        idempotency_key=args.idempotency_key,
+        apply=args.apply,
+    )
+    _print(result, json_output=args.json)
+    return 0
 
 
 def handle_recover_blocked_single_stage(args: argparse.Namespace) -> int:

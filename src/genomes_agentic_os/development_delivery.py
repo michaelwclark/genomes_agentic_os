@@ -5956,19 +5956,10 @@ def _active_blocked_single_stage_recovery_context(state_path: Path) -> dict[str,
         raise DevelopmentDeliveryError(
             "active blocked recovery refuses prior pull-request or terminal authority"
         )
-    stage_receipts = task.get("stage_receipts") or {}
-    if not isinstance(stage_receipts, Mapping) or set(stage_receipts) - {"release_propagation"}:
+    stage_receipts = task.get("stage_receipts")
+    if not isinstance(stage_receipts, Mapping) or set(stage_receipts) != {"release_propagation"}:
         raise DevelopmentDeliveryError(
-            "active blocked recovery refuses non-legacy stage receipt authority"
-        )
-    if any(
-        not isinstance(row, Mapping)
-        or not str(row.get("ref") or "").strip()
-        or not str(row.get("sha256") or "").strip()
-        for row in stage_receipts.values()
-    ):
-        raise DevelopmentDeliveryError(
-            "active blocked recovery requires hash-bound legacy stage receipts"
+            "active blocked recovery requires exactly one legacy release_propagation stage receipt"
         )
 
     required = ("os_root", "domain", "project", "ticket", "run_id", "work_item", "autodev_path", "canonical_work_id")
@@ -6028,6 +6019,39 @@ def _active_blocked_single_stage_recovery_context(state_path: Path) -> dict[str,
         )
 
     run_dir = state_path.parent.parent.parent
+    release_stage_receipt = stage_receipts["release_propagation"]
+    if not isinstance(release_stage_receipt, Mapping):
+        raise DevelopmentDeliveryError(
+            "active blocked recovery requires a hash-bound legacy release_propagation receipt"
+        )
+    release_ref = str(release_stage_receipt.get("ref") or "").strip()
+    release_sha256 = str(release_stage_receipt.get("sha256") or "").strip().lower()
+    if not release_ref or not re.fullmatch(r"[a-f0-9]{64}", release_sha256):
+        raise DevelopmentDeliveryError(
+            "active blocked recovery requires a hash-bound legacy release_propagation receipt"
+        )
+    release_path = Path(release_ref).expanduser()
+    if not release_path.is_absolute() or release_path.is_symlink():
+        raise DevelopmentDeliveryError(
+            "active blocked recovery legacy release_propagation receipt must be an absolute regular file"
+        )
+    try:
+        release_path = release_path.resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        raise DevelopmentDeliveryError(
+            "active blocked recovery legacy release_propagation receipt is missing"
+        ) from exc
+    if not release_path.is_file() or not any(
+        release_path.is_relative_to(scope)
+        for scope in (work_item, run_dir.resolve())
+    ):
+        raise DevelopmentDeliveryError(
+            "active blocked recovery legacy release_propagation receipt is outside task/run scope"
+        )
+    if hashlib.sha256(release_path.read_bytes()).hexdigest() != release_sha256:
+        raise DevelopmentDeliveryError(
+            "active blocked recovery legacy release_propagation receipt digest does not match"
+        )
     portfolio_path = run_dir / "portfolio.json"
     portfolio_bytes = portfolio_path.read_bytes()
     portfolio_value = yaml.safe_load(portfolio_bytes.decode("utf-8")) or {}

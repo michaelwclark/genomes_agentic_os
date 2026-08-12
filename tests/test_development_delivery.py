@@ -3374,6 +3374,85 @@ def test_recover_active_blocked_single_stage_refuses_unsupported_blocker_without
     ).exists()
 
 
+def _active_blocked_single_stage_recovery_surfaces(
+    root: Path,
+    task_path: Path,
+    portfolio_path: Path,
+) -> dict[str, object]:
+    """Snapshot every recovery-owned surface before a fail-closed refusal."""
+
+    task = TaskState(task_path).read()
+    canonical = delivery._read_canonical_development_work(
+        root,
+        canonical_work_id=task["canonical_work_id"],
+        ticket=task["ticket"],
+        packet=Path(task["work_item"]),
+    )
+    recovery_dir = (
+        Path(task["work_item"])
+        / "artifacts"
+        / "development-delivery"
+        / "active-blocked-single-stage-recovery"
+    )
+    event_path = task_path.parent / "events.jsonl"
+    return {
+        "task": task_path.read_bytes(),
+        "portfolio": portfolio_path.read_bytes(),
+        "autodev": Path(task["autodev_path"]).read_bytes(),
+        "canonical": json.dumps(canonical, sort_keys=True),
+        "events": event_path.read_bytes() if event_path.is_file() else None,
+        "recovery_artifacts": (
+            {path.relative_to(recovery_dir).as_posix(): path.read_bytes() for path in recovery_dir.rglob("*") if path.is_file()}
+            if recovery_dir.is_dir()
+            else None
+        ),
+    }
+
+
+@pytest.mark.parametrize(
+    ("variant", "error"),
+    [
+        ("missing_stage_entry", "exactly one legacy release_propagation"),
+        ("missing_release_file", "legacy release_propagation receipt is missing"),
+        ("tampered_release_file", "legacy release_propagation receipt digest does not match"),
+        ("outside_task_or_run_scope", "legacy release_propagation receipt is outside task/run scope"),
+    ],
+)
+def test_recover_active_blocked_single_stage_refuses_unverified_legacy_release_receipt_without_mutation(
+    tmp_path: Path,
+    variant: str,
+    error: str,
+) -> None:
+    root, task_path, _, release_receipt, portfolio_path = _legacy_age163_blocked_single_stage(tmp_path)
+    task = TaskState(task_path).read()
+    if variant == "missing_stage_entry":
+        task["stage_receipts"] = {}
+        delivery._atomic_json(task_path, task)
+    elif variant == "missing_release_file":
+        release_receipt.unlink()
+    elif variant == "tampered_release_file":
+        release_receipt.write_text('{"legacy":"tampered"}\n', encoding="utf-8")
+    else:
+        outside_receipt = tmp_path / "outside-legacy-release.json"
+        outside_receipt.write_text('{"legacy":"outside"}\n', encoding="utf-8")
+        task["stage_receipts"]["release_propagation"] = {
+            "ref": str(outside_receipt),
+            "sha256": hashlib.sha256(outside_receipt.read_bytes()).hexdigest(),
+        }
+        delivery._atomic_json(task_path, task)
+    before = _active_blocked_single_stage_recovery_surfaces(root, task_path, portfolio_path)
+
+    with pytest.raises(DevelopmentDeliveryError, match=error):
+        delivery.recover_active_blocked_single_stage_delivery(
+            task_path,
+            reason="Legacy receipt evidence must remain immutable and in scope.",
+            idempotency_key=f"cc-163:unverified-release-{variant}",
+            apply=True,
+        )
+
+    assert _active_blocked_single_stage_recovery_surfaces(root, task_path, portfolio_path) == before
+
+
 def test_recover_active_blocked_single_stage_refuses_portfolio_drift_before_any_recovery_mutation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
