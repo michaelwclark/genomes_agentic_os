@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import sqlite3
 import subprocess
 
 import pytest
@@ -280,7 +281,7 @@ def test_canonical_work_state_tracks_delivery_and_never_regresses_or_clears_bloc
         connection.close()
 
 
-def test_canonical_admission_contention_is_bounded_and_preserves_one_work_item(
+def test_canonical_admission_contention_is_bounded_and_preserves_all_receipts(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A supervisor-owned SQLite write lock yields one actionable retry receipt.
@@ -329,12 +330,31 @@ def test_canonical_admission_contention_is_bounded_and_preserves_one_work_item(
         holder.execute("ROLLBACK")
         holder.close()
 
-    receipt = packet / "artifacts" / "development-delivery" / "canonical-admission-contention.json"
-    receipt_data = json.loads(receipt.read_text(encoding="utf-8"))
+    receipt_dir = packet / "artifacts" / "development-delivery"
+    receipts = sorted(
+        path
+        for path in receipt_dir.glob("canonical-admission-contention-*.json")
+        if path.name != "canonical-admission-contention-latest.json"
+    )
+    assert len(receipts) == 1
+    receipt = receipts[0]
+    receipt_bytes = receipt.read_bytes()
+    receipt_data = json.loads(receipt_bytes)
     assert receipt_data["outcome"] == "exhausted"
     assert receipt_data["attempts"] == delivery.CANONICAL_ADMISSION_MAX_ATTEMPTS
     assert receipt_data["next_action"].startswith("Resume the existing Auto-Dev packet")
 
+    original_sync = delivery._sync_canonical_development_work_once
+    calls = 0
+
+    def fail_once(*args: object, **kwargs: object) -> dict[str, object]:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise sqlite3.OperationalError("database is locked")
+        return original_sync(*args, **kwargs)
+
+    monkeypatch.setattr(delivery, "_sync_canonical_development_work_once", fail_once)
     row = delivery._sync_canonical_development_work(
         root,
         domain="acme",
@@ -349,6 +369,23 @@ def test_canonical_admission_contention_is_bounded_and_preserves_one_work_item(
         canonical_work_id="acme:app:cc-contention",
     )
     assert row["id"] == "acme:app:cc-contention"
+    receipts = sorted(
+        path
+        for path in receipt_dir.glob("canonical-admission-contention-*.json")
+        if path.name != "canonical-admission-contention-latest.json"
+    )
+    assert len(receipts) == 2
+    assert receipt.read_bytes() == receipt_bytes
+    assert {json.loads(path.read_text(encoding="utf-8"))["outcome"] for path in receipts} == {
+        "exhausted",
+        "retried",
+    }
+    latest = json.loads(
+        (receipt_dir / "canonical-admission-contention-latest.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert Path(str(latest["latest_receipt"])).is_file()
 
     connection = connect_state(db_path)
     try:
@@ -358,6 +395,71 @@ def test_canonical_admission_contention_is_bounded_and_preserves_one_work_item(
             if item["source_key"] == "CC-CONTENTION"
         ]
         assert [item["id"] for item in rows] == ["acme:app:cc-contention"]
+        assert connection.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+    finally:
+        connection.close()
+
+
+def test_start_development_run_bounds_preflight_canonical_admission_contention(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The production start path uses the bounded admission boundary before work starts."""
+
+    repo, base_sha = _repository(tmp_path)
+    root = tmp_path / "os"
+    project = _project(root, repo)
+    db_path = default_db_path(root)
+    holder = connect_state(db_path)
+    holder.execute("BEGIN IMMEDIATE")
+    monkeypatch.setattr(delivery, "CANONICAL_ADMISSION_BUSY_TIMEOUT_MS", 1)
+    monkeypatch.setattr(delivery, "CANONICAL_ADMISSION_BACKOFF_SECONDS", 0.001)
+
+    try:
+        with pytest.raises(delivery.DevelopmentDeliveryError, match="bounded attempts"):
+            delivery.start_development_run(
+                root,
+                "acme",
+                "app",
+                ["CC-START-CONTENTION"],
+                run_id="start-contention",
+                apply=True,
+            )
+    finally:
+        holder.execute("ROLLBACK")
+        holder.close()
+
+    receipts = sorted(
+        path
+        for packet in _work_item_packets(project)
+        for path in (packet / "artifacts" / "development-delivery").glob(
+            "canonical-admission-contention-*.json"
+        )
+        if path.name != "canonical-admission-contention-latest.json"
+    )
+    assert len(receipts) == 1
+    receipt = json.loads(receipts[0].read_text(encoding="utf-8"))
+    assert receipt["operation"] == "sync_canonical_development_work"
+    assert receipt["outcome"] == "exhausted"
+    assert receipt["attempts"] == delivery.CANONICAL_ADMISSION_MAX_ATTEMPTS
+
+    _fake_worktree(monkeypatch, "CC-START-CONTENTION", base_sha)
+    resumed = delivery.start_development_run(
+        root,
+        "acme",
+        "app",
+        ["CC-START-CONTENTION"],
+        run_id="start-contention",
+        apply=True,
+    )
+    task = TaskState(Path(resumed["tasks"][0]["state_ref"])).read()
+    connection = connect_state(db_path)
+    try:
+        rows = [
+            row
+            for row in canonical_work_items.query(connection, domain="acme", project="app", limit=100)
+            if row["source_key"] == "CC-START-CONTENTION"
+        ]
+        assert [row["id"] for row in rows] == [task["canonical_work_id"]]
         assert connection.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
     finally:
         connection.close()
