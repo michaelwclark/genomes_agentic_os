@@ -5571,6 +5571,60 @@ def run_development_stage(
                                     legacy_source.get("source_head_sha") or ""
                                 ).strip(),
                             }
+                    task_repository = (
+                        task_value.get("repository")
+                        if isinstance(task_value.get("repository"), Mapping)
+                        else {}
+                    )
+                    expected_repository = str(task_repository.get("id") or "").strip()
+                    expected_base_branch = str(task_repository.get("base_branch") or "").strip()
+                    worktree = (
+                        task_value.get("worktree")
+                        if isinstance(task_value.get("worktree"), Mapping)
+                        else {}
+                    )
+                    expected_source_branch = str(worktree.get("branch") or "").strip()
+                    expected_provider = ""
+                    if expected_repository.startswith(("github:", "git:github.com/")):
+                        expected_provider = "github"
+                    elif expected_repository.startswith(("gitlab:", "git:gitlab.com/")):
+                        expected_provider = "gitlab"
+                    elif expected_repository.startswith(("bitbucket:", "git:bitbucket.org/")):
+                        expected_provider = "bitbucket"
+                    pull_request_repository = expected_repository
+                    if expected_repository.startswith("git:github.com/"):
+                        pull_request_repository = "github:" + expected_repository.removeprefix(
+                            "git:github.com/"
+                        )
+                    elif expected_repository.startswith("git:gitlab.com/"):
+                        pull_request_repository = "gitlab:" + expected_repository.removeprefix(
+                            "git:gitlab.com/"
+                        )
+                    elif expected_repository.startswith("git:bitbucket.org/"):
+                        pull_request_repository = "bitbucket:" + expected_repository.removeprefix(
+                            "git:bitbucket.org/"
+                        )
+                    pull_request_prefix = f"{pull_request_repository}#"
+                    # The immediate predecessor of the repository-qualified
+                    # family contract stored a bare GitHub owner/repository
+                    # and numeric PR.  Normalize only that exact historical
+                    # shape and only when the selected task binds it to the
+                    # same GitHub repository.  The original receipt remains
+                    # immutable and all later identity checks stay strict.
+                    legacy_repository = expected_repository.removeprefix("git:github.com/")
+                    legacy_pull_request = str(previous_details.get("pull_request") or "").strip()
+                    if (
+                        expected_provider == "github"
+                        and str(previous_details.get("provider") or "").strip().lower() == "github"
+                        and str(previous_details.get("repository") or "").strip()
+                        == legacy_repository
+                        and re.fullmatch(r"[1-9][0-9]*", legacy_pull_request)
+                    ):
+                        previous_details = {
+                            **previous_details,
+                            "repository": expected_repository,
+                            "pull_request": pull_request_prefix + legacy_pull_request,
+                        }
                     refreshed_details = (
                         receipt_payload.get("evidence")
                         if isinstance(receipt_payload.get("evidence"), Mapping)
@@ -5628,19 +5682,6 @@ def run_development_stage(
                             raise DevelopmentDeliveryError(
                                 "release propagation refresh must retain the same " + field
                             )
-                    task_repository = (
-                        task_value.get("repository")
-                        if isinstance(task_value.get("repository"), Mapping)
-                        else {}
-                    )
-                    expected_repository = str(task_repository.get("id") or "").strip()
-                    expected_base_branch = str(task_repository.get("base_branch") or "").strip()
-                    worktree = (
-                        task_value.get("worktree")
-                        if isinstance(task_value.get("worktree"), Mapping)
-                        else {}
-                    )
-                    expected_source_branch = str(worktree.get("branch") or "").strip()
                     if not (
                         expected_repository
                         and expected_base_branch
@@ -5652,31 +5693,10 @@ def run_development_stage(
                         raise DevelopmentDeliveryError(
                             "release propagation refresh identity must match the selected task repository, base branch, and worktree branch"
                         )
-                    expected_provider = ""
-                    if expected_repository.startswith(("github:", "git:github.com/")):
-                        expected_provider = "github"
-                    elif expected_repository.startswith(("gitlab:", "git:gitlab.com/")):
-                        expected_provider = "gitlab"
-                    elif expected_repository.startswith(("bitbucket:", "git:bitbucket.org/")):
-                        expected_provider = "bitbucket"
                     if expected_provider and previous_identity["provider"].lower() != expected_provider:
                         raise DevelopmentDeliveryError(
                             "release propagation refresh provider must match the selected task repository"
                         )
-                    pull_request_repository = expected_repository
-                    if expected_repository.startswith("git:github.com/"):
-                        pull_request_repository = "github:" + expected_repository.removeprefix(
-                            "git:github.com/"
-                        )
-                    elif expected_repository.startswith("git:gitlab.com/"):
-                        pull_request_repository = "gitlab:" + expected_repository.removeprefix(
-                            "git:gitlab.com/"
-                        )
-                    elif expected_repository.startswith("git:bitbucket.org/"):
-                        pull_request_repository = "bitbucket:" + expected_repository.removeprefix(
-                            "git:bitbucket.org/"
-                        )
-                    pull_request_prefix = f"{pull_request_repository}#"
                     for label, identity in (
                         ("prior", previous_identity),
                         ("new", refreshed_identity),

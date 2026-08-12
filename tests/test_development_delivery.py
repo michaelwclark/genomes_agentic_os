@@ -4288,6 +4288,101 @@ def test_release_propagation_appends_exact_head_supersession_without_rewriting_p
         )
 
 
+def test_release_propagation_normalizes_only_selected_legacy_flat_github_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, base_sha = _repository(tmp_path)
+    root = tmp_path / "os"
+    _project(root, repo, repository_id="git:github.com/acme/app")
+    monkeypatch.setattr(
+        delivery,
+        "create_isolated_worktree",
+        lambda **kwargs: {
+            "name": "cc-53",
+            "path": "/tmp/cc-53",
+            "branch": "feature/cc-53",
+            "base_sha": base_sha,
+        },
+    )
+    run = delivery.start_development_run(
+        root,
+        "acme",
+        "app",
+        ["CC-53"],
+        run_id="release-propagation-flat-identity",
+        auto_dev_mode="everything",
+        apply=True,
+    )
+    task = TaskState(Path(run["tasks"][0]["state_ref"]))
+    _advance_auto_dev_task_to_ready(
+        task,
+        subject_revision=base_sha,
+        pull_request="github:acme/app#53",
+    )
+    for stage_name in ("groom", "detective", "create_artifacts", "document"):
+        _record_standalone_stage(task, stage_name)
+    task_value = task.read()
+    task_value["state"] = "local_validation"
+    task.path.write_text(json.dumps(task_value), encoding="utf-8")
+    work_item = Path(task_value["work_item"])
+
+    def receipt(
+        name: str,
+        head: str,
+        *,
+        legacy: bool = False,
+        supersedes: str = "a" * 40,
+    ) -> Path:
+        evidence: dict[str, object] = {
+            "ticket": "CC-53",
+            "repository": "acme/app" if legacy else "git:github.com/acme/app",
+            "base_branch": "main",
+            "provider": "github",
+            "pull_request": "53" if legacy else "github:acme/app#53",
+            "source_branch": "feature/cc-53",
+            "source_head_sha": head,
+            "readback_verified": True,
+            "provider_observed": {"head_sha": head},
+        }
+        if not legacy:
+            evidence["supersession"] = {
+                "supersedes_source_head_sha": supersedes,
+                "reason": "The verified PR head changed after the prior family receipt.",
+            }
+        path = work_item / "artifacts" / "auto-dev-pr-create" / f"flat-{name}.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(
+                {
+                    "schema": "development-stage-evidence/v1",
+                    "state": "release_propagation",
+                    "status": "completed",
+                    "summary": f"PR family is current at {head}",
+                    "verified_at": "2026-08-12T08:00:00Z",
+                    "evidence": evidence,
+                }
+            ),
+            encoding="utf-8",
+        )
+        return path
+
+    old = receipt("old", "a" * 40, legacy=True)
+    run_development_stage(
+        task.path,
+        stage="release_propagation",
+        receipts={"release_propagation": str(old)},
+        idempotency_prefix="cc-53:pr-create:old",
+    )
+    refreshed = receipt("new", "b" * 40)
+    output = run_development_stage(
+        task.path,
+        stage="release_propagation",
+        receipts={"release_propagation": str(refreshed)},
+        idempotency_prefix="cc-53:pr-create:new",
+    )
+    assert output["supersedes"]["source_head_sha"] == "a" * 40
+
+
 def test_heartbeat_does_not_refresh_milestone_evidence_timestamp(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
