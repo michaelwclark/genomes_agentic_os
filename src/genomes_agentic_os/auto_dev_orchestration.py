@@ -582,6 +582,7 @@ def _load_stage_receipts(
     subject_revision: str | None,
     terminal_revision: str | None,
     invalidated_subject_revision: str | None = None,
+    suppress_revision_sensitive_stages: bool = False,
 ) -> None:
     stage_dir = work_item / "artifacts" / "auto-dev-orchestration" / "stages"
     if stage_dir.is_dir():
@@ -595,6 +596,16 @@ def _load_stage_receipts(
             if status not in TERMINAL_STAGE_STATUSES:
                 continue
             receipt_revision = payload.get("subject_revision")
+            if (
+                status == "completed"
+                and name in REVISION_SENSITIVE_STAGES
+                and suppress_revision_sensitive_stages
+            ):
+                # A pending PR-head supersession has no accepted subject yet.
+                # Historical receipts remain on disk, but none can project as
+                # active QA/review/finalize authority until fresh Review Self
+                # binds the newest provider-read head.
+                continue
             if (
                 status == "completed"
                 and name in REVISION_SENSITIVE_STAGES
@@ -1086,6 +1097,7 @@ def sync_delivery_projection(task_state_path: str | Path) -> dict[str, Any] | No
                 if pending_supersession is not None
                 else None
             ),
+            suppress_revision_sensitive_stages=pending_supersession is not None,
         )
         for name, row in stages.items():
             policy = stage_policies.get(name, {"applicability": "required"})

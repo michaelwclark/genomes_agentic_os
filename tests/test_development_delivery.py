@@ -4208,6 +4208,11 @@ def test_release_propagation_appends_exact_head_supersession_without_rewriting_p
     assert newest_task["subject_revision"] is None
     current = newest_task["stage_receipts"]["release_propagation"]
     current_wrapper = Path(current["ref"])
+    projection = read_auto_dev_state(task.read()["autodev_path"])
+    assert projection["subject_revision"] is None
+    assert projection["stages"]["review_self"]["status"] == "not_started"
+    assert projection["stages"]["qa"]["status"] == "not_started"
+    assert projection["stages"]["finalize"]["status"] == "not_started"
 
     def review_receipts(name: str, head: str) -> dict[str, str]:
         review_root = work_item / "artifacts" / f"review-{name}"
