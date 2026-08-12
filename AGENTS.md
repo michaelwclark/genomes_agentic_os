@@ -45,6 +45,10 @@ Do not recreate source-root `SPECS/`, `PLANS/`, `features/`, `BUILD_LOGS/`, or
   leave a non-terminal feature branch or worktree without a scheduled follow-up
   that records its PR, exact head, validation status, blocker, and post-merge
   cleanup action.
+- For the `genomes_agentic` family, independent or cross-model review is
+  advisory only. Record its absence or unavailability, but do not hold a merge
+  for it; actual review findings, exact-head validation, provider mergeability,
+  and applicable release/install gates remain blocking.
 - Clean up only merged worktrees and safe local feature branches. Preserve
   unmerged, dirty, conflicted, or `REOPEN.md` worktrees and report the exact
   blocker rather than treating runtime artifacts as disposable source work.
