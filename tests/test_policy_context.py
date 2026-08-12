@@ -552,6 +552,26 @@ def test_declared_rule_glob_rejects_a_non_regular_rule_file(tmp_path: Path) -> N
         module.resolve_source_rules({"root": str(checkout)}, config, strict=True)
 
 
+def test_source_rule_hash_read_failure_is_a_handled_blocker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = load_policy_context()
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    (checkout / "AGENTS.md").write_text("# readable before hashing\n", encoding="utf-8")
+    config = module.rule_surface_config(
+        {"repository": {"rule_surfaces": {"globs": ["AGENTS.md"], "required": True}}}
+    )
+
+    def fail_to_hash(_path: Path) -> str:
+        raise OSError("simulated read failure")
+
+    monkeypatch.setattr(module, "sha256_file", fail_to_hash)
+
+    with pytest.raises(module.Blocker, match="source-rule file cannot be read: AGENTS.md"):
+        module.resolve_source_rules({"root": str(checkout)}, config, strict=True)
+
+
 def test_declared_rule_glob_that_matches_nothing_is_a_blocker(tmp_path: Path) -> None:
     module = load_policy_context()
     checkout = tmp_path / "checkout"

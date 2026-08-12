@@ -769,14 +769,23 @@ def resolve_source_rules(
     files = expand_rule_globs(
         checkout.resolve(), config["globs"], declared=config["mode"] == "declared"
     )
-    entries = [
-        {
-            "source_ref": str(path.relative_to(checkout.resolve())),
-            "absolute_path": str(path),
-            "sha256": sha256_file(path),
-        }
-        for path in files
-    ]
+    entries = []
+    for path in files:
+        try:
+            digest = sha256_file(path)
+        except OSError as exc:
+            raise Blocker(
+                f"source-rule file cannot be read: {path.relative_to(checkout.resolve())}",
+                "Restore a readable regular file inside the selected checkout; "
+                "do not emit a partial policy fingerprint.",
+            ) from exc
+        entries.append(
+            {
+                "source_ref": str(path.relative_to(checkout.resolve())),
+                "absolute_path": str(path),
+                "sha256": digest,
+            }
+        )
 
     priority = config["priority_source"]
     if priority:
