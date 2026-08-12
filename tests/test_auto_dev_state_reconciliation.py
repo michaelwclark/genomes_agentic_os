@@ -400,10 +400,10 @@ def test_canonical_admission_contention_is_bounded_and_preserves_all_receipts(
         connection.close()
 
 
-def test_start_development_run_bounds_preflight_canonical_admission_contention(
+def test_start_development_run_recovers_same_run_after_preflight_canonical_admission_contention(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The production start path uses the bounded admission boundary before work starts."""
+    """Preflight contention preserves its receipt without poisoning same-run recovery."""
 
     repo, base_sha = _repository(tmp_path)
     root = tmp_path / "os"
@@ -411,6 +411,20 @@ def test_start_development_run_bounds_preflight_canonical_admission_contention(
     db_path = default_db_path(root)
     holder = connect_state(db_path)
     holder.execute("BEGIN IMMEDIATE")
+    original_source_match = delivery._canonical_source_match
+
+    def require_write_admission(
+        connection: sqlite3.Connection, *args: object, **kwargs: object
+    ) -> dict[str, object] | None:
+        """Make preflight take the same write-admission boundary as production."""
+
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            return original_source_match(connection, *args, **kwargs)
+        finally:
+            connection.execute("ROLLBACK")
+
+    monkeypatch.setattr(delivery, "_canonical_source_match", require_write_admission)
     monkeypatch.setattr(delivery, "CANONICAL_ADMISSION_BUSY_TIMEOUT_MS", 1)
     monkeypatch.setattr(delivery, "CANONICAL_ADMISSION_BACKOFF_SECONDS", 0.001)
 
@@ -428,20 +442,28 @@ def test_start_development_run_bounds_preflight_canonical_admission_contention(
         holder.execute("ROLLBACK")
         holder.close()
 
+    run_id = "start-contention"
+    receipt_dir = (
+        project
+        / "artifacts"
+        / "development-delivery"
+        / "admission-preflight"
+        / run_id
+        / "admission-receipts"
+    )
     receipts = sorted(
         path
-        for packet in _work_item_packets(project)
-        for path in (packet / "artifacts" / "development-delivery").glob(
-            "canonical-admission-contention-*.json"
-        )
+        for path in receipt_dir.glob("canonical-admission-contention-*.json")
         if path.name != "canonical-admission-contention-latest.json"
     )
     assert len(receipts) == 1
-    receipt = json.loads(receipts[0].read_text(encoding="utf-8"))
-    assert receipt["operation"] == "sync_canonical_development_work"
+    receipt_bytes = receipts[0].read_bytes()
+    receipt = json.loads(receipt_bytes)
+    assert receipt["operation"] == "resolve_canonical_development_work_id"
     assert receipt["outcome"] == "exhausted"
     assert receipt["attempts"] == delivery.CANONICAL_ADMISSION_MAX_ATTEMPTS
-    assert receipt["next_action"].startswith("Resume the existing Auto-Dev packet")
+    assert receipt["next_action"].startswith("Re-run this exact Auto-Dev run")
+    assert not (project / "state" / "development-runs" / run_id).exists()
 
     _fake_worktree(monkeypatch, "CC-START-CONTENTION", base_sha)
     resumed = delivery.start_development_run(
@@ -449,9 +471,12 @@ def test_start_development_run_bounds_preflight_canonical_admission_contention(
         "acme",
         "app",
         ["CC-START-CONTENTION"],
-        run_id="start-contention",
+        run_id=run_id,
         apply=True,
     )
+    assert Path(resumed["run_dir"]) == project / "state" / "development-runs" / run_id
+    assert (Path(resumed["run_dir"]) / "portfolio.json").is_file()
+    assert receipts[0].read_bytes() == receipt_bytes
     task = TaskState(Path(resumed["tasks"][0]["state_ref"])).read()
     connection = connect_state(db_path)
     try:

@@ -2323,11 +2323,12 @@ def _canonical_admission_contention_receipt(
     operation: str,
     diagnostic_root: Path | None = None,
 ) -> str | None:
-    """Persist a compact, packet-local diagnostic for a contended admission.
+    """Persist a compact diagnostic for a contended canonical admission.
 
-    The control-plane row is intentionally not used for this receipt: when it
-    is unavailable, the packet remains the durable place an operator can read
-    before safely resuming the exact same Auto-Dev run.
+    The control-plane row is intentionally not used for this receipt.  Once a
+    packet exists it owns the durable diagnostic; before packet admission, the
+    caller provides a project-scoped preflight location instead of creating a
+    partial run directory that a same-run-id retry could not resume.
     """
 
     if packet is not None and packet.is_dir():
@@ -2376,6 +2377,26 @@ def _canonical_admission_contention_receipt(
         },
     )
     return str(receipt)
+
+
+def _preflight_admission_diagnostic_root(project_path: Path, run_id: str) -> Path:
+    """Return the durable, non-run-directory receipt root for preflight.
+
+    Canonical identity lookup happens before ``portfolio.json`` is created.
+    A failed lookup must therefore not create ``state/development-runs/<id>``:
+    that directory denotes an admitted run and its presence without a
+    portfolio receipt is intentionally rejected on replay.  Keep the
+    append-only diagnostics adjacent to project artifacts until admission can
+    establish the run directory atomically through its portfolio receipt.
+    """
+
+    return (
+        project_path
+        / "artifacts"
+        / "development-delivery"
+        / "admission-preflight"
+        / run_id
+    )
 
 
 def _run_canonical_admission(
@@ -3180,6 +3201,9 @@ def start_development_run(
     )
     run_dir = project_path / "state" / "development-runs" / run_id
     if apply and selected_packet is None:
+        preflight_diagnostic_root = _preflight_admission_diagnostic_root(
+            project_path, run_id
+        )
         tracker_name = str(profile["tracker"].get("primary") or "filesystem")
         for ticket in dict.fromkeys(tickets):
             canonical_id = _resolve_canonical_development_work_id(
@@ -3188,13 +3212,13 @@ def start_development_run(
                 project=validate_name(project, "project"),
                 tracker=tracker_name,
                 ticket=ticket,
-                diagnostic_root=run_dir,
+                diagnostic_root=preflight_diagnostic_root,
             )
             canonical_existing = _read_canonical_development_work(
                 root,
                 canonical_work_id=canonical_id,
                 ticket=ticket,
-                diagnostic_root=run_dir,
+                diagnostic_root=preflight_diagnostic_root,
             )
             packet_raw = (
                 str(canonical_existing.get("packet_path") or "").strip()
