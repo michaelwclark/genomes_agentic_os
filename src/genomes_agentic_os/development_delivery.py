@@ -96,6 +96,7 @@ FORWARD_STATES = (
 TERMINAL_STATES = {"delivery_complete", "blocked", "abandoned", "cancelled"}
 RETRYABLE_FAILURES = {
     "environment_unavailable",
+    "executor_unavailable",
     "provider_unavailable",
     "lease_expired",
     "ci_failed",
@@ -1838,6 +1839,151 @@ class TaskState:
         _sync_canonical_task_progress(self.path)
         return state
 
+    def record_executor_unavailable(self, *, stage: str | None) -> dict[str, Any]:
+        """Atomically bind one unaccepted post-materialization handoff to its task.
+
+        A runtime registration establishes only resource ownership; it is not
+        executor admission.  Keep the provisioned worktree intact until a
+        recorded acceptance or bounded synchronous stage attempt exists, but
+        make the missing handoff durable and retry-bounded instead of returning
+        a successful-looking dispatch result.
+        """
+
+        replayed = False
+        handoff: dict[str, Any]
+        with _file_lock(self.path.with_suffix(self.path.suffix + ".lock")):
+            state = self.read()
+            failure = state.get("failure") if isinstance(state.get("failure"), Mapping) else {}
+            prior_receipt = Path(str(failure.get("receipt") or "")).expanduser()
+            prior_attempt = int(state.get("attempts", {}).get("executor_unavailable", 0))
+            maximum = int(state.get("max_attempts", 3))
+            if (
+                failure.get("kind") == "executor_unavailable"
+                and prior_receipt.is_file()
+                and prior_attempt >= maximum
+            ):
+                # A terminal refusal is idempotent: preserve the bound receipt
+                # instead of creating an unbounded fourth handoff.
+                handoff = _read_mapping(prior_receipt)
+                replayed = True
+            else:
+                # A still-pending refusal is a new failed handoff on the exact
+                # packet. Keep its prior receipt immutable and advance toward
+                # the configured bound; only an orphaned receipt from an
+                # interrupted first write is reused below.
+                attempt = prior_attempt + 1
+                recoverable = attempt < maximum
+                runtime = state.get("runtime") if isinstance(state.get("runtime"), Mapping) else {}
+                worktree = state.get("worktree") if isinstance(state.get("worktree"), Mapping) else {}
+                receipt_path = (
+                    self.path.parent
+                    / "handoffs"
+                    / f"executor-unavailable-attempt-{attempt:02d}.json"
+                )
+                handoff = {
+                    "schema": "development-executor-handoff/v1",
+                    "status": "pending" if recoverable else "blocked",
+                    "outcome": "executor_unavailable",
+                    "attempt": attempt,
+                    "max_attempts": maximum,
+                    "recoverable": recoverable,
+                    "run_id": state.get("run_id"),
+                    "ticket": state.get("ticket"),
+                    "canonical_work_id": state.get("canonical_work_id"),
+                    "task_state": str(self.path),
+                    "task_state_before_handoff": state.get("state"),
+                    "requested_stage": state.get("requested_stage"),
+                    "next_stage": stage,
+                    "worktree": dict(worktree),
+                    "policy": {
+                        "fingerprint": state.get("policy_fingerprint"),
+                        "receipt": state.get("policy_receipt"),
+                    },
+                    "runtime": dict(runtime),
+                    "reason": (
+                        "No recorded executor acceptance or bounded synchronous stage attempt "
+                        "followed the post-materialization Auto-Dev handoff; no stage was "
+                        "executed or receipted."
+                        if recoverable
+                        else "No recorded executor acceptance or bounded synchronous stage attempt "
+                        "followed the post-materialization Auto-Dev handoff before the retry "
+                        "budget was exhausted; no stage was executed or receipted."
+                    ),
+                    "next_action": (
+                        "Record executor acceptance or a bounded synchronous stage attempt, then "
+                        "resume this exact task; do not infer completion from the preserved worktree."
+                        if recoverable
+                        else "Correct the executor acceptance path and explicitly reopen or recover "
+                        "this blocked task before attempting another handoff."
+                    ),
+                    "recorded_at": utc_now(),
+                }
+                if receipt_path.is_file():
+                    existing_handoff = _read_mapping(receipt_path)
+                    comparable_existing = {
+                        key: value
+                        for key, value in existing_handoff.items()
+                        if key != "recorded_at"
+                    }
+                    comparable_handoff = {
+                        key: value for key, value in handoff.items() if key != "recorded_at"
+                    }
+                    if comparable_existing != comparable_handoff:
+                        raise DevelopmentDeliveryError("executor handoff receipt collision")
+                    # A crash after the receipt write but before the state write
+                    # leaves this exact, valid receipt orphaned. Reuse it so the
+                    # retry can atomically finish binding the failure to its task.
+                    handoff = existing_handoff
+                else:
+                    _atomic_json(receipt_path, handoff)
+                state.setdefault("attempts", {})["executor_unavailable"] = attempt
+                state["failure"] = {
+                    "kind": "executor_unavailable",
+                    "detail": handoff["reason"],
+                    "receipt": str(receipt_path),
+                    "recoverable": recoverable,
+                    "failed_at": handoff["recorded_at"],
+                    # A terminal executor refusal still has an operator-supported
+                    # recovery path once executor admission is repaired.
+                    "retry_state": state["state"],
+                }
+                if not recoverable:
+                    state["state"] = "blocked"
+                state["updated_at"] = utc_now()
+                state["last_failure_key"] = (
+                    f"{state['run_id']}:{state['ticket']}:executor-unavailable:{attempt}"
+                )
+                _atomic_json(self.path, state)
+        if replayed:
+            _refresh_portfolio_state(self.path)
+            _sync_auto_dev_projection(self.path)
+            _sync_canonical_task_progress(self.path)
+            return {"task": state, "handoff": handoff, "replayed": True}
+        self.emit(
+            event_type=(
+                "development.task.executor_handoff_pending"
+                if handoff["status"] == "pending"
+                else "development.task.executor_handoff_blocked"
+            ),
+            idempotency_key=state["last_failure_key"],
+            payload={
+                "ticket": state["ticket"],
+                "stage": stage,
+                "attempt": handoff["attempt"],
+                "receipt": str(self.path.parent / "handoffs" / f"executor-unavailable-attempt-{handoff['attempt']:02d}.json"),
+                "recoverable": handoff["recoverable"],
+            },
+        )
+        self.emit(
+            event_type="development.task.failed",
+            idempotency_key=f"{state['last_failure_key']}:failed",
+            payload={"ticket": state["ticket"], **state["failure"], "attempt": handoff["attempt"]},
+        )
+        _refresh_portfolio_state(self.path)
+        _sync_auto_dev_projection(self.path)
+        _sync_canonical_task_progress(self.path)
+        return {"task": state, "handoff": handoff, "replayed": False}
+
     def recover(self, *, receipt: str, idempotency_key: str) -> dict[str, Any]:
         replayed = False
         with _file_lock(self.path.with_suffix(self.path.suffix + ".lock")):
@@ -1849,7 +1995,12 @@ class TaskState:
                     raise DevelopmentDeliveryError("recovery requires a receipt")
                 failure = state.get("failure") if isinstance(state.get("failure"), Mapping) else {}
                 retry_state = failure.get("retry_state")
-                if not failure.get("recoverable") or not retry_state:
+                terminal_executor_handoff = (
+                    failure.get("kind") == "executor_unavailable" and retry_state
+                )
+                if not retry_state or (
+                    not failure.get("recoverable") and not terminal_executor_handoff
+                ):
                     raise DevelopmentDeliveryError("task has no recoverable failure")
                 now = utc_now()
                 state["state"] = retry_state
@@ -2521,6 +2672,32 @@ def _write_task_state(
     return state
 
 
+def _record_post_materialization_handoff(
+    task_state: TaskState,
+    *,
+    require_executor_handoff: bool,
+) -> dict[str, Any] | None:
+    """Record the exact no-executor boundary after a governed worktree exists."""
+
+    if not require_executor_handoff:
+        return None
+    task = task_state.read()
+    projection_path = Path(str(task.get("autodev_path") or "")).expanduser()
+    projection = read_auto_dev_state(projection_path) if projection_path.is_file() else {}
+    result = task_state.record_executor_unavailable(
+        stage=str(projection.get("current_stage") or task.get("requested_stage") or "") or None
+    )
+    return {
+        "schema": result["handoff"]["schema"],
+        "status": result["handoff"]["status"],
+        "outcome": result["handoff"]["outcome"],
+        "receipt": result["task"]["failure"]["receipt"],
+        "attempt": result["handoff"]["attempt"],
+        "recoverable": result["handoff"]["recoverable"],
+        "next_stage": result["handoff"]["next_stage"],
+    }
+
+
 def start_development_run(
     root: str | Path,
     domain: str,
@@ -2543,6 +2720,7 @@ def start_development_run(
     selected_work_item: str | Path | None = None,
     adopt_existing: bool = False,
     existing_state_only: bool = False,
+    require_executor_handoff: bool = False,
     apply: bool = False,
 ) -> dict[str, Any]:
     if not tickets:
@@ -3122,7 +3300,13 @@ def start_development_run(
         task_state = TaskState(state_path)
         current = task_state.read()
         failure = current.get("failure") if isinstance(current.get("failure"), Mapping) else {}
-        if failure.get("recoverable"):
+        # An unaccepted executor handoff is a durable, idempotent pending
+        # boundary.  Do not clear it merely because the same Everything
+        # packet is resumed: that would make the second invocation look like
+        # a fresh worktree-ready success while retaining no failed handoff
+        # evidence.  A distinct recovery after executor remediation remains
+        # the only way to advance this retry-bounded failure.
+        if failure.get("recoverable") and failure.get("kind") != "executor_unavailable":
             task_state.recover(
                 receipt="automatic provisioning resume",
                 idempotency_key=f"{run_id}:{ticket}:auto-recover:{current.get('updated_at')}",
@@ -3314,9 +3498,23 @@ def start_development_run(
             current_index = FORWARD_STATES.index(current_name)
             worktree_index = FORWARD_STATES.index("worktree_ready")
             if not provision_worktree or (current_index >= worktree_index and current.get("worktree")):
-                task_rows.append(
-                    dict(prior_rows.get(ticket) or {"ticket": ticket, "state_ref": str(state_path), **current})
+                handoff = _record_post_materialization_handoff(
+                    task_state,
+                    require_executor_handoff=require_executor_handoff,
                 )
+                row = dict(
+                    prior_rows.get(ticket)
+                    or {"ticket": ticket, "state_ref": str(state_path), **current}
+                )
+                if handoff is not None:
+                    row["handoff"] = handoff
+                else:
+                    # A recovery clears the task failure, so a later named-stage
+                    # resume must not keep the old pending handoff copied from
+                    # the portfolio projection. Pending status is current-task
+                    # state, not an append-only history marker.
+                    row.pop("handoff", None)
+                task_rows.append(row)
                 continue
             if current_index > FORWARD_STATES.index("work_item_ready"):
                 raise DevelopmentDeliveryError(
@@ -3504,16 +3702,21 @@ def start_development_run(
                     delivery_state="worktree_ready",
                     canonical_work_id=canonical_work_id,
                 )
-                task_rows.append(
-                    {
-                        "ticket": ticket,
-                        "state_ref": str(state_path),
-                        "work_item": str(work_item),
-                        "worktree": adopted_worktree,
-                        "runtime": runtime_registration,
-                        "canonical_work_id": canonical_work_id,
-                    }
+                handoff = _record_post_materialization_handoff(
+                    task_state,
+                    require_executor_handoff=require_executor_handoff,
                 )
+                row = {
+                    "ticket": ticket,
+                    "state_ref": str(state_path),
+                    "work_item": str(work_item),
+                    "worktree": adopted_worktree,
+                    "runtime": runtime_registration,
+                    "canonical_work_id": canonical_work_id,
+                }
+                if handoff is not None:
+                    row["handoff"] = handoff
+                task_rows.append(row)
                 continue
             if not provision_worktree:
                 current = task_state.read()
@@ -3565,16 +3768,21 @@ def start_development_run(
                 delivery_state=str(current.get("state") or "worktree_ready"),
                 canonical_work_id=canonical_work_id,
             )
-            task_rows.append(
-                {
-                    "ticket": ticket,
-                    "state_ref": str(state_path),
-                    "work_item": str(work_item),
-                    "worktree": worktree,
-                    "runtime": runtime_registration,
-                    "canonical_work_id": canonical_work_id,
-                }
+            handoff = _record_post_materialization_handoff(
+                task_state,
+                require_executor_handoff=require_executor_handoff,
             )
+            row = {
+                "ticket": ticket,
+                "state_ref": str(state_path),
+                "work_item": str(work_item),
+                "worktree": worktree,
+                "runtime": runtime_registration,
+                "canonical_work_id": canonical_work_id,
+            }
+            if handoff is not None:
+                row["handoff"] = handoff
+            task_rows.append(row)
         except (DevelopmentDeliveryError, OSError, subprocess.SubprocessError) as exc:
             detail = str(exc)
             kind = "provider_unavailable" if any(word in detail.lower() for word in ("fetch", "timeout", "unavailable")) else "provisioning_failed"
@@ -3599,8 +3807,21 @@ def start_development_run(
     )
     task_rows = [merged_task_rows[ticket] for ticket in plan["tickets"] if ticket in merged_task_rows]
     task_states = [TaskState(Path(row["state_ref"])).read()["state"] for row in task_rows]
+    portfolio_state = _portfolio_rollup(task_states)
+    pending_handoffs = [
+        row
+        for row in task_rows
+        if isinstance(row.get("handoff"), Mapping)
+        and row["handoff"].get("status") == "pending"
+    ]
     plan.update({
-        "state": _portfolio_rollup(task_states),
+        "state": (
+            "blocked"
+            if portfolio_state == "blocked"
+            else "pending"
+            if pending_handoffs
+            else portfolio_state
+        ),
         "tasks": task_rows,
         "updated_at": utc_now(),
     })
