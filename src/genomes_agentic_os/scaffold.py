@@ -512,6 +512,9 @@ class ScaffoldResult:
     created: list[Path] = field(default_factory=list)
     skipped: list[Path] = field(default_factory=list)
     updated: list[Path] = field(default_factory=list)
+    # Scaffolders that own exactly one durable entity record its resolved path
+    # here so callers never have to re-derive it by matching directory names.
+    entity_path: Path | None = None
 
     def extend(self, other: "ScaffoldResult") -> None:
         self.created.extend(other.created)
