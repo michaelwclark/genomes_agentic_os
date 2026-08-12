@@ -5816,9 +5816,33 @@ def run_development_stage(
                             if isinstance(ready_payload, Mapping)
                             else {}
                         )
+                        ready_repository = str(
+                            ready_evidence.get("repository") or ""
+                        ).strip()
+                        ready_base_branch = str(
+                            ready_evidence.get("base_branch") or ""
+                        ).strip()
+                        ready_provider = str(
+                            ready_evidence.get("provider") or ""
+                        ).strip()
                         ready_pull_request = str(
                             ready_evidence.get("pull_request") or ""
                         ).strip()
+                        # The same immediate predecessor that emitted a flat
+                        # GitHub PR-family receipt could record its immutable
+                        # ready-for-merge authority with a bare numeric PR.
+                        # Qualify that value only for this comparison and only
+                        # after its repository, base, and provider bind it to
+                        # the selected task; never rewrite the receipt.
+                        if (
+                            expected_repository.startswith("git:github.com/")
+                            and expected_provider == "github"
+                            and ready_repository == expected_repository
+                            and ready_base_branch == expected_base_branch
+                            and ready_provider.lower() == "github"
+                            and re.fullmatch(r"[1-9][0-9]*", ready_pull_request)
+                        ):
+                            ready_pull_request = pull_request_prefix + ready_pull_request
                         autodev_subject = ""
                         if autodev_ref and Path(autodev_ref).expanduser().is_file():
                             autodev_subject = str(
@@ -5830,12 +5854,9 @@ def run_development_stage(
                             and ready_evidence.get("checks_verified") is True
                             and ready_evidence.get("reviews_verified") is True
                             and ready_evidence.get("readback_verified") is True
-                            and str(ready_evidence.get("repository") or "").strip()
-                            == expected_repository
-                            and str(ready_evidence.get("base_branch") or "").strip()
-                            == expected_base_branch
-                            and str(ready_evidence.get("provider") or "").strip().lower()
-                            == expected_provider
+                            and ready_repository == expected_repository
+                            and ready_base_branch == expected_base_branch
+                            and ready_provider.lower() == expected_provider
                             and ready_pull_request == previous_identity["pull_request"]
                             and str(ready_evidence.get("source_head_sha") or "").strip()
                             == previous_head
