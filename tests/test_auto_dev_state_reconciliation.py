@@ -441,6 +441,7 @@ def test_start_development_run_bounds_preflight_canonical_admission_contention(
     assert receipt["operation"] == "sync_canonical_development_work"
     assert receipt["outcome"] == "exhausted"
     assert receipt["attempts"] == delivery.CANONICAL_ADMISSION_MAX_ATTEMPTS
+    assert receipt["next_action"].startswith("Resume the existing Auto-Dev packet")
 
     _fake_worktree(monkeypatch, "CC-START-CONTENTION", base_sha)
     resumed = delivery.start_development_run(

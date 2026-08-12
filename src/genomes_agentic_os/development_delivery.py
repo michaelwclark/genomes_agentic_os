@@ -2342,6 +2342,14 @@ def _canonical_admission_contention_receipt(
         f"{recorded_at.replace(':', '').replace('-', '').replace('+00:00', 'Z')}-"
         f"{uuid.uuid4().hex[:12]}.json"
     )
+    if outcome == "exhausted":
+        next_action = (
+            "Resume the existing Auto-Dev packet after the current state-db writer releases its transaction."
+            if packet is not None and packet.is_dir()
+            else "Re-run this exact Auto-Dev run after the current state-db writer releases its transaction."
+        )
+    else:
+        next_action = "Canonical admission completed without creating a second lifecycle transition."
     payload = {
         "schema": "development-canonical-admission-contention/v1",
         "ticket": ticket,
@@ -2352,11 +2360,7 @@ def _canonical_admission_contention_receipt(
         "backoff_seconds": list(delays),
         "error": error,
         "recorded_at": recorded_at,
-        "next_action": (
-            "Resume the existing Auto-Dev packet after the current state-db writer releases its transaction."
-            if outcome == "exhausted"
-            else "Canonical admission completed without creating a second lifecycle transition."
-        ),
+        "next_action": next_action,
     }
     _atomic_json(
         receipt,
@@ -2406,10 +2410,15 @@ def _run_canonical_admission(
                     operation=operation,
                     diagnostic_root=diagnostic_root,
                 )
+                recovery = (
+                    "Resume the existing packet; do not create a replacement run."
+                    if packet is not None and packet.is_dir()
+                    else "Re-run this exact Auto-Dev run; do not create a replacement packet."
+                )
                 diagnostic = f" Diagnostic receipt: {receipt}." if receipt else ""
                 raise DevelopmentDeliveryError(
                     "canonical Auto-Dev admission could not acquire the state database write lock "
-                    f"after {attempt} bounded attempts.{diagnostic} Resume the existing packet; do not create a replacement run."
+                    f"after {attempt} bounded attempts.{diagnostic} {recovery}"
                 ) from exc
             delay = CANONICAL_ADMISSION_BACKOFF_SECONDS * (2 ** (attempt - 1))
             delays.append(delay)
