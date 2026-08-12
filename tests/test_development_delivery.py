@@ -4133,6 +4133,43 @@ def test_release_propagation_appends_exact_head_supersession_without_rewriting_p
     ready_path.write_bytes(ready_bytes)
     task.path.write_text(json.dumps(post_pr_task), encoding="utf-8")
 
+    def set_ready_evidence(**updates: object) -> bytes:
+        updated_ready = json.loads(ready_bytes)
+        updated_ready["evidence"].update(updates)
+        updated_ready_bytes = json.dumps(updated_ready).encode("utf-8")
+        ready_path.write_bytes(updated_ready_bytes)
+        updated_task = json.loads(json.dumps(post_pr_task))
+        updated_record = next(
+            item
+            for item in reversed(updated_task["receipts"])
+            if item.get("state") == "ready_for_merge"
+        )
+        updated_record["sha256"] = hashlib.sha256(updated_ready_bytes).hexdigest()
+        task.path.write_text(json.dumps(updated_task), encoding="utf-8")
+        return updated_ready_bytes
+
+    for label, updates in (
+        ("zero", {"pull_request": "0"}),
+        ("malformed", {"pull_request": "not-a-pr"}),
+        ("different", {"pull_request": "53"}),
+        ("foreign-repository", {"repository": "git:github.com/other/app", "pull_request": "52"}),
+        ("foreign-base", {"base_branch": "release", "pull_request": "52"}),
+        ("foreign-provider", {"provider": "gitlab", "pull_request": "52"}),
+    ):
+        refused_ready_bytes = set_ready_evidence(**updates)
+        with pytest.raises(
+            DevelopmentDeliveryError,
+            match="canonical prior review authority",
+        ):
+            run_development_stage(
+                task.path,
+                stage="release_propagation",
+                receipts={"release_propagation": str(refreshed_receipt)},
+                idempotency_prefix=f"cc-52:pr-create:{label}-ready-pr",
+            )
+        assert ready_path.read_bytes() == refused_ready_bytes
+
+    legacy_ready_bytes = set_ready_evidence(pull_request="52")
     refreshed = run_development_stage(
         task.path,
         stage="release_propagation",
@@ -4143,6 +4180,7 @@ def test_release_propagation_appends_exact_head_supersession_without_rewriting_p
     current = task.read()["stage_receipts"]["release_propagation"]
     current_wrapper = Path(current["ref"])
     assert legacy_wrapper.read_bytes() == legacy_bytes
+    assert ready_path.read_bytes() == legacy_ready_bytes
     assert current_wrapper != legacy_wrapper
     assert current_wrapper.is_file()
     assert refreshed["supersedes"]["wrapper_ref"] == str(legacy_wrapper)
