@@ -18,8 +18,10 @@ import fcntl
 import json
 from pathlib import Path
 import re
+import sqlite3
 import subprocess
-from typing import Any, Mapping, Sequence
+import time
+from typing import Any, Callable, Mapping, Sequence
 from urllib.parse import urlsplit
 import uuid
 
@@ -105,6 +107,9 @@ RETRYABLE_FAILURES = {
     "test_failed",
     "provisioning_failed",
 }
+CANONICAL_ADMISSION_MAX_ATTEMPTS = 4
+CANONICAL_ADMISSION_BUSY_TIMEOUT_MS = 250
+CANONICAL_ADMISSION_BACKOFF_SECONDS = 0.05
 WORKFLOW_NAMES = (
     "readiness_and_context",
     "isolated_implementation",
@@ -1801,7 +1806,15 @@ class TaskState:
         _sync_canonical_task_progress(self.path)
         return state
 
-    def fail(self, *, kind: str, detail: str, receipt: str, idempotency_key: str) -> dict[str, Any]:
+    def fail(
+        self,
+        *,
+        kind: str,
+        detail: str,
+        receipt: str,
+        idempotency_key: str,
+        sync_canonical: bool = True,
+    ) -> dict[str, Any]:
         replayed = False
         with _file_lock(self.path.with_suffix(self.path.suffix + ".lock")):
             state = self.read()
@@ -1828,7 +1841,8 @@ class TaskState:
         if replayed:
             _refresh_portfolio_state(self.path)
             _sync_auto_dev_projection(self.path)
-            _sync_canonical_task_progress(self.path)
+            if sync_canonical:
+                _sync_canonical_task_progress(self.path)
             return state
         self.emit(
             event_type="development.task.failed",
@@ -1837,7 +1851,8 @@ class TaskState:
         )
         _refresh_portfolio_state(self.path)
         _sync_auto_dev_projection(self.path)
-        _sync_canonical_task_progress(self.path)
+        if sync_canonical:
+            _sync_canonical_task_progress(self.path)
         return state
 
     def record_executor_unavailable(self, *, stage: str | None) -> dict[str, Any]:
@@ -2150,24 +2165,72 @@ def _resolve_canonical_development_work_id(
     tracker: str,
     ticket: str,
     preferred_id: str | None = None,
+    packet: Path | None = None,
+    diagnostic_root: Path | None = None,
 ) -> str:
-    connection = connect_state(default_db_path(root))
-    try:
-        existing = _canonical_source_match(
-            connection,
-            domain=domain,
-            project=project,
-            tracker=tracker,
+    def resolve() -> str:
+        connection = connect_state(
+            default_db_path(root),
+            busy_timeout_ms=CANONICAL_ADMISSION_BUSY_TIMEOUT_MS,
+        )
+        try:
+            existing = _canonical_source_match(
+                connection,
+                domain=domain,
+                project=project,
+                tracker=tracker,
+                ticket=ticket,
+                preferred_id=preferred_id,
+            )
+            return str(
+                (existing or {}).get("id")
+                or preferred_id
+                or _canonical_development_work_id(domain, project, ticket)
+            )
+        finally:
+            connection.close()
+
+    return str(
+        _run_canonical_admission(
+            resolve,
             ticket=ticket,
-            preferred_id=preferred_id,
+            canonical_work_id=preferred_id or _canonical_development_work_id(domain, project, ticket),
+            operation="resolve_canonical_development_work_id",
+            packet=packet,
+            diagnostic_root=diagnostic_root,
         )
-        return str(
-            (existing or {}).get("id")
-            or preferred_id
-            or _canonical_development_work_id(domain, project, ticket)
+    )
+
+
+def _read_canonical_development_work(
+    root: str | Path,
+    *,
+    canonical_work_id: str,
+    ticket: str,
+    packet: Path | None = None,
+    diagnostic_root: Path | None = None,
+) -> dict[str, Any] | None:
+    """Read one canonical row through the same bounded admission boundary."""
+
+    def read() -> dict[str, Any] | None:
+        connection = connect_state(
+            default_db_path(root),
+            busy_timeout_ms=CANONICAL_ADMISSION_BUSY_TIMEOUT_MS,
         )
-    finally:
-        connection.close()
+        try:
+            return canonical_work_items.get(connection, canonical_work_id)
+        finally:
+            connection.close()
+
+    result = _run_canonical_admission(
+        read,
+        ticket=ticket,
+        canonical_work_id=canonical_work_id,
+        operation="read_canonical_development_work",
+        packet=packet,
+        diagnostic_root=diagnostic_root,
+    )
+    return dict(result) if isinstance(result, Mapping) else None
 
 
 def _canonical_packet_match(
@@ -2181,16 +2244,28 @@ def _canonical_packet_match(
     """Resolve one existing canonical row by its exact packet path for migration."""
 
     os_root = expand_path(root)
-    connection = connect_state(default_db_path(root))
-    try:
-        rows = canonical_work_items.query(
-            connection,
-            domain=normalize_domain(domain),
-            project=validate_name(project, "project"),
-            limit=10000,
+    def query() -> list[dict[str, Any]]:
+        connection = connect_state(
+            default_db_path(root),
+            busy_timeout_ms=CANONICAL_ADMISSION_BUSY_TIMEOUT_MS,
         )
-    finally:
-        connection.close()
+        try:
+            return canonical_work_items.query(
+                connection,
+                domain=normalize_domain(domain),
+                project=validate_name(project, "project"),
+                limit=10000,
+            )
+        finally:
+            connection.close()
+
+    rows = _run_canonical_admission(
+        query,
+        ticket=ticket,
+        canonical_work_id=None,
+        operation="query_canonical_development_packets",
+        packet=packet,
+    )
     matches: list[dict[str, Any]] = []
     for row in rows:
         raw = str(row.get("packet_path") or "").strip()
@@ -2230,7 +2305,211 @@ def _canonical_state_for_delivery(
     return "ready"
 
 
+def _is_transient_sqlite_contention(exc: sqlite3.OperationalError) -> bool:
+    """Return whether SQLite rejected a write because another owner is active."""
+
+    detail = str(exc).lower()
+    return "database is locked" in detail or "database is busy" in detail
+
+
+def _canonical_admission_contention_receipt(
+    packet: Path | None,
+    *,
+    ticket: str,
+    canonical_work_id: str | None,
+    attempts: int,
+    delays: Sequence[float],
+    error: str,
+    outcome: str,
+    operation: str,
+    diagnostic_root: Path | None = None,
+) -> str | None:
+    """Persist a compact diagnostic for a contended canonical admission.
+
+    The control-plane row is intentionally not used for this receipt.  Once a
+    packet exists it owns the durable diagnostic; before packet admission, the
+    caller provides a project-scoped preflight location instead of creating a
+    partial run directory that a same-run-id retry could not resume.
+    """
+
+    if packet is not None and packet.is_dir():
+        directory = packet / "artifacts" / "development-delivery"
+    elif diagnostic_root is not None:
+        directory = diagnostic_root / "admission-receipts"
+    else:
+        return None
+    recorded_at = utc_now()
+    receipt = directory / (
+        "canonical-admission-contention-"
+        f"{recorded_at.replace(':', '').replace('-', '').replace('+00:00', 'Z')}-"
+        f"{uuid.uuid4().hex[:12]}.json"
+    )
+    if outcome == "exhausted":
+        next_action = (
+            "Resume the existing Auto-Dev packet after the current state-db writer releases its transaction."
+            if packet is not None and packet.is_dir()
+            else "Re-run this exact Auto-Dev run after the current state-db writer releases its transaction."
+        )
+    else:
+        next_action = "Canonical admission completed without creating a second lifecycle transition."
+    payload = {
+        "schema": "development-canonical-admission-contention/v1",
+        "ticket": ticket,
+        "canonical_work_id": canonical_work_id,
+        "operation": operation,
+        "outcome": outcome,
+        "attempts": attempts,
+        "backoff_seconds": list(delays),
+        "error": error,
+        "recorded_at": recorded_at,
+        "next_action": next_action,
+    }
+    _atomic_json(
+        receipt,
+        payload,
+    )
+    _atomic_json(
+        directory / "canonical-admission-contention-latest.json",
+        {
+            "schema": "development-canonical-admission-contention-latest/v1",
+            "latest_receipt": str(receipt),
+            "latest_receipt_sha256": hashlib.sha256(receipt.read_bytes()).hexdigest(),
+            "updated_at": recorded_at,
+        },
+    )
+    return str(receipt)
+
+
+def _preflight_admission_diagnostic_root(project_path: Path, run_id: str) -> Path:
+    """Return the durable, non-run-directory receipt root for preflight.
+
+    Canonical identity lookup happens before ``portfolio.json`` is created.
+    A failed lookup must therefore not create ``state/development-runs/<id>``:
+    that directory denotes an admitted run and its presence without a
+    portfolio receipt is intentionally rejected on replay.  Keep the
+    append-only diagnostics adjacent to project artifacts until admission can
+    establish the run directory atomically through its portfolio receipt.
+    """
+
+    return (
+        project_path
+        / "artifacts"
+        / "development-delivery"
+        / "admission-preflight"
+        / run_id
+    )
+
+
+def _run_canonical_admission(
+    operation_fn: Callable[[], Any],
+    *,
+    ticket: str,
+    canonical_work_id: str | None,
+    operation: str,
+    packet: Path | None = None,
+    diagnostic_root: Path | None = None,
+) -> Any:
+    """Run every canonical-state DB access under one bounded lock policy."""
+
+    delays: list[float] = []
+    last_error: sqlite3.OperationalError | None = None
+    for attempt in range(1, CANONICAL_ADMISSION_MAX_ATTEMPTS + 1):
+        try:
+            result = operation_fn()
+        except sqlite3.OperationalError as exc:
+            if not _is_transient_sqlite_contention(exc):
+                raise
+            last_error = exc
+            if attempt == CANONICAL_ADMISSION_MAX_ATTEMPTS:
+                receipt = _canonical_admission_contention_receipt(
+                    packet,
+                    ticket=ticket,
+                    canonical_work_id=canonical_work_id,
+                    attempts=attempt,
+                    delays=delays,
+                    error=str(exc),
+                    outcome="exhausted",
+                    operation=operation,
+                    diagnostic_root=diagnostic_root,
+                )
+                recovery = (
+                    "Resume the existing packet; do not create a replacement run."
+                    if packet is not None and packet.is_dir()
+                    else "Re-run this exact Auto-Dev run; do not create a replacement packet."
+                )
+                diagnostic = f" Diagnostic receipt: {receipt}." if receipt else ""
+                raise DevelopmentDeliveryError(
+                    "canonical Auto-Dev admission could not acquire the state database write lock "
+                    f"after {attempt} bounded attempts.{diagnostic} {recovery}"
+                ) from exc
+            delay = CANONICAL_ADMISSION_BACKOFF_SECONDS * (2 ** (attempt - 1))
+            delays.append(delay)
+            time.sleep(delay)
+        else:
+            if last_error is not None:
+                _canonical_admission_contention_receipt(
+                    packet,
+                    ticket=ticket,
+                    canonical_work_id=canonical_work_id,
+                    attempts=attempt,
+                    delays=delays,
+                    error=str(last_error),
+                    outcome="retried",
+                    operation=operation,
+                    diagnostic_root=diagnostic_root,
+                )
+            return result
+    raise AssertionError("canonical admission retry loop exhausted without a result")
+
+
 def _sync_canonical_development_work(
+    root: str | Path,
+    *,
+    domain: str,
+    project: str,
+    ticket: str,
+    title: str,
+    run_id: str,
+    tracker: str,
+    packet: Path,
+    worktree: Mapping[str, Any] | None,
+    delivery_state: str,
+    canonical_work_id: str | None = None,
+    blocked_reason: str | None = None,
+    allow_unblock: bool = False,
+) -> dict[str, Any]:
+    """Synchronize canonical state with bounded retry for a busy SQLite writer.
+
+    Each attempt opens and closes a fresh connection before backoff.  That
+    makes an interrupted supervisor tick unable to keep the next Auto-Dev
+    admission pinned behind its abandoned transaction, while the upsert's
+    stable work id keeps replay from creating a duplicate lifecycle row.
+    """
+
+    return _run_canonical_admission(
+        lambda: _sync_canonical_development_work_once(
+            root,
+            domain=domain,
+            project=project,
+            ticket=ticket,
+            title=title,
+            run_id=run_id,
+            tracker=tracker,
+            packet=packet,
+            worktree=worktree,
+            delivery_state=delivery_state,
+            canonical_work_id=canonical_work_id,
+            blocked_reason=blocked_reason,
+            allow_unblock=allow_unblock,
+        ),
+        ticket=ticket,
+        canonical_work_id=canonical_work_id,
+        operation="sync_canonical_development_work",
+        packet=packet,
+    )
+
+
+def _sync_canonical_development_work_once(
     root: str | Path,
     *,
     domain: str,
@@ -2256,7 +2535,10 @@ def _sync_canonical_development_work(
             "to create a new active packet and delivery run"
         )
 
-    connection = connect_state(default_db_path(root))
+    connection = connect_state(
+        default_db_path(root),
+        busy_timeout_ms=CANONICAL_ADMISSION_BUSY_TIMEOUT_MS,
+    )
     try:
         existing = _canonical_source_match(
             connection,
@@ -3332,7 +3614,20 @@ def start_development_run(
         context_selection_override=context_selection_override,
     )
     project_path = project_root(root, domain, project)
+    # Allocate the deterministic run destination before admission preflight so
+    # an unavailable state database still leaves durable, bounded diagnostics.
+    started_at = datetime.now(timezone.utc)
+    run_id = run_id or dated_name(
+        f"dev-{started_at.strftime('%H%M%SZ')}-{uuid.uuid4().hex[:6]}",
+        when=started_at,
+        policy=load_artifact_naming_policy(root),
+        scope="development_runs",
+    )
+    run_dir = project_path / "state" / "development-runs" / run_id
     if apply and selected_packet is None:
+        preflight_diagnostic_root = _preflight_admission_diagnostic_root(
+            project_path, run_id
+        )
         tracker_name = str(profile["tracker"].get("primary") or "filesystem")
         for ticket in dict.fromkeys(tickets):
             canonical_id = _resolve_canonical_development_work_id(
@@ -3341,12 +3636,14 @@ def start_development_run(
                 project=validate_name(project, "project"),
                 tracker=tracker_name,
                 ticket=ticket,
+                diagnostic_root=preflight_diagnostic_root,
             )
-            connection = connect_state(default_db_path(root))
-            try:
-                canonical_existing = canonical_work_items.get(connection, canonical_id)
-            finally:
-                connection.close()
+            canonical_existing = _read_canonical_development_work(
+                root,
+                canonical_work_id=canonical_id,
+                ticket=ticket,
+                diagnostic_root=preflight_diagnostic_root,
+            )
             packet_raw = (
                 str(canonical_existing.get("packet_path") or "").strip()
                 if isinstance(canonical_existing, Mapping)
@@ -3391,14 +3688,6 @@ def start_development_run(
                         f"{ticket} already has a live Auto-Dev item; resume it with "
                         f"--state {projection} so its delivery and pull-request history cannot be replaced"
                     )
-    started_at = datetime.now(timezone.utc)
-    run_id = run_id or dated_name(
-        f"dev-{started_at.strftime('%H%M%SZ')}-{uuid.uuid4().hex[:6]}",
-        when=started_at,
-        policy=load_artifact_naming_policy(root),
-        scope="development_runs",
-    )
-    run_dir = project_path / "state" / "development-runs" / run_id
     requested_titles = {ticket: (titles or {}).get(ticket) or f"Implement {ticket}" for ticket in dict.fromkeys(tickets)}
     plan = {
         "schema": "development-portfolio/v1",
@@ -3911,6 +4200,8 @@ def start_development_run(
                     if current.get("canonical_work_id")
                     else None
                 ),
+                packet=existing_work_item,
+                diagnostic_root=run_dir,
             )
             current.update(
                 {
@@ -3999,12 +4290,16 @@ def start_development_run(
                 tracker=profile_tracker,
                 ticket=ticket,
                 preferred_id=(str(current.get("canonical_work_id")) if current.get("canonical_work_id") else None),
+                packet=selected_packet,
+                diagnostic_root=run_dir,
             )
-            connection = connect_state(default_db_path(root))
-            try:
-                canonical_existing = canonical_work_items.get(connection, canonical_work_id)
-            finally:
-                connection.close()
+            canonical_existing = _read_canonical_development_work(
+                root,
+                canonical_work_id=canonical_work_id,
+                ticket=ticket,
+                packet=selected_packet,
+                diagnostic_root=run_dir,
+            )
             work_item = selected_packet if adoption_row is not None else None
             if canonical_existing and canonical_existing.get("packet_path"):
                 if canonical_existing.get("state") in canonical_work_items.TERMINAL_STATES:
@@ -4253,12 +4548,19 @@ def start_development_run(
         except (DevelopmentDeliveryError, OSError, subprocess.SubprocessError) as exc:
             detail = str(exc)
             kind = "provider_unavailable" if any(word in detail.lower() for word in ("fetch", "timeout", "unavailable")) else "provisioning_failed"
+            admission_contended = "canonical Auto-Dev admission could not acquire" in detail
             failed = task_state.fail(
                 kind=kind,
                 detail=detail,
                 receipt=str(state_path),
                 idempotency_key=f"{run_id}:{ticket}:provisioning-failed:{task_state.read().get('updated_at')}",
+                # The original bounded admission receipt is authoritative while
+                # the state DB is locked. Do not immediately retry that same
+                # unavailable writer just to project this local failure.
+                sync_canonical=not admission_contended,
             )
+            if admission_contended:
+                raise
             task_rows.append({"ticket": ticket, "state_ref": str(state_path), "error": failed["failure"]})
     merged_task_rows = {
         str(row.get("ticket")): dict(row)
