@@ -6006,6 +6006,8 @@ def run_development_stage(
                     legacy_repository = expected_repository.removeprefix("git:github.com/")
                     legacy_pull_request = str(previous_details.get("pull_request") or "").strip()
                     legacy_flat_github_identity = False
+                    legacy_canonical_github_identity = False
+                    legacy_expected_pull_request = ""
                     if (
                         expected_repository.startswith("git:github.com/")
                         and expected_provider == "github"
@@ -6021,6 +6023,41 @@ def run_development_stage(
                             "pull_request": pull_request_prefix + legacy_pull_request,
                         }
                         legacy_flat_github_identity = True
+                        legacy_expected_pull_request = (
+                            pull_request_prefix + legacy_pull_request
+                        )
+                    # A later predecessor already used the canonical GitHub
+                    # repository and qualified PR fields, but can still lack
+                    # only source_branch.  Treat that distinct historical
+                    # shape as compatible solely when every available prior
+                    # identity field already binds to the selected task.
+                    # Unlike the flat predecessor above, no field is
+                    # normalized here.
+                    canonical_pull_request = str(
+                        previous_details.get("pull_request") or ""
+                    ).strip()
+                    canonical_pull_request_identifier = canonical_pull_request.removeprefix(
+                        pull_request_prefix
+                    )
+                    if (
+                        not legacy_flat_github_identity
+                        and expected_repository.startswith("git:github.com/")
+                        and expected_provider == "github"
+                        and expected_base_branch
+                        and not str(previous_details.get("source_branch") or "").strip()
+                        and str(previous_details.get("repository") or "").strip()
+                        == expected_repository
+                        and str(previous_details.get("base_branch") or "").strip()
+                        == expected_base_branch
+                        and str(previous_details.get("provider") or "").strip().lower()
+                        == "github"
+                        and canonical_pull_request.startswith(pull_request_prefix)
+                        and re.fullmatch(
+                            r"[1-9][0-9]*", canonical_pull_request_identifier
+                        )
+                    ):
+                        legacy_canonical_github_identity = True
+                        legacy_expected_pull_request = canonical_pull_request
                     refreshed_details = (
                         release_receipt_payload.get("evidence")
                         if isinstance(release_receipt_payload.get("evidence"), Mapping)
@@ -6064,7 +6101,10 @@ def run_development_stage(
                     # evidence is never rewritten.
                     legacy_source_branch_derived = False
                     if (
-                        legacy_flat_github_identity
+                        (
+                            legacy_flat_github_identity
+                            or legacy_canonical_github_identity
+                        )
                         and not str(previous_details.get("source_branch") or "").strip()
                         and expected_base_branch
                         and expected_source_branch
@@ -6075,12 +6115,12 @@ def run_development_stage(
                         and str(previous_details.get("provider") or "").strip().lower()
                         == expected_provider
                         and str(previous_details.get("pull_request") or "").strip()
-                        == pull_request_prefix + legacy_pull_request
+                        == legacy_expected_pull_request
                         and refreshed_identity["repository"] == expected_repository
                         and refreshed_identity["base_branch"] == expected_base_branch
                         and refreshed_identity["provider"].lower() == expected_provider
                         and refreshed_identity["pull_request"]
-                        == pull_request_prefix + legacy_pull_request
+                        == legacy_expected_pull_request
                         and refreshed_identity["source_branch"] == expected_source_branch
                     ):
                         previous_details = {
@@ -6214,11 +6254,18 @@ def run_development_stage(
                         "source_head_sha": previous_head,
                     }
                     if legacy_source_branch_derived:
-                        payload["supersedes"]["legacy_identity_normalization"] = {
+                        legacy_normalization = {
                             "field": "source_branch",
                             "source": "selected_task.worktree.branch",
                             "value": expected_source_branch,
                         }
+                        if legacy_canonical_github_identity:
+                            legacy_normalization["identity_shape"] = (
+                                "canonical_qualified_github"
+                            )
+                        payload["supersedes"]["legacy_identity_normalization"] = (
+                            legacy_normalization
+                        )
                     supersession_key = hashlib.sha256(
                         json.dumps(
                             {
