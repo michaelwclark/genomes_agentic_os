@@ -82,6 +82,27 @@ create parallel host or alert configuration.
 
 ## Local and cross-host transport
 
+### Local/degraded queue isolation
+
+**Audience:** operators running `agentic-os runtime work` against a local
+Execution Fabric instance. The source of truth is the selected queue and worker
+pool in `harness/config/execution-fabric.yml`; this guide is the operator-facing
+description of that policy.
+
+In local/degraded mode, a worker has concurrency one. When it is configured for
+more than one named queue, each bounded dispatch chooses one configured queue
+and its matching worker pool before claiming work. It never claims from the
+entire fabric and then reports the requested queue afterward. This preserves
+queue and worker-pool admission boundaries: work in another queue remains
+queued for that queue's worker instead of being consumed by whichever local
+worker tick ran first.
+
+The `runtime work` result includes both `requested_queue` and
+`selected_queue`. Operators should treat a mismatch as an investigation signal;
+normal local operation selects only the requested queue. Cross-host shared
+worker-pool concurrency remains a remote-transport capability, not a local
+fallback behavior.
+
 Fresh installs remain on the explicit local/degraded transport:
 
 ```yaml
