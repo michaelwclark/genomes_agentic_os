@@ -285,6 +285,7 @@ def _set_reviewed_revision(
             "checks_verified": True,
             "reviews_verified": True,
             "readback_verified": True,
+            "source_head_sha": revision,
             "subject_revision": revision,
             **scope,
         },
@@ -4063,7 +4064,7 @@ def test_release_propagation_appends_exact_head_supersession_without_rewriting_p
         )
         return path
 
-    old_head = "a" * 40
+    old_head = base_sha
     new_head = "b" * 40
     original_receipt = family_receipt("old", old_head, legacy_nested_identity=True)
     first = run_development_stage(
@@ -4096,19 +4097,7 @@ def test_release_propagation_appends_exact_head_supersession_without_rewriting_p
     )
     post_pr_task = task.read()
     post_pr_task["state"] = "ready_for_merge"
-    task.path.write_text(json.dumps(post_pr_task), encoding="utf-8")
-    with pytest.raises(
-        DevelopmentDeliveryError,
-        match="only allowed from local_validation",
-    ):
-        run_development_stage(
-            task.path,
-            stage="release_propagation",
-            receipts={"release_propagation": str(refreshed_receipt)},
-            idempotency_prefix="cc-52:pr-create:new",
-        )
-    assert legacy_wrapper.read_bytes() == legacy_bytes
-    post_pr_task["state"] = "local_validation"
+    post_pr_task["subject_revision"] = old_head
     task.path.write_text(json.dumps(post_pr_task), encoding="utf-8")
     refreshed = run_development_stage(
         task.path,
@@ -4127,6 +4116,11 @@ def test_release_propagation_appends_exact_head_supersession_without_rewriting_p
     assert current["sha256"] == hashlib.sha256(current_wrapper.read_bytes()).hexdigest()
     assert current_wrapper.parent.name == "release-propagation"
     assert first["receipt"] != refreshed["receipt"]
+    refreshed_task = task.read()
+    assert refreshed_task["state"] == "local_validation"
+    assert refreshed_task["subject_revision"] is None
+    assert refreshed_task["subject_supersessions"][-1]["from_subject_revision"] == old_head
+    assert refreshed_task["subject_supersessions"][-1]["to_source_head_sha"] == new_head
     projection = read_auto_dev_state(task.read()["autodev_path"])
     assert projection["stages"]["pr_create"]["status"] == "completed"
     assert projection["stages"]["pr_create"]["run_ref"].endswith(current_wrapper.name)
@@ -4288,12 +4282,23 @@ def test_release_propagation_appends_exact_head_supersession_without_rewriting_p
         )
 
 
+@pytest.mark.parametrize(
+    ("repository_id", "legacy_repository", "accepts_legacy_flat_identity"),
+    [
+        ("git:github.com/acme/app", "acme/app", True),
+        ("github:acme/app", "github:acme/app", False),
+    ],
+)
 def test_release_propagation_normalizes_only_selected_legacy_flat_github_identity(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    repository_id: str,
+    legacy_repository: str,
+    accepts_legacy_flat_identity: bool,
 ) -> None:
     repo, base_sha = _repository(tmp_path)
     root = tmp_path / "os"
-    _project(root, repo, repository_id="git:github.com/acme/app")
+    _project(root, repo, repository_id=repository_id)
     monkeypatch.setattr(
         delivery,
         "create_isolated_worktree",
@@ -4335,7 +4340,7 @@ def test_release_propagation_normalizes_only_selected_legacy_flat_github_identit
     ) -> Path:
         evidence: dict[str, object] = {
             "ticket": "CC-53",
-            "repository": "acme/app" if legacy else "git:github.com/acme/app",
+            "repository": legacy_repository if legacy else repository_id,
             "base_branch": "main",
             "provider": "github",
             "pull_request": "53" if legacy else "github:acme/app#53",
@@ -4374,13 +4379,25 @@ def test_release_propagation_normalizes_only_selected_legacy_flat_github_identit
         idempotency_prefix="cc-53:pr-create:old",
     )
     refreshed = receipt("new", "b" * 40)
-    output = run_development_stage(
-        task.path,
-        stage="release_propagation",
-        receipts={"release_propagation": str(refreshed)},
-        idempotency_prefix="cc-53:pr-create:new",
-    )
-    assert output["supersedes"]["source_head_sha"] == "a" * 40
+    if accepts_legacy_flat_identity:
+        output = run_development_stage(
+            task.path,
+            stage="release_propagation",
+            receipts={"release_propagation": str(refreshed)},
+            idempotency_prefix="cc-53:pr-create:new",
+        )
+        assert output["supersedes"]["source_head_sha"] == "a" * 40
+    else:
+        with pytest.raises(
+            DevelopmentDeliveryError,
+            match="prior pull_request.*non-empty numeric identifier",
+        ):
+            run_development_stage(
+                task.path,
+                stage="release_propagation",
+                receipts={"release_propagation": str(refreshed)},
+                idempotency_prefix="cc-53:pr-create:new",
+            )
 
 
 def test_heartbeat_does_not_refresh_milestone_evidence_timestamp(

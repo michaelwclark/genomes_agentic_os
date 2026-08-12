@@ -5377,7 +5377,7 @@ def run_development_stage(
             raise DevelopmentDeliveryError(
                 "release_propagation requires --receipt release_propagation=<ref>"
             )
-        receipt, receipt_payload = validate_receipt("release_propagation", raw_receipt)
+        receipt, release_receipt_payload = validate_receipt("release_propagation", raw_receipt)
         qa_stage_policy = (
             current.get("auto_dev_stage_policies", {}).get("qa", {})
             if isinstance(current.get("auto_dev_stage_policies"), Mapping)
@@ -5391,8 +5391,8 @@ def run_development_stage(
         )
         if assessment_policy.get("always_create") is True:
             receipt_evidence = (
-                receipt_payload.get("evidence")
-                if isinstance(receipt_payload.get("evidence"), Mapping)
+                release_receipt_payload.get("evidence")
+                if isinstance(release_receipt_payload.get("evidence"), Mapping)
                 else {}
             )
             assessment = receipt_evidence.get("qa_automation_assessment")
@@ -5418,7 +5418,7 @@ def run_development_stage(
                 raise DevelopmentDeliveryError(
                     "release_propagation evidence must be snapshotted inside the work item"
                 ) from exc
-        validated_payloads["release_propagation"] = receipt_payload
+        validated_payloads["release_propagation"] = release_receipt_payload
         legacy_output = state.path.parent / "stages" / "release-propagation.json"
         payload = {
             "schema": "development-stage-receipt/v1",
@@ -5426,7 +5426,7 @@ def run_development_stage(
             "task_state": current.get("state"),
             "receipt": receipt,
             "evidence_sha256": hashlib.sha256(
-                json.dumps(receipt_payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+                json.dumps(release_receipt_payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
             ).hexdigest(),
             "idempotency_key": f"{idempotency_prefix}:release_propagation",
             "recorded_at": utc_now(),
@@ -5434,6 +5434,7 @@ def run_development_stage(
         output = legacy_output
         with _file_lock(state.path.with_suffix(state.path.suffix + ".lock")):
             task_value = state.read()
+            superseded_ready_for_merge = False
             stage_receipts = (
                 task_value.get("stage_receipts")
                 if isinstance(task_value.get("stage_receipts"), Mapping)
@@ -5614,6 +5615,8 @@ def run_development_stage(
                     legacy_repository = expected_repository.removeprefix("git:github.com/")
                     legacy_pull_request = str(previous_details.get("pull_request") or "").strip()
                     if (
+                        expected_repository.startswith("git:github.com/")
+                        and
                         expected_provider == "github"
                         and str(previous_details.get("provider") or "").strip().lower() == "github"
                         and str(previous_details.get("repository") or "").strip()
@@ -5626,8 +5629,8 @@ def run_development_stage(
                             "pull_request": pull_request_prefix + legacy_pull_request,
                         }
                     refreshed_details = (
-                        receipt_payload.get("evidence")
-                        if isinstance(receipt_payload.get("evidence"), Mapping)
+                        release_receipt_payload.get("evidence")
+                        if isinstance(release_receipt_payload.get("evidence"), Mapping)
                         else {}
                     )
                     previous_head = str(previous_details.get("source_head_sha") or "").strip()
@@ -5712,10 +5715,54 @@ def run_development_stage(
                                 f"{label} pull_request must be qualified by the selected task repository "
                                 "and contain a non-empty numeric identifier"
                             )
-                    if task_value.get("state") != "local_validation":
+                    if task_value.get("state") not in {"local_validation", "ready_for_merge"}:
                         raise DevelopmentDeliveryError(
-                            "release propagation refresh is only allowed from local_validation; post-PR review evidence must be renewed for a changed head"
+                            "release propagation refresh is only allowed from local_validation or an "
+                            "unmerged ready_for_merge task"
                         )
+                    if task_value.get("state") == "ready_for_merge":
+                        ready_payload = receipt_payload("ready_for_merge")
+                        ready_evidence = (
+                            ready_payload.get("evidence")
+                            if isinstance(ready_payload, Mapping)
+                            else {}
+                        )
+                        ready_pull_request = str(
+                            ready_evidence.get("pull_request") or ""
+                        ).strip()
+                        ready_pr_number = ready_pull_request.rsplit("#", 1)[-1]
+                        previous_pr_number = previous_identity["pull_request"].rsplit("#", 1)[-1]
+                        autodev_subject = ""
+                        if autodev_ref and Path(autodev_ref).expanduser().is_file():
+                            autodev_subject = str(
+                                _read_mapping(Path(autodev_ref).expanduser()).get("subject_revision")
+                                or ""
+                            ).strip()
+                        if not (
+                            isinstance(ready_evidence, Mapping)
+                            and ready_evidence.get("checks_verified") is True
+                            and ready_evidence.get("reviews_verified") is True
+                            and ready_evidence.get("readback_verified") is True
+                            and str(ready_evidence.get("repository") or "").strip()
+                            == expected_repository
+                            and str(ready_evidence.get("base_branch") or "").strip()
+                            == expected_base_branch
+                            and str(ready_evidence.get("provider") or "").strip().lower()
+                            == expected_provider
+                            and ready_pr_number == previous_pr_number
+                            and str(ready_evidence.get("source_head_sha") or "").strip()
+                            == previous_head
+                            and str(ready_evidence.get("subject_revision") or "").strip()
+                            == previous_head
+                            and str(task_value.get("subject_revision") or "").strip()
+                            == previous_head
+                            and (not autodev_subject or autodev_subject == previous_head)
+                        ):
+                            raise DevelopmentDeliveryError(
+                                "ready_for_merge supersession requires the canonical prior review "
+                                "authority for the superseded PR head"
+                            )
+                        superseded_ready_for_merge = True
                     payload["supersedes"] = {
                         "wrapper_ref": str(active_output),
                         "wrapper_sha256": hashlib.sha256(active_output.read_bytes()).hexdigest(),
@@ -5742,12 +5789,18 @@ def run_development_stage(
                     if output.is_file():
                         stored = json.loads(output.read_text(encoding="utf-8"))
                         stored_without_timestamp = (
-                            {key: value for key, value in stored.items() if key != "recorded_at"}
+                            {
+                                key: value
+                                for key, value in stored.items()
+                                if key not in {"recorded_at", "task_state"}
+                            }
                             if isinstance(stored, Mapping)
                             else None
                         )
                         payload_without_timestamp = {
-                            key: value for key, value in payload.items() if key != "recorded_at"
+                            key: value
+                            for key, value in payload.items()
+                            if key not in {"recorded_at", "task_state"}
                         }
                         if stored_without_timestamp != payload_without_timestamp:
                             raise DevelopmentDeliveryError(
@@ -5762,11 +5815,26 @@ def run_development_stage(
                 "ref": str(output),
                 "sha256": hashlib.sha256(output.read_bytes()).hexdigest(),
             }
+            if superseded_ready_for_merge:
+                task_value.setdefault("subject_supersessions", []).append(
+                    {
+                        "from_subject_revision": payload["supersedes"]["source_head_sha"],
+                        "to_source_head_sha": refreshed_head,
+                        "release_propagation_wrapper": str(output),
+                        "recorded_at": utc_now(),
+                    }
+                )
+                task_value["state"] = "local_validation"
+                task_value["subject_revision"] = None
             _atomic_json(state.path, task_value)
         state.emit(
             event_type="development.stage.release_propagated",
             idempotency_key=payload["idempotency_key"],
-            payload={"ticket": current.get("ticket"), "receipt": receipt},
+            payload={
+                "ticket": current.get("ticket"),
+                "receipt": receipt,
+                "invalidated_ready_for_merge": superseded_ready_for_merge,
+            },
         )
         _sync_auto_dev_projection(state.path)
         return payload
