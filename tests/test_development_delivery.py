@@ -2104,6 +2104,28 @@ def test_correct_failed_base_selection_preserves_failure_then_allows_retry(tmp_p
     assert recovered["base_selection_corrections"][0]["receipt"] == str(receipt)
 
 
+def test_historical_origin_main_failure_cannot_resume_without_correction(tmp_path: Path) -> None:
+    root, _, task_path, _ = _historical_origin_main_failure(tmp_path)
+
+    with pytest.raises(DevelopmentDeliveryError, match="requires the recorded base-selection correction"):
+        delivery.start_development_run(
+            root,
+            "acme",
+            "app",
+            ["CC-179"],
+            titles={"CC-179": "Retry selection"},
+            run_id="origin-main-retry",
+            apply=True,
+        )
+
+    blocked = TaskState(task_path).read()
+    assert blocked["state"] == "work_item_ready"
+    assert blocked["failure"]["kind"] == "provisioning_failed"
+    assert blocked["repository"]["base_branch"] == "origin/main"
+    assert not blocked.get("worktree")
+    assert not blocked.get("base_selection_corrections")
+
+
 def test_correct_failed_base_selection_replay_completes_interrupted_portfolio_effect(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2154,26 +2176,31 @@ def test_correct_failed_base_selection_cannot_race_resume_worktree_allocation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     root, _, task_path, base_sha = _historical_origin_main_failure(tmp_path)
-    portfolio_path = task_path.parent.parent.parent / "portfolio.json"
-    portfolio = json.loads(portfolio_path.read_text(encoding="utf-8"))
-    portfolio["repository"]["base_branch"] = "main"
-    portfolio_path.write_text(json.dumps(portfolio), encoding="utf-8")
-    allocation_started = threading.Event()
-    allow_allocation = threading.Event()
+    preflight_started = threading.Event()
+    allow_preflight = threading.Event()
     correction_finished = threading.Event()
     result: dict[str, object] = {}
+    original_runner = delivery._run_command
 
-    def provision(**kwargs: object) -> dict[str, object]:
-        allocation_started.set()
-        assert allow_allocation.wait(timeout=5)
-        return {
-            "name": "cc-179",
-            "path": "/tmp/cc-179",
-            "branch": "feature/cc-179-retry-selection",
-            "base_sha": base_sha,
-        }
+    def block_correction_preflight(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        if command[-3:] == ["fetch", "origin", "main"]:
+            preflight_started.set()
+            assert allow_preflight.wait(timeout=5)
+        return original_runner(command, **kwargs)
 
-    monkeypatch.setattr(delivery, "create_isolated_worktree", provision)
+    def correct() -> None:
+        try:
+            result["correction"] = delivery.correct_failed_base_selection(
+                task_path,
+                corrected_base_branch="main",
+                idempotency_key="cc-179:race-resume",
+                apply=True,
+                runner=block_correction_preflight,
+            )
+        except Exception as exc:  # pragma: no cover - asserted after joining
+            result["correction_error"] = exc
+        finally:
+            correction_finished.set()
 
     def resume() -> None:
         try:
@@ -2186,40 +2213,28 @@ def test_correct_failed_base_selection_cannot_race_resume_worktree_allocation(
                 run_id="origin-main-retry",
                 apply=True,
             )
-        except Exception as exc:  # pragma: no cover - asserted after joining
+        except Exception as exc:
             result["resume_error"] = exc
 
-    def correct() -> None:
-        try:
-            delivery.correct_failed_base_selection(
-                task_path,
-                corrected_base_branch="main",
-                idempotency_key="cc-179:race-resume",
-                apply=True,
-            )
-        except Exception as exc:
-            result["correction_error"] = exc
-        finally:
-            correction_finished.set()
-
-    resume_thread = threading.Thread(target=resume)
-    resume_thread.start()
-    assert allocation_started.wait(timeout=5), result
     correction_thread = threading.Thread(target=correct)
     correction_thread.start()
+    assert preflight_started.wait(timeout=5), result
+    resume_thread = threading.Thread(target=resume)
+    resume_thread.start()
     assert not correction_finished.wait(timeout=0.2)
-    allow_allocation.set()
-    resume_thread.join(timeout=10)
+    allow_preflight.set()
     correction_thread.join(timeout=10)
+    resume_thread.join(timeout=10)
 
-    assert not resume_thread.is_alive()
     assert not correction_thread.is_alive()
+    assert not resume_thread.is_alive()
+    assert "correction_error" not in result
     assert "resume_error" not in result
-    assert isinstance(result.get("correction_error"), DevelopmentDeliveryError)
+    assert result["correction"]["result"] == "corrected"
+    assert result["resume"]["state"] == "dispatching"
     state = TaskState(task_path).read()
     assert state["worktree"]["branch"] == "feature/cc-179-retry-selection"
-    assert not state.get("base_selection_corrections")
-
+    assert len(state["base_selection_corrections"]) == 1
 
 @pytest.mark.parametrize("effect", ["worktree", "local_branch", "provider_branch"])
 def test_correct_failed_base_selection_rejects_every_post_failure_effect(

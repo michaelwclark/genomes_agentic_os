@@ -2496,6 +2496,21 @@ def _task_provisioning_admission_lock(state_path: Path):
         yield
 
 
+def _is_retryable_origin_main_provisioning_failure(task: Mapping[str, Any]) -> bool:
+    """Return whether a task carries the narrowly recognized legacy failure."""
+
+    failure = task.get("failure") if isinstance(task.get("failure"), Mapping) else {}
+    detail = str(failure.get("detail") or "").lower()
+    return bool(
+        task.get("state") == "work_item_ready"
+        and failure.get("kind") == "provisioning_failed"
+        and failure.get("recoverable") is True
+        and failure.get("retry_state") == "work_item_ready"
+        and "origin/main" in detail
+        and "remote ref" in detail
+    )
+
+
 def _base_selection_correction_context(
     state_path: Path,
     *,
@@ -2516,15 +2531,7 @@ def _base_selection_correction_context(
             "base-selection correction only permits the verified branch 'main'"
         )
     failure = task.get("failure") if isinstance(task.get("failure"), Mapping) else {}
-    detail = str(failure.get("detail") or "").lower()
-    if not (
-        task.get("state") == "work_item_ready"
-        and failure.get("kind") == "provisioning_failed"
-        and failure.get("recoverable") is True
-        and failure.get("retry_state") == "work_item_ready"
-        and "origin/main" in detail
-        and "remote ref" in detail
-    ):
+    if not _is_retryable_origin_main_provisioning_failure(task):
         raise DevelopmentDeliveryError(
             "base-selection correction requires the exact retryable origin/main provisioning failure"
         )
@@ -2732,6 +2739,34 @@ def _complete_base_selection_correction(
     _sync_auto_dev_projection(state_path)
     _refresh_portfolio_state(state_path)
     return receipt
+
+
+def _has_valid_base_selection_correction(
+    state_path: Path,
+    *,
+    current: Mapping[str, Any],
+    apply: bool,
+) -> bool:
+    """Prove a legacy failure has a completed, immutable correction boundary."""
+
+    candidates = [
+        row
+        for row in current.get("base_selection_corrections") or []
+        if isinstance(row, Mapping)
+        and row.get("from_base_branch") == "origin/main"
+        and row.get("to_base_branch") == "main"
+    ]
+    if not candidates:
+        return False
+    if len(candidates) != 1:
+        raise DevelopmentDeliveryError("historical base-selection correction has ambiguous task history")
+    _complete_base_selection_correction(
+        state_path,
+        current=current,
+        correction=candidates[0],
+        apply=apply,
+    )
+    return True
 
 
 def correct_failed_base_selection(
@@ -3405,6 +3440,22 @@ def start_development_run(
     portfolio_existed = portfolio_path.is_file()
     if run_dir.exists() and not portfolio_path.is_file():
         raise DevelopmentDeliveryError(f"run directory exists without a portfolio receipt: {run_dir}")
+    if portfolio_existed:
+        for ticket in dict.fromkeys(tickets):
+            state_path = run_dir / "tasks" / _slug(ticket) / "state.json"
+            if not state_path.is_file():
+                continue
+            with _task_provisioning_admission_lock(state_path):
+                current = TaskState(state_path).read()
+                if _is_retryable_origin_main_provisioning_failure(current) and not _has_valid_base_selection_correction(
+                    state_path,
+                    current=current,
+                    apply=True,
+                ):
+                    raise DevelopmentDeliveryError(
+                        "historical origin/main provisioning failure requires the recorded "
+                        "base-selection correction before resume"
+                    )
     if portfolio_path.is_file():
         existing = json.loads(portfolio_path.read_text(encoding="utf-8"))
         selected_tickets = list(dict.fromkeys(tickets))
@@ -3701,6 +3752,15 @@ def start_development_run(
         with _task_provisioning_admission_lock(state_path):
             current = task_state.read()
             failure = current.get("failure") if isinstance(current.get("failure"), Mapping) else {}
+            if _is_retryable_origin_main_provisioning_failure(current) and not _has_valid_base_selection_correction(
+                state_path,
+                current=current,
+                apply=True,
+            ):
+                raise DevelopmentDeliveryError(
+                    "historical origin/main provisioning failure requires the recorded "
+                    "base-selection correction before resume"
+                )
             # An unaccepted executor handoff is a durable, idempotent pending
             # boundary.  Do not clear it merely because the same Everything
             # packet is resumed: that would make the second invocation look like
