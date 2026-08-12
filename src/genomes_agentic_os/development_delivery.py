@@ -5312,11 +5312,10 @@ def run_development_stage(
     current = state.read()
     autodev_ref = str(current.get("autodev_path") or "").strip()
     predecessor_target = {
-        # Review Self is delivery-managed and becomes terminal only after this
-        # stage records ready_for_merge. Requiring it as its own predecessor
-        # makes a locally validated PR impossible to review; PR Create is the
-        # final independent predecessor for this transition.
-        "review": "pr_create",
+        # The predecessor helper validates stages before this target, so
+        # review_self correctly requires the completed PR Create stage without
+        # treating its own eventual ready_for_merge projection as a prerequisite.
+        "review": "review_self",
         "merge": "merge",
         "deploy": "deploy",
         "closeout": "closeout",

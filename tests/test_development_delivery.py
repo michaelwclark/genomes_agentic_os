@@ -5903,6 +5903,31 @@ def test_review_stage_follows_pr_create_without_requiring_its_own_completion(
     )
     for stage_name in ("groom", "detective", "create_artifacts", "document"):
         _record_standalone_stage(task, stage_name)
+    authority = _provider_authority(task, pull_request="github:acme/app#77")
+    review_receipts = {
+        "pre_pr_review": _stage_receipt(work_item, "pre_pr_review"),
+        "pr_open": _stage_receipt(work_item, "pr_open", evidence=authority),
+        "ci_repair": _stage_receipt(work_item, "ci_repair"),
+        "review_repair": _stage_receipt(work_item, "review_repair"),
+        "post_pr_review": _stage_receipt(work_item, "post_pr_review"),
+        "ready_for_merge": _stage_receipt(
+            work_item,
+            "ready_for_merge",
+            evidence={
+                **authority,
+                "checks_verified": True,
+                "reviews_verified": True,
+                "subject_revision": base_sha,
+            },
+        ),
+    }
+    with pytest.raises(DevelopmentDeliveryError, match="pr_create"):
+        run_development_stage(
+            task.path,
+            stage="review",
+            receipts=review_receipts,
+            idempotency_prefix="cc-review-cycle:review-before-pr-create",
+        )
     run_development_stage(
         task.path,
         stage="release_propagation",
@@ -5913,27 +5938,10 @@ def test_review_stage_follows_pr_create_without_requiring_its_own_completion(
         },
         idempotency_prefix="cc-review-cycle:pr-create",
     )
-    authority = _provider_authority(task, pull_request="github:acme/app#77")
     reviewed = run_development_stage(
         task.path,
         stage="review",
-        receipts={
-            "pre_pr_review": _stage_receipt(work_item, "pre_pr_review"),
-            "pr_open": _stage_receipt(work_item, "pr_open", evidence=authority),
-            "ci_repair": _stage_receipt(work_item, "ci_repair"),
-            "review_repair": _stage_receipt(work_item, "review_repair"),
-            "post_pr_review": _stage_receipt(work_item, "post_pr_review"),
-            "ready_for_merge": _stage_receipt(
-                work_item,
-                "ready_for_merge",
-                evidence={
-                    **authority,
-                    "checks_verified": True,
-                    "reviews_verified": True,
-                    "subject_revision": base_sha,
-                },
-            ),
-        },
+        receipts=review_receipts,
         idempotency_prefix="cc-review-cycle:review",
     )
     assert reviewed["state"] == "ready_for_merge"
