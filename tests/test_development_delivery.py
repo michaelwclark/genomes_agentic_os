@@ -4099,6 +4099,40 @@ def test_release_propagation_appends_exact_head_supersession_without_rewriting_p
     post_pr_task["state"] = "ready_for_merge"
     post_pr_task["subject_revision"] = old_head
     task.path.write_text(json.dumps(post_pr_task), encoding="utf-8")
+
+    # Numeric PR equality is not authority: a differently qualified PR with
+    # the same number cannot furnish the prior ready-for-merge acceptance.
+    ready_record = next(
+        item
+        for item in reversed(post_pr_task["receipts"])
+        if item.get("state") == "ready_for_merge"
+    )
+    ready_path = Path(ready_record["ref"])
+    ready_bytes = ready_path.read_bytes()
+    mismatched_ready = json.loads(ready_bytes)
+    mismatched_ready["evidence"]["pull_request"] = "github:other/app#52"
+    ready_path.write_text(json.dumps(mismatched_ready), encoding="utf-8")
+    mismatched_task = json.loads(json.dumps(post_pr_task))
+    mismatched_record = next(
+        item
+        for item in reversed(mismatched_task["receipts"])
+        if item.get("state") == "ready_for_merge"
+    )
+    mismatched_record["sha256"] = hashlib.sha256(ready_path.read_bytes()).hexdigest()
+    task.path.write_text(json.dumps(mismatched_task), encoding="utf-8")
+    with pytest.raises(
+        DevelopmentDeliveryError,
+        match="canonical prior review authority",
+    ):
+        run_development_stage(
+            task.path,
+            stage="release_propagation",
+            receipts={"release_propagation": str(refreshed_receipt)},
+            idempotency_prefix="cc-52:pr-create:wrong-qualified-pr",
+        )
+    ready_path.write_bytes(ready_bytes)
+    task.path.write_text(json.dumps(post_pr_task), encoding="utf-8")
+
     refreshed = run_development_stage(
         task.path,
         stage="release_propagation",
@@ -4122,8 +4156,12 @@ def test_release_propagation_appends_exact_head_supersession_without_rewriting_p
     assert refreshed_task["subject_supersessions"][-1]["from_subject_revision"] == old_head
     assert refreshed_task["subject_supersessions"][-1]["to_source_head_sha"] == new_head
     projection = read_auto_dev_state(task.read()["autodev_path"])
+    assert projection["subject_revision"] is None
     assert projection["stages"]["pr_create"]["status"] == "completed"
     assert projection["stages"]["pr_create"]["run_ref"].endswith(current_wrapper.name)
+    assert projection["stages"]["review_self"]["status"] == "not_started"
+    assert projection["stages"]["qa"]["status"] == "not_started"
+    assert projection["stages"]["finalize"]["status"] == "not_started"
 
     # Simulate interruption after the append-only wrapper write but before the
     # task binding write. The same idempotency key must finish that transaction.
@@ -4145,6 +4183,83 @@ def test_release_propagation_appends_exact_head_supersession_without_rewriting_p
         idempotency_prefix="cc-52:pr-create:new",
     )
     assert replayed == refreshed
+
+    def review_receipts(name: str, head: str) -> dict[str, str]:
+        review_root = work_item / "artifacts" / f"review-{name}"
+        authority = _provider_authority(task, pull_request="github:acme/app#52")
+        return {
+            "pre_pr_review": _stage_receipt(review_root, "pre_pr_review"),
+            "pr_open": _stage_receipt(review_root, "pr_open", evidence=authority),
+            "ci_repair": _stage_receipt(review_root, "ci_repair"),
+            "review_repair": _stage_receipt(review_root, "review_repair"),
+            "post_pr_review": _stage_receipt(review_root, "post_pr_review"),
+            "ready_for_merge": _stage_receipt(
+                review_root,
+                "ready_for_merge",
+                evidence={
+                    **authority,
+                    "checks_verified": True,
+                    "reviews_verified": True,
+                    "source_branch": "feature/cc-52",
+                    "source_head_sha": head,
+                    "subject_revision": head,
+                },
+            ),
+        }
+
+    # The append-only wrapper is an active fence: old review proof cannot
+    # re-promote this task after its PR head changed.
+    with pytest.raises(
+        DevelopmentDeliveryError,
+        match="must bind the refreshed release-propagation head",
+    ):
+        run_development_stage(
+            task.path,
+            stage="review",
+            receipts=review_receipts("stale", old_head),
+            idempotency_prefix="cc-52:review:stale",
+        )
+    assert task.read()["state"] == "local_validation"
+    with pytest.raises(AutoDevStateError, match="qa is blocked until fresh Review Self"):
+        _record_standalone_stage(task, "qa", revision=old_head)
+    with pytest.raises(AutoDevStateError, match="finalize is blocked until fresh Review Self"):
+        _record_standalone_stage(
+            task,
+            "finalize",
+            revision=old_head,
+            pull_request="github:acme/app#52",
+        )
+
+    reviewed = run_development_stage(
+        task.path,
+        stage="review",
+        receipts=review_receipts("fresh", new_head),
+        idempotency_prefix="cc-52:review:fresh",
+    )
+    assert reviewed["state"] == "ready_for_merge"
+    reviewed_task = task.read()
+    assert reviewed_task["subject_revision"] == new_head
+    assert reviewed_task["subject_supersession_resolutions"][-1]["subject_revision"] == new_head
+    projection = read_auto_dev_state(task.read()["autodev_path"])
+    assert projection["subject_revision"] == new_head
+    assert projection["stages"]["review_self"]["status"] == "completed"
+    assert projection["stages"]["qa"]["status"] == "not_started"
+    assert projection["stages"]["finalize"]["status"] == "not_started"
+    with pytest.raises(
+        AutoDevStateError,
+        match="qa evidence subject_revision must match the canonical reviewed pull-request head",
+    ):
+        _record_standalone_stage(task, "qa", revision=old_head)
+    _record_standalone_stage(task, "qa", revision=new_head)
+    _record_standalone_stage(
+        task,
+        "finalize",
+        revision=new_head,
+        pull_request="github:acme/app#52",
+    )
+    projection = read_auto_dev_state(task.read()["autodev_path"])
+    assert projection["stages"]["qa"]["status"] == "completed"
+    assert projection["stages"]["finalize"]["status"] == "completed"
 
     malformed_new_receipt = family_receipt(
         "malformed-new-pr",

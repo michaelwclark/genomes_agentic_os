@@ -4973,6 +4973,38 @@ def run_development_stage(
                 f"{target} receipt PR authority must match {prior_target}"
             )
 
+    def supersession_identifier(item: Mapping[str, Any]) -> str:
+        return str(
+            item.get("supersession_id")
+            or item.get("release_propagation_wrapper")
+            or ""
+        ).strip()
+
+    def pending_subject_supersession(
+        task_value: Mapping[str, Any],
+    ) -> Mapping[str, Any] | None:
+        """Return the newest refreshed head without fresh review authority."""
+
+        resolutions = task_value.get("subject_supersession_resolutions")
+        resolved = {
+            supersession_identifier(item)
+            for item in resolutions or []
+            if isinstance(item, Mapping)
+        }
+        supersessions = task_value.get("subject_supersessions")
+        for item in reversed(supersessions or []):
+            if not isinstance(item, Mapping):
+                continue
+            identifier = supersession_identifier(item)
+            if not identifier or identifier in resolved:
+                continue
+            if all(
+                str(item.get(field) or "").strip()
+                for field in ("from_subject_revision", "to_source_head_sha")
+            ):
+                return item
+        return None
+
     def persist_delivery_revision_metadata() -> dict[str, Any]:
         """Keep reviewed-head and terminal merge/deploy revisions distinct."""
 
@@ -4995,6 +5027,21 @@ def run_development_stage(
             task_value = state.read()
             if review_sha and task_value.get("subject_revision") != review_sha:
                 task_value["subject_revision"] = review_sha
+                changed = True
+            pending_supersession = pending_subject_supersession(task_value)
+            if (
+                pending_supersession is not None
+                and review_sha
+                and review_sha
+                == str(pending_supersession.get("to_source_head_sha") or "").strip()
+            ):
+                task_value.setdefault("subject_supersession_resolutions", []).append(
+                    {
+                        "supersession_id": supersession_identifier(pending_supersession),
+                        "subject_revision": review_sha,
+                        "recorded_at": utc_now(),
+                    }
+                )
                 changed = True
             if merge_sha and task_value.get("terminal_revision") != merge_sha:
                 task_value["terminal_revision"] = merge_sha
@@ -5218,6 +5265,34 @@ def run_development_stage(
                 "pr_open",
                 prior_pull_request_authority("pr_open"),
             )
+            pending_supersession = pending_subject_supersession(state.read())
+            if pending_supersession is not None:
+                expected_identity = pending_supersession.get("pull_request_identity")
+                expected_head = str(
+                    pending_supersession.get("to_source_head_sha") or ""
+                ).strip()
+                if not (
+                    isinstance(expected_identity, Mapping)
+                    and all(
+                        str(evidence.get(field) or "").strip()
+                        == str(expected_identity.get(field) or "").strip()
+                        for field in (
+                            "repository",
+                            "base_branch",
+                            "provider",
+                            "pull_request",
+                            "source_branch",
+                        )
+                    )
+                    and str(evidence.get("source_head_sha") or "").strip()
+                    == expected_head
+                    and str(evidence.get("subject_revision") or "").strip()
+                    == expected_head
+                ):
+                    raise DevelopmentDeliveryError(
+                        "ready_for_merge receipt must bind the refreshed release-propagation "
+                        "head and exact pull-request identity"
+                    )
         if target == "merged":
             expected_subject = reviewed_revision()
             source_head_sha = (
@@ -5730,8 +5805,6 @@ def run_development_stage(
                         ready_pull_request = str(
                             ready_evidence.get("pull_request") or ""
                         ).strip()
-                        ready_pr_number = ready_pull_request.rsplit("#", 1)[-1]
-                        previous_pr_number = previous_identity["pull_request"].rsplit("#", 1)[-1]
                         autodev_subject = ""
                         if autodev_ref and Path(autodev_ref).expanduser().is_file():
                             autodev_subject = str(
@@ -5749,7 +5822,7 @@ def run_development_stage(
                             == expected_base_branch
                             and str(ready_evidence.get("provider") or "").strip().lower()
                             == expected_provider
-                            and ready_pr_number == previous_pr_number
+                            and ready_pull_request == previous_identity["pull_request"]
                             and str(ready_evidence.get("source_head_sha") or "").strip()
                             == previous_head
                             and str(ready_evidence.get("subject_revision") or "").strip()
@@ -5818,8 +5891,10 @@ def run_development_stage(
             if superseded_ready_for_merge:
                 task_value.setdefault("subject_supersessions", []).append(
                     {
+                        "supersession_id": f"release-propagation:{supersession_key}",
                         "from_subject_revision": payload["supersedes"]["source_head_sha"],
                         "to_source_head_sha": refreshed_head,
+                        "pull_request_identity": refreshed_identity,
                         "release_propagation_wrapper": str(output),
                         "recorded_at": utc_now(),
                     }
