@@ -16,6 +16,7 @@ from genomes_agentic_os.auto_dev_orchestration import (
     record_auto_dev_stage,
     sync_delivery_projection,
 )
+from genomes_agentic_os.plans import capture_plan
 from genomes_agentic_os.lifecycle import (
     cleanup_terminal_worktrees,
     create_project_work_item,
@@ -1040,3 +1041,70 @@ def test_health_runtime_identity_can_be_reused_after_hashed_teardown_proof(
         current_task,
         runtime,
     )
+
+
+def _plan_capture_project(root: Path, *, layout: str | None) -> Path:
+    project = root / "domains" / "acme" / "02-projects" / "app"
+    project.mkdir(parents=True)
+    if layout is not None:
+        (project / "config").mkdir()
+        (project / "config" / "work-lifecycle.yml").write_text(
+            yaml.safe_dump({"work_lifecycle": {"layout": layout}}, sort_keys=False),
+            encoding="utf-8",
+        )
+    return project
+
+
+def test_plan_capture_returns_the_packet_spec_for_a_canonical_project(tmp_path: Path) -> None:
+    root = tmp_path / "os"
+    project = _plan_capture_project(root, layout=None)
+
+    result = capture_plan(
+        root,
+        title="Cluster CI failures",
+        summary="Group repeated CI failures so triage reads one signal.",
+        kind="domain",
+        domain="acme",
+        project="app",
+    )
+
+    target = Path(result["work_item"])
+    assert target.name == "SPEC.md"
+    assert target.is_file()
+    assert target.parent.parent == project / "work-items"
+    assert result["target"] == result["work_item"]
+
+
+def test_plan_capture_returns_the_intake_markdown_for_a_lane_project(tmp_path: Path) -> None:
+    # A lane layout writes `captured` work as one markdown file, so there is no
+    # packet holding a SPEC.md for the caller to find by name.
+    root = tmp_path / "os"
+    project = _plan_capture_project(root, layout="lane_based")
+
+    result = capture_plan(
+        root,
+        title="Cluster CI failures",
+        summary="Group repeated CI failures so triage reads one signal.",
+        kind="domain",
+        domain="acme",
+        project="app",
+    )
+
+    target = Path(result["work_item"])
+    assert target.is_file()
+    assert target.suffix == ".md"
+    assert target.parent == project / "work-items" / "01-intake"
+    assert target.name.endswith("001_cluster_ci_failures.md")
+    assert "Cluster CI failures" in target.read_text(encoding="utf-8")
+
+    # The lane path used to raise before reaching these writes, so the control
+    # plane has never carried an intake markdown link until now.
+    relative = target.relative_to(project)
+    active_work = (root / "domains" / "acme" / "00-control-plane" / "active-work.md").read_text(
+        encoding="utf-8"
+    )
+    assert f"`02-projects/app/{relative}`" in active_work
+    state_index = (root / "domains" / "acme" / "00-control-plane" / "state-index.md").read_text(
+        encoding="utf-8"
+    )
+    assert f"`02-projects/app/{relative}`" in state_index

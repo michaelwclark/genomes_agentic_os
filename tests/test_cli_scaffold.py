@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -25,8 +26,10 @@ from genomes_agentic_os.routing import context_from_here
 from genomes_agentic_os.scaffold import (
     EXECUTION_FABRIC_MARKER_START,
     PROJECT_CONFIG_FILES,
+    ScaffoldResult,
     create_project_worktree,
     install_docs,
+    migrate_auto_dev_policy_directories,
 )
 from genomes_agentic_os.validate import validate_root
 from genomes_agentic_os.work_lifecycle import (
@@ -54,6 +57,40 @@ def dated_child(parent: Path, legacy_name: str) -> Path:
 
 def expected_dated_name(legacy_name: str) -> str:
     return f"{datetime.now(timezone.utc).strftime('%m%d%y')}-{legacy_name}"
+
+
+V06_CANONICAL_PERFORMANCE_LEAKS = """# Performance And Leaks
+
+Focus: hot paths stay fast and long-lived processes do not grow.
+
+## Write
+- No unbounded caches or accumulating module-level state; close or
+  context-manage files, connections, and cursors.
+- Stream or paginate large datasets; move heavy work out of request paths;
+  no O(n) network/DB calls inside loops.
+- Keep request-path serializers and service adapters bounded. Do not replace a
+  narrow response/proxy with a whole-object serializer or an unbounded relation
+  graph without deliberate eager loading, field selection, and a measured
+  query/payload budget.
+
+## Review
+- Check hot paths for growth over time (long-lived processes and workers
+  leak first), repeated identical lookups, missing pagination on list
+  endpoints, and payloads that scale with tenant data size.
+- Treat changes to views, serializers, API services, managers, selectors, and
+  queryset construction as performance-risk changes even when the ticket is
+  functional. Trace database, object-storage, and provider calls through the
+  changed path; do not infer safety from unit-test success alone.
+- Require a regression test with a representative relation fan-out and an
+  explicit query budget (`assertNumQueries`, `django_assert_num_queries`, or
+  an equivalent stack-native assertion) whenever a request path, serializer,
+  list endpoint, or ORM relation traversal changes.
+- Require latency/trace evidence when the path performs remote I/O or builds a
+  payload from tenant-sized data. A green functional test is not performance
+  evidence.
+
+Blocking: always for leaks and hot-path regressions.
+"""
 
 
 def limit_self_improvement_evidence_to_runs(root: Path) -> None:
@@ -3202,6 +3239,82 @@ def test_project_create_is_idempotent_and_preserves_local_edits(tmp_path: Path) 
     active_work = (root / "domains" / "los" / "00-control-plane" / "active-work.md").read_text(encoding="utf-8")
     assert active_work.count("| `losmon_replacement` |") == 1
     assert validate_root(root).ok
+
+
+def test_project_create_collapses_known_v06_performance_policy_superset(tmp_path: Path) -> None:
+    root = tmp_path / "agentic_os"
+    command = ["project", "create", "los", "policy_migration", "--root", str(root)]
+
+    assert main(command) == 0
+    policy_root = shared_factory(root) / "05-knowledge"
+    legacy = policy_root / "dev_standards" / "PERFORMANCE_LEAKS.md"
+    canonical = policy_root / "auto_dev" / "dev_standards" / "PERFORMANCE_LEAKS.md"
+    legacy_seed = (
+        Path(__file__).resolve().parents[1]
+        / "harness/shared_factory/05-knowledge/dev_standards/PERFORMANCE_LEAKS.md"
+    ).read_bytes()
+    assert hashlib.sha256(legacy_seed).hexdigest() == (
+        "683703d086d89871631b6e86c350ea87096ef2246d46bdcd37e28fbe0baec797"
+    )
+    assert hashlib.sha256(V06_CANONICAL_PERFORMANCE_LEAKS.encode()).hexdigest() == (
+        "cd0339df7b5d0019a1e3b5cf87c08eb9309dbc7003b4ba670d7bbf0121c84473"
+    )
+
+    canonical.write_text(V06_CANONICAL_PERFORMANCE_LEAKS, encoding="utf-8")
+    legacy.parent.mkdir(parents=True, exist_ok=True)
+    legacy.write_bytes(legacy_seed)
+
+    assert main(command) == 0
+    assert not legacy.exists()
+    assert canonical.read_text(encoding="utf-8") == V06_CANONICAL_PERFORMANCE_LEAKS
+    assert main(command) == 0
+    assert canonical.read_text(encoding="utf-8") == V06_CANONICAL_PERFORMANCE_LEAKS
+    assert validate_root(root).ok
+
+
+def test_policy_migration_rejects_divergent_user_authored_files(tmp_path: Path) -> None:
+    policy_root = tmp_path / "05-knowledge"
+    legacy = policy_root / "dev_standards" / "PERFORMANCE_LEAKS.md"
+    canonical = policy_root / "auto_dev" / "dev_standards" / "PERFORMANCE_LEAKS.md"
+    legacy.parent.mkdir(parents=True)
+    canonical.parent.mkdir(parents=True)
+    legacy.write_text("# Custom legacy policy\n", encoding="utf-8")
+    canonical.write_text("# Custom canonical policy\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Auto-Dev policy migration conflict"):
+        migrate_auto_dev_policy_directories(policy_root, ScaffoldResult())
+
+    assert legacy.read_text(encoding="utf-8") == "# Custom legacy policy\n"
+    assert canonical.read_text(encoding="utf-8") == "# Custom canonical policy\n"
+
+
+def test_policy_migration_preserves_known_policy_pair_below_allowlisted_path(
+    tmp_path: Path,
+) -> None:
+    policy_root = tmp_path / "05-knowledge"
+    legacy = (
+        policy_root
+        / "dev_standards/user/dev_standards/PERFORMANCE_LEAKS.md"
+    )
+    canonical = (
+        policy_root
+        / "auto_dev/dev_standards/user/dev_standards/PERFORMANCE_LEAKS.md"
+    )
+    legacy_seed = (
+        Path(__file__).resolve().parents[1]
+        / "harness/shared_factory/05-knowledge/dev_standards/PERFORMANCE_LEAKS.md"
+    ).read_bytes()
+    canonical_bytes = V06_CANONICAL_PERFORMANCE_LEAKS.encode("utf-8")
+    legacy.parent.mkdir(parents=True)
+    canonical.parent.mkdir(parents=True)
+    legacy.write_bytes(legacy_seed)
+    canonical.write_bytes(canonical_bytes)
+
+    with pytest.raises(ValueError, match="Auto-Dev policy migration conflict"):
+        migrate_auto_dev_policy_directories(policy_root, ScaffoldResult())
+
+    assert legacy.read_bytes() == legacy_seed
+    assert canonical.read_bytes() == canonical_bytes
 
 
 def test_project_create_rejects_invalid_names_and_accepts_any_domain(tmp_path: Path) -> None:
