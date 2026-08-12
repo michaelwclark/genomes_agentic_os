@@ -97,6 +97,22 @@ navigation guide.
 should not import `cli.py`. There is no circular dependency. New shared primitives
 belong in `scaffold.py`, not a new `utils.py`.
 
+### 4.1.1 Policy migration safety
+
+`init` and `project create` refresh the shared Auto-Dev policy tree before
+scaffolding the requested project. Policy planes now live beneath `auto_dev/`,
+but older installs can still contain a legacy sibling plane. Migration is
+additive and failure-closed:
+
+- byte-identical files collapse to the canonical location;
+- the verified v0.6 `dev_standards/PERFORMANCE_LEAKS.md` replacement collapses
+  only when its exact legacy and canonical package-owned contents are present;
+- every other differing collision stops with a migration error, preserving both
+  files for an operator decision.
+
+This lets a fresh or repeated bootstrap remove the obsolete duplicate without
+weakening the stricter canonical policy or overwriting user-authored content.
+
 ### 4.2 Module responsibility map
 
 | Module | LOC | Responsibility |
