@@ -137,6 +137,17 @@ Everything is the orchestrator, not another stage. It uses this one exact order:
 | 15 | Closeout | `/auto-dev-closeout` | `develop stage --stage closeout` |
 | 16 | Health | `/auto-dev-health` | strict Health receipt after cleanup and finished-state readback |
 
+When PR Create must refresh an existing PR after its commit ID changes, it
+does not rewrite the old record. It requires provider readback for the new
+head, an explicit link to the old head, and the same complete PR identity in
+both receipts. That identity must match the selected repository, base branch,
+and registered source branch, with a real PR identifier after the repository
+prefix. It appends a new compatibility wrapper and makes that wrapper the
+current PR Create evidence. A refresh is allowed only while
+the task is still in local validation; once PR review begins, a changed head
+requires a fresh delivery run so review, QA, and Finalize cannot stay attached
+to the old commit.
+
 ### Documentation delivery
 
 For this source package, a completed Auto-Dev Document outcome includes the
@@ -291,6 +302,18 @@ Everything versus single-stage mode, the current named workflow, per-workflow
 status and receipt references, the next action, blockers, and a pointer to the
 canonical Development Delivery task. It never replaces tracker/provider truth,
 the SQLite work registry, or delivery transitions.
+
+### Post-materialization executor handoff
+
+`auto-dev everything --apply` can materialize a governed worktree before a
+managed executor accepts the next stage. That is not stage execution. When no
+configured executor accepts the handoff, Auto-Dev writes a task-scoped
+`executor_unavailable` receipt with the worktree and frozen-policy context and
+returns a non-success `pending` result. A repeated unaccepted handoff on the
+exact packet preserves every prior receipt and records the next bounded
+attempt rather than presenting a new `worktree_ready` success. After the
+retry budget is exhausted, the result is `blocked` and nonrecoverable. Neither
+result marks an Auto-Dev stage as executed or completed.
 
 ```bash
 agentic-os auto-dev everything <domain> <project> <ticket> --apply

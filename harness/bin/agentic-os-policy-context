@@ -1,0 +1,1198 @@
+#!/usr/bin/env python3
+"""agentic-os-policy-context — Resolve the complete effective policy set for one
+development plane and emit a paste-ready subagent-brief block.
+
+WHY THIS EXISTS
+  `harness/RULES.md` already requires that development and review "load and
+  receipt effective development, QA-gate, and gitflow Markdown policy bundles
+  before selecting a repository, base branch, validation command, PR target, or
+  release path". That sentence is not executable, so on 2026-08-03 a 12-PR
+  Auto-Dev review job read the harness root contract, stopped routing, and
+  re-derived project policy by inference. It transcribed its own inferred
+  conventions into a subagent brief; twelve subagents then inherited the gap
+  with no way to discover it, because the brief looked authoritative.
+
+  This tool makes the resolution executable and the result quotable. It answers
+  one question -- "what is the exact, ordered, hashed policy set that governs
+  work on this project, including the source checkout's own rule surfaces?" --
+  and emits it in a form a subagent brief can carry verbatim. A brief that
+  paraphrases a convention instead of citing the resolved path is the failure
+  mode; a brief that pastes this block cannot have that failure mode.
+
+WHAT IT RESOLVES
+  1. The five Agentic OS policy planes, via `agentic-os develop policy`, which
+     composes root -> domain -> project Markdown and returns a per-plane
+     fingerprint plus every source file's path and sha256.
+  2. The *source checkout's own* rule surfaces -- `AGENTS.md`, nested
+     `AGENTS.md`, and `.claude/rules/**` by default, or whatever
+     `repository.rule_surfaces` in the project's `development.yml` declares.
+     The OS resolver deliberately refuses paths outside the OS root, so these
+     cannot ride along as `--overlay`; they are inventoried and hashed here.
+  3. A composite `effective_policy_fingerprint` over (2) and every plane
+     fingerprint from (1). It is named distinctly from a plane `fingerprint` on
+     purpose -- it covers a strictly larger set than the OS resolver knows about.
+
+USAGE
+  agentic-os-policy-context --domain <domain> --project <project>
+  agentic-os-policy-context --path <any path inside a project or its checkout>
+  agentic-os-policy-context --domain D --project P --format json
+  agentic-os-policy-context --domain D --project P --receipt <out.json>
+  agentic-os-policy-context --check-brief --file <brief.md>
+  agentic-os-policy-context --check-brief            # brief text on stdin
+
+OPTIONS
+  --domain / --project   Explicit routing. Both required together.
+  --path PATH            Infer domain/project from any path inside the project
+                         directory, its `worktrees/`, or its declared
+                         `repository.root`.
+  --repository ID        Select one catalog entry for multi-repository projects.
+  --overlay REL          Invocation Markdown overlay, OS-root-relative;
+                         repeatable. Passed through to `agentic-os develop policy`.
+  --format brief|json    Default `brief`: the paste-ready block. `json`: the
+                         full structured resolution.
+  --detail compact|full  `compact` (default) enumerates the narrowest policy
+                         layer plus every source-checkout rule file, and cites
+                         broader layers by directory; `full` enumerates every
+                         file. Compact exists because the narrowest layer is
+                         where the incident's missed files lived, and an
+                         unreadably long brief gets skimmed.
+  --receipt PATH         Also write the JSON resolution to PATH (a durable
+                         "policy was loaded" receipt for the work-item packet).
+  --strict-source-rules  Treat "checkout present but zero rule files" as a
+                         blocker even when the project has not declared
+                         `repository.rule_surfaces.required: true`.
+  --root DIR             Agentic OS instance root. Defaults to $AGENTIC_OS_ROOT,
+                         then the parent of this script's `harness/` directory.
+  --check-brief          Verify that a subagent brief carries an intact policy
+                         block. Reads `--file` or stdin.
+
+EXIT CODES
+  0  Resolved. The emitted block is safe to paste into a subagent brief.
+  2  Blocker. Policy could not be fully resolved; the message names the one
+     exact owner action. Never proceed to substantive work on a 2 -- proceeding
+     on inference is the incident this tool exists to prevent.
+  1  Internal error (bad arguments, unreadable tree).
+
+  For --check-brief: 0 = block present and intact, 2 = missing or malformed.
+"""
+
+from __future__ import annotations
+
+import argparse
+import fnmatch
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import stat
+import subprocess
+import sys
+from typing import Any
+
+try:
+    import yaml
+except ImportError:  # pragma: no cover - environment guard
+    print("ERROR: PyYAML is required. pip install pyyaml", file=sys.stderr)
+    sys.exit(1)
+
+
+# Planes the OS resolver understands. Keep in sync with
+# `agentic-os develop policy --plane`; an unknown plane is reported, not guessed.
+POLICY_PLANES = (
+    "auto_dev",
+    "dev_standards",
+    "qa_gates",
+    "gitflow_topology",
+    "environment_access",
+)
+
+# Conventional rule surfaces in a source checkout, used when the project's
+# `development.yml` does not declare `repository.rule_surfaces.globs`.
+DEFAULT_RULE_GLOBS = ("AGENTS.md", "**/AGENTS.md", ".claude/rules/**/*.md", "CLAUDE.md")
+
+# Directories never walked when expanding rule globs.
+SKIP_DIRS = {".git", "node_modules", ".venv", "venv", "__pycache__", "dist", "build", ".tox"}
+
+BLOCK_OPEN = "<!-- effective-policy-context/v1 -->"
+BLOCK_CLOSE = "<!-- /effective-policy-context/v1 -->"
+
+# This is a governance boundary, not a truncation limit. A partial source-rule
+# inventory would make the reported effective-policy fingerprint unsafe.
+MAX_RULE_FILES = 400
+
+
+class Blocker(Exception):
+    """A policy element could not be resolved. Carries one exact owner action."""
+
+    def __init__(self, message: str, owner_action: str) -> None:
+        super().__init__(message)
+        self.owner_action = owner_action
+
+
+# ---------------------------------------------------------------------------
+# Root and routing
+# ---------------------------------------------------------------------------
+
+
+def default_root() -> Path:
+    env = os.environ.get("AGENTIC_OS_ROOT")
+    if env:
+        return Path(env).expanduser().resolve()
+    here = Path(__file__).resolve()
+    for parent in here.parents:
+        if parent.name == "harness":
+            return parent.parent
+    return Path.home() / "agentic_os"
+
+
+def profile_paths(root: Path) -> list[Path]:
+    """Return only the two canonical project-profile layouts.
+
+    A domain project belongs under domains/<domain>/02-projects/<project>.
+    Agentic OS's own reusable object library is deliberately not a domain
+    alias: it belongs under harness/shared_factory/02-projects/<project>.
+    Supporting that second layout here avoids a copied profile under
+    domains/shared_factory and keeps profile provenance unambiguous.
+    """
+    domain_profiles = (
+        profile
+        for profile in root.glob("domains/*/02-projects/*/config/development.yml")
+        # shared_factory is a harness layout, never a domain alias.
+        if profile.relative_to(root).parts[1] != "shared_factory"
+    )
+    shared_factory_profiles = root.glob(
+        "harness/shared_factory/02-projects/*/config/development.yml"
+    )
+    return sorted([*domain_profiles, *shared_factory_profiles])
+
+
+def profile_path_for(root: Path, domain: str, project: str) -> Path:
+    """Resolve one canonical profile path without accepting layout aliases."""
+    if domain == "shared_factory":
+        alias = (
+            root
+            / "domains"
+            / domain
+            / "02-projects"
+            / project
+            / "config"
+            / "development.yml"
+        )
+        if alias.is_file():
+            raise Blocker(
+                f"domain alias profile is not supported for {domain}/{project}: {alias}",
+                "Remove the domains/shared_factory copy and keep the canonical "
+                "harness/shared_factory profile.",
+            )
+        candidate = (
+            root
+            / "harness"
+            / "shared_factory"
+            / "02-projects"
+            / project
+            / "config"
+            / "development.yml"
+        )
+    else:
+        candidate = (
+            root
+            / "domains"
+            / domain
+            / "02-projects"
+            / project
+            / "config"
+            / "development.yml"
+        )
+    if candidate.is_file():
+        return candidate
+    raise Blocker(
+        f"no development.yml for {domain}/{project} at {candidate}",
+        f"Create {candidate}, or re-run with the correct --domain/--project.",
+    )
+
+
+def load_profile(path: Path) -> dict[str, Any]:
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError) as exc:
+        raise Blocker(
+            f"development.yml is unreadable: {path} ({exc})",
+            f"Repair the YAML in {path}.",
+        ) from exc
+    return data if isinstance(data, dict) else {}
+
+
+def absolute_path(path: Path) -> Path:
+    """Make a path absolute without resolving project-visible symlinks.
+
+    A registered worktree can deliberately be exposed through
+    ``<project>/worktrees/<name>`` as a symlink to an external checkout.  The
+    visible path is part of the project registry, so routing must inspect it
+    before following the link to its physical target.
+    """
+    return Path(os.path.abspath(path.expanduser()))
+
+
+def is_within(target: Path, candidate: Path) -> bool:
+    """Whether ``target`` is ``candidate`` or one of its descendants."""
+    try:
+        target.relative_to(candidate)
+    except ValueError:
+        return False
+    return True
+
+
+def matching_path_depth(target: Path, candidate: Path) -> int | None:
+    """Return the most-specific visible or physical ownership match.
+
+    Both forms are needed: visible paths preserve the project worktree
+    registry, while physical paths preserve ordinary source-checkout routing.
+    """
+    visible_target = absolute_path(target)
+    visible_candidate = absolute_path(candidate)
+    pairs = (
+        (visible_target, visible_candidate),
+        (visible_target.resolve(), visible_candidate.resolve()),
+    )
+    matches = [len(owner.parts) for path, owner in pairs if is_within(path, owner)]
+    return max(matches) if matches else None
+
+
+def route_from_path(root: Path, target: Path) -> tuple[str, str]:
+    """Map an arbitrary path to (domain, project).
+
+    Matches the project directory itself (including `worktrees/`) first, then
+    any declared `repository.root` or multi-repository catalog root, so an
+    orchestrator working inside a checkout still routes correctly.
+    """
+    best: tuple[int, str, str] | None = None
+    for profile in profile_paths(root):
+        project_dir = profile.parent.parent
+        candidates = [project_dir]
+        try:
+            data = load_profile(profile)
+        except Blocker:
+            data = {}
+        for candidate_root in declared_repo_roots(data):
+            candidates.append(Path(candidate_root).expanduser())
+        for candidate in candidates:
+            depth = matching_path_depth(target, candidate)
+            if depth is not None and (best is None or depth > best[0]):
+                best = (depth, project_dir.parent.parent.name, project_dir.name)
+    if best is None:
+        raise Blocker(
+            f"no project with a config/development.yml owns {absolute_path(target)}",
+            "Pass --domain/--project explicitly, or register the checkout with "
+            "`agentic-os project worktree add`.",
+        )
+    return best[1], best[2]
+
+
+def git_worktree_common_dir(checkout: Path) -> Path:
+    """Return a checkout's Git common directory, rejecting non-worktrees.
+
+    ``.git`` is not sufficient evidence: it can be a stale file or an
+    unrelated repository.  The common directory lets a project prove that a
+    visible worktree belongs to the repository selected for the policy receipt.
+    """
+    command = ["git", "-C", str(checkout), "rev-parse", "--is-inside-work-tree", "--git-common-dir"]
+    try:
+        completed = subprocess.run(command, capture_output=True, text=True, timeout=30, check=False)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise Blocker(
+            f"could not verify Git worktree ownership for {checkout}: {exc}",
+            "Repair or register a reachable Git worktree, then re-run with --path.",
+        ) from exc
+    return parse_git_worktree_common_dir(
+        checkout,
+        completed.stdout,
+        returncode=completed.returncode,
+        stderr=completed.stderr,
+    )
+
+
+def parse_git_worktree_common_dir(
+    checkout: Path, stdout: str, *, returncode: int, stderr: str = ""
+) -> Path:
+    """Parse and normalize ``rev-parse --git-common-dir`` output."""
+    lines = [line.strip() for line in stdout.splitlines() if line.strip()]
+    if returncode != 0 or len(lines) != 2 or lines[0].lower() != "true":
+        detail = (stderr or stdout or "Git did not identify a worktree").strip()
+        raise Blocker(
+            f"path is not a verifiable Git worktree: {checkout} ({detail})",
+            "Repair or register the project worktree, then re-run with --path.",
+        )
+    common_dir = Path(lines[1]).expanduser()
+    if not common_dir.is_absolute():
+        common_dir = checkout / common_dir
+    return common_dir.resolve()
+
+
+def verify_selected_worktree(checkout: Path, selection: dict[str, Any]) -> Path:
+    """Verify that a project-visible worktree belongs to the selected repo."""
+    if not checkout.is_dir():
+        raise Blocker(
+            f"path is inside project worktrees but the checkout is missing: {checkout}",
+            "Register or repair the project worktree, then re-run with --path.",
+        )
+    root_text = str(selection.get("root") or "").strip()
+    if not root_text:
+        raise Blocker(
+            f"cannot verify worktree ownership without a selected repository root: {checkout}",
+            "Set repository.root in config/development.yml or select a catalog repository "
+            "with --repository.",
+        )
+    selected_root = absolute_path(Path(root_text))
+    expected_common_dir = git_worktree_common_dir(selected_root)
+    actual_common_dir = git_worktree_common_dir(checkout)
+    if actual_common_dir != expected_common_dir:
+        repository = selection.get("id") or str(selected_root)
+        raise Blocker(
+            f"worktree {checkout} does not belong to selected repository {repository}",
+            "Use a worktree for the selected repository, or select the repository that owns --path.",
+        )
+    return checkout.resolve()
+
+
+def registered_worktree_entry(project_dir: Path, candidate: Path) -> dict[str, Any]:
+    """Require a project-visible worktree to have an active registry entry."""
+    worktrees_root = absolute_path(project_dir / "worktrees")
+    index_path = worktrees_root / "index.yml"
+    if not index_path.is_file():
+        raise Blocker(
+            f"project-visible worktree {candidate} is not registered: {index_path} is missing",
+            "Register the worktree with `agentic-os project worktree add`, then re-run with --path.",
+        )
+    try:
+        loaded = yaml.safe_load(index_path.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError) as exc:
+        raise Blocker(
+            f"could not read project worktree registry {index_path}: {exc}",
+            "Repair worktrees/index.yml or register the worktree again, then re-run with --path.",
+        ) from exc
+    entries = loaded.get("worktrees") if isinstance(loaded, dict) else None
+    if not isinstance(entries, list):
+        raise Blocker(
+            f"project worktree registry {index_path} has no worktrees list",
+            "Repair worktrees/index.yml or register the worktree again, then re-run with --path.",
+        )
+
+    visible_candidate = absolute_path(candidate)
+    physical_candidate = visible_candidate.resolve()
+    for entry in entries:
+        if not isinstance(entry, dict) or entry.get("status") != "active":
+            continue
+        path_value = entry.get("path")
+        link_value = entry.get("link")
+        if not (
+            isinstance(path_value, str)
+            and path_value.strip()
+            and isinstance(link_value, str)
+            and link_value.strip()
+        ):
+            continue
+        path = Path(path_value.strip()).expanduser()
+        registered_path = absolute_path(path if path.is_absolute() else project_dir / path)
+        link = Path(link_value.strip()).expanduser()
+        registered_link = absolute_path(link if link.is_absolute() else project_dir / link)
+        if visible_candidate == registered_link and physical_candidate == registered_path.resolve():
+            return entry
+    raise Blocker(
+        f"project-visible worktree {visible_candidate} is not registered in {index_path}",
+        "Register the worktree with `agentic-os project worktree add`, then re-run with --path.",
+    )
+
+
+def source_checkout_for_path(
+    profile_path: Path, profile: dict[str, Any], selection: dict[str, Any], target: Path
+) -> Path | None:
+    """Return the declared checkout or registered worktree that owns ``target``.
+
+    ``--path`` is allowed to select a source checkout. When it points into a
+    registered project worktree, hashing the configured primary checkout would
+    omit that worktree's own rule surfaces. Project-local metadata remains
+    routed through the declared repository root instead of being promoted to a
+    source checkout by inference.
+    """
+    visible_target = absolute_path(target)
+    resolved_target = visible_target.resolve()
+    project_dir = profile_path.parent.parent
+    worktrees_root = absolute_path(project_dir / "worktrees")
+    if is_within(visible_target, worktrees_root):
+        relative = visible_target.relative_to(worktrees_root)
+        if relative.parts:
+            candidate = worktrees_root / relative.parts[0]
+            registered_worktree_entry(project_dir, candidate)
+            return verify_selected_worktree(candidate, selection)
+
+    selected_root_text = str(selection.get("root") or "").strip()
+    if selected_root_text:
+        selected_root = absolute_path(Path(selected_root_text))
+        if is_within(visible_target, selected_root) or is_within(
+            resolved_target, selected_root.resolve()
+        ):
+            return selected_root.resolve()
+
+    # A path in another declared catalog root must not silently override the
+    # explicitly selected repository in the emitted fingerprint.
+    for root_text in declared_repo_roots(profile):
+        candidate = absolute_path(Path(root_text))
+        if is_within(visible_target, candidate) or is_within(
+            resolved_target, candidate.resolve()
+        ):
+            repository = selection.get("id") or str(selected_root_text)
+            raise Blocker(
+                f"selected repository {repository} does not own --path {visible_target}",
+                "Select the repository that owns --path, or pass a path inside the selected checkout.",
+            )
+    return None
+
+
+def declared_repo_roots(profile: dict[str, Any]) -> list[str]:
+    repository = profile.get("repository")
+    if not isinstance(repository, dict):
+        return []
+    roots: list[str] = []
+    root_value = repository.get("root")
+    if isinstance(root_value, str) and root_value.strip():
+        roots.append(root_value.strip())
+    catalog = repository.get("catalog")
+    if isinstance(catalog, list):
+        for entry in catalog:
+            if isinstance(entry, dict):
+                entry_root = entry.get("root")
+                if isinstance(entry_root, str) and entry_root.strip():
+                    roots.append(entry_root.strip())
+    return roots
+
+
+def select_repository(profile: dict[str, Any], repository_id: str | None) -> dict[str, Any]:
+    """Return {'id', 'root', 'declared'} for the selected repository.
+
+    Multi-repository projects must be selected explicitly; guessing which
+    checkout governs the work is the same class of error as guessing policy.
+    """
+    repository = profile.get("repository")
+    if not isinstance(repository, dict):
+        return {"id": None, "root": "", "declared": False}
+
+    catalog = repository.get("catalog")
+    if isinstance(catalog, list) and catalog:
+        entries = {
+            str(entry.get("id")): entry
+            for entry in catalog
+            if isinstance(entry, dict) and entry.get("id")
+        }
+        if repository_id is None:
+            if len(entries) == 1:
+                only_id, only = next(iter(entries.items()))
+                return {"id": only_id, "root": str(only.get("root") or ""), "declared": True}
+            raise Blocker(
+                "project declares multiple repositories; policy context is "
+                f"repository-scoped (available: {', '.join(sorted(entries))})",
+                "Re-run with --repository <id>.",
+            )
+        if repository_id not in entries:
+            raise Blocker(
+                f"unknown repository id {repository_id!r} "
+                f"(available: {', '.join(sorted(entries))})",
+                "Re-run with a declared --repository id.",
+            )
+        chosen = entries[repository_id]
+        return {"id": repository_id, "root": str(chosen.get("root") or ""), "declared": True}
+
+    root_value = repository.get("root")
+    root_text = root_value.strip() if isinstance(root_value, str) else ""
+    return {"id": None, "root": root_text, "declared": bool(root_text)}
+
+
+# ---------------------------------------------------------------------------
+# Plane resolution (delegated to the canonical OS resolver)
+# ---------------------------------------------------------------------------
+
+
+def agentic_os_binary() -> str:
+    found = shutil.which("agentic-os")
+    if not found:
+        raise Blocker(
+            "the `agentic-os` CLI is not on PATH, so policy planes cannot be resolved",
+            "Install or expose `agentic-os` on PATH, then re-run.",
+        )
+    return found
+
+
+def resolve_plane(
+    binary: str, root: Path, domain: str, project: str, plane: str, overlays: list[str]
+) -> dict[str, Any]:
+    command = [
+        binary,
+        "develop",
+        "policy",
+        domain,
+        project,
+        "--plane",
+        plane,
+        "--root",
+        str(root),
+        "--json",
+    ]
+    for overlay in overlays:
+        command += ["--overlay", overlay]
+    try:
+        completed = subprocess.run(
+            command, capture_output=True, text=True, timeout=120, check=False
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise Blocker(
+            f"`agentic-os develop policy` failed for plane {plane}: {exc}",
+            f"Run `{' '.join(command)}` by hand and repair the reported cause.",
+        ) from exc
+    if completed.returncode != 0:
+        detail = (completed.stderr or completed.stdout or "").strip().splitlines()
+        raise Blocker(
+            f"plane {plane} did not resolve: {detail[0] if detail else 'unknown error'}",
+            f"Run `{' '.join(command)}` by hand and repair the reported cause.",
+        )
+    try:
+        return json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise Blocker(
+            f"plane {plane} returned unparseable JSON: {exc}",
+            f"Run `{' '.join(command)}` by hand and repair the reported cause.",
+        ) from exc
+
+
+def summarize_plane(payload: dict[str, Any]) -> dict[str, Any]:
+    """Keep sources grouped by layer.
+
+    The compact brief cites the narrowest layer file-by-file and the broader
+    layers directory-by-directory, so grouping has to survive summarization.
+    The narrowest layer is where the incident's missed files lived.
+    """
+    layers = payload.get("layers") or []
+    sources = payload.get("sources") or []
+    grouped: list[dict[str, Any]] = []
+    for layer in layers:
+        rank = layer.get("rank")
+        grouped.append(
+            {
+                "rank": rank,
+                "scope": layer.get("scope"),
+                "root": layer.get("root"),
+                "exists": bool(layer.get("exists")),
+                "source_refs": [
+                    source.get("source_ref") for source in sources if source.get("rank") == rank
+                ],
+            }
+        )
+    overlay_refs = [
+        source.get("source_ref") for source in sources if source.get("scope") == "invocation"
+    ]
+    return {
+        "plane": payload.get("plane"),
+        "fingerprint": payload.get("fingerprint"),
+        "layers": grouped,
+        "overlay_refs": overlay_refs,
+        "missing_layer_roots": [
+            layer.get("root") for layer in layers if not layer.get("exists")
+        ],
+        "source_refs": [source.get("source_ref") for source in sources],
+        "source_count": len(sources),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Source-checkout rule surfaces
+# ---------------------------------------------------------------------------
+
+
+def rule_surface_config(profile: dict[str, Any]) -> dict[str, Any]:
+    repository = profile.get("repository")
+    declared = repository.get("rule_surfaces") if isinstance(repository, dict) else None
+    if not isinstance(declared, dict):
+        return {"globs": list(DEFAULT_RULE_GLOBS), "priority_source": None,
+                "required": False, "mode": "convention"}
+    globs = declared.get("globs")
+    if not isinstance(globs, list) or not globs:
+        globs = list(DEFAULT_RULE_GLOBS)
+        mode = "declared_partial"
+    else:
+        globs = [str(item) for item in globs]
+        mode = "declared"
+    priority = declared.get("priority_source")
+    return {
+        "globs": globs,
+        "priority_source": str(priority) if isinstance(priority, str) and priority else None,
+        "required": bool(declared.get("required")),
+        "mode": mode,
+    }
+
+
+def expand_rule_globs(
+    checkout: Path, globs: list[str], *, declared: bool = False
+) -> list[Path]:
+    """Expand rule globs against a checkout without walking vendored trees.
+
+    Declared globs are part of the policy contract, so an invalid or unmatched
+    one must not disappear from the effective-policy fingerprint. Built-in
+    convention globs remain best-effort because not every repository uses every
+    supported rule surface.
+    """
+    checkout_root = checkout.resolve()
+    matched: set[Path] = set()
+    for pattern in globs:
+        if pattern.startswith("/") or ".." in Path(pattern).parts:
+            if declared:
+                raise Blocker(
+                    f"declared source-rule glob must be checkout-relative: {pattern!r}",
+                    "Make repository.rule_surfaces.globs checkout-relative; absolute and "
+                    "escaping paths cannot contribute to the policy fingerprint.",
+                )
+            # Built-in convention globs are controlled by this executable and
+            # contain no path escapes. Preserve the defensive skip for them.
+            continue
+        # Walk with explicit pruning so documented exclusions are never
+        # traversed. A bare pattern is rooted at the checkout; any pattern with
+        # a path separator matches the full relative path at its declared depth.
+        root_only = "/" not in pattern and "**" not in pattern
+        pattern_matches: set[Path] = set()
+        for directory, dirnames, filenames in os.walk(checkout_root, topdown=True):
+            dirnames[:] = sorted(name for name in dirnames if name not in SKIP_DIRS)
+            relative_dir = Path(directory).relative_to(checkout_root)
+            for filename in filenames:
+                relative = relative_dir / filename
+                if _matches_rule_pattern(relative, pattern):
+                    candidate = checkout_root / relative
+                    if candidate.is_symlink():
+                        raise Blocker(
+                            f"source-rule file must be a checkout-local regular file, not a symlink: {relative}",
+                            "Replace the symlink with a regular file inside the selected checkout; "
+                            "external policy bytes cannot contribute to the effective-policy fingerprint.",
+                        )
+                    try:
+                        resolved = candidate.resolve(strict=True)
+                        mode = candidate.lstat().st_mode
+                    except OSError as exc:
+                        raise Blocker(
+                            f"source-rule file cannot be safely inspected: {relative}",
+                            "Restore a readable regular file inside the selected checkout; "
+                            "do not emit a partial policy fingerprint.",
+                        ) from exc
+                    if not resolved.is_relative_to(checkout_root):
+                        raise Blocker(
+                            f"source-rule file resolves outside the selected checkout: {relative}",
+                            "Restore a checkout-local regular rule file; external policy bytes "
+                            "cannot contribute to the effective-policy fingerprint.",
+                        )
+                    if not stat.S_ISREG(mode):
+                        raise Blocker(
+                            f"source-rule file must be a regular file: {relative}",
+                            "Replace the non-regular entry with a regular file inside the selected checkout; "
+                            "do not emit a partial policy fingerprint.",
+                        )
+                    pattern_matches.add(candidate)
+            if root_only:
+                # Bare non-recursive patterns only inspect the checkout root.
+                break
+        if declared and not pattern_matches:
+            raise Blocker(
+                f"declared source-rule glob matched no files: {pattern!r} under {checkout}",
+                "Restore a matching rule surface or correct "
+                "repository.rule_surfaces.globs; do not emit a partial policy fingerprint.",
+            )
+        matched.update(pattern_matches)
+    files = sorted(matched)
+    if len(files) > MAX_RULE_FILES:
+        raise Blocker(
+            f"source-rule inventory exceeds the safe limit of {MAX_RULE_FILES} files under {checkout}",
+            "Narrow repository.rule_surfaces.globs, or raise MAX_RULE_FILES with an explicit "
+            "reviewed policy decision; do not proceed with a truncated inventory.",
+        )
+    return files
+
+
+def _matches_rule_pattern(relative: Path, pattern: str) -> bool:
+    """Match a checkout-relative rule pattern with predictable glob scope."""
+    path_parts = relative.parts
+    pattern_parts = tuple(part for part in pattern.split("/") if part)
+
+    def matches(path_index: int, pattern_index: int) -> bool:
+        if pattern_index == len(pattern_parts):
+            return path_index == len(path_parts)
+        current = pattern_parts[pattern_index]
+        if current == "**":
+            return matches(path_index, pattern_index + 1) or (
+                path_index < len(path_parts) and matches(path_index + 1, pattern_index)
+            )
+        return (
+            path_index < len(path_parts)
+            and fnmatch.fnmatchcase(path_parts[path_index], current)
+            and matches(path_index + 1, pattern_index + 1)
+        )
+
+    return matches(0, 0)
+
+
+def rule_file_stat_identity(result: os.stat_result) -> tuple[int, int, int, int, int, int]:
+    """Return the stable file identity used around a no-follow hash read."""
+    return (
+        stat.S_IFMT(result.st_mode),
+        result.st_dev,
+        result.st_ino,
+        result.st_size,
+        result.st_mtime_ns,
+        result.st_ctime_ns,
+    )
+
+
+def sha256_file(path: Path, *, checkout: Path) -> str:
+    """Hash one source rule through a verified, no-follow file descriptor."""
+    checkout_root = checkout.resolve()
+    try:
+        relative = path.relative_to(checkout_root)
+        expected = path.lstat()
+        resolved = path.resolve(strict=True)
+    except OSError as exc:
+        raise Blocker(
+            f"source-rule file cannot be safely inspected: {path}",
+            "Restore a readable regular file inside the selected checkout; "
+            "do not emit a partial policy fingerprint.",
+        ) from exc
+    except ValueError as exc:
+        raise Blocker(
+            f"source-rule file is outside the selected checkout: {path}",
+            "Restore a checkout-local regular rule file; external policy bytes "
+            "cannot contribute to the effective-policy fingerprint.",
+        ) from exc
+    if not stat.S_ISREG(expected.st_mode) or not resolved.is_relative_to(checkout_root):
+        raise Blocker(
+            f"source-rule file is unsafe for hashing: {relative}",
+            "Restore a readable regular file inside the selected checkout; "
+            "do not emit a partial policy fingerprint.",
+        )
+    no_follow = getattr(os, "O_NOFOLLOW", None)
+    if no_follow is None:
+        raise Blocker(
+            f"source-rule hashing requires no-follow descriptor support: {relative}",
+            "Run this policy gate on a platform with no-follow file descriptors; "
+            "do not emit a partial policy fingerprint.",
+        )
+    try:
+        descriptor = os.open(path, os.O_RDONLY | no_follow)
+    except OSError as exc:
+        raise Blocker(
+            f"source-rule file cannot be safely opened: {relative}",
+            "Restore a readable regular file inside the selected checkout; "
+            "do not emit a partial policy fingerprint.",
+        ) from exc
+    try:
+        opened = os.fstat(descriptor)
+        if not stat.S_ISREG(opened.st_mode) or rule_file_stat_identity(opened) != rule_file_stat_identity(expected):
+            raise Blocker(
+                f"source-rule file changed before hashing: {relative}",
+                "Restore a stable regular file inside the selected checkout; "
+                "do not emit a partial policy fingerprint.",
+            )
+        digest = hashlib.sha256()
+        while chunk := os.read(descriptor, 65536):
+            digest.update(chunk)
+        finished = os.fstat(descriptor)
+        if rule_file_stat_identity(finished) != rule_file_stat_identity(opened):
+            raise Blocker(
+                f"source-rule file changed while hashing: {relative}",
+                "Restore a stable regular file inside the selected checkout; "
+                "do not emit a partial policy fingerprint.",
+            )
+    except OSError as exc:
+        raise Blocker(
+            f"source-rule file cannot be read: {relative}",
+            "Restore a readable regular file inside the selected checkout; "
+            "do not emit a partial policy fingerprint.",
+        ) from exc
+    finally:
+        os.close(descriptor)
+    try:
+        current = path.lstat()
+    except OSError as exc:
+        raise Blocker(
+            f"source-rule file changed while hashing: {relative}",
+            "Restore a stable regular file inside the selected checkout; "
+            "do not emit a partial policy fingerprint.",
+        ) from exc
+    if not stat.S_ISREG(current.st_mode) or rule_file_stat_identity(current) != rule_file_stat_identity(opened):
+        raise Blocker(
+            f"source-rule file changed while hashing: {relative}",
+            "Restore a stable regular file inside the selected checkout; "
+            "do not emit a partial policy fingerprint.",
+        )
+    return digest.hexdigest()
+
+
+def resolve_source_rules(
+    selection: dict[str, Any], config: dict[str, Any], strict: bool, checkout_override: Path | None = None
+) -> dict[str, Any]:
+    root_text = str(checkout_override) if checkout_override else selection.get("root") or ""
+    if not root_text:
+        # A project may legitimately have no source checkout (research,
+        # documentation, config-only). Report it; never let silence read as
+        # "there were no rules to load".
+        return {
+            "status": "none_declared",
+            "checkout": None,
+            "globs": config["globs"],
+            "priority_source": config["priority_source"],
+            "mode": config["mode"],
+            "files": [],
+        }
+
+    checkout = Path(root_text).expanduser()
+    if not checkout.is_dir():
+        raise Blocker(
+            f"declared repository root does not exist on disk: {checkout}",
+            f"Clone or mount {checkout}, or correct `repository.root` in the "
+            "project's config/development.yml.",
+        )
+
+    files = expand_rule_globs(
+        checkout.resolve(), config["globs"], declared=config["mode"] == "declared"
+    )
+    entries = []
+    for path in files:
+        try:
+            digest = sha256_file(path, checkout=checkout)
+        except OSError as exc:
+            raise Blocker(
+                f"source-rule file cannot be read: {path.relative_to(checkout.resolve())}",
+                "Restore a readable regular file inside the selected checkout; "
+                "do not emit a partial policy fingerprint.",
+            ) from exc
+        entries.append(
+            {
+                "source_ref": str(path.relative_to(checkout.resolve())),
+                "absolute_path": str(path),
+                "sha256": digest,
+            }
+        )
+
+    priority = config["priority_source"]
+    if priority:
+        known = {entry["source_ref"] for entry in entries}
+        if priority not in known:
+            raise Blocker(
+                f"declared priority rule source is missing from the checkout: {priority}",
+                f"Restore {checkout / priority}, or correct "
+                "`repository.rule_surfaces.priority_source` in the project's "
+                "config/development.yml.",
+            )
+
+    if not entries and (config["required"] or strict):
+        raise Blocker(
+            f"no source-checkout rule files matched {config['globs']} under {checkout}",
+            "Add the checkout's rule surfaces, or correct "
+            "`repository.rule_surfaces.globs` in the project's config/development.yml.",
+        )
+
+    return {
+        "status": "resolved" if entries else "none_found",
+        "checkout": str(checkout),
+        "globs": config["globs"],
+        "priority_source": priority,
+        "mode": config["mode"],
+        "files": entries,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Composite fingerprint and rendering
+# ---------------------------------------------------------------------------
+
+
+def composite_fingerprint(planes: list[dict[str, Any]], source_rules: dict[str, Any]) -> str:
+    """Hash every plane fingerprint plus every source-rule file hash.
+
+    Named `effective_policy_fingerprint`, never `fingerprint`: it covers a
+    strictly larger set than any single plane fingerprint and must not be
+    mistaken for one in a receipt.
+    """
+    digest = hashlib.sha256()
+    for plane in sorted(planes, key=lambda item: item["plane"] or ""):
+        digest.update(f"{plane['plane']}:{plane['fingerprint']}\n".encode())
+    # The selected checkout and priority/glob configuration alter which policy
+    # rules govern a task even if the discovered bytes are unchanged.
+    source_contract = {
+        "status": source_rules["status"],
+        "checkout": source_rules["checkout"],
+        "globs": source_rules["globs"],
+        "priority_source": source_rules["priority_source"],
+        "mode": source_rules["mode"],
+        "files": [
+            {"source_ref": entry["source_ref"], "sha256": entry["sha256"]}
+            for entry in source_rules["files"]
+        ],
+    }
+    digest.update(json.dumps(source_contract, sort_keys=True, separators=(",", ":")).encode())
+    return digest.hexdigest()
+
+
+def render_brief(resolution: dict[str, Any]) -> str:
+    lines = [
+        BLOCK_OPEN,
+        "**Effective policy context — resolved, not paraphrased.**",
+        "",
+        f"- Route: `{resolution['domain']}` / `{resolution['project']}`"
+        + (f" / repository `{resolution['repository_id']}`" if resolution["repository_id"] else ""),
+        f"- Profile: `{resolution['profile_source']}`",
+        f"- effective_policy_fingerprint: `{resolution['effective_policy_fingerprint']}`",
+        "",
+        "Read these before any judgement about architecture, migrations, branch",
+        "targets, commit format, validation commands, review criteria, or runtime.",
+        "They are the authority. Do not restate a convention from memory, and do",
+        "not treat this brief's prose as the source — cite the file.",
+        "",
+        "**Agentic OS policy planes** (root → domain → project order):",
+        "",
+    ]
+    os_root = resolution["os_root"]
+    full = resolution["detail"] == "full"
+    for plane in resolution["planes"]:
+        lines.append(f"- `{plane['plane']}` — fingerprint `{plane['fingerprint']}`")
+        layers = plane["layers"]
+        narrowest_rank = max((layer["rank"] for layer in layers), default=None)
+        for layer in layers:
+            refs = layer["source_refs"]
+            # The narrowest layer is always enumerated: those are the
+            # project-specific files an orchestrator is most likely to skip and
+            # then re-derive by inference. Broader layers cite their directory
+            # unless --detail full was requested.
+            if full or layer["rank"] == narrowest_rank:
+                lines.append(f"  - `{os_root}/{layer['root']}/`")
+                for source_ref in refs:
+                    lines.append(f"    - `{os_root}/{source_ref}`")
+            else:
+                noun = "file" if len(refs) == 1 else "files"
+                lines.append(f"  - `{os_root}/{layer['root']}/` ({len(refs)} {noun} — read all)")
+        for source_ref in plane["overlay_refs"]:
+            lines.append(f"  - overlay: `{os_root}/{source_ref}`")
+    lines.append("")
+
+    rules = resolution["source_rules"]
+    if rules["status"] == "resolved":
+        lines.append(
+            "**Source checkout rule surfaces** "
+            f"(`{rules['checkout']}`) — part of the effective policy set:"
+        )
+        lines.append("")
+        for entry in rules["files"]:
+            marker = ""
+            if rules["priority_source"] and entry["source_ref"] == rules["priority_source"]:
+                marker = "  ← priority source when documents conflict"
+            lines.append(f"- `{entry['absolute_path']}`{marker}")
+    elif rules["status"] == "none_found":
+        lines.append(
+            f"**Source checkout rule surfaces** — none matched `{rules['globs']}` "
+            f"under `{rules['checkout']}`. Treat this as an absence you verified, "
+            "not as permission to infer conventions."
+        )
+    else:
+        lines.append(
+            "**Source checkout rule surfaces** — this project declares no "
+            "repository root; there is no source checkout to load."
+        )
+
+    lines += [
+        "",
+        "If any statement in the surrounding brief conflicts with a file above,",
+        "the file wins and the conflict is a blocker to report, not to resolve",
+        "by preference.",
+        "",
+        "Regenerate or expand this block with:",
+        "`agentic-os-policy-context --domain {domain} --project {project}"
+        "{repository} --detail full`".format(
+            domain=resolution["domain"],
+            project=resolution["project"],
+            repository=(
+                f" --repository {resolution['repository_id']}"
+                if resolution["repository_id"]
+                else ""
+            ),
+        ),
+        BLOCK_CLOSE,
+    ]
+    return "\n".join(lines)
+
+
+def resolve(args: argparse.Namespace) -> dict[str, Any]:
+    root = Path(args.root).expanduser().resolve() if args.root else default_root()
+    if not root.is_dir():
+        raise Blocker(f"Agentic OS root not found: {root}", "Pass --root <dir>.")
+
+    checkout_override: Path | None = None
+    if args.path:
+        routed_domain, routed_project = route_from_path(root, Path(args.path))
+        if args.domain and args.project and (args.domain, args.project) != (
+            routed_domain,
+            routed_project,
+        ):
+            raise Blocker(
+                f"explicit route {args.domain}/{args.project} disagrees with --path routing "
+                f"{routed_domain}/{routed_project}",
+                "Remove the conflicting --domain/--project, or pass a --path inside the "
+                "explicit project.",
+            )
+        domain, project = routed_domain, routed_project
+    else:
+        domain, project = args.domain, args.project
+
+    profile_path = profile_path_for(root, domain, project)
+    profile = load_profile(profile_path)
+    selection = select_repository(profile, args.repository)
+    if args.path:
+        checkout_override = source_checkout_for_path(
+            profile_path, profile, selection, Path(args.path)
+        )
+
+    binary = agentic_os_binary()
+    planes: list[dict[str, Any]] = []
+    for plane in POLICY_PLANES:
+        payload = resolve_plane(binary, root, domain, project, plane, args.overlay or [])
+        summary = summarize_plane(payload)
+        if summary["missing_layer_roots"]:
+            raise Blocker(
+                f"plane {plane} has configured but missing layer roots: "
+                f"{summary['missing_layer_roots']}",
+                "Create the missing policy directory, or remove it from the "
+                f"project's config/development.yml policy configuration.",
+            )
+        planes.append(summary)
+
+    rules = resolve_source_rules(
+        selection, rule_surface_config(profile), args.strict_source_rules, checkout_override
+    )
+
+    resolution: dict[str, Any] = {
+        "schema": "effective-policy-context/v1",
+        "os_root": str(root),
+        "domain": domain,
+        "project": project,
+        "repository_id": selection["id"],
+        "profile_source": str(profile_path),
+        "planes": planes,
+        "source_rules": rules,
+        "detail": args.detail,
+    }
+    resolution["effective_policy_fingerprint"] = composite_fingerprint(planes, rules)
+    return resolution
+
+
+# ---------------------------------------------------------------------------
+# Brief verification
+# ---------------------------------------------------------------------------
+
+FINGERPRINT_PATTERN = re.compile(r"effective_policy_fingerprint:\s*`?([0-9a-f]{64})`?")
+
+
+def check_brief(text: str) -> tuple[bool, str]:
+    if BLOCK_OPEN not in text:
+        return False, (
+            "subagent brief carries no effective-policy-context/v1 block: it "
+            "cannot cite the policy files that govern the work"
+        )
+    if BLOCK_CLOSE not in text:
+        return False, "effective-policy-context/v1 block is not closed"
+    body = text.split(BLOCK_OPEN, 1)[1].split(BLOCK_CLOSE, 1)[0]
+    if not FINGERPRINT_PATTERN.search(body):
+        return False, "policy block has no effective_policy_fingerprint"
+    if body.count("`/") < 3:
+        return False, "policy block cites fewer than three absolute policy paths"
+    return True, "effective-policy-context/v1 block present and intact"
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="agentic-os-policy-context",
+        description=(
+            "Resolve the complete effective policy set for a project and emit a "
+            "paste-ready subagent-brief block."
+        ),
+    )
+    parser.add_argument("--domain")
+    parser.add_argument("--project")
+    parser.add_argument("--path", help="Infer --domain/--project from any path inside the project.")
+    parser.add_argument("--repository", help="Repository id for multi-repository projects.")
+    parser.add_argument("--overlay", action="append", help="OS-root-relative invocation overlay.")
+    parser.add_argument("--format", choices=("brief", "json"), default="brief")
+    parser.add_argument(
+        "--detail",
+        choices=("compact", "full"),
+        default="compact",
+        help=(
+            "compact (default) enumerates the narrowest policy layer and every "
+            "source-checkout rule file, and cites broader layers by directory; "
+            "full enumerates every file in every layer."
+        ),
+    )
+    parser.add_argument("--receipt", help="Also write the JSON resolution to this path.")
+    parser.add_argument("--strict-source-rules", action="store_true")
+    parser.add_argument("--root")
+    parser.add_argument("--check-brief", action="store_true")
+    parser.add_argument("--file", help="Brief file to verify with --check-brief.")
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+
+    if args.check_brief:
+        if args.file:
+            try:
+                text = Path(args.file).expanduser().read_text(encoding="utf-8", errors="replace")
+            except OSError as exc:
+                print(f"agentic-os-policy-context: cannot read {args.file}: {exc}", file=sys.stderr)
+                return 1
+        else:
+            text = sys.stdin.read()
+        ok, message = check_brief(text)
+        print(message, file=sys.stdout if ok else sys.stderr)
+        return 0 if ok else 2
+
+    if not args.path and not (args.domain and args.project):
+        print(
+            "agentic-os-policy-context: pass --path, or both --domain and --project",
+            file=sys.stderr,
+        )
+        return 1
+
+    try:
+        resolution = resolve(args)
+    except Blocker as blocker:
+        print(f"BLOCKER: {blocker}", file=sys.stderr)
+        print(f"Owner action: {blocker.owner_action}", file=sys.stderr)
+        print(
+            "Do not proceed on inferred policy. Report this blocker.",
+            file=sys.stderr,
+        )
+        return 2
+
+    if args.receipt:
+        receipt_path = Path(args.receipt).expanduser()
+        receipt_path.parent.mkdir(parents=True, exist_ok=True)
+        receipt_path.write_text(
+            json.dumps(resolution, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+
+    if args.format == "json":
+        print(json.dumps(resolution, indent=2, sort_keys=True))
+    else:
+        print(render_brief(resolution))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

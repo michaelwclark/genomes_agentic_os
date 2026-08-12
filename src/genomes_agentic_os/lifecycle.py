@@ -667,7 +667,7 @@ def create_project_work_item(
     )
     work_root = work_items_root(project_root)
     work_item_root = work_item_path(project_root, work_id, status, item_format=item_format)
-    result = ScaffoldResult()
+    result = ScaffoldResult(entity_path=work_item_root)
     canonical = lane_root(project_root, status) == work_root
     directories = (
         (work_root, work_root / ARCHIVE_DIRECTORY)

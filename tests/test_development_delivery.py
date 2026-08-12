@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import re
 import subprocess
+import threading
 
 import pytest
 import yaml
@@ -71,7 +72,14 @@ def _work_item_packets(project: Path) -> list[Path]:
     return sorted(packets)
 
 
-def _project(root: Path, repo: Path, *, canonical: bool = True) -> Path:
+def _project(
+    root: Path,
+    repo: Path,
+    *,
+    canonical: bool = True,
+    repository_id: str = "github:acme/app",
+    managed_runtime: bool = False,
+) -> Path:
     create_project(root, "acme", "app", repo=str(repo))
     project = root / "domains" / "acme" / "02-projects" / "app"
     profile = {
@@ -79,13 +87,23 @@ def _project(root: Path, repo: Path, *, canonical: bool = True) -> Path:
         "enabled": True,
         "tracker": {"primary": "linear"},
         "repository": {
-            "id": "github:acme/app",
+            "id": repository_id,
             "root": str(repo),
             "base_branch": "main",
         },
         "worktrees": {"directory": "worktrees", "branch_template": "feature/{ticket}-{slug}"},
         "work_items": {"active_status": "building"},
-        "runtime": {"ownership": "not_managed", "provider": "none", "identity": "not-managed"},
+        "runtime": (
+            {
+                "ownership": "managed",
+                "provider": "test-managed-runtime",
+                "identity_template": "{domain}-{project}-{worktree}",
+                "teardown_command": "true {runtime_identity}",
+                "readback_command": "true {runtime_identity}",
+            }
+            if managed_runtime
+            else {"ownership": "not_managed", "provider": "none", "identity": "not-managed"}
+        ),
         "validation": {
             "commands": ["python3 -m pytest tests -q"],
             "test_policy": "risk_based_triangle",
@@ -267,6 +285,7 @@ def _set_reviewed_revision(
             "checks_verified": True,
             "reviews_verified": True,
             "readback_verified": True,
+            "source_head_sha": revision,
             "subject_revision": revision,
             **scope,
         },
@@ -1290,6 +1309,48 @@ def test_failure_retries_then_blocks_and_recovery_resumes_owner_state(tmp_path: 
     assert blocked["failure"]["recoverable"] is False
 
 
+def test_executor_handoff_can_recover_after_retry_budget_exhaustion(tmp_path: Path) -> None:
+    task = _state(tmp_path, max_attempts=2)
+    first = task.record_executor_unavailable(stage="groom")
+    assert first["handoff"]["status"] == "pending"
+    task.recover(receipt="executor repaired", idempotency_key="recover-first-handoff")
+
+    exhausted = task.record_executor_unavailable(stage="groom")
+    assert exhausted["handoff"]["status"] == "blocked"
+    assert task.read()["state"] == "blocked"
+
+    recovered = task.recover(
+        receipt="executor admission restored", idempotency_key="recover-exhausted-handoff"
+    )
+    assert recovered["state"] == "discovered"
+    assert recovered["failure"] is None
+
+
+def test_executor_handoff_reuses_orphaned_receipt_after_interrupted_state_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    task = _state(tmp_path)
+    original_atomic_json = delivery._atomic_json
+
+    def interrupt_task_state_write(path: Path, value: dict[str, object]) -> None:
+        if path == task.path:
+            raise OSError("simulated interruption after handoff receipt")
+        original_atomic_json(path, value)
+
+    monkeypatch.setattr(delivery, "_atomic_json", interrupt_task_state_write)
+    with pytest.raises(OSError, match="simulated interruption"):
+        task.record_executor_unavailable(stage="groom")
+    receipt_path = task.path.parent / "handoffs" / "executor-unavailable-attempt-01.json"
+    assert receipt_path.is_file()
+    assert task.read()["failure"] is None
+
+    monkeypatch.setattr(delivery, "_atomic_json", original_atomic_json)
+    resumed = task.record_executor_unavailable(stage="groom")
+    assert resumed["replayed"] is False
+    assert resumed["handoff"] == json.loads(receipt_path.read_text(encoding="utf-8"))
+    assert task.read()["attempts"]["executor_unavailable"] == 1
+
+
 def test_stale_lease_is_classified_for_recovery(tmp_path: Path) -> None:
     task = _state(tmp_path)
     state = task.read()
@@ -1970,6 +2031,255 @@ def test_multi_ticket_provisioning_preserves_success_and_auto_recovers_retryable
         assert json.loads(receipt.read_text(encoding="utf-8"))["run_id"] == "portfolio-recovery"
 
 
+def _historical_origin_main_failure(tmp_path: Path) -> tuple[Path, Path, Path, str]:
+    """Create the pre-AGE-179 failure shape without creating task source effects."""
+
+    repo, base_sha = _repository(tmp_path)
+    root = tmp_path / "os"
+    project = _project(root, repo)
+    profile_path = project / "config" / "development.yml"
+    profile = yaml.safe_load(profile_path.read_text(encoding="utf-8"))
+    profile["repository"]["base_branch"] = "origin/main"
+    profile_path.write_text(yaml.safe_dump(profile, sort_keys=False), encoding="utf-8")
+    first = delivery.start_development_run(
+        root,
+        "acme",
+        "app",
+        ["CC-179"],
+        titles={"CC-179": "Retry selection"},
+        run_id="origin-main-retry",
+        apply=True,
+    )
+    task_path = Path(first["tasks"][0]["state_ref"])
+    failed = TaskState(task_path).read()
+    assert failed["state"] == "work_item_ready"
+    assert failed["failure"]["kind"] == "provisioning_failed"
+    assert "remote ref origin/main" in failed["failure"]["detail"]
+    profile["repository"]["base_branch"] = "main"
+    profile_path.write_text(yaml.safe_dump(profile, sort_keys=False), encoding="utf-8")
+    return root, repo, task_path, base_sha
+
+
+def test_correct_failed_base_selection_preserves_failure_then_allows_retry(tmp_path: Path) -> None:
+    root, repo, task_path, base_sha = _historical_origin_main_failure(tmp_path)
+    before = TaskState(task_path).read()
+    portfolio_path = task_path.parent.parent.parent / "portfolio.json"
+    assert json.loads(portfolio_path.read_text(encoding="utf-8"))["repository"]["base_branch"] == "origin/main"
+
+    corrected = delivery.correct_failed_base_selection(
+        task_path,
+        corrected_base_branch="main",
+        idempotency_key="cc-179:correct-main",
+        apply=True,
+    )
+
+    assert corrected["result"] == "corrected"
+    assert corrected["base_sha"] == base_sha
+    receipt = Path(corrected["receipt"])
+    recorded = json.loads(receipt.read_text(encoding="utf-8"))
+    assert recorded["original"]["failure"] == before["failure"]
+    assert recorded["original"]["repository"]["base_branch"] == "origin/main"
+    assert recorded["corrected"]["repository"]["base_branch"] == "main"
+    assert recorded["preflight"]["no_worktree_or_runtime_effect"] is True
+    selected = TaskState(task_path).read()
+    assert selected["failure"] == before["failure"]
+    assert selected["repository"]["base_branch"] == "main"
+    assert selected["base_selection_corrections"][0]["receipt"] == str(receipt)
+    portfolio = json.loads(portfolio_path.read_text(encoding="utf-8"))
+    assert portfolio["repository"]["base_branch"] == "main"
+    assert _git("branch", "--list", "feature/cc-179-retry-selection", cwd=repo) == ""
+
+    resumed = delivery.start_development_run(
+        root,
+        "acme",
+        "app",
+        ["CC-179"],
+        titles={"CC-179": "Retry selection"},
+        run_id="origin-main-retry",
+        apply=True,
+    )
+    assert resumed["state"] == "dispatching"
+    recovered = TaskState(task_path).read()
+    assert recovered["state"] == "worktree_ready"
+    assert recovered["failure"] is None
+    assert recovered["base_selection_corrections"][0]["receipt"] == str(receipt)
+
+
+def test_historical_origin_main_failure_cannot_resume_without_correction(tmp_path: Path) -> None:
+    root, _, task_path, _ = _historical_origin_main_failure(tmp_path)
+
+    with pytest.raises(DevelopmentDeliveryError, match="requires the recorded base-selection correction"):
+        delivery.start_development_run(
+            root,
+            "acme",
+            "app",
+            ["CC-179"],
+            titles={"CC-179": "Retry selection"},
+            run_id="origin-main-retry",
+            apply=True,
+        )
+
+    blocked = TaskState(task_path).read()
+    assert blocked["state"] == "work_item_ready"
+    assert blocked["failure"]["kind"] == "provisioning_failed"
+    assert blocked["repository"]["base_branch"] == "origin/main"
+    assert not blocked.get("worktree")
+    assert not blocked.get("base_selection_corrections")
+
+
+def test_correct_failed_base_selection_replay_completes_interrupted_portfolio_effect(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _, _, task_path, _ = _historical_origin_main_failure(tmp_path)
+    portfolio_path = task_path.parent.parent.parent / "portfolio.json"
+    original_atomic_json = delivery._atomic_json
+
+    def interrupt_portfolio_write(path: Path, value: dict[str, object]) -> None:
+        if path == portfolio_path:
+            raise OSError("simulated interruption before portfolio correction")
+        original_atomic_json(path, value)
+
+    monkeypatch.setattr(delivery, "_atomic_json", interrupt_portfolio_write)
+    with pytest.raises(OSError, match="simulated interruption"):
+        delivery.correct_failed_base_selection(
+            task_path,
+            corrected_base_branch="main",
+            idempotency_key="cc-179:recover-portfolio",
+            apply=True,
+        )
+    interrupted = TaskState(task_path).read()
+    correction = interrupted["base_selection_corrections"][0]
+    assert interrupted["repository"]["base_branch"] == "main"
+    assert json.loads(portfolio_path.read_text(encoding="utf-8"))["repository"]["base_branch"] == "origin/main"
+
+    monkeypatch.setattr(delivery, "_atomic_json", original_atomic_json)
+    replayed = delivery.correct_failed_base_selection(
+        task_path,
+        corrected_base_branch="main",
+        idempotency_key="cc-179:recover-portfolio",
+        apply=True,
+    )
+
+    assert replayed["result"] == "replayed"
+    selected = TaskState(task_path).read()
+    portfolio = json.loads(portfolio_path.read_text(encoding="utf-8"))
+    assert selected["repository"]["base_branch"] == "main"
+    assert portfolio["repository"]["base_branch"] == "main"
+    assert selected["base_selection_corrections"] == [correction]
+    assert portfolio["base_selection_corrections"] == [{**correction, "task_state_ref": str(task_path)}]
+    projection = json.loads(Path(selected["autodev_path"]).read_text(encoding="utf-8"))
+    assert projection["delivery"]["repository"]["base_branch"] == "main"
+    events = [json.loads(line) for line in (task_path.parent / "events.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert [event["type"] for event in events].count("development.task.base_selection_corrected") == 1
+
+
+def test_correct_failed_base_selection_cannot_race_resume_worktree_allocation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, _, task_path, base_sha = _historical_origin_main_failure(tmp_path)
+    preflight_started = threading.Event()
+    allow_preflight = threading.Event()
+    correction_finished = threading.Event()
+    result: dict[str, object] = {}
+    original_runner = delivery._run_command
+
+    def block_correction_preflight(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        if command[-3:] == ["fetch", "origin", "main"]:
+            preflight_started.set()
+            assert allow_preflight.wait(timeout=5)
+        return original_runner(command, **kwargs)
+
+    def correct() -> None:
+        try:
+            result["correction"] = delivery.correct_failed_base_selection(
+                task_path,
+                corrected_base_branch="main",
+                idempotency_key="cc-179:race-resume",
+                apply=True,
+                runner=block_correction_preflight,
+            )
+        except Exception as exc:  # pragma: no cover - asserted after joining
+            result["correction_error"] = exc
+        finally:
+            correction_finished.set()
+
+    def resume() -> None:
+        try:
+            result["resume"] = delivery.start_development_run(
+                root,
+                "acme",
+                "app",
+                ["CC-179"],
+                titles={"CC-179": "Retry selection"},
+                run_id="origin-main-retry",
+                apply=True,
+            )
+        except Exception as exc:
+            result["resume_error"] = exc
+
+    correction_thread = threading.Thread(target=correct)
+    correction_thread.start()
+    assert preflight_started.wait(timeout=5), result
+    resume_thread = threading.Thread(target=resume)
+    resume_thread.start()
+    assert not correction_finished.wait(timeout=0.2)
+    allow_preflight.set()
+    correction_thread.join(timeout=10)
+    resume_thread.join(timeout=10)
+
+    assert not correction_thread.is_alive()
+    assert not resume_thread.is_alive()
+    assert "correction_error" not in result
+    assert "resume_error" not in result
+    assert result["correction"]["result"] == "corrected"
+    assert result["resume"]["state"] == "dispatching"
+    state = TaskState(task_path).read()
+    assert state["worktree"]["branch"] == "feature/cc-179-retry-selection"
+    assert len(state["base_selection_corrections"]) == 1
+
+@pytest.mark.parametrize("effect", ["worktree", "local_branch", "provider_branch"])
+def test_correct_failed_base_selection_rejects_every_post_failure_effect(
+    tmp_path: Path, effect: str
+) -> None:
+    _, repo, task_path, _ = _historical_origin_main_failure(tmp_path)
+    task = TaskState(task_path)
+    branch = "feature/cc-179-retry-selection"
+    if effect == "worktree":
+        state = task.read()
+        state["worktree"] = {"path": "/tmp/not-a-real-worktree", "branch": branch}
+        state["updated_at"] = "2026-08-11T00:00:00Z"
+        task.path.write_text(json.dumps(state), encoding="utf-8")
+    elif effect == "local_branch":
+        _git("branch", branch, cwd=repo)
+    else:
+        _git("branch", branch, cwd=repo)
+        _git("push", "origin", branch, cwd=repo)
+        _git("branch", "-D", branch, cwd=repo)
+
+    with pytest.raises(DevelopmentDeliveryError, match="forbidden after"):
+        delivery.correct_failed_base_selection(
+            task_path,
+            corrected_base_branch="main",
+            idempotency_key=f"cc-179:{effect}",
+            apply=True,
+        )
+
+    rejected = task.read()
+    assert rejected["repository"]["base_branch"] == "origin/main"
+    assert not rejected.get("base_selection_corrections")
+
+
+def test_correct_failed_base_selection_rejects_any_replacement_other_than_main(tmp_path: Path) -> None:
+    _, _, task_path, _ = _historical_origin_main_failure(tmp_path)
+    with pytest.raises(DevelopmentDeliveryError, match="only permits"):
+        delivery.correct_failed_base_selection(
+            task_path,
+            corrected_base_branch="release/2026-08",
+            idempotency_key="cc-179:not-main",
+            apply=True,
+        )
+
+
 def test_multi_ticket_run_can_resume_one_explicitly_selected_packet(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2024,6 +2334,7 @@ def test_multi_ticket_run_can_resume_one_explicitly_selected_packet(
     assert other_state.read_bytes() == other_before
     assert worktree_calls == ["CC-ONE", "CC-TWO"]
     selected_projection = read_auto_dev_state(selected_packet / "autodev.json")
+    assert selected_projection["mode"] == "everything"
     assert selected_projection["requested_stage"] == "document"
 
 
@@ -2488,7 +2799,317 @@ def test_auto_dev_plain_english_cli_dry_run(tmp_path: Path, capsys: pytest.Captu
     assert output["auto_dev"]["mode"] == "everything"
     assert output["auto_dev"]["requested_stage"] is None
     assert set(output["auto_dev"]["stage_order"]) == set(delivery.AUTO_DEV_STAGE_ORDER)
+    assert "execution" not in output
     assert not (root / "domains" / "acme" / "02-projects" / "app" / "state" / "development-runs").exists()
+
+
+@pytest.mark.parametrize("managed_runtime", (False, True), ids=("unmanaged", "managed"))
+def test_everything_apply_records_pending_executor_handoff(
+    managed_runtime: bool,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    repo, base_sha = _repository(tmp_path)
+    root = tmp_path / "os"
+    _project(root, repo, managed_runtime=managed_runtime)
+    monkeypatch.setattr(
+        delivery,
+        "create_isolated_worktree",
+        lambda **kwargs: {
+            "name": "cc-175",
+            "path": "/tmp/cc-175",
+            "branch": "feature/cc-175",
+            "base_sha": base_sha,
+        },
+    )
+
+    assert main(
+        [
+            "auto-dev",
+            "everything",
+            "acme",
+            "app",
+            "CC-175",
+            "--root",
+            str(root),
+            "--apply",
+            "--json",
+        ]
+    ) == 1
+    output = json.loads(capsys.readouterr().out)
+
+    assert output["state"] == "pending"
+    assert output["execution"]["schema"] == "auto-dev-everything-execution-status/v1"
+    assert output["execution"]["status"] == "pending"
+    assert output["execution"]["executed"] is False
+    assert output["execution"]["next_actions"] == [
+        {
+            "ticket": "CC-175",
+            "stage": "groom",
+            "command": "/auto-dev-grooming",
+            "stage_receipt_recorded": False,
+        }
+    ]
+    assert output["execution"]["handoffs"] == [
+        {
+            "ticket": "CC-175",
+            "outcome": "executor_unavailable",
+            "receipt": output["tasks"][0]["handoff"]["receipt"],
+            "attempt": 1,
+            "recoverable": True,
+        }
+    ]
+    task = TaskState(Path(output["tasks"][0]["state_ref"])).read()
+    assert task["state"] == "worktree_ready"
+    assert task["runtime"]["ownership"] == ("managed" if managed_runtime else "not_managed")
+    assert task["failure"]["kind"] == "executor_unavailable"
+    assert task["failure"]["recoverable"] is True
+    handoff = json.loads(Path(task["failure"]["receipt"]).read_text(encoding="utf-8"))
+    assert handoff["schema"] == "development-executor-handoff/v1"
+    assert handoff["status"] == "pending"
+    assert handoff["worktree"] == task["worktree"]
+    assert handoff["policy"]["fingerprint"] == task["policy_fingerprint"]
+    assert read_auto_dev_state(task["autodev_path"])["stages"]["groom"]["status"] == "not_started"
+    from genomes_agentic_os.program_run_packets import read_program_run_packet
+
+    run_packet = read_auto_dev_state(task["autodev_path"])["run_packet"]
+    run_summary = read_program_run_packet(root, run_packet["packet_id"])
+    assert run_summary["state"] == "started"
+    assert run_summary["running_workflows"] == []
+    events = [
+        json.loads(line)
+        for line in (Path(output["tasks"][0]["state_ref"]).parent / "events.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
+    assert {event["type"] for event in events} >= {
+        "development.task.executor_handoff_pending",
+        "development.task.failed",
+    }
+
+    # Every repeated unaccepted handoff on the exact packet must retain the
+    # prior receipt and record the next bounded failure, never a
+    # success-looking dispatch result.
+    assert main(
+        [
+            "auto-dev",
+            "groom",
+            "--state",
+            task["autodev_path"],
+            "--root",
+            str(root),
+            "--apply",
+            "--json",
+        ]
+    ) == 1
+    groom_resume = json.loads(capsys.readouterr().out)
+    assert groom_resume["state"] == "pending"
+    assert groom_resume["tasks"][0]["handoff"]["attempt"] == 2
+    assert groom_resume["tasks"][0]["handoff"]["receipt"] != task["failure"]["receipt"]
+    first_handoff = json.loads(Path(task["failure"]["receipt"]).read_text(encoding="utf-8"))
+    assert first_handoff["attempt"] == 1
+
+    # The configured final refusal becomes terminal without an explicit
+    # recovery; all previous handoff evidence remains immutable.
+    assert main(
+        [
+            "auto-dev",
+            "readiness",
+            "--state",
+            task["autodev_path"],
+            "--root",
+            str(root),
+            "--apply",
+            "--json",
+        ]
+    ) == 1
+    resumed = json.loads(capsys.readouterr().out)
+    assert resumed["state"] == "blocked"
+    resumed_task = TaskState(Path(resumed["tasks"][0]["state_ref"])).read()
+    assert resumed_task["state"] == "blocked"
+    assert resumed_task["runtime"]["ownership"] == ("managed" if managed_runtime else "not_managed")
+    assert resumed_task["failure"]["kind"] == "executor_unavailable"
+    assert resumed_task["failure"]["recoverable"] is False
+    assert resumed_task["attempts"]["executor_unavailable"] == 3
+    handoff_dir = Path(resumed_task["failure"]["receipt"]).parent
+    assert [
+        json.loads((handoff_dir / f"executor-unavailable-attempt-{attempt:02d}.json").read_text(encoding="utf-8"))["attempt"]
+        for attempt in (1, 2, 3)
+    ] == [1, 2, 3]
+
+    # Once an operator has explicitly recovered the task, a named stage must
+    # use its current state rather than retain the old pending handoff that is
+    # still present in the historical portfolio row.
+    assert main(
+        [
+            "develop",
+            "recover",
+            output["tasks"][0]["state_ref"],
+            "--receipt",
+            "executor accepted the recovered task",
+            "--idempotency-key",
+            "cc-175:recover-after-handoff",
+            "--json",
+        ]
+    ) == 0
+    capsys.readouterr()
+
+    assert main(
+        [
+            "auto-dev",
+            "develop",
+            "--state",
+            task["autodev_path"],
+            "--root",
+            str(root),
+            "--apply",
+            "--json",
+        ]
+    ) == 0
+    recovered_resume = json.loads(capsys.readouterr().out)
+    assert recovered_resume["state"] == "dispatching"
+    assert "handoff" not in recovered_resume["tasks"][0]
+    recovered_task = TaskState(Path(recovered_resume["tasks"][0]["state_ref"])).read()
+    assert recovered_task["state"] == "worktree_ready"
+    assert recovered_task["failure"] is None
+
+
+def test_everything_apply_marks_four_unmanaged_tasks_pending_without_stage_receipts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    repo, base_sha = _repository(tmp_path)
+    root = tmp_path / "os"
+    _project(root, repo)
+    monkeypatch.setattr(
+        delivery,
+        "create_isolated_worktree",
+        lambda **kwargs: {
+            "name": kwargs["ticket"].lower(),
+            "path": f"/tmp/{kwargs['ticket'].lower()}",
+            "branch": f"feature/{kwargs['ticket'].lower()}",
+            "base_sha": base_sha,
+        },
+    )
+
+    tickets = ["AGE-166", "AGE-168", "AGE-171", "AGE-172"]
+    assert main(
+        [
+            "auto-dev",
+            "everything",
+            "acme",
+            "app",
+            *tickets,
+            "--root",
+            str(root),
+            "--apply",
+            "--json",
+        ]
+    ) == 1
+    output = json.loads(capsys.readouterr().out)
+
+    assert output["state"] == "pending"
+    assert {row["ticket"] for row in output["tasks"]} == set(tickets)
+    assert {row["ticket"] for row in output["execution"]["handoffs"]} == set(tickets)
+    for row in output["tasks"]:
+        task = TaskState(Path(row["state_ref"])).read()
+        assert task["state"] == "worktree_ready"
+        assert task["attempts"]["executor_unavailable"] == 1
+        assert task["failure"]["kind"] == "executor_unavailable"
+        handoff = json.loads(Path(task["failure"]["receipt"]).read_text(encoding="utf-8"))
+        assert handoff["ticket"] == row["ticket"]
+        assert handoff["worktree"] == task["worktree"]
+        assert handoff["policy"]["receipt"] == task["policy_receipt"]
+        projection = read_auto_dev_state(task["autodev_path"])
+        assert projection["mode"] == "everything"
+        assert projection["stages"]["groom"]["status"] == "not_started"
+
+
+def test_everything_executor_handoff_blocks_after_bounded_retries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    repo, base_sha = _repository(tmp_path)
+    root = tmp_path / "os"
+    _project(root, repo)
+    monkeypatch.setattr(
+        delivery,
+        "create_isolated_worktree",
+        lambda **kwargs: {
+            "name": kwargs["ticket"].lower(),
+            "path": f"/tmp/{kwargs['ticket'].lower()}",
+            "branch": f"feature/{kwargs['ticket'].lower()}",
+            "base_sha": base_sha,
+        },
+    )
+
+    assert main(
+        [
+            "auto-dev",
+            "everything",
+            "acme",
+            "app",
+            "CC-EXHAUST",
+            "--root",
+            str(root),
+            "--apply",
+            "--json",
+        ]
+    ) == 1
+    output = json.loads(capsys.readouterr().out)
+    state_ref = output["tasks"][0]["state_ref"]
+    autodev_path = TaskState(Path(state_ref)).read()["autodev_path"]
+
+    # The profile allows three attempts.  Explicit recovery is required before
+    # each subsequent exact-packet handoff, so the third refusal must be
+    # terminal rather than another pending result.
+    for attempt in (2, 3):
+        assert main(
+            [
+                "develop",
+                "recover",
+                state_ref,
+                "--receipt",
+                f"operator-recovery-{attempt}",
+                "--idempotency-key",
+                f"cc-exhaust:recover:{attempt}",
+                "--json",
+            ]
+        ) == 0
+        capsys.readouterr()
+        assert main(
+            [
+                "auto-dev",
+                "everything",
+                "--state",
+                autodev_path,
+                "--root",
+                str(root),
+                "--apply",
+                "--json",
+            ]
+        ) == 1
+        output = json.loads(capsys.readouterr().out)
+
+    assert output["state"] == "blocked"
+    assert output["execution"]["status"] == "blocked"
+    assert output["execution"]["executed"] is False
+    assert output["execution"]["handoffs"] == [
+        {
+            "ticket": "CC-EXHAUST",
+            "outcome": "executor_unavailable",
+            "receipt": output["tasks"][0]["handoff"]["receipt"],
+            "attempt": 3,
+            "recoverable": False,
+        }
+    ]
+    task = TaskState(Path(state_ref)).read()
+    assert task["state"] == "blocked"
+    assert task["failure"]["kind"] == "executor_unavailable"
+    assert task["failure"]["recoverable"] is False
+    handoff = json.loads(Path(task["failure"]["receipt"]).read_text(encoding="utf-8"))
+    assert handoff["status"] == "blocked"
+    assert handoff["attempt"] == 3
+    assert handoff["recoverable"] is False
+    portfolio = json.loads((Path(state_ref).parents[2] / "portfolio.json").read_text(encoding="utf-8"))
+    assert portfolio["state"] == "blocked"
 
 
 def test_everything_projection_creates_a_linked_program_run_packet(
@@ -2527,8 +3148,8 @@ def test_everything_projection_creates_a_linked_program_run_packet(
     summary = read_program_run_packet(root, link["packet_id"])
     assert link["program_ref"] == "00-program.json"
     assert summary["packet"]["program_id"] == "auto_dev"
-    assert summary["state"] == "running"
-    assert summary["running_workflows"] == ["groom"]
+    assert summary["state"] == "started"
+    assert summary["running_workflows"] == []
     assert any(item["kind"] == "effective_policy" for item in summary["packet"]["config_refs"])
 
 
@@ -2927,6 +3548,8 @@ def test_progressed_run_resumes_and_single_stage_retargets_same_projection(
         idempotency_prefix="cc-48:readiness",
     )
     before_resume = read_auto_dev_state(TaskState(task_path).read()["autodev_path"])
+    assert before_resume["mode"] == "everything"
+    assert TaskState(task_path).read()["auto_dev_mode"] == "everything"
     resumed = delivery.start_development_run(
         root,
         "acme",
@@ -2942,6 +3565,8 @@ def test_progressed_run_resumes_and_single_stage_retargets_same_projection(
     assert TaskState(task_path).read()["state"] == "planned"
     assert resumed["state"] == "planned"
     projection = read_auto_dev_state(TaskState(task_path).read()["autodev_path"])
+    assert projection["mode"] == "everything"
+    assert TaskState(task_path).read()["auto_dev_mode"] == "everything"
     assert projection["requested_stage"] == "document"
     assert projection["current_stage"] == "document"
     assert projection["start_stage"] == before_resume["start_stage"]
@@ -2967,6 +3592,8 @@ def test_progressed_run_resumes_and_single_stage_retargets_same_projection(
     ) == 0
     capsys.readouterr()
     retargeted = read_auto_dev_state(TaskState(task_path).read()["autodev_path"])
+    assert retargeted["mode"] == "everything"
+    assert TaskState(task_path).read()["auto_dev_mode"] == "everything"
     assert retargeted["requested_stage"] == "groom"
     assert retargeted["current_stage"] == "groom"
     assert retargeted["start_stage"] == before_resume["start_stage"]
@@ -3335,6 +3962,926 @@ def test_revision_sensitive_stage_receipts_can_supersede_stale_evidence(
     assert replayed_projection["subject_revision"] == "revision-b"
 
 
+def test_release_propagation_appends_exact_head_supersession_without_rewriting_prior_wrapper(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A rewritten PR head must replace the current binding, not history."""
+
+    repo, base_sha = _repository(tmp_path)
+    root = tmp_path / "os"
+    _project(root, repo, repository_id="git:github.com/acme/app")
+    monkeypatch.setattr(
+        delivery,
+        "create_isolated_worktree",
+        lambda **kwargs: {
+            "name": "cc-52",
+            "path": "/tmp/cc-52",
+            "branch": "feature/cc-52",
+            "base_sha": base_sha,
+        },
+    )
+    run = delivery.start_development_run(
+        root,
+        "acme",
+        "app",
+        ["CC-52"],
+        run_id="release-propagation-head-refresh",
+        auto_dev_mode="everything",
+        apply=True,
+    )
+    task = TaskState(Path(run["tasks"][0]["state_ref"]))
+    _advance_auto_dev_task_to_ready(
+        task,
+        subject_revision=base_sha,
+        pull_request="github:acme/app#52",
+    )
+    for stage_name in ("groom", "detective", "create_artifacts", "document"):
+        _record_standalone_stage(task, stage_name)
+
+    work_item = Path(task.read()["work_item"])
+    task_value = task.read()
+    task_value["state"] = "local_validation"
+    task.path.write_text(json.dumps(task_value), encoding="utf-8")
+
+    def family_receipt(
+        name: str,
+        source_head_sha: str,
+        *,
+        supersedes_source_head_sha: str | None = None,
+        legacy_nested_identity: bool = False,
+    ) -> Path:
+        evidence: dict[str, object] = {
+            "ticket": "CC-52",
+            "repository": "git:github.com/acme/app",
+            "base_branch": "main",
+            "provider": "github",
+            "pull_request": "github:acme/app#52",
+            "source_branch": "feature/cc-52",
+            "source_head_sha": source_head_sha,
+            "readback_verified": True,
+            "provider_observed": {"head_sha": source_head_sha},
+        }
+        if legacy_nested_identity:
+            evidence = {
+                "ticket": "CC-52",
+                "source": {
+                    "repository": "github:acme/app",
+                    "base_branch": "main",
+                    "source_branch": "feature/cc-52",
+                    "source_head_sha": source_head_sha,
+                },
+                "provider_readback": {"head_sha": source_head_sha},
+                "targets": [
+                    {
+                        "repository": "github:acme/app",
+                        "base_branch": "main",
+                        "provider": "github",
+                        "pull_request": "github:acme/app#52",
+                        "source_branch": "feature/cc-52",
+                        "source_head_sha": source_head_sha,
+                    }
+                ],
+            }
+        if supersedes_source_head_sha:
+            evidence["supersession"] = {
+                "supersedes_source_head_sha": supersedes_source_head_sha,
+                "reason": "The PR head changed after a commit-message rewrite.",
+            }
+        path = work_item / "artifacts" / "auto-dev-pr-create" / f"family-{name}.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(
+                {
+                    "schema": "development-stage-evidence/v1",
+                    "state": "release_propagation",
+                    "status": "completed",
+                    "summary": f"PR family is current at {source_head_sha}",
+                    "verified_at": "2026-08-11T15:10:32Z",
+                    "evidence": evidence,
+                }
+            ),
+            encoding="utf-8",
+        )
+        return path
+
+    old_head = base_sha
+    new_head = "b" * 40
+    original_receipt = family_receipt("old", old_head, legacy_nested_identity=True)
+    first = run_development_stage(
+        task.path,
+        stage="release_propagation",
+        receipts={"release_propagation": str(original_receipt)},
+        idempotency_prefix="cc-52:pr-create:old",
+    )
+    legacy_wrapper = task.path.parent / "stages" / "release-propagation.json"
+    legacy_bytes = legacy_wrapper.read_bytes()
+    legacy_binding = dict(task.read()["stage_receipts"]["release_propagation"])
+
+    missing_supersession_receipt = family_receipt("new-without-proof", new_head)
+    with pytest.raises(
+        DevelopmentDeliveryError,
+        match="requires provider-read new head and explicit prior-head supersession",
+    ):
+        run_development_stage(
+            task.path,
+            stage="release_propagation",
+            receipts={"release_propagation": str(missing_supersession_receipt)},
+            idempotency_prefix="cc-52:pr-create:missing-supersession",
+        )
+    assert legacy_wrapper.read_bytes() == legacy_bytes
+
+    refreshed_receipt = family_receipt(
+        "new",
+        new_head,
+        supersedes_source_head_sha=old_head,
+    )
+    post_pr_task = task.read()
+    post_pr_task["state"] = "ready_for_merge"
+    post_pr_task["subject_revision"] = old_head
+    task.path.write_text(json.dumps(post_pr_task), encoding="utf-8")
+
+    # Numeric PR equality is not authority: a differently qualified PR with
+    # the same number cannot furnish the prior ready-for-merge acceptance.
+    ready_record = next(
+        item
+        for item in reversed(post_pr_task["receipts"])
+        if item.get("state") == "ready_for_merge"
+    )
+    ready_path = Path(ready_record["ref"])
+    ready_bytes = ready_path.read_bytes()
+    mismatched_ready = json.loads(ready_bytes)
+    mismatched_ready["evidence"]["pull_request"] = "github:other/app#52"
+    ready_path.write_text(json.dumps(mismatched_ready), encoding="utf-8")
+    mismatched_task = json.loads(json.dumps(post_pr_task))
+    mismatched_record = next(
+        item
+        for item in reversed(mismatched_task["receipts"])
+        if item.get("state") == "ready_for_merge"
+    )
+    mismatched_record["sha256"] = hashlib.sha256(ready_path.read_bytes()).hexdigest()
+    task.path.write_text(json.dumps(mismatched_task), encoding="utf-8")
+    with pytest.raises(
+        DevelopmentDeliveryError,
+        match="canonical prior review authority",
+    ):
+        run_development_stage(
+            task.path,
+            stage="release_propagation",
+            receipts={"release_propagation": str(refreshed_receipt)},
+            idempotency_prefix="cc-52:pr-create:wrong-qualified-pr",
+        )
+    ready_path.write_bytes(ready_bytes)
+    task.path.write_text(json.dumps(post_pr_task), encoding="utf-8")
+
+    def set_ready_evidence(**updates: object) -> bytes:
+        updated_ready = json.loads(ready_bytes)
+        updated_ready["evidence"].update(updates)
+        updated_ready_bytes = json.dumps(updated_ready).encode("utf-8")
+        ready_path.write_bytes(updated_ready_bytes)
+        updated_task = json.loads(json.dumps(post_pr_task))
+        updated_record = next(
+            item
+            for item in reversed(updated_task["receipts"])
+            if item.get("state") == "ready_for_merge"
+        )
+        updated_record["sha256"] = hashlib.sha256(updated_ready_bytes).hexdigest()
+        task.path.write_text(json.dumps(updated_task), encoding="utf-8")
+        return updated_ready_bytes
+
+    for label, updates in (
+        ("zero", {"pull_request": "0"}),
+        ("malformed", {"pull_request": "not-a-pr"}),
+        ("different", {"pull_request": "53"}),
+        ("foreign-repository", {"repository": "git:github.com/other/app", "pull_request": "52"}),
+        ("foreign-base", {"base_branch": "release", "pull_request": "52"}),
+        ("foreign-provider", {"provider": "gitlab", "pull_request": "52"}),
+    ):
+        refused_ready_bytes = set_ready_evidence(**updates)
+        with pytest.raises(
+            DevelopmentDeliveryError,
+            match="canonical prior review authority",
+        ):
+            run_development_stage(
+                task.path,
+                stage="release_propagation",
+                receipts={"release_propagation": str(refreshed_receipt)},
+                idempotency_prefix=f"cc-52:pr-create:{label}-ready-pr",
+            )
+        assert ready_path.read_bytes() == refused_ready_bytes
+
+    legacy_ready_bytes = set_ready_evidence(pull_request="52")
+    refreshed = run_development_stage(
+        task.path,
+        stage="release_propagation",
+        receipts={"release_propagation": str(refreshed_receipt)},
+        idempotency_prefix="cc-52:pr-create:new",
+    )
+
+    current = task.read()["stage_receipts"]["release_propagation"]
+    current_wrapper = Path(current["ref"])
+    assert legacy_wrapper.read_bytes() == legacy_bytes
+    assert ready_path.read_bytes() == legacy_ready_bytes
+    assert current_wrapper != legacy_wrapper
+    assert current_wrapper.is_file()
+    assert refreshed["supersedes"]["wrapper_ref"] == str(legacy_wrapper)
+    assert refreshed["supersedes"]["source_head_sha"] == old_head
+    assert current["sha256"] == hashlib.sha256(current_wrapper.read_bytes()).hexdigest()
+    assert current_wrapper.parent.name == "release-propagation"
+    assert first["receipt"] != refreshed["receipt"]
+    refreshed_task = task.read()
+    assert refreshed_task["state"] == "local_validation"
+    assert refreshed_task["subject_revision"] is None
+    assert refreshed_task["subject_supersessions"][-1]["from_subject_revision"] == old_head
+    assert refreshed_task["subject_supersessions"][-1]["to_source_head_sha"] == new_head
+    projection = read_auto_dev_state(task.read()["autodev_path"])
+    assert projection["subject_revision"] is None
+    assert projection["stages"]["pr_create"]["status"] == "completed"
+    assert projection["stages"]["pr_create"]["run_ref"].endswith(current_wrapper.name)
+    assert projection["stages"]["review_self"]["status"] == "not_started"
+    assert projection["stages"]["qa"]["status"] == "not_started"
+    assert projection["stages"]["finalize"]["status"] == "not_started"
+
+    # Simulate interruption after the append-only wrapper write but before the
+    # task binding write. The same idempotency key must finish that transaction.
+    interrupted = task.read()
+    interrupted["stage_receipts"]["release_propagation"] = legacy_binding
+    task.path.write_text(json.dumps(interrupted), encoding="utf-8")
+    recovered = run_development_stage(
+        task.path,
+        stage="release_propagation",
+        receipts={"release_propagation": str(refreshed_receipt)},
+        idempotency_prefix="cc-52:pr-create:new",
+    )
+    assert recovered == refreshed
+
+    replayed = run_development_stage(
+        task.path,
+        stage="release_propagation",
+        receipts={"release_propagation": str(refreshed_receipt)},
+        idempotency_prefix="cc-52:pr-create:new",
+    )
+    assert replayed == refreshed
+
+    # A second PR rewrite before any fresh review advances the active fence.
+    # The intermediate B head must never be able to consume the older A->B
+    # marker and become merge authority after propagation has reached C.
+    newest_head = "c" * 40
+    newest_receipt = family_receipt(
+        "newest",
+        newest_head,
+        supersedes_source_head_sha=new_head,
+    )
+    newest = run_development_stage(
+        task.path,
+        stage="release_propagation",
+        receipts={"release_propagation": str(newest_receipt)},
+        idempotency_prefix="cc-52:pr-create:newest",
+    )
+    newest_task = task.read()
+    assert newest["supersedes"]["source_head_sha"] == new_head
+    assert [
+        item["to_source_head_sha"] for item in newest_task["subject_supersessions"]
+    ] == [new_head, newest_head]
+    assert newest_task["state"] == "local_validation"
+    assert newest_task["subject_revision"] is None
+    current = newest_task["stage_receipts"]["release_propagation"]
+    current_wrapper = Path(current["ref"])
+    projection = read_auto_dev_state(task.read()["autodev_path"])
+    assert projection["subject_revision"] is None
+    assert projection["stages"]["review_self"]["status"] == "not_started"
+    assert projection["stages"]["qa"]["status"] == "not_started"
+    assert projection["stages"]["finalize"]["status"] == "not_started"
+
+    def review_receipts(name: str, head: str) -> dict[str, str]:
+        review_root = work_item / "artifacts" / f"review-{name}"
+        authority = _provider_authority(task, pull_request="github:acme/app#52")
+        return {
+            "pre_pr_review": _stage_receipt(review_root, "pre_pr_review"),
+            "pr_open": _stage_receipt(review_root, "pr_open", evidence=authority),
+            "ci_repair": _stage_receipt(review_root, "ci_repair"),
+            "review_repair": _stage_receipt(review_root, "review_repair"),
+            "post_pr_review": _stage_receipt(review_root, "post_pr_review"),
+            "ready_for_merge": _stage_receipt(
+                review_root,
+                "ready_for_merge",
+                evidence={
+                    **authority,
+                    "checks_verified": True,
+                    "reviews_verified": True,
+                    "source_branch": "feature/cc-52",
+                    "source_head_sha": head,
+                    "subject_revision": head,
+                },
+            ),
+        }
+
+    # The append-only wrapper is an active fence: the intermediate B review
+    # proof cannot re-promote this task after its PR head advanced to C.
+    with pytest.raises(
+        DevelopmentDeliveryError,
+        match="must bind the refreshed release-propagation head",
+    ):
+        run_development_stage(
+            task.path,
+            stage="review",
+            receipts=review_receipts("stale", new_head),
+            idempotency_prefix="cc-52:review:stale",
+        )
+    assert task.read()["state"] == "local_validation"
+    with pytest.raises(AutoDevStateError, match="qa is blocked until fresh Review Self"):
+        _record_standalone_stage(task, "qa", revision=old_head)
+    with pytest.raises(AutoDevStateError, match="finalize is blocked until fresh Review Self"):
+        _record_standalone_stage(
+            task,
+            "finalize",
+            revision=old_head,
+            pull_request="github:acme/app#52",
+        )
+
+    reviewed = run_development_stage(
+        task.path,
+        stage="review",
+        receipts=review_receipts("fresh", newest_head),
+        idempotency_prefix="cc-52:review:fresh",
+    )
+    assert reviewed["state"] == "ready_for_merge"
+    reviewed_task = task.read()
+    assert reviewed_task["subject_revision"] == newest_head
+    assert [
+        item["subject_revision"]
+        for item in reviewed_task["subject_supersession_resolutions"]
+    ] == [newest_head, newest_head]
+    projection = read_auto_dev_state(task.read()["autodev_path"])
+    assert projection["subject_revision"] == newest_head
+    assert projection["stages"]["review_self"]["status"] == "completed"
+    assert projection["stages"]["qa"]["status"] == "not_started"
+    assert projection["stages"]["finalize"]["status"] == "not_started"
+    with pytest.raises(
+        AutoDevStateError,
+        match="qa evidence subject_revision must match the canonical reviewed pull-request head",
+    ):
+        _record_standalone_stage(task, "qa", revision=new_head)
+    _record_standalone_stage(task, "qa", revision=newest_head)
+    _record_standalone_stage(
+        task,
+        "finalize",
+        revision=newest_head,
+        pull_request="github:acme/app#52",
+    )
+    projection = read_auto_dev_state(task.read()["autodev_path"])
+    assert projection["stages"]["qa"]["status"] == "completed"
+    assert projection["stages"]["finalize"]["status"] == "completed"
+
+    malformed_new_receipt = family_receipt(
+        "malformed-new-pr",
+        "d" * 40,
+        supersedes_source_head_sha=newest_head,
+    )
+    malformed_new_payload = json.loads(malformed_new_receipt.read_text(encoding="utf-8"))
+    malformed_new_payload["evidence"]["pull_request"] = "github:acme/app#"
+    malformed_new_receipt.write_text(json.dumps(malformed_new_payload), encoding="utf-8")
+    with pytest.raises(
+        DevelopmentDeliveryError,
+        match="new pull_request.*non-empty numeric identifier",
+    ):
+        run_development_stage(
+            task.path,
+            stage="release_propagation",
+            receipts={"release_propagation": str(malformed_new_receipt)},
+            idempotency_prefix="cc-52:pr-create:malformed-new-pr",
+        )
+
+    # A supersession is not a way to retarget this task. Both receipts can be
+    # internally consistent yet still name a different repository and branch.
+    task_mismatch = {
+        "repository": "github:other/app",
+        "base_branch": "trunk",
+        "provider": "github",
+        "pull_request": "github:other/app#52",
+        "source_branch": "feature/other",
+    }
+    current_wrapper_payload = json.loads(current_wrapper.read_text(encoding="utf-8"))
+    current_receipt_path = work_item / current_wrapper_payload["receipt"]
+    current_receipt = json.loads(current_receipt_path.read_text(encoding="utf-8"))
+    current_receipt["evidence"].update(task_mismatch)
+    current_receipt_path.write_text(json.dumps(current_receipt), encoding="utf-8")
+    current_wrapper_payload["evidence_sha256"] = hashlib.sha256(
+        json.dumps(current_receipt, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    current_wrapper.write_text(json.dumps(current_wrapper_payload), encoding="utf-8")
+    task_mismatch_state = task.read()
+    task_mismatch_state["stage_receipts"]["release_propagation"]["sha256"] = hashlib.sha256(
+        current_wrapper.read_bytes()
+    ).hexdigest()
+    task.path.write_text(json.dumps(task_mismatch_state), encoding="utf-8")
+    arbitrary_receipt = family_receipt(
+        "task-mismatch",
+        "d" * 40,
+        supersedes_source_head_sha=newest_head,
+    )
+    arbitrary_payload = json.loads(arbitrary_receipt.read_text(encoding="utf-8"))
+    arbitrary_payload["evidence"].update(task_mismatch)
+    arbitrary_receipt.write_text(json.dumps(arbitrary_payload), encoding="utf-8")
+    with pytest.raises(
+        DevelopmentDeliveryError,
+        match="identity must match the selected task repository",
+    ):
+        run_development_stage(
+            task.path,
+            stage="release_propagation",
+            receipts={"release_propagation": str(arbitrary_receipt)},
+            idempotency_prefix="cc-52:pr-create:task-mismatch",
+        )
+
+    missing_identity_payload = json.loads(arbitrary_receipt.read_text(encoding="utf-8"))
+    del missing_identity_payload["evidence"]["provider"]
+    arbitrary_receipt.write_text(json.dumps(missing_identity_payload), encoding="utf-8")
+    with pytest.raises(
+        DevelopmentDeliveryError,
+        match="requires complete prior and new PR identity",
+    ):
+        run_development_stage(
+            task.path,
+            stage="release_propagation",
+            receipts={"release_propagation": str(arbitrary_receipt)},
+            idempotency_prefix="cc-52:pr-create:missing-new-identity",
+        )
+
+    missing_identity_payload["evidence"]["provider"] = "github"
+    arbitrary_receipt.write_text(json.dumps(missing_identity_payload), encoding="utf-8")
+    prior_missing_identity = json.loads(current_receipt_path.read_text(encoding="utf-8"))
+    del prior_missing_identity["evidence"]["provider"]
+    current_receipt_path.write_text(json.dumps(prior_missing_identity), encoding="utf-8")
+    current_wrapper_payload["evidence_sha256"] = hashlib.sha256(
+        json.dumps(prior_missing_identity, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    current_wrapper.write_text(json.dumps(current_wrapper_payload), encoding="utf-8")
+    prior_missing_state = task.read()
+    prior_missing_state["stage_receipts"]["release_propagation"]["sha256"] = hashlib.sha256(
+        current_wrapper.read_bytes()
+    ).hexdigest()
+    task.path.write_text(json.dumps(prior_missing_state), encoding="utf-8")
+    with pytest.raises(
+        DevelopmentDeliveryError,
+        match="requires complete prior and new PR identity",
+    ):
+        run_development_stage(
+            task.path,
+            stage="release_propagation",
+            receipts={"release_propagation": str(arbitrary_receipt)},
+            idempotency_prefix="cc-52:pr-create:missing-prior-identity",
+        )
+
+    prior_missing_identity["evidence"].update(
+        {
+            "repository": "git:github.com/acme/app",
+            "base_branch": "main",
+            "provider": "github",
+            "pull_request": "github:acme/app#",
+            "source_branch": "feature/cc-52",
+        }
+    )
+    current_receipt_path.write_text(json.dumps(prior_missing_identity), encoding="utf-8")
+    current_wrapper_payload["evidence_sha256"] = hashlib.sha256(
+        json.dumps(prior_missing_identity, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    current_wrapper.write_text(json.dumps(current_wrapper_payload), encoding="utf-8")
+    malformed_prior_state = task.read()
+    malformed_prior_state["stage_receipts"]["release_propagation"]["sha256"] = hashlib.sha256(
+        current_wrapper.read_bytes()
+    ).hexdigest()
+    task.path.write_text(json.dumps(malformed_prior_state), encoding="utf-8")
+    malformed_prior_receipt = family_receipt(
+        "malformed-prior-pr",
+        "d" * 40,
+        supersedes_source_head_sha=newest_head,
+    )
+    with pytest.raises(
+        DevelopmentDeliveryError,
+        match="prior pull_request.*non-empty numeric identifier",
+    ):
+        run_development_stage(
+            task.path,
+            stage="release_propagation",
+            receipts={"release_propagation": str(malformed_prior_receipt)},
+            idempotency_prefix="cc-52:pr-create:malformed-prior-pr",
+        )
+
+
+@pytest.mark.parametrize(
+    (
+        "repository_id",
+        "legacy_repository",
+        "registered_source_branch",
+        "legacy_source_branch",
+        "refreshed_source_branch",
+        "expected_refresh_error",
+    ),
+    [
+        (
+            "git:github.com/acme/app",
+            "acme/app",
+            "feature/cc-53",
+            "feature/cc-53",
+            "feature/cc-53",
+            None,
+        ),
+        (
+            "git:github.com/acme/app",
+            "acme/app",
+            "feature/cc-53",
+            None,
+            "feature/cc-53",
+            None,
+        ),
+        (
+            "git:github.com/acme/app",
+            "acme/app",
+            None,
+            None,
+            "feature/cc-53",
+            "requires complete prior and new PR identity",
+        ),
+        (
+            "git:github.com/acme/app",
+            "acme/app",
+            "feature/cc-53",
+            None,
+            "feature/other",
+            "requires complete prior and new PR identity",
+        ),
+        (
+            "git:github.com/acme/app",
+            "acme/app",
+            "feature/cc-53",
+            "feature/other",
+            "feature/cc-53",
+            "must retain the same source_branch",
+        ),
+        (
+            "github:acme/app",
+            "github:acme/app",
+            "feature/cc-53",
+            "feature/cc-53",
+            "feature/cc-53",
+            "prior pull_request.*non-empty numeric identifier",
+        ),
+    ],
+)
+def test_release_propagation_normalizes_only_selected_legacy_flat_github_identity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    repository_id: str,
+    legacy_repository: str,
+    registered_source_branch: str | None,
+    legacy_source_branch: str | None,
+    refreshed_source_branch: str,
+    expected_refresh_error: str | None,
+) -> None:
+    repo, base_sha = _repository(tmp_path)
+    root = tmp_path / "os"
+    _project(root, repo, repository_id=repository_id)
+    monkeypatch.setattr(
+        delivery,
+        "create_isolated_worktree",
+        lambda **kwargs: {
+            "name": "cc-53",
+            "path": "/tmp/cc-53",
+            "branch": registered_source_branch,
+            "base_sha": base_sha,
+        },
+    )
+    run = delivery.start_development_run(
+        root,
+        "acme",
+        "app",
+        ["CC-53"],
+        run_id="release-propagation-flat-identity",
+        auto_dev_mode="everything",
+        apply=True,
+    )
+    task = TaskState(Path(run["tasks"][0]["state_ref"]))
+    _advance_auto_dev_task_to_ready(
+        task,
+        subject_revision=base_sha,
+        pull_request="github:acme/app#53",
+    )
+    for stage_name in ("groom", "detective", "create_artifacts", "document"):
+        _record_standalone_stage(task, stage_name)
+    task_value = task.read()
+    task_value["state"] = "local_validation"
+    task.path.write_text(json.dumps(task_value), encoding="utf-8")
+    work_item = Path(task_value["work_item"])
+
+    def receipt(
+        name: str,
+        head: str,
+        *,
+        legacy: bool = False,
+        supersedes: str = "a" * 40,
+    ) -> Path:
+        evidence: dict[str, object] = {
+            "ticket": "CC-53",
+            "repository": legacy_repository if legacy else repository_id,
+            "base_branch": "main",
+            "provider": "github",
+            "pull_request": "53" if legacy else "github:acme/app#53",
+            "source_head_sha": head,
+            "readback_verified": True,
+            "provider_observed": {"head_sha": head},
+        }
+        if not legacy or legacy_source_branch is not None:
+            evidence["source_branch"] = (
+                legacy_source_branch if legacy else refreshed_source_branch
+            )
+        if not legacy:
+            evidence["supersession"] = {
+                "supersedes_source_head_sha": supersedes,
+                "reason": "The verified PR head changed after the prior family receipt.",
+            }
+        path = work_item / "artifacts" / "auto-dev-pr-create" / f"flat-{name}.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(
+                {
+                    "schema": "development-stage-evidence/v1",
+                    "state": "release_propagation",
+                    "status": "completed",
+                    "summary": f"PR family is current at {head}",
+                    "verified_at": "2026-08-12T08:00:00Z",
+                    "evidence": evidence,
+                }
+            ),
+            encoding="utf-8",
+        )
+        return path
+
+    old = receipt("old", "a" * 40, legacy=True)
+    run_development_stage(
+        task.path,
+        stage="release_propagation",
+        receipts={"release_propagation": str(old)},
+        idempotency_prefix="cc-53:pr-create:old",
+    )
+    old_bytes = old.read_bytes()
+    old_wrapper = Path(task.read()["stage_receipts"]["release_propagation"]["ref"])
+    old_wrapper_bytes = old_wrapper.read_bytes()
+    refreshed = receipt("new", "b" * 40)
+    if expected_refresh_error is None:
+        output = run_development_stage(
+            task.path,
+            stage="release_propagation",
+            receipts={"release_propagation": str(refreshed)},
+            idempotency_prefix="cc-53:pr-create:new",
+        )
+        assert output["supersedes"]["source_head_sha"] == "a" * 40
+        assert old.read_bytes() == old_bytes
+        assert old_wrapper.read_bytes() == old_wrapper_bytes
+        if legacy_source_branch is None:
+            assert output["supersedes"]["legacy_identity_normalization"] == {
+                "field": "source_branch",
+                "source": "selected_task.worktree.branch",
+                "value": registered_source_branch,
+            }
+        else:
+            assert "legacy_identity_normalization" not in output["supersedes"]
+    else:
+        with pytest.raises(
+            DevelopmentDeliveryError,
+            match=expected_refresh_error,
+        ):
+            run_development_stage(
+                task.path,
+                stage="release_propagation",
+                receipts={"release_propagation": str(refreshed)},
+                idempotency_prefix="cc-53:pr-create:new",
+            )
+        assert old.read_bytes() == old_bytes
+        assert old_wrapper.read_bytes() == old_wrapper_bytes
+
+
+@pytest.mark.parametrize(
+    ("previous_overrides", "refreshed_overrides", "expected_refresh_error"),
+    [
+        ({}, {}, None),
+        (
+            {"repository": "git:github.com/acme/other"},
+            {},
+            "requires complete prior and new PR identity",
+        ),
+        (
+            {"base_branch": "release"},
+            {},
+            "requires complete prior and new PR identity",
+        ),
+        (
+            {"provider": "gitlab"},
+            {},
+            "requires complete prior and new PR identity",
+        ),
+        (
+            {"pull_request": "github:acme/app#55"},
+            {},
+            "requires complete prior and new PR identity",
+        ),
+        (
+            {"pull_request": "github:acme/app#not-numeric"},
+            {},
+            "requires complete prior and new PR identity",
+        ),
+        (
+            {"source_branch": "feature/other"},
+            {},
+            "must retain the same source_branch",
+        ),
+        (
+            {},
+            {"source_branch": "feature/other"},
+            "requires complete prior and new PR identity",
+        ),
+        (
+            {},
+            {"provider_observed": {"head_sha": "c" * 40}},
+            "requires provider-read new head",
+        ),
+        (
+            {},
+            {
+                "supersession": {
+                    "supersedes_source_head_sha": "c" * 40,
+                    "reason": "The successor must bind the exact prior head.",
+                }
+            },
+            "requires provider-read new head",
+        ),
+        (
+            {"source_head_sha": "AbCd" * 10},
+            {
+                "source_head_sha": ("AbCd" * 10).lower(),
+                "provider_observed": {"head_sha": ("AbCd" * 10).lower()},
+                "supersession": {
+                    "supersedes_source_head_sha": "AbCd" * 10,
+                    "reason": "The successor must bind the exact prior head.",
+                },
+            },
+            "requires provider-read new head",
+        ),
+    ],
+)
+def test_release_propagation_derives_only_blank_canonical_github_source_branch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    previous_overrides: dict[str, object],
+    refreshed_overrides: dict[str, object],
+    expected_refresh_error: str | None,
+) -> None:
+    repo, base_sha = _repository(tmp_path)
+    root = tmp_path / "os"
+    repository_id = "git:github.com/acme/app"
+    source_branch = "feature/cc-54"
+    pull_request = "github:acme/app#54"
+    _project(root, repo, repository_id=repository_id)
+    monkeypatch.setattr(
+        delivery,
+        "create_isolated_worktree",
+        lambda **kwargs: {
+            "name": "cc-54",
+            "path": "/tmp/cc-54",
+            "branch": source_branch,
+            "base_sha": base_sha,
+        },
+    )
+    run = delivery.start_development_run(
+        root,
+        "acme",
+        "app",
+        ["CC-54"],
+        run_id="release-propagation-canonical-identity",
+        auto_dev_mode="everything",
+        apply=True,
+    )
+    task = TaskState(Path(run["tasks"][0]["state_ref"]))
+    _advance_auto_dev_task_to_ready(
+        task,
+        subject_revision=base_sha,
+        pull_request=pull_request,
+    )
+    for stage_name in ("groom", "detective", "create_artifacts", "document"):
+        _record_standalone_stage(task, stage_name)
+    task_value = task.read()
+    task_value["state"] = "local_validation"
+    task.path.write_text(json.dumps(task_value), encoding="utf-8")
+    work_item = Path(task_value["work_item"])
+
+    def receipt(
+        name: str,
+        head: str,
+        *,
+        previous: bool,
+        overrides: dict[str, object],
+    ) -> Path:
+        evidence: dict[str, object] = {
+            "ticket": "CC-54",
+            "repository": repository_id,
+            "base_branch": "main",
+            "provider": "github",
+            "pull_request": pull_request,
+            "source_head_sha": head,
+            "readback_verified": True,
+            "provider_observed": {"head_sha": head},
+        }
+        if not previous:
+            evidence.update(
+                {
+                    "source_branch": source_branch,
+                    "supersession": {
+                        "supersedes_source_head_sha": "a" * 40,
+                        "reason": "The verified PR head changed after the prior family receipt.",
+                    },
+                }
+            )
+        evidence.update(overrides)
+        path = work_item / "artifacts" / "auto-dev-pr-create" / f"canonical-{name}.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(
+                {
+                    "schema": "development-stage-evidence/v1",
+                    "state": "release_propagation",
+                    "status": "completed",
+                    "summary": f"PR family is current at {head}",
+                    "verified_at": "2026-08-12T08:00:00Z",
+                    "evidence": evidence,
+                }
+            ),
+            encoding="utf-8",
+        )
+        return path
+
+    old = receipt("old", "a" * 40, previous=True, overrides=previous_overrides)
+    run_development_stage(
+        task.path,
+        stage="release_propagation",
+        receipts={"release_propagation": str(old)},
+        idempotency_prefix="cc-54:pr-create:old",
+    )
+    old_bytes = old.read_bytes()
+    old_wrapper = Path(task.read()["stage_receipts"]["release_propagation"]["ref"])
+    old_wrapper_bytes = old_wrapper.read_bytes()
+    old_wrapper_hash = hashlib.sha256(old_wrapper_bytes).hexdigest()
+    old_wrapper_evidence_hash = json.loads(old_wrapper_bytes)["evidence_sha256"]
+    refreshed = receipt(
+        "new", "b" * 40, previous=False, overrides=refreshed_overrides
+    )
+
+    if expected_refresh_error is None:
+        output = run_development_stage(
+            task.path,
+            stage="release_propagation",
+            receipts={"release_propagation": str(refreshed)},
+            idempotency_prefix="cc-54:pr-create:new",
+        )
+        assert output["supersedes"]["source_head_sha"] == "a" * 40
+        assert output["supersedes"]["wrapper_sha256"] == old_wrapper_hash
+        assert output["supersedes"]["evidence_sha256"] == old_wrapper_evidence_hash
+        assert output["supersedes"]["legacy_identity_normalization"] == {
+            "field": "source_branch",
+            "source": "selected_task.worktree.branch",
+            "value": source_branch,
+            "identity_shape": "canonical_qualified_github",
+        }
+        assert old.read_bytes() == old_bytes
+        assert old_wrapper.read_bytes() == old_wrapper_bytes
+    else:
+        task_bytes = task.path.read_bytes()
+        autodev_path = Path(task.read()["autodev_path"])
+        autodev_bytes = autodev_path.read_bytes()
+        task_ledger_bytes = task.ledger.read_bytes()
+        predecessor_binding = dict(
+            task.read()["stage_receipts"]["release_propagation"]
+        )
+        successor_directory = old_wrapper.parent / "release-propagation"
+        assert not successor_directory.exists()
+        with pytest.raises(
+            DevelopmentDeliveryError,
+            match=expected_refresh_error,
+        ):
+            run_development_stage(
+                task.path,
+                stage="release_propagation",
+                receipts={"release_propagation": str(refreshed)},
+                idempotency_prefix="cc-54:pr-create:new",
+            )
+        assert task.path.read_bytes() == task_bytes
+        assert autodev_path.read_bytes() == autodev_bytes
+        assert task.ledger.read_bytes() == task_ledger_bytes
+        assert task.read()["stage_receipts"]["release_propagation"] == predecessor_binding
+        assert not successor_directory.exists()
+        assert old.read_bytes() == old_bytes
+        assert old_wrapper.read_bytes() == old_wrapper_bytes
+        assert hashlib.sha256(old_wrapper.read_bytes()).hexdigest() == old_wrapper_hash
+
+
 def test_heartbeat_does_not_refresh_milestone_evidence_timestamp(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -3541,12 +5088,16 @@ def test_release_propagation_workflow_is_pr_create_compatibility_recorder() -> N
     contract = yaml.safe_load(
         (workflow_root / "workflow.yml").read_text(encoding="utf-8")
     )
-    assert contract["version"] == 2
+    assert contract["version"] == 5
     assert contract["inputs"][0] == "pr_create_family_receipt"
     assert contract["outputs"] == [
         "release_propagation_stage_receipt",
         "pr_create_projection",
     ]
+    assert "append_exact_head_supersession" in contract["steps"]
+    assert "complete_prior_and_new_pr_identity" in contract["validations"]
+    assert "qualified_nonempty_pr_identifier" in contract["validations"]
+    assert "local_validation_only_for_refresh" in contract["validations"]
     forbidden_steps = {
         "read_fix_version",
         "map_targets",
@@ -5150,6 +6701,98 @@ def test_pr_open_receipt_error_names_the_fields_that_branch_checks(
     assert "pull_request" not in message
 
 
+def test_review_stage_follows_pr_create_without_requiring_its_own_completion(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A review records Review Self; it cannot require that result beforehand."""
+
+    repo, base_sha = _repository(tmp_path)
+    root = tmp_path / "os"
+    _project(root, repo)
+    monkeypatch.setattr(
+        delivery,
+        "create_isolated_worktree",
+        lambda **kwargs: {
+            "name": "cc-review-cycle",
+            "path": "/tmp/cc-review-cycle",
+            "branch": "feature/cc-review-cycle",
+            "base_sha": base_sha,
+        },
+    )
+    run = delivery.start_development_run(
+        root,
+        "acme",
+        "app",
+        ["CC-REVIEW-CYCLE"],
+        run_id="review-cycle",
+        auto_dev_mode="everything",
+        apply=True,
+    )
+    task = TaskState(Path(run["tasks"][0]["state_ref"]))
+    work_item = Path(task.read()["work_item"])
+    run_development_stage(
+        task.path,
+        stage="readiness",
+        receipts={"planned": _stage_receipt(work_item, "planned")},
+        idempotency_prefix="cc-review-cycle:readiness",
+    )
+    run_development_stage(
+        task.path,
+        stage="implementation",
+        receipts={
+            "implementing": _stage_receipt(work_item, "implementing"),
+            "local_validation": _stage_receipt(work_item, "local_validation"),
+        },
+        idempotency_prefix="cc-review-cycle:implementation",
+    )
+    for stage_name in ("groom", "detective", "create_artifacts", "document"):
+        _record_standalone_stage(task, stage_name)
+    authority = _provider_authority(task, pull_request="github:acme/app#77")
+    review_receipts = {
+        "pre_pr_review": _stage_receipt(work_item, "pre_pr_review"),
+        "pr_open": _stage_receipt(work_item, "pr_open", evidence=authority),
+        "ci_repair": _stage_receipt(work_item, "ci_repair"),
+        "review_repair": _stage_receipt(work_item, "review_repair"),
+        "post_pr_review": _stage_receipt(work_item, "post_pr_review"),
+        "ready_for_merge": _stage_receipt(
+            work_item,
+            "ready_for_merge",
+            evidence={
+                **authority,
+                "checks_verified": True,
+                "reviews_verified": True,
+                "subject_revision": base_sha,
+            },
+        ),
+    }
+    with pytest.raises(DevelopmentDeliveryError, match="pr_create"):
+        run_development_stage(
+            task.path,
+            stage="review",
+            receipts=review_receipts,
+            idempotency_prefix="cc-review-cycle:review-before-pr-create",
+        )
+    run_development_stage(
+        task.path,
+        stage="release_propagation",
+        receipts={
+            "release_propagation": _stage_receipt(
+                work_item / "artifacts" / "delivery", "release_propagation"
+            )
+        },
+        idempotency_prefix="cc-review-cycle:pr-create",
+    )
+    reviewed = run_development_stage(
+        task.path,
+        stage="review",
+        receipts=review_receipts,
+        idempotency_prefix="cc-review-cycle:review",
+    )
+    assert reviewed["state"] == "ready_for_merge"
+    projection = read_auto_dev_state(task.read()["autodev_path"])
+    assert projection["stages"]["review_self"]["status"] == "completed"
+
+
 def test_record_rejects_inline_evidence_json_with_a_usage_error() -> None:
     inline = json.dumps({"schema": AUTO_DEV_STAGE_EVIDENCE_SCHEMA, "stage": "qa"})
     with pytest.raises(AutoDevStateError) as caught:
@@ -5183,3 +6826,150 @@ def test_missing_evidence_file_reports_the_evidence_flag_not_the_state() -> None
 def test_workflow_docs_are_complete_and_shallow() -> None:
     repository = Path(__file__).resolve().parents[1]
     assert validate_workflow_contracts(repository) == []
+
+
+# The title below is the exact one that broke provisioning for FLYWL-3391 on
+# 2026-08-04. It matters that it is verbatim: the defect only fires when the
+# 48-character cut inside ``_slug`` lands on a separator, so the composed work id
+# keeps a trailing underscore that the scaffolder's own normalisation strips.
+_TRUNCATING_TITLE = "Architecture spike: consolidate global reference data in the public schema"
+
+
+def test_find_delivery_work_item_matches_the_normalised_packet_name(tmp_path: Path) -> None:
+    project = tmp_path / "app"
+    # The composed id keeps the trailing underscore the packet name never has.
+    composed = "github_acme_app_flywl_3391_architecture_spike_consolidate_global_reference_"
+    packet = project / "work-items" / "02-active" / f"080526-203_{composed.rstrip('_')}"
+    packet.mkdir(parents=True)
+    assert delivery.find_delivery_work_item(project, composed) == packet
+
+
+def test_long_title_provisions_its_own_packet_and_registry_entry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, base_sha = _repository(tmp_path)
+    root = tmp_path / "os"
+    project = _project(root, repo)
+
+    work_id = f"github_acme_app_{delivery._slug('FLYWL-3391').replace('-', '_')}_" + delivery._slug(
+        _TRUNCATING_TITLE
+    ).replace("-", "_")
+    assert work_id.endswith("_"), "fixture no longer reproduces the truncation defect"
+
+    monkeypatch.setattr(
+        delivery,
+        "create_isolated_worktree",
+        lambda **kwargs: {
+            "name": "flywl-3391",
+            "path": f"{tmp_path}/wt/flywl-3391",
+            "branch": "feature/flywl-3391",
+            "base_sha": base_sha,
+        },
+    )
+    run = delivery.start_development_run(
+        root,
+        "acme",
+        "app",
+        ["FLYWL-3391"],
+        titles={"FLYWL-3391": _TRUNCATING_TITLE},
+        run_id="long-title-provisioning",
+        auto_dev_mode="everything",
+        apply=True,
+    )
+
+    task = TaskState(Path(run["tasks"][0]["state_ref"])).read()
+    # Surfaced first so a regression reports "work item receipt missing" rather
+    # than the downstream run state it turns into.
+    assert task.get("failure") is None, task.get("failure")
+    assert run["state"] == "dispatching"
+    work_item = Path(task["work_item"])
+    assert work_item.is_dir()
+    assert (work_item / "work.yml").is_file()
+    assert Path(task["autodev_path"]) == work_item / "autodev.json"
+    projection = read_auto_dev_state(task["autodev_path"])
+    assert Path(projection["delivery"]["work_item"]) == work_item
+
+    # The packet name is the normalised id, one character shorter than the
+    # composed id. Looking it up by that composed id has to still find it.
+    assert work_item.name.endswith(work_id.rstrip("_"))
+    assert not work_item.name.endswith(work_id)
+    assert delivery.find_delivery_work_item(project, work_id) == work_item
+
+    connection = connect_state(default_db_path(root))
+    try:
+        canonical = canonical_work_items.get(connection, "acme:app:flywl-3391")
+        assert canonical is not None
+        assert Path(canonical["packet_path"]) == work_item
+    finally:
+        connection.close()
+
+
+def test_long_title_retry_adopts_its_packet_instead_of_orphaning_another(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, base_sha = _repository(tmp_path)
+    root = tmp_path / "os"
+    project = _project(root, repo)
+
+    def worktree(**kwargs):
+        if not attempts:
+            attempts.append("first")
+            raise DevelopmentDeliveryError("git fetch provider unavailable")
+        return {
+            "name": "flywl-3391",
+            "path": f"{tmp_path}/wt/flywl-3391",
+            "branch": "feature/flywl-3391",
+            "base_sha": base_sha,
+        }
+
+    attempts: list[str] = []
+    monkeypatch.setattr(delivery, "create_isolated_worktree", worktree)
+    for _ in range(2):
+        delivery.start_development_run(
+            root,
+            "acme",
+            "app",
+            ["FLYWL-3391"],
+            titles={"FLYWL-3391": _TRUNCATING_TITLE},
+            run_id="long-title-retry",
+            auto_dev_mode="everything",
+            apply=True,
+        )
+
+    assert len(_work_item_packets(project)) == 1
+
+
+def test_run_id_refuses_a_corrected_title_instead_of_reusing_the_pinned_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, base_sha = _repository(tmp_path)
+    root = tmp_path / "os"
+    _project(root, repo)
+    monkeypatch.setattr(
+        delivery,
+        "create_isolated_worktree",
+        lambda **kwargs: {
+            "name": "flywl-3391",
+            "path": f"{tmp_path}/wt/flywl-3391",
+            "branch": "feature/flywl-3391",
+            "base_sha": base_sha,
+        },
+    )
+    kwargs = dict(run_id="pinned-title", auto_dev_mode="everything", apply=True)
+    delivery.start_development_run(
+        root, "acme", "app", ["FLYWL-3391"], titles={"FLYWL-3391": _TRUNCATING_TITLE}, **kwargs
+    )
+
+    with pytest.raises(DevelopmentDeliveryError, match="already pinned the title for FLYWL-3391"):
+        delivery.start_development_run(
+            root,
+            "acme",
+            "app",
+            ["FLYWL-3391"],
+            titles={"FLYWL-3391": "Public schema reference data spike"},
+            **kwargs,
+        )
+
+    # Resuming without an explicit title still inherits the pinned one.
+    resumed = delivery.start_development_run(root, "acme", "app", ["FLYWL-3391"], **kwargs)
+    assert resumed["titles"]["FLYWL-3391"] == _TRUNCATING_TITLE

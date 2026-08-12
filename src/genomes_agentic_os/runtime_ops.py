@@ -2646,11 +2646,20 @@ def _run_quiet_run_script(
     return result
 
 
-def runtime_run_next(root: str | Path, *, dry_run: bool = True, item_id: str | None = None) -> dict[str, Any]:
+def runtime_run_next(
+    root: str | Path,
+    *,
+    dry_run: bool = True,
+    item_id: str | None = None,
+    queue_name: str | None = None,
+    worker_pool: str | None = None,
+) -> dict[str, Any]:
     os_root = expand_path(root)
     mode = _queue_mode(os_root)
     if mode == EXECUTION_FABRIC_MODE:
-        return _runtime_run_next_execution_fabric(os_root, dry_run=dry_run, item_id=item_id)
+        return _runtime_run_next_execution_fabric(
+            os_root, dry_run=dry_run, item_id=item_id, queue_name=queue_name, worker_pool=worker_pool
+        )
     return _runtime_run_next_filesystem(os_root, dry_run=dry_run, item_id=item_id)
 
 
@@ -2918,8 +2927,12 @@ def _runtime_run_next_execution_fabric(
     *,
     dry_run: bool,
     item_id: str | None,
+    queue_name: str | None = None,
+    worker_pool: str | None = None,
 ) -> dict[str, Any]:
-    preparation = _prepare_execution_fabric_dispatch(os_root, dry_run=dry_run, item_id=item_id)
+    preparation = _prepare_execution_fabric_dispatch(
+        os_root, dry_run=dry_run, item_id=item_id, queue_name=queue_name, worker_pool=worker_pool
+    )
     if "result" in preparation:
         return preparation["result"]
     return _execute_prepared_execution_fabric_dispatch(os_root, preparation)
@@ -3046,6 +3059,8 @@ def _prepare_execution_fabric_dispatch(
     *,
     dry_run: bool,
     item_id: str | None,
+    queue_name: str | None = None,
+    worker_pool: str | None = None,
 ) -> dict[str, Any]:
     registry = _registry(os_root)
     with queue_backend_mutation_guard(os_root, EXECUTION_FABRIC_MODE):
@@ -3057,16 +3072,72 @@ def _prepare_execution_fabric_dispatch(
                 candidate_state = state_queue.get(conn, item_id)
             else:
                 now_value = state_db.utc_now_iso()
+                candidate_clauses = [
+                    "status = 'queued'",
+                    "(due_at IS NULL OR due_at <= ?)",
+                ]
+                candidate_params: list[Any] = [now_value]
+                if queue_name:
+                    candidate_clauses.append("queue_name = ?")
+                    candidate_params.append(queue_name)
+                if worker_pool:
+                    candidate_clauses.append("worker_pool = ?")
+                    candidate_params.append(worker_pool)
                 row = conn.execute(
-                    """
-                    SELECT id FROM run_queue
-                    WHERE status = 'queued' AND (due_at IS NULL OR due_at <= ?)
-                    ORDER BY priority DESC, (due_at IS NULL) ASC, due_at, created_at, id
-                    LIMIT 1
-                    """,
-                    (now_value,),
+                    "\n".join(
+                        (
+                            "SELECT id FROM run_queue",
+                            "WHERE " + " AND ".join(candidate_clauses),
+                            "ORDER BY priority DESC, (due_at IS NULL) ASC, due_at, created_at, id",
+                            "LIMIT 1",
+                        )
+                    ),
+                    candidate_params,
                 ).fetchone()
                 candidate_state = state_queue.get(conn, str(row["id"])) if row is not None else None
+                if candidate_state is None and queue_name and worker_pool:
+                    mismatch_clauses = [
+                        "status = 'queued'",
+                        "(due_at IS NULL OR due_at <= ?)",
+                        "queue_name = ?",
+                        "worker_pool != ?",
+                    ]
+                    mismatch_row = conn.execute(
+                        "\n".join(
+                            (
+                                "SELECT id FROM run_queue",
+                                "WHERE " + " AND ".join(mismatch_clauses),
+                                "ORDER BY priority DESC, (due_at IS NULL) ASC, due_at, created_at, id",
+                                "LIMIT 1",
+                            )
+                        ),
+                        (now_value, queue_name, worker_pool),
+                    ).fetchone()
+                    if mismatch_row is not None:
+                        candidate_state = state_queue.get(conn, str(mismatch_row["id"]))
+                        if candidate_state is not None:
+                            blocked_reason = (
+                                "queue item worker pool does not match the requested queue: "
+                                f"{candidate_state['worker_pool']} != {worker_pool}"
+                            )
+                            if not dry_run:
+                                candidate_state = state_queue.update_status(
+                                    conn,
+                                    str(candidate_state["id"]),
+                                    "blocked",
+                                    blocked_reason=blocked_reason,
+                                )
+                            return {
+                                "result": {
+                                    "root": str(os_root),
+                                    "status": "blocked",
+                                    "dry_run": dry_run,
+                                    "queue_item": _runtime_item_from_state(candidate_state),
+                                    "blocked_reason": blocked_reason,
+                                    "queue_backend": EXECUTION_FABRIC_MODE,
+                                    "external_effect": "none",
+                                }
+                            }
             if candidate_state is None:
                 return {"result": {"root": str(os_root), "status": "idle", "dry_run": dry_run, "message": "no queued runtime work"}}
             item = _runtime_item_from_state(candidate_state)

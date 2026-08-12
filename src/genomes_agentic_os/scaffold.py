@@ -512,6 +512,9 @@ class ScaffoldResult:
     created: list[Path] = field(default_factory=list)
     skipped: list[Path] = field(default_factory=list)
     updated: list[Path] = field(default_factory=list)
+    # Scaffolders that own exactly one durable entity record its resolved path
+    # here so callers never have to re-derive it by matching directory names.
+    entity_path: Path | None = None
 
     def extend(self, other: "ScaffoldResult") -> None:
         self.created.extend(other.created)
@@ -754,12 +757,51 @@ def _is_managed_auto_dev_compatibility_readme(path: Path) -> bool:
     )
 
 
+_KNOWN_AUTO_DEV_POLICY_SUPERSET_REPLACEMENTS = {
+    ("dev_standards", "PERFORMANCE_LEAKS.md"): (
+        "683703d086d89871631b6e86c350ea87096ef2246d46bdcd37e28fbe0baec797",
+        "cd0339df7b5d0019a1e3b5cf87c08eb9309dbc7003b4ba670d7bbf0121c84473",
+    ),
+}
+
+
+def _is_known_auto_dev_policy_superset(
+    source: Path, destination: Path, relative_path: Path
+) -> bool:
+    """Return whether this is one exact package-owned policy replacement.
+
+    The canonical v0.6 performance policy is a verified strict superset of
+    the legacy seed.  Recognize only the exact pair so every user-authored
+    divergent collision remains failure-closed.
+    """
+
+    expected = _KNOWN_AUTO_DEV_POLICY_SUPERSET_REPLACEMENTS.get(
+        (source.parent.name, source.name)
+    )
+    if (
+        expected is None
+        or relative_path != Path("PERFORMANCE_LEAKS.md")
+        or source.is_symlink()
+        or destination.is_symlink()
+        or not source.is_file()
+        or not destination.is_file()
+        or destination.parent.name != source.parent.name
+        or destination.name != source.name
+    ):
+        return False
+    return (
+        hashlib.sha256(source.read_bytes()).hexdigest(),
+        hashlib.sha256(destination.read_bytes()).hexdigest(),
+    ) == expected
+
+
 def migrate_auto_dev_policy_directories(parent: Path, result: ScaffoldResult) -> None:
     """Move legacy sibling policy folders beneath the single Auto-Dev parent.
 
-    The move is additive and conflict-safe. Identical files and explicitly
-    managed compatibility READMEs collapse to one canonical copy. Any other
-    collision stops the scaffold instead of silently choosing one.
+    The move is additive and conflict-safe. Identical files, exact managed
+    policy supersets, and explicitly managed compatibility READMEs collapse to
+    one canonical copy. Any other collision stops the scaffold instead of
+    silently choosing one.
     """
 
     operations: list[tuple[str, Path, Path]] = []
@@ -776,7 +818,8 @@ def migrate_auto_dev_policy_directories(parent: Path, result: ScaffoldResult) ->
             key=lambda path: path.relative_to(legacy).as_posix(),
         )
         for source in files:
-            destination = canonical / source.relative_to(legacy)
+            relative_path = source.relative_to(legacy)
+            destination = canonical / relative_path
             if destination.exists() or destination.is_symlink():
                 if (
                     source.is_file()
@@ -785,6 +828,9 @@ def migrate_auto_dev_policy_directories(parent: Path, result: ScaffoldResult) ->
                     and not destination.is_symlink()
                     and source.read_bytes() == destination.read_bytes()
                 ):
+                    operations.append(("collapse", source, destination))
+                    continue
+                if _is_known_auto_dev_policy_superset(source, destination, relative_path):
                     operations.append(("collapse", source, destination))
                     continue
                 if (
