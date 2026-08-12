@@ -280,6 +280,89 @@ def test_canonical_work_state_tracks_delivery_and_never_regresses_or_clears_bloc
         connection.close()
 
 
+def test_canonical_admission_contention_is_bounded_and_preserves_one_work_item(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A supervisor-owned SQLite write lock yields one actionable retry receipt.
+
+    The retry must not create an additional canonical item while the lock is
+    held. Once the writer releases it, resuming the same packet upserts the
+    original source identity and leaves the database readable.
+    """
+
+    repo, _base_sha = _repository(tmp_path)
+    root = tmp_path / "os"
+    project = _project(root, repo)
+    created = create_project_work_item(
+        root,
+        "acme",
+        "app",
+        title="SQLite contention admission",
+        summary="Exercise bounded Auto-Dev canonical admission retry.",
+        status="building",
+        work_id="sqlite_contention",
+        item_format="packet",
+    )
+    packet = next(path for path in created.created if path.is_dir() and (path / "work.yml").is_file())
+    db_path = default_db_path(root)
+    holder = connect_state(db_path)
+    holder.execute("BEGIN IMMEDIATE")
+    monkeypatch.setattr(delivery, "CANONICAL_ADMISSION_BUSY_TIMEOUT_MS", 1)
+    monkeypatch.setattr(delivery, "CANONICAL_ADMISSION_BACKOFF_SECONDS", 0.001)
+
+    try:
+        with pytest.raises(delivery.DevelopmentDeliveryError, match="bounded attempts"):
+            delivery._sync_canonical_development_work(
+                root,
+                domain="acme",
+                project="app",
+                ticket="CC-CONTENTION",
+                title="SQLite contention admission",
+                run_id="contention-run",
+                tracker="linear",
+                packet=packet,
+                worktree=None,
+                delivery_state="planned",
+                canonical_work_id="acme:app:cc-contention",
+            )
+    finally:
+        holder.execute("ROLLBACK")
+        holder.close()
+
+    receipt = packet / "artifacts" / "development-delivery" / "canonical-admission-contention.json"
+    receipt_data = json.loads(receipt.read_text(encoding="utf-8"))
+    assert receipt_data["outcome"] == "exhausted"
+    assert receipt_data["attempts"] == delivery.CANONICAL_ADMISSION_MAX_ATTEMPTS
+    assert receipt_data["next_action"].startswith("Resume the existing Auto-Dev packet")
+
+    row = delivery._sync_canonical_development_work(
+        root,
+        domain="acme",
+        project="app",
+        ticket="CC-CONTENTION",
+        title="SQLite contention admission",
+        run_id="contention-run",
+        tracker="linear",
+        packet=packet,
+        worktree=None,
+        delivery_state="planned",
+        canonical_work_id="acme:app:cc-contention",
+    )
+    assert row["id"] == "acme:app:cc-contention"
+
+    connection = connect_state(db_path)
+    try:
+        rows = [
+            item
+            for item in canonical_work_items.query(connection, domain="acme", project="app", limit=100)
+            if item["source_key"] == "CC-CONTENTION"
+        ]
+        assert [item["id"] for item in rows] == ["acme:app:cc-contention"]
+        assert connection.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+    finally:
+        connection.close()
+
+
 def test_start_reuses_canonical_source_identity_and_existing_packet(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

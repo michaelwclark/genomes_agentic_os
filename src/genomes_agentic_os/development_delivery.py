@@ -18,7 +18,9 @@ import fcntl
 import json
 from pathlib import Path
 import re
+import sqlite3
 import subprocess
+import time
 from typing import Any, Mapping, Sequence
 from urllib.parse import urlsplit
 import uuid
@@ -103,6 +105,9 @@ RETRYABLE_FAILURES = {
     "test_failed",
     "provisioning_failed",
 }
+CANONICAL_ADMISSION_MAX_ATTEMPTS = 4
+CANONICAL_ADMISSION_BUSY_TIMEOUT_MS = 250
+CANONICAL_ADMISSION_BACKOFF_SECONDS = 0.05
 WORKFLOW_NAMES = (
     "readiness_and_context",
     "isolated_implementation",
@@ -2078,7 +2083,136 @@ def _canonical_state_for_delivery(
     return "ready"
 
 
+def _is_transient_sqlite_contention(exc: sqlite3.OperationalError) -> bool:
+    """Return whether SQLite rejected a write because another owner is active."""
+
+    detail = str(exc).lower()
+    return "database is locked" in detail or "database is busy" in detail
+
+
+def _canonical_admission_contention_receipt(
+    packet: Path,
+    *,
+    ticket: str,
+    canonical_work_id: str | None,
+    attempts: int,
+    delays: Sequence[float],
+    error: str,
+    outcome: str,
+) -> str | None:
+    """Persist a compact, packet-local diagnostic for a contended admission.
+
+    The control-plane row is intentionally not used for this receipt: when it
+    is unavailable, the packet remains the durable place an operator can read
+    before safely resuming the exact same Auto-Dev run.
+    """
+
+    if not packet.is_dir():
+        return None
+    receipt = packet / "artifacts" / "development-delivery" / "canonical-admission-contention.json"
+    _atomic_json(
+        receipt,
+        {
+            "schema": "development-canonical-admission-contention/v1",
+            "ticket": ticket,
+            "canonical_work_id": canonical_work_id,
+            "operation": "sync_canonical_development_work",
+            "outcome": outcome,
+            "attempts": attempts,
+            "backoff_seconds": list(delays),
+            "error": error,
+            "recorded_at": utc_now(),
+            "next_action": (
+                "Resume the existing Auto-Dev packet after the current state-db writer releases its transaction."
+                if outcome == "exhausted"
+                else "Canonical admission completed without creating a second lifecycle transition."
+            ),
+        },
+    )
+    return str(receipt)
+
+
 def _sync_canonical_development_work(
+    root: str | Path,
+    *,
+    domain: str,
+    project: str,
+    ticket: str,
+    title: str,
+    run_id: str,
+    tracker: str,
+    packet: Path,
+    worktree: Mapping[str, Any] | None,
+    delivery_state: str,
+    canonical_work_id: str | None = None,
+    blocked_reason: str | None = None,
+    allow_unblock: bool = False,
+) -> dict[str, Any]:
+    """Synchronize canonical state with bounded retry for a busy SQLite writer.
+
+    Each attempt opens and closes a fresh connection before backoff.  That
+    makes an interrupted supervisor tick unable to keep the next Auto-Dev
+    admission pinned behind its abandoned transaction, while the upsert's
+    stable work id keeps replay from creating a duplicate lifecycle row.
+    """
+
+    delays: list[float] = []
+    last_error: sqlite3.OperationalError | None = None
+    for attempt in range(1, CANONICAL_ADMISSION_MAX_ATTEMPTS + 1):
+        try:
+            row = _sync_canonical_development_work_once(
+                root,
+                domain=domain,
+                project=project,
+                ticket=ticket,
+                title=title,
+                run_id=run_id,
+                tracker=tracker,
+                packet=packet,
+                worktree=worktree,
+                delivery_state=delivery_state,
+                canonical_work_id=canonical_work_id,
+                blocked_reason=blocked_reason,
+                allow_unblock=allow_unblock,
+            )
+        except sqlite3.OperationalError as exc:
+            if not _is_transient_sqlite_contention(exc):
+                raise
+            last_error = exc
+            if attempt == CANONICAL_ADMISSION_MAX_ATTEMPTS:
+                receipt = _canonical_admission_contention_receipt(
+                    packet,
+                    ticket=ticket,
+                    canonical_work_id=canonical_work_id,
+                    attempts=attempt,
+                    delays=delays,
+                    error=str(exc),
+                    outcome="exhausted",
+                )
+                diagnostic = f" Diagnostic receipt: {receipt}." if receipt else ""
+                raise DevelopmentDeliveryError(
+                    "canonical Auto-Dev admission could not acquire the state database write lock "
+                    f"after {attempt} bounded attempts.{diagnostic} Resume the existing packet; do not create a replacement run."
+                ) from exc
+            delay = CANONICAL_ADMISSION_BACKOFF_SECONDS * (2 ** (attempt - 1))
+            delays.append(delay)
+            time.sleep(delay)
+        else:
+            if last_error is not None:
+                _canonical_admission_contention_receipt(
+                    packet,
+                    ticket=ticket,
+                    canonical_work_id=canonical_work_id,
+                    attempts=attempt,
+                    delays=delays,
+                    error=str(last_error),
+                    outcome="retried",
+                )
+            return row
+    raise AssertionError("canonical admission retry loop exhausted without a result")
+
+
+def _sync_canonical_development_work_once(
     root: str | Path,
     *,
     domain: str,
@@ -2104,7 +2238,10 @@ def _sync_canonical_development_work(
             "to create a new active packet and delivery run"
         )
 
-    connection = connect_state(default_db_path(root))
+    connection = connect_state(
+        default_db_path(root),
+        busy_timeout_ms=CANONICAL_ADMISSION_BUSY_TIMEOUT_MS,
+    )
     try:
         existing = _canonical_source_match(
             connection,
