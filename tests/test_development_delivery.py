@@ -492,6 +492,127 @@ def _complete_pre_merge_auto_dev(
     )
 
 
+def _active_nonblocked_pr_create_escalation_fixture(
+    tmp_path: Path,
+) -> tuple[Path, TaskState, Path, Path, Path]:
+    """Materialize the exact historical AGE-188 PR Create boundary.
+
+    This intentionally retains the odd portfolio-level ``groom`` request and
+    disabled worktree provisioning that the old, already-open PR record wrote.
+    It is not a general single-stage fixture: every predecessor is receipt-backed
+    and the only task-level stage receipt is the immutable release propagation
+    wrapper that owns the PR identity.
+    """
+
+    repo, base_sha = _repository(tmp_path)
+    root = tmp_path / "os"
+    _project(root, repo, repository_id="git:github.com/acme/app")
+    run = delivery.start_development_run(
+        root,
+        "acme",
+        "app",
+        ["CC-190"],
+        run_id="active-pr-create-escalation",
+        auto_dev_mode="single_stage",
+        requested_stage="pr_create",
+        goal="pr_create",
+        apply=True,
+    )
+    task = TaskState(Path(run["tasks"][0]["state_ref"]))
+    work_item = Path(task.read()["work_item"])
+    run_development_stage(
+        task.path,
+        stage="readiness",
+        receipts={"planned": _stage_receipt(work_item, "planned")},
+        idempotency_prefix="cc-190:readiness",
+    )
+    run_development_stage(
+        task.path,
+        stage="implementation",
+        receipts={
+            "implementing": _stage_receipt(work_item, "implementing"),
+            "local_validation": _stage_receipt(work_item, "local_validation"),
+        },
+        idempotency_prefix="cc-190:implementation",
+    )
+    for stage in ("groom", "detective", "create_artifacts", "document"):
+        _record_standalone_stage(task, stage)
+    source_branch = str(task.read()["worktree"]["branch"])
+    release_evidence = _stage_receipt(
+        work_item / "artifacts" / "delivery",
+        "release_propagation",
+        evidence={
+            "repository": "git:github.com/acme/app",
+            "base_branch": "main",
+            "provider": "github",
+            "pull_request": "github:acme/app#190",
+            "source_branch": source_branch,
+            "source_head_sha": base_sha,
+            "provider_observed": {"head_sha": base_sha},
+            "readback_verified": True,
+        },
+    )
+    run_development_stage(
+        task.path,
+        stage="release_propagation",
+        receipts={"release_propagation": release_evidence},
+        idempotency_prefix="cc-190:release-propagation",
+    )
+    portfolio_path = task.path.parents[2] / "portfolio.json"
+    portfolio = json.loads(portfolio_path.read_text(encoding="utf-8"))
+    portfolio.update({"state": "local_validation"})
+    portfolio["auto_dev"].update(
+        {"requested_stage": "groom", "provision_worktree": False}
+    )
+    portfolio_path.write_text(
+        json.dumps(portfolio, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    release_wrapper = Path(task.read()["stage_receipts"]["release_propagation"]["ref"])
+    release_wrapper_payload = json.loads(release_wrapper.read_text(encoding="utf-8"))
+    canonical_evidence = Path(release_wrapper_payload["receipt"])
+    if not canonical_evidence.is_absolute():
+        canonical_evidence = work_item / canonical_evidence
+    return root, task, portfolio_path, release_wrapper, canonical_evidence
+
+
+def _canonical_delivery_row(root: Path, task: TaskState) -> dict[str, object] | None:
+    connection = connect_state(default_db_path(root))
+    try:
+        row = canonical_work_items.get(connection, task.read()["canonical_work_id"])
+    finally:
+        connection.close()
+    return dict(row) if row else None
+
+
+def _active_pr_create_escalation_surfaces(
+    root: Path, task: TaskState, portfolio_path: Path
+) -> dict[str, object]:
+    work_item = Path(task.read()["work_item"])
+    recovery_root = (
+        work_item
+        / "artifacts"
+        / "development-delivery"
+        / "active-pr-create-delivery-escalation"
+    )
+    ledger = task.path.parent / "events.jsonl"
+    return {
+        "task": task.path.read_bytes(),
+        "portfolio": portfolio_path.read_bytes(),
+        "autodev": Path(task.read()["autodev_path"]).read_bytes(),
+        "canonical": _canonical_delivery_row(root, task),
+        "events": ledger.read_bytes() if ledger.is_file() else None,
+        "recovery_receipts": (
+            sorted(
+                (path.relative_to(recovery_root), path.read_bytes())
+                for path in recovery_root.rglob("*")
+                if path.is_file()
+            )
+            if recovery_root.is_dir()
+            else []
+        ),
+    }
+
+
 def _advance_auto_dev_task_to_ready(
     task: TaskState,
     *,
