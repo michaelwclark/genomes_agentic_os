@@ -6005,11 +6005,12 @@ def run_development_stage(
                     # immutable and all later identity checks stay strict.
                     legacy_repository = expected_repository.removeprefix("git:github.com/")
                     legacy_pull_request = str(previous_details.get("pull_request") or "").strip()
+                    legacy_flat_github_identity = False
                     if (
                         expected_repository.startswith("git:github.com/")
-                        and
-                        expected_provider == "github"
-                        and str(previous_details.get("provider") or "").strip().lower() == "github"
+                        and expected_provider == "github"
+                        and str(previous_details.get("provider") or "").strip().lower()
+                        == "github"
                         and str(previous_details.get("repository") or "").strip()
                         == legacy_repository
                         and re.fullmatch(r"[1-9][0-9]*", legacy_pull_request)
@@ -6019,6 +6020,7 @@ def run_development_stage(
                             "repository": expected_repository,
                             "pull_request": pull_request_prefix + legacy_pull_request,
                         }
+                        legacy_flat_github_identity = True
                     refreshed_details = (
                         release_receipt_payload.get("evidence")
                         if isinstance(release_receipt_payload.get("evidence"), Mapping)
@@ -6035,10 +6037,6 @@ def run_development_stage(
                         "pull_request",
                         "source_branch",
                     )
-                    previous_identity = {
-                        field: str(previous_details.get(field) or "").strip()
-                        for field in identity_fields
-                    }
                     refreshed_identity = {
                         field: str(refreshed_details.get(field) or "").strip()
                         for field in identity_fields
@@ -6058,6 +6056,42 @@ def run_development_stage(
                         raise DevelopmentDeliveryError(
                             "release propagation refresh requires provider-read new head and explicit prior-head supersession"
                         )
+                    # The same immediate legacy receipt shape can omit its
+                    # source branch.  Derive that one comparison field only
+                    # after the selected task, the legacy record, and the
+                    # provider-read successor all bind the same GitHub PR
+                    # family and exact superseded head.  The immutable prior
+                    # evidence is never rewritten.
+                    legacy_source_branch_derived = False
+                    if (
+                        legacy_flat_github_identity
+                        and not str(previous_details.get("source_branch") or "").strip()
+                        and expected_base_branch
+                        and expected_source_branch
+                        and str(previous_details.get("repository") or "").strip()
+                        == expected_repository
+                        and str(previous_details.get("base_branch") or "").strip()
+                        == expected_base_branch
+                        and str(previous_details.get("provider") or "").strip().lower()
+                        == expected_provider
+                        and str(previous_details.get("pull_request") or "").strip()
+                        == pull_request_prefix + legacy_pull_request
+                        and refreshed_identity["repository"] == expected_repository
+                        and refreshed_identity["base_branch"] == expected_base_branch
+                        and refreshed_identity["provider"].lower() == expected_provider
+                        and refreshed_identity["pull_request"]
+                        == pull_request_prefix + legacy_pull_request
+                        and refreshed_identity["source_branch"] == expected_source_branch
+                    ):
+                        previous_details = {
+                            **previous_details,
+                            "source_branch": expected_source_branch,
+                        }
+                        legacy_source_branch_derived = True
+                    previous_identity = {
+                        field: str(previous_details.get(field) or "").strip()
+                        for field in identity_fields
+                    }
                     if not all(previous_identity.values()) or not all(refreshed_identity.values()):
                         raise DevelopmentDeliveryError(
                             "release propagation refresh requires complete prior and new PR identity"
@@ -6179,6 +6213,12 @@ def run_development_stage(
                         "evidence_sha256": previous_evidence_hash,
                         "source_head_sha": previous_head,
                     }
+                    if legacy_source_branch_derived:
+                        payload["supersedes"]["legacy_identity_normalization"] = {
+                            "field": "source_branch",
+                            "source": "selected_task.worktree.branch",
+                            "value": expected_source_branch,
+                        }
                     supersession_key = hashlib.sha256(
                         json.dumps(
                             {
