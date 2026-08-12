@@ -35,6 +35,11 @@ Create and never creates or retargets a pull request.
    actually address it.
 8. Bound repeated loops. If the same failure returns without new evidence,
    capture one blocker with the root cause and next discriminating action.
+9. For any serializer, request payload, canonicalization, persisted
+   configuration, rule, or template input change, run the runtime-consumer
+   contract gate. Review the complete consumer inventory and tenant impact
+   matrix; inspect legacy and canonical-shape tests through the real evaluator;
+   and reject a producer-only change that can yield a silent empty result.
 
 Use quiet watchers for CI and long tests. Keep raw output in durable logs and
 surface only terminal check results or blocker-grade summaries in chat.
@@ -50,7 +55,9 @@ pull request proves its siblings.
 
 The stage records the provider, pull request family, exact head revisions,
 commands, checks, independent review, addressed findings, unresolved blockers,
-and live readback.
+and live readback. Contract-risk changes additionally record the consumer
+matrix, tenant impact matrix, compatibility strategy, and exact evaluator
+evidence.
 
 It ends at `ready_for_merge` only when the exact current revisions satisfy the
 effective policy. That status is evidence for Finalize; it is not approval or
