@@ -3757,6 +3757,7 @@ def test_release_propagation_appends_exact_head_supersession_without_rewriting_p
         source_head_sha: str,
         *,
         supersedes_source_head_sha: str | None = None,
+        legacy_nested_identity: bool = False,
     ) -> Path:
         evidence: dict[str, object] = {
             "ticket": "CC-52",
@@ -3769,6 +3770,27 @@ def test_release_propagation_appends_exact_head_supersession_without_rewriting_p
             "readback_verified": True,
             "provider_observed": {"head_sha": source_head_sha},
         }
+        if legacy_nested_identity:
+            evidence = {
+                "ticket": "CC-52",
+                "source": {
+                    "repository": "github:acme/app",
+                    "base_branch": "main",
+                    "source_branch": "feature/cc-52",
+                    "source_head_sha": source_head_sha,
+                },
+                "provider_readback": {"head_sha": source_head_sha},
+                "targets": [
+                    {
+                        "repository": "github:acme/app",
+                        "base_branch": "main",
+                        "provider": "github",
+                        "pull_request": "github:acme/app#52",
+                        "source_branch": "feature/cc-52",
+                        "source_head_sha": source_head_sha,
+                    }
+                ],
+            }
         if supersedes_source_head_sha:
             evidence["supersession"] = {
                 "supersedes_source_head_sha": supersedes_source_head_sha,
@@ -3793,7 +3815,7 @@ def test_release_propagation_appends_exact_head_supersession_without_rewriting_p
 
     old_head = "a" * 40
     new_head = "b" * 40
-    original_receipt = family_receipt("old", old_head)
+    original_receipt = family_receipt("old", old_head, legacy_nested_identity=True)
     first = run_development_stage(
         task.path,
         stage="release_propagation",

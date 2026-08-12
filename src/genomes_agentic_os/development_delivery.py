@@ -5084,6 +5084,47 @@ def run_development_stage(
                         if isinstance(previous_evidence.get("evidence"), Mapping)
                         else {}
                     )
+                    # Older PR-family receipts nested their identity under
+                    # ``source`` and ``targets``.  Keep their immutable bytes
+                    # intact, but normalize that shape before comparing it to a
+                    # current exact-head refresh.
+                    if not previous_details.get("source_head_sha"):
+                        legacy_source = previous_details.get("source")
+                        legacy_targets = previous_details.get("targets")
+                        legacy_target = (
+                            legacy_targets[0]
+                            if isinstance(legacy_targets, list)
+                            and legacy_targets
+                            and isinstance(legacy_targets[0], Mapping)
+                            else {}
+                        )
+                        if isinstance(legacy_source, Mapping):
+                            legacy_repository = str(
+                                legacy_source.get("repository") or ""
+                            ).strip()
+                            if legacy_repository.startswith("github:"):
+                                legacy_repository = "git:github.com/" + legacy_repository.removeprefix(
+                                    "github:"
+                                )
+                            previous_details = {
+                                **previous_details,
+                                "repository": legacy_repository,
+                                "base_branch": str(
+                                    legacy_source.get("base_branch") or ""
+                                ).strip(),
+                                "provider": str(
+                                    legacy_target.get("provider") or "github"
+                                ).strip(),
+                                "pull_request": str(
+                                    legacy_target.get("pull_request") or ""
+                                ).strip(),
+                                "source_branch": str(
+                                    legacy_source.get("source_branch") or ""
+                                ).strip(),
+                                "source_head_sha": str(
+                                    legacy_source.get("source_head_sha") or ""
+                                ).strip(),
+                            }
                     refreshed_details = (
                         receipt_payload.get("evidence")
                         if isinstance(receipt_payload.get("evidence"), Mapping)
