@@ -733,11 +733,100 @@ def _matches_rule_pattern(relative: Path, pattern: str) -> bool:
         )
 
     return matches(0, 0)
-def sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(65536), b""):
+
+
+def rule_file_stat_identity(result: os.stat_result) -> tuple[int, int, int, int, int, int]:
+    """Return the stable file identity used around a no-follow hash read."""
+    return (
+        stat.S_IFMT(result.st_mode),
+        result.st_dev,
+        result.st_ino,
+        result.st_size,
+        result.st_mtime_ns,
+        result.st_ctime_ns,
+    )
+
+
+def sha256_file(path: Path, *, checkout: Path) -> str:
+    """Hash one source rule through a verified, no-follow file descriptor."""
+    checkout_root = checkout.resolve()
+    try:
+        relative = path.relative_to(checkout_root)
+        expected = path.lstat()
+        resolved = path.resolve(strict=True)
+    except OSError as exc:
+        raise Blocker(
+            f"source-rule file cannot be safely inspected: {path}",
+            "Restore a readable regular file inside the selected checkout; "
+            "do not emit a partial policy fingerprint.",
+        ) from exc
+    except ValueError as exc:
+        raise Blocker(
+            f"source-rule file is outside the selected checkout: {path}",
+            "Restore a checkout-local regular rule file; external policy bytes "
+            "cannot contribute to the effective-policy fingerprint.",
+        ) from exc
+    if not stat.S_ISREG(expected.st_mode) or not resolved.is_relative_to(checkout_root):
+        raise Blocker(
+            f"source-rule file is unsafe for hashing: {relative}",
+            "Restore a readable regular file inside the selected checkout; "
+            "do not emit a partial policy fingerprint.",
+        )
+    no_follow = getattr(os, "O_NOFOLLOW", None)
+    if no_follow is None:
+        raise Blocker(
+            f"source-rule hashing requires no-follow descriptor support: {relative}",
+            "Run this policy gate on a platform with no-follow file descriptors; "
+            "do not emit a partial policy fingerprint.",
+        )
+    try:
+        descriptor = os.open(path, os.O_RDONLY | no_follow)
+    except OSError as exc:
+        raise Blocker(
+            f"source-rule file cannot be safely opened: {relative}",
+            "Restore a readable regular file inside the selected checkout; "
+            "do not emit a partial policy fingerprint.",
+        ) from exc
+    try:
+        opened = os.fstat(descriptor)
+        if not stat.S_ISREG(opened.st_mode) or rule_file_stat_identity(opened) != rule_file_stat_identity(expected):
+            raise Blocker(
+                f"source-rule file changed before hashing: {relative}",
+                "Restore a stable regular file inside the selected checkout; "
+                "do not emit a partial policy fingerprint.",
+            )
+        digest = hashlib.sha256()
+        while chunk := os.read(descriptor, 65536):
             digest.update(chunk)
+        finished = os.fstat(descriptor)
+        if rule_file_stat_identity(finished) != rule_file_stat_identity(opened):
+            raise Blocker(
+                f"source-rule file changed while hashing: {relative}",
+                "Restore a stable regular file inside the selected checkout; "
+                "do not emit a partial policy fingerprint.",
+            )
+    except OSError as exc:
+        raise Blocker(
+            f"source-rule file cannot be read: {relative}",
+            "Restore a readable regular file inside the selected checkout; "
+            "do not emit a partial policy fingerprint.",
+        ) from exc
+    finally:
+        os.close(descriptor)
+    try:
+        current = path.lstat()
+    except OSError as exc:
+        raise Blocker(
+            f"source-rule file changed while hashing: {relative}",
+            "Restore a stable regular file inside the selected checkout; "
+            "do not emit a partial policy fingerprint.",
+        ) from exc
+    if not stat.S_ISREG(current.st_mode) or rule_file_stat_identity(current) != rule_file_stat_identity(opened):
+        raise Blocker(
+            f"source-rule file changed while hashing: {relative}",
+            "Restore a stable regular file inside the selected checkout; "
+            "do not emit a partial policy fingerprint.",
+        )
     return digest.hexdigest()
 
 
@@ -772,7 +861,7 @@ def resolve_source_rules(
     entries = []
     for path in files:
         try:
-            digest = sha256_file(path)
+            digest = sha256_file(path, checkout=checkout)
         except OSError as exc:
             raise Blocker(
                 f"source-rule file cannot be read: {path.relative_to(checkout.resolve())}",

@@ -563,12 +563,64 @@ def test_source_rule_hash_read_failure_is_a_handled_blocker(
         {"repository": {"rule_surfaces": {"globs": ["AGENTS.md"], "required": True}}}
     )
 
-    def fail_to_hash(_path: Path) -> str:
+    def fail_to_hash(_path: Path, *, checkout: Path) -> str:
         raise OSError("simulated read failure")
 
     monkeypatch.setattr(module, "sha256_file", fail_to_hash)
 
     with pytest.raises(module.Blocker, match="source-rule file cannot be read: AGENTS.md"):
+        module.resolve_source_rules({"root": str(checkout)}, config, strict=True)
+
+
+def test_source_rule_hash_rejects_symlink_swap_after_validation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = load_policy_context()
+    checkout = tmp_path / "checkout"
+    external_rule = tmp_path / "external-policy.md"
+    rule = checkout / "AGENTS.md"
+    checkout.mkdir()
+    rule.write_text("# safe before open\n", encoding="utf-8")
+    external_rule.write_text("# external after validation\n", encoding="utf-8")
+    config = module.rule_surface_config(
+        {"repository": {"rule_surfaces": {"globs": ["AGENTS.md"], "required": True}}}
+    )
+    real_open = module.os.open
+
+    def replace_with_symlink(path: str | Path, flags: int, mode: int = 0o777) -> int:
+        if Path(path) == rule:
+            rule.unlink()
+            rule.symlink_to(external_rule)
+        return real_open(path, flags, mode)
+
+    monkeypatch.setattr(module.os, "open", replace_with_symlink)
+
+    with pytest.raises(module.Blocker, match="source-rule file cannot be safely opened: AGENTS.md"):
+        module.resolve_source_rules({"root": str(checkout)}, config, strict=True)
+
+
+def test_source_rule_hash_rejects_regular_file_swap_after_validation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = load_policy_context()
+    checkout = tmp_path / "checkout"
+    rule = checkout / "AGENTS.md"
+    checkout.mkdir()
+    rule.write_text("# original\n", encoding="utf-8")
+    config = module.rule_surface_config(
+        {"repository": {"rule_surfaces": {"globs": ["AGENTS.md"], "required": True}}}
+    )
+    real_open = module.os.open
+
+    def replace_with_regular_file(path: str | Path, flags: int, mode: int = 0o777) -> int:
+        if Path(path) == rule:
+            rule.unlink()
+            rule.write_text("# replacement\n", encoding="utf-8")
+        return real_open(path, flags, mode)
+
+    monkeypatch.setattr(module.os, "open", replace_with_regular_file)
+
+    with pytest.raises(module.Blocker, match="source-rule file changed before hashing: AGENTS.md"):
         module.resolve_source_rules({"root": str(checkout)}, config, strict=True)
 
 
