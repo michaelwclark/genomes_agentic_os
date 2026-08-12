@@ -2630,8 +2630,9 @@ def test_everything_apply_records_pending_executor_handoff(
         "development.task.failed",
     }
 
-    # Every named stage of an unrecovered Everything packet must preserve the
-    # same pending handoff, not return a success-looking dispatch result.
+    # Every repeated unaccepted handoff on the exact packet must retain the
+    # prior receipt and record the next bounded failure, never a
+    # success-looking dispatch result.
     assert main(
         [
             "auto-dev",
@@ -2646,11 +2647,13 @@ def test_everything_apply_records_pending_executor_handoff(
     ) == 1
     groom_resume = json.loads(capsys.readouterr().out)
     assert groom_resume["state"] == "pending"
-    assert groom_resume["tasks"][0]["handoff"]["receipt"] == task["failure"]["receipt"]
+    assert groom_resume["tasks"][0]["handoff"]["attempt"] == 2
+    assert groom_resume["tasks"][0]["handoff"]["receipt"] != task["failure"]["receipt"]
+    first_handoff = json.loads(Path(task["failure"]["receipt"]).read_text(encoding="utf-8"))
+    assert first_handoff["attempt"] == 1
 
-    # A named single-stage resume of this Everything packet must retain the
-    # original pending handoff, not automatically clear it and masquerade as
-    # a new worktree-ready success.
+    # The configured final refusal becomes terminal without an explicit
+    # recovery; all previous handoff evidence remains immutable.
     assert main(
         [
             "auto-dev",
@@ -2664,17 +2667,18 @@ def test_everything_apply_records_pending_executor_handoff(
         ]
     ) == 1
     resumed = json.loads(capsys.readouterr().out)
-    assert resumed["state"] == "pending"
+    assert resumed["state"] == "blocked"
     resumed_task = TaskState(Path(resumed["tasks"][0]["state_ref"])).read()
-    assert resumed_task["state"] == "worktree_ready"
+    assert resumed_task["state"] == "blocked"
     assert resumed_task["runtime"]["ownership"] == ("managed" if managed_runtime else "not_managed")
     assert resumed_task["failure"]["kind"] == "executor_unavailable"
-    assert resumed_task["failure"]["receipt"] == task["failure"]["receipt"]
-    assert resumed_task["attempts"]["executor_unavailable"] == 1
-    assert not (
-        Path(resumed_task["failure"]["receipt"]).parent
-        / "executor-unavailable-attempt-02.json"
-    ).exists()
+    assert resumed_task["failure"]["recoverable"] is False
+    assert resumed_task["attempts"]["executor_unavailable"] == 3
+    handoff_dir = Path(resumed_task["failure"]["receipt"]).parent
+    assert [
+        json.loads((handoff_dir / f"executor-unavailable-attempt-{attempt:02d}.json").read_text(encoding="utf-8"))["attempt"]
+        for attempt in (1, 2, 3)
+    ] == [1, 2, 3]
 
     # Once an operator has explicitly recovered the task, a named stage must
     # use its current state rather than retain the old pending handoff that is

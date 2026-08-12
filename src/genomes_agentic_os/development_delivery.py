@@ -1855,15 +1855,23 @@ class TaskState:
             state = self.read()
             failure = state.get("failure") if isinstance(state.get("failure"), Mapping) else {}
             prior_receipt = Path(str(failure.get("receipt") or "")).expanduser()
+            prior_attempt = int(state.get("attempts", {}).get("executor_unavailable", 0))
+            maximum = int(state.get("max_attempts", 3))
             if (
                 failure.get("kind") == "executor_unavailable"
                 and prior_receipt.is_file()
+                and prior_attempt >= maximum
             ):
+                # A terminal refusal is idempotent: preserve the bound receipt
+                # instead of creating an unbounded fourth handoff.
                 handoff = _read_mapping(prior_receipt)
                 replayed = True
             else:
-                attempt = int(state.get("attempts", {}).get("executor_unavailable", 0)) + 1
-                maximum = int(state.get("max_attempts", 3))
+                # A still-pending refusal is a new failed handoff on the exact
+                # packet. Keep its prior receipt immutable and advance toward
+                # the configured bound; only an orphaned receipt from an
+                # interrupted first write is reused below.
+                attempt = prior_attempt + 1
                 recoverable = attempt < maximum
                 runtime = state.get("runtime") if isinstance(state.get("runtime"), Mapping) else {}
                 worktree = state.get("worktree") if isinstance(state.get("worktree"), Mapping) else {}

@@ -298,10 +298,11 @@ the SQLite work registry, or delivery transitions.
 managed executor accepts the next stage. That is not stage execution. When no
 configured executor accepts the handoff, Auto-Dev writes a task-scoped
 `executor_unavailable` receipt with the worktree and frozen-policy context and
-returns a non-success `pending` result. It preserves that receipt on an exact
-packet resume rather than presenting a new `worktree_ready` success. After the
-bounded retry budget is exhausted, the result is `blocked` and nonrecoverable.
-Neither result marks an Auto-Dev stage as executed or completed.
+returns a non-success `pending` result. A repeated unaccepted handoff on the
+exact packet preserves every prior receipt and records the next bounded
+attempt rather than presenting a new `worktree_ready` success. After the
+retry budget is exhausted, the result is `blocked` and nonrecoverable. Neither
+result marks an Auto-Dev stage as executed or completed.
 
 ```bash
 agentic-os auto-dev everything <domain> <project> <ticket> --apply
