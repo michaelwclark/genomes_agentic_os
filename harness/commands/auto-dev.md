@@ -20,3 +20,11 @@ This command keeps the finished packet byte-for-byte unchanged, writes a reopen
 receipt into one new active packet, relinks canonical work state, and provisions
 a fresh worktree and runtime registration. A plain `agentic-os work set` is not
 a reopen operation and cannot make a `03-complete` packet writable.
+
+Reopen carries the prior frozen context selection by default, including its
+normalized `touched_paths`, subjects, rulebook identities, and evidence hash.
+It rejects replacement selectors unless the operator explicitly passes
+`--reselect-context` (or `--reselect-rules-engine-context`) with one or more
+`--touched-path`, `--subject`, or `--rulebook-id` values. The reopen receipt
+binds the prior and selected context hashes; a reselect never silently drops
+Rules Engine context.

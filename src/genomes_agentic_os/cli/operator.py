@@ -11,6 +11,7 @@ from ..release_reinstall import (
     verify_reinstall,
     watch_release,
 )
+from ..release_rollout import load_published_release, load_rollout_evidence, rollout_gate
 from ..update_ops import (
     activate_license,
     backup_push,
@@ -70,6 +71,14 @@ def handle_update_status(args: argparse.Namespace) -> int:
 def handle_update_phone_home(args: argparse.Namespace) -> int:
     print(format_update_result(phone_home_payload(args.root)))
     return 0
+
+
+def handle_update_rollout_gate(args: argparse.Namespace) -> int:
+    release = load_published_release(args.release_receipt)
+    evidence = load_rollout_evidence(args.evidence) if args.evidence else {}
+    result = rollout_gate(release, evidence)
+    print(format_update_result(result))
+    return 2 if result["status"] in {"blocked", "failed"} else 0
 
 
 def handle_update_watch_release(args: argparse.Namespace) -> int:
@@ -179,6 +188,20 @@ def register(subparsers) -> None:
     )
     update_phone_home_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
     update_phone_home_parser.set_defaults(handler=handle_update_phone_home)
+    update_rollout_parser = update_subparsers.add_parser(
+        "rollout-gate",
+        help="Read local release and host receipts to gate the first host before the second; never runs remote actions.",
+    )
+    update_rollout_parser.add_argument(
+        "--release-receipt",
+        required=True,
+        help="Published release JSON/YAML receipt.",
+    )
+    update_rollout_parser.add_argument(
+        "--evidence",
+        help="Local JSON/YAML host receipt mapping; omitted means no host has rolled out.",
+    )
+    update_rollout_parser.set_defaults(handler=handle_update_rollout_gate)
     update_watch_parser = update_subparsers.add_parser(
         "watch-release",
         help="Read one published-release receipt and plan or apply this target's transactional reinstall.",

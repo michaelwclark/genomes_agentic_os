@@ -71,7 +71,9 @@ def _work_item_packets(project: Path) -> list[Path]:
     return sorted(packets)
 
 
-def _project(root: Path, repo: Path, *, canonical: bool = True) -> Path:
+def _project(
+    root: Path, repo: Path, *, canonical: bool = True, managed_runtime: bool = False
+) -> Path:
     create_project(root, "acme", "app", repo=str(repo))
     project = root / "domains" / "acme" / "02-projects" / "app"
     profile = {
@@ -85,7 +87,17 @@ def _project(root: Path, repo: Path, *, canonical: bool = True) -> Path:
         },
         "worktrees": {"directory": "worktrees", "branch_template": "feature/{ticket}-{slug}"},
         "work_items": {"active_status": "building"},
-        "runtime": {"ownership": "not_managed", "provider": "none", "identity": "not-managed"},
+        "runtime": (
+            {
+                "ownership": "managed",
+                "provider": "test-managed-runtime",
+                "identity_template": "{domain}-{project}-{worktree}",
+                "teardown_command": "true {runtime_identity}",
+                "readback_command": "true {runtime_identity}",
+            }
+            if managed_runtime
+            else {"ownership": "not_managed", "provider": "none", "identity": "not-managed"}
+        ),
         "validation": {
             "commands": ["python3 -m pytest tests -q"],
             "test_policy": "risk_based_triangle",
@@ -117,6 +129,47 @@ def _project(root: Path, repo: Path, *, canonical: bool = True) -> Path:
         }
         (project / "project.yml").write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
     return project
+
+
+def _context_kit_policy(root: Path) -> None:
+    """Install two selector dimensions that merge into one frozen kit."""
+
+    source_root = root / "harness" / "investigation-config" / "sources"
+    source_root.mkdir(parents=True, exist_ok=True)
+    common = """\
+schema_version: 1
+id: rules-engine-kit
+kind: source
+title: Rules Engine kit
+priority: 18
+authority:
+  class: snapshot-backed test evidence
+freshness:
+  mode: fixture
+requirements:
+  kit: contract.yml
+---
+"""
+    (source_root / "caller.md").write_text(
+        "---\n"
+        + common.replace(
+            "authority:",
+            "applies_to:\n  domains: [acme]\n  projects: [app]\n"
+            "  touched_paths: [src/rules_engine.py]\nauthority:",
+        )
+        + "\n# Caller context\n\nLoad the caller kit.\n",
+        encoding="utf-8",
+    )
+    (source_root / "rulebook.md").write_text(
+        "---\n"
+        + common.replace(
+            "authority:",
+            "applies_to:\n  domains: [acme]\n  projects: [app]\n"
+            "  subjects: [rulebook]\nauthority:",
+        )
+        + "\n# Rulebook context\n\nLoad the rulebook kit.\n",
+        encoding="utf-8",
+    )
 
 
 def _repository(tmp_path: Path) -> tuple[Path, str]:
@@ -1249,6 +1302,48 @@ def test_failure_retries_then_blocks_and_recovery_resumes_owner_state(tmp_path: 
     assert blocked["failure"]["recoverable"] is False
 
 
+def test_executor_handoff_can_recover_after_retry_budget_exhaustion(tmp_path: Path) -> None:
+    task = _state(tmp_path, max_attempts=2)
+    first = task.record_executor_unavailable(stage="groom")
+    assert first["handoff"]["status"] == "pending"
+    task.recover(receipt="executor repaired", idempotency_key="recover-first-handoff")
+
+    exhausted = task.record_executor_unavailable(stage="groom")
+    assert exhausted["handoff"]["status"] == "blocked"
+    assert task.read()["state"] == "blocked"
+
+    recovered = task.recover(
+        receipt="executor admission restored", idempotency_key="recover-exhausted-handoff"
+    )
+    assert recovered["state"] == "discovered"
+    assert recovered["failure"] is None
+
+
+def test_executor_handoff_reuses_orphaned_receipt_after_interrupted_state_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    task = _state(tmp_path)
+    original_atomic_json = delivery._atomic_json
+
+    def interrupt_task_state_write(path: Path, value: dict[str, object]) -> None:
+        if path == task.path:
+            raise OSError("simulated interruption after handoff receipt")
+        original_atomic_json(path, value)
+
+    monkeypatch.setattr(delivery, "_atomic_json", interrupt_task_state_write)
+    with pytest.raises(OSError, match="simulated interruption"):
+        task.record_executor_unavailable(stage="groom")
+    receipt_path = task.path.parent / "handoffs" / "executor-unavailable-attempt-01.json"
+    assert receipt_path.is_file()
+    assert task.read()["failure"] is None
+
+    monkeypatch.setattr(delivery, "_atomic_json", original_atomic_json)
+    resumed = task.record_executor_unavailable(stage="groom")
+    assert resumed["replayed"] is False
+    assert resumed["handoff"] == json.loads(receipt_path.read_text(encoding="utf-8"))
+    assert task.read()["attempts"]["executor_unavailable"] == 1
+
+
 def test_stale_lease_is_classified_for_recovery(tmp_path: Path) -> None:
     task = _state(tmp_path)
     state = task.read()
@@ -1406,6 +1501,7 @@ def test_ci_deferral_uses_frozen_selected_repository_override(
     repo, base_sha = _repository(tmp_path)
     root = tmp_path / "os"
     project = _project(root, repo)
+    _context_kit_policy(root)
     profile_path = project / "config" / "development.yml"
     profile = yaml.safe_load(profile_path.read_text(encoding="utf-8"))
     profile["validation"]["ci_fallback_on_environment_failure"] = base_allows
@@ -1982,6 +2078,7 @@ def test_multi_ticket_run_can_resume_one_explicitly_selected_packet(
     assert other_state.read_bytes() == other_before
     assert worktree_calls == ["CC-ONE", "CC-TWO"]
     selected_projection = read_auto_dev_state(selected_packet / "autodev.json")
+    assert selected_projection["mode"] == "everything"
     assert selected_projection["requested_stage"] == "document"
 
 
@@ -2029,6 +2126,264 @@ def test_start_creates_one_linked_auto_dev_projection_and_policy_planes(
     assert projection["stages"]["review_self"]["command"] == "/auto-dev-review-self"
     assert projection["stages"]["review_others"]["command"] == "/auto-dev-review-others"
     assert not (Path(task["work_item"]) / "artifacts" / "auto-dev" / "state.json").exists()
+
+
+def test_rules_engine_context_selection_is_frozen_through_delivery_and_qa_projection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, base_sha = _repository(tmp_path)
+    root = tmp_path / "os"
+    _project(root, repo)
+    _context_kit_policy(root)
+    monkeypatch.setattr(
+        delivery,
+        "create_isolated_worktree",
+        lambda **kwargs: {
+            "name": "cc-rules",
+            "path": "/tmp/cc-rules",
+            "branch": "feature/cc-rules",
+            "base_sha": base_sha,
+        },
+    )
+
+    run = delivery.start_development_run(
+        root,
+        "acme",
+        "app",
+        ["CC-RULES"],
+        run_id="rules-context",
+        touched_paths=["src/rules_engine.py", "src/rules_engine.py"],
+        subjects=["rulebook", "rulebook"],
+        auto_dev_mode="everything",
+        goal="delivery_complete",
+        apply=True,
+    )
+    task = TaskState(Path(run["tasks"][0]["state_ref"])).read()
+    frozen = json.loads(Path(task["policy_receipt"]).read_text(encoding="utf-8"))
+    context = frozen["context_selection"]
+
+    assert context["selection"]["touched_paths"] == ["src/rules_engine.py"]
+    assert context["selection"]["subjects"] == ["rulebook"]
+    assert len(context["selection"]["selected_documents"]) == 2
+    assert [document["id"] for document in context["context_documents"]] == [
+        "rules-engine-kit"
+    ]
+    assert len(context["context_documents"][0]["source_refs"]) == 2
+    assert task["context_selection"] == context
+
+    projection = read_auto_dev_state(task["autodev_path"])
+    assert projection["delivery"]["context_selection"] == context
+    refs = auto_dev._auto_dev_packet_config_refs(task)
+    assert {row["kind"] for row in refs} >= {"context_policy:rules-engine-kit"}
+    context_policy_refs = {
+        row["ref"]: row["sha256"]
+        for row in refs
+        if row["kind"] == "context_policy:rules-engine-kit"
+    }
+    assert set(context_policy_refs) == set(context["context_documents"][0]["source_refs"])
+    assert context_policy_refs == {
+        row["source_ref"]: row["sha256"]
+        for row in context["selection"]["selected_documents"]
+    }
+
+    # A resume with different invocation input does not replace a frozen kit.
+    resumed = delivery.start_development_run(
+        root,
+        "acme",
+        "app",
+        ["CC-RULES"],
+        run_id="rules-context",
+        touched_paths=["src/unrelated.py"],
+        apply=True,
+    )
+    assert resumed["context_selection"] == context
+    assert resumed["policy_drift"]["behavior"] == "continue_with_run_snapshot"
+
+
+def test_loaded_frozen_rules_engine_context_requires_available_known_findings() -> None:
+    source_ref = "harness/investigation-config/sources/rules-engine.md"
+    artifacts = [
+        {
+            "name": name,
+            "ref": f"evidence/kits/applicable-documents/{name}",
+            "sha256": character * 64,
+        }
+        for name, character in zip(
+            ["contract.yml", "dictionary.yml", "checks.yml", "coverage.yml", "redundancy.yml"],
+            "abcde",
+            strict=True,
+        )
+    ]
+    kit = {
+        "id": "applicable-documents-v1",
+        "rulebook": "ApplicableDocuments",
+        "root_ref": "evidence/kits/applicable-documents",
+        "artifacts": artifacts,
+    }
+    kit["content_sha256"] = delivery._json_sha256(kit)
+    context = {
+        "schema": "rules-engine-frozen-context/v1",
+        "status": "loaded",
+        "source_refs": [source_ref],
+        "selected_rulebook_ids": ["applicabledocuments"],
+        "catalog": {"status": "available"},
+        "kit": kit,
+        "snapshot": {"status": "usable"},
+        "known_findings": {
+            "status": "available",
+            "ref": "evidence/findings.json",
+            "sha256": "f" * 64,
+            "count": 0,
+            "by_severity": {},
+            "items": [],
+        },
+        "reason_codes": [],
+    }
+    context["content_sha256"] = delivery._json_sha256(context)
+    delivery._validate_frozen_rules_engine_context(context, document_refs={source_ref})
+
+    for status in ("not-declared", "unavailable"):
+        candidate = json.loads(json.dumps(context))
+        candidate["known_findings"] = {"status": status}
+        candidate["content_sha256"] = delivery._json_sha256(
+            {key: value for key, value in candidate.items() if key != "content_sha256"}
+        )
+        with pytest.raises(DevelopmentDeliveryError, match="loaded Rules Engine kit"):
+            delivery._validate_frozen_rules_engine_context(
+                candidate, document_refs={source_ref}
+            )
+
+
+def test_develop_cli_exposes_frozen_context_kit_selection(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    repo, _ = _repository(tmp_path)
+    root = tmp_path / "os"
+    _project(root, repo)
+    _context_kit_policy(root)
+
+    assert main(
+        [
+            "develop",
+            "start",
+            "acme",
+            "app",
+            "CC-CLI",
+            "--touched-path",
+            "src/rules_engine.py",
+            "--subject",
+            "rulebook",
+            "--root",
+            str(root),
+            "--json",
+        ]
+    ) == 0
+    plan = json.loads(capsys.readouterr().out)
+    assert plan["context_selection"]["selection"]["touched_paths"] == [
+        "src/rules_engine.py"
+    ]
+    assert plan["context_selection"]["selection"]["subjects"] == ["rulebook"]
+
+
+def test_reopen_context_requires_explicit_reselect_and_records_lineage() -> None:
+    prior = {
+        "schema": "development-context-selection/v1",
+        "trigger": "ticket-comment",
+        "output_type": "planning-evidence",
+        "policy_fingerprint": "a" * 64,
+        "selection": {
+            "touched_paths": ["src/rules_engine.py"],
+            "subjects": ["rulebook"],
+            "rulebook_ids": [],
+            "selected_documents": [],
+        },
+        "context_documents": [],
+    }
+    prior["content_sha256"] = delivery._json_sha256(prior)
+
+    carried, mode = delivery._reopen_context_plan(
+        prior,
+        reselect_context=False,
+        touched_paths=[],
+        subjects=[],
+        rulebook_ids=[],
+    )
+    assert mode == "carried"
+    assert carried == prior
+    provenance = delivery._reopen_context_provenance(
+        mode=mode,
+        prior=prior,
+        selected=carried,
+    )
+    assert provenance["touched_paths"] == ["src/rules_engine.py"]
+    assert provenance["subjects"] == ["rulebook"]
+
+    with pytest.raises(DevelopmentDeliveryError, match="--reselect-context"):
+        delivery._reopen_context_plan(
+            prior,
+            reselect_context=False,
+            touched_paths=["src/other.py"],
+            subjects=[],
+            rulebook_ids=[],
+        )
+    selected, selected_mode = delivery._reopen_context_plan(
+        prior,
+        reselect_context=True,
+        touched_paths=["src/other.py"],
+        subjects=[],
+        rulebook_ids=[],
+    )
+    assert selected is None
+    assert selected_mode == "reselected"
+
+
+@pytest.mark.parametrize("action", ["readiness", "qa"])
+def test_auto_dev_routes_freeze_rules_engine_context_selection(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    action: str,
+) -> None:
+    repo, base_sha = _repository(tmp_path)
+    root = tmp_path / "os"
+    _project(root, repo)
+    _context_kit_policy(root)
+    monkeypatch.setattr(
+        delivery,
+        "create_isolated_worktree",
+        lambda **kwargs: {
+            "name": f"cc-{action}",
+            "path": f"/tmp/cc-{action}",
+            "branch": f"feature/cc-{action}",
+            "base_sha": base_sha,
+        },
+    )
+
+    assert main(
+        [
+            "auto-dev",
+            action,
+            "acme",
+            "app",
+            f"CC-{action.upper()}",
+            "--touched-path",
+            "src/rules_engine.py",
+            "--subject",
+            "rulebook",
+            "--root",
+            str(root),
+            "--apply",
+            "--json",
+        ]
+    ) == 0
+    result = json.loads(capsys.readouterr().out)
+    task = TaskState(Path(result["tasks"][0]["state_ref"])).read()
+    selection = task["context_selection"]
+    assert selection["selection"]["touched_paths"] == ["src/rules_engine.py"]
+    assert selection["selection"]["subjects"] == ["rulebook"]
+    projection = read_auto_dev_state(task["autodev_path"])
+    assert projection["requested_stage"] == action
+    assert projection["delivery"]["context_selection"] == selection
 
 
 def test_start_registers_exact_managed_runtime_from_project_profile(
@@ -2188,7 +2543,317 @@ def test_auto_dev_plain_english_cli_dry_run(tmp_path: Path, capsys: pytest.Captu
     assert output["auto_dev"]["mode"] == "everything"
     assert output["auto_dev"]["requested_stage"] is None
     assert set(output["auto_dev"]["stage_order"]) == set(delivery.AUTO_DEV_STAGE_ORDER)
+    assert "execution" not in output
     assert not (root / "domains" / "acme" / "02-projects" / "app" / "state" / "development-runs").exists()
+
+
+@pytest.mark.parametrize("managed_runtime", (False, True), ids=("unmanaged", "managed"))
+def test_everything_apply_records_pending_executor_handoff(
+    managed_runtime: bool,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    repo, base_sha = _repository(tmp_path)
+    root = tmp_path / "os"
+    _project(root, repo, managed_runtime=managed_runtime)
+    monkeypatch.setattr(
+        delivery,
+        "create_isolated_worktree",
+        lambda **kwargs: {
+            "name": "cc-175",
+            "path": "/tmp/cc-175",
+            "branch": "feature/cc-175",
+            "base_sha": base_sha,
+        },
+    )
+
+    assert main(
+        [
+            "auto-dev",
+            "everything",
+            "acme",
+            "app",
+            "CC-175",
+            "--root",
+            str(root),
+            "--apply",
+            "--json",
+        ]
+    ) == 1
+    output = json.loads(capsys.readouterr().out)
+
+    assert output["state"] == "pending"
+    assert output["execution"]["schema"] == "auto-dev-everything-execution-status/v1"
+    assert output["execution"]["status"] == "pending"
+    assert output["execution"]["executed"] is False
+    assert output["execution"]["next_actions"] == [
+        {
+            "ticket": "CC-175",
+            "stage": "groom",
+            "command": "/auto-dev-grooming",
+            "stage_receipt_recorded": False,
+        }
+    ]
+    assert output["execution"]["handoffs"] == [
+        {
+            "ticket": "CC-175",
+            "outcome": "executor_unavailable",
+            "receipt": output["tasks"][0]["handoff"]["receipt"],
+            "attempt": 1,
+            "recoverable": True,
+        }
+    ]
+    task = TaskState(Path(output["tasks"][0]["state_ref"])).read()
+    assert task["state"] == "worktree_ready"
+    assert task["runtime"]["ownership"] == ("managed" if managed_runtime else "not_managed")
+    assert task["failure"]["kind"] == "executor_unavailable"
+    assert task["failure"]["recoverable"] is True
+    handoff = json.loads(Path(task["failure"]["receipt"]).read_text(encoding="utf-8"))
+    assert handoff["schema"] == "development-executor-handoff/v1"
+    assert handoff["status"] == "pending"
+    assert handoff["worktree"] == task["worktree"]
+    assert handoff["policy"]["fingerprint"] == task["policy_fingerprint"]
+    assert read_auto_dev_state(task["autodev_path"])["stages"]["groom"]["status"] == "not_started"
+    from genomes_agentic_os.program_run_packets import read_program_run_packet
+
+    run_packet = read_auto_dev_state(task["autodev_path"])["run_packet"]
+    run_summary = read_program_run_packet(root, run_packet["packet_id"])
+    assert run_summary["state"] == "started"
+    assert run_summary["running_workflows"] == []
+    events = [
+        json.loads(line)
+        for line in (Path(output["tasks"][0]["state_ref"]).parent / "events.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
+    assert {event["type"] for event in events} >= {
+        "development.task.executor_handoff_pending",
+        "development.task.failed",
+    }
+
+    # Every repeated unaccepted handoff on the exact packet must retain the
+    # prior receipt and record the next bounded failure, never a
+    # success-looking dispatch result.
+    assert main(
+        [
+            "auto-dev",
+            "groom",
+            "--state",
+            task["autodev_path"],
+            "--root",
+            str(root),
+            "--apply",
+            "--json",
+        ]
+    ) == 1
+    groom_resume = json.loads(capsys.readouterr().out)
+    assert groom_resume["state"] == "pending"
+    assert groom_resume["tasks"][0]["handoff"]["attempt"] == 2
+    assert groom_resume["tasks"][0]["handoff"]["receipt"] != task["failure"]["receipt"]
+    first_handoff = json.loads(Path(task["failure"]["receipt"]).read_text(encoding="utf-8"))
+    assert first_handoff["attempt"] == 1
+
+    # The configured final refusal becomes terminal without an explicit
+    # recovery; all previous handoff evidence remains immutable.
+    assert main(
+        [
+            "auto-dev",
+            "readiness",
+            "--state",
+            task["autodev_path"],
+            "--root",
+            str(root),
+            "--apply",
+            "--json",
+        ]
+    ) == 1
+    resumed = json.loads(capsys.readouterr().out)
+    assert resumed["state"] == "blocked"
+    resumed_task = TaskState(Path(resumed["tasks"][0]["state_ref"])).read()
+    assert resumed_task["state"] == "blocked"
+    assert resumed_task["runtime"]["ownership"] == ("managed" if managed_runtime else "not_managed")
+    assert resumed_task["failure"]["kind"] == "executor_unavailable"
+    assert resumed_task["failure"]["recoverable"] is False
+    assert resumed_task["attempts"]["executor_unavailable"] == 3
+    handoff_dir = Path(resumed_task["failure"]["receipt"]).parent
+    assert [
+        json.loads((handoff_dir / f"executor-unavailable-attempt-{attempt:02d}.json").read_text(encoding="utf-8"))["attempt"]
+        for attempt in (1, 2, 3)
+    ] == [1, 2, 3]
+
+    # Once an operator has explicitly recovered the task, a named stage must
+    # use its current state rather than retain the old pending handoff that is
+    # still present in the historical portfolio row.
+    assert main(
+        [
+            "develop",
+            "recover",
+            output["tasks"][0]["state_ref"],
+            "--receipt",
+            "executor accepted the recovered task",
+            "--idempotency-key",
+            "cc-175:recover-after-handoff",
+            "--json",
+        ]
+    ) == 0
+    capsys.readouterr()
+
+    assert main(
+        [
+            "auto-dev",
+            "develop",
+            "--state",
+            task["autodev_path"],
+            "--root",
+            str(root),
+            "--apply",
+            "--json",
+        ]
+    ) == 0
+    recovered_resume = json.loads(capsys.readouterr().out)
+    assert recovered_resume["state"] == "dispatching"
+    assert "handoff" not in recovered_resume["tasks"][0]
+    recovered_task = TaskState(Path(recovered_resume["tasks"][0]["state_ref"])).read()
+    assert recovered_task["state"] == "worktree_ready"
+    assert recovered_task["failure"] is None
+
+
+def test_everything_apply_marks_four_unmanaged_tasks_pending_without_stage_receipts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    repo, base_sha = _repository(tmp_path)
+    root = tmp_path / "os"
+    _project(root, repo)
+    monkeypatch.setattr(
+        delivery,
+        "create_isolated_worktree",
+        lambda **kwargs: {
+            "name": kwargs["ticket"].lower(),
+            "path": f"/tmp/{kwargs['ticket'].lower()}",
+            "branch": f"feature/{kwargs['ticket'].lower()}",
+            "base_sha": base_sha,
+        },
+    )
+
+    tickets = ["AGE-166", "AGE-168", "AGE-171", "AGE-172"]
+    assert main(
+        [
+            "auto-dev",
+            "everything",
+            "acme",
+            "app",
+            *tickets,
+            "--root",
+            str(root),
+            "--apply",
+            "--json",
+        ]
+    ) == 1
+    output = json.loads(capsys.readouterr().out)
+
+    assert output["state"] == "pending"
+    assert {row["ticket"] for row in output["tasks"]} == set(tickets)
+    assert {row["ticket"] for row in output["execution"]["handoffs"]} == set(tickets)
+    for row in output["tasks"]:
+        task = TaskState(Path(row["state_ref"])).read()
+        assert task["state"] == "worktree_ready"
+        assert task["attempts"]["executor_unavailable"] == 1
+        assert task["failure"]["kind"] == "executor_unavailable"
+        handoff = json.loads(Path(task["failure"]["receipt"]).read_text(encoding="utf-8"))
+        assert handoff["ticket"] == row["ticket"]
+        assert handoff["worktree"] == task["worktree"]
+        assert handoff["policy"]["receipt"] == task["policy_receipt"]
+        projection = read_auto_dev_state(task["autodev_path"])
+        assert projection["mode"] == "everything"
+        assert projection["stages"]["groom"]["status"] == "not_started"
+
+
+def test_everything_executor_handoff_blocks_after_bounded_retries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    repo, base_sha = _repository(tmp_path)
+    root = tmp_path / "os"
+    _project(root, repo)
+    monkeypatch.setattr(
+        delivery,
+        "create_isolated_worktree",
+        lambda **kwargs: {
+            "name": kwargs["ticket"].lower(),
+            "path": f"/tmp/{kwargs['ticket'].lower()}",
+            "branch": f"feature/{kwargs['ticket'].lower()}",
+            "base_sha": base_sha,
+        },
+    )
+
+    assert main(
+        [
+            "auto-dev",
+            "everything",
+            "acme",
+            "app",
+            "CC-EXHAUST",
+            "--root",
+            str(root),
+            "--apply",
+            "--json",
+        ]
+    ) == 1
+    output = json.loads(capsys.readouterr().out)
+    state_ref = output["tasks"][0]["state_ref"]
+    autodev_path = TaskState(Path(state_ref)).read()["autodev_path"]
+
+    # The profile allows three attempts.  Explicit recovery is required before
+    # each subsequent exact-packet handoff, so the third refusal must be
+    # terminal rather than another pending result.
+    for attempt in (2, 3):
+        assert main(
+            [
+                "develop",
+                "recover",
+                state_ref,
+                "--receipt",
+                f"operator-recovery-{attempt}",
+                "--idempotency-key",
+                f"cc-exhaust:recover:{attempt}",
+                "--json",
+            ]
+        ) == 0
+        capsys.readouterr()
+        assert main(
+            [
+                "auto-dev",
+                "everything",
+                "--state",
+                autodev_path,
+                "--root",
+                str(root),
+                "--apply",
+                "--json",
+            ]
+        ) == 1
+        output = json.loads(capsys.readouterr().out)
+
+    assert output["state"] == "blocked"
+    assert output["execution"]["status"] == "blocked"
+    assert output["execution"]["executed"] is False
+    assert output["execution"]["handoffs"] == [
+        {
+            "ticket": "CC-EXHAUST",
+            "outcome": "executor_unavailable",
+            "receipt": output["tasks"][0]["handoff"]["receipt"],
+            "attempt": 3,
+            "recoverable": False,
+        }
+    ]
+    task = TaskState(Path(state_ref)).read()
+    assert task["state"] == "blocked"
+    assert task["failure"]["kind"] == "executor_unavailable"
+    assert task["failure"]["recoverable"] is False
+    handoff = json.loads(Path(task["failure"]["receipt"]).read_text(encoding="utf-8"))
+    assert handoff["status"] == "blocked"
+    assert handoff["attempt"] == 3
+    assert handoff["recoverable"] is False
+    portfolio = json.loads((Path(state_ref).parents[2] / "portfolio.json").read_text(encoding="utf-8"))
+    assert portfolio["state"] == "blocked"
 
 
 def test_everything_projection_creates_a_linked_program_run_packet(
@@ -2227,8 +2892,8 @@ def test_everything_projection_creates_a_linked_program_run_packet(
     summary = read_program_run_packet(root, link["packet_id"])
     assert link["program_ref"] == "00-program.json"
     assert summary["packet"]["program_id"] == "auto_dev"
-    assert summary["state"] == "running"
-    assert summary["running_workflows"] == ["groom"]
+    assert summary["state"] == "started"
+    assert summary["running_workflows"] == []
     assert any(item["kind"] == "effective_policy" for item in summary["packet"]["config_refs"])
 
 
@@ -2627,6 +3292,8 @@ def test_progressed_run_resumes_and_single_stage_retargets_same_projection(
         idempotency_prefix="cc-48:readiness",
     )
     before_resume = read_auto_dev_state(TaskState(task_path).read()["autodev_path"])
+    assert before_resume["mode"] == "everything"
+    assert TaskState(task_path).read()["auto_dev_mode"] == "everything"
     resumed = delivery.start_development_run(
         root,
         "acme",
@@ -2642,6 +3309,8 @@ def test_progressed_run_resumes_and_single_stage_retargets_same_projection(
     assert TaskState(task_path).read()["state"] == "planned"
     assert resumed["state"] == "planned"
     projection = read_auto_dev_state(TaskState(task_path).read()["autodev_path"])
+    assert projection["mode"] == "everything"
+    assert TaskState(task_path).read()["auto_dev_mode"] == "everything"
     assert projection["requested_stage"] == "document"
     assert projection["current_stage"] == "document"
     assert projection["start_stage"] == before_resume["start_stage"]
@@ -2667,6 +3336,8 @@ def test_progressed_run_resumes_and_single_stage_retargets_same_projection(
     ) == 0
     capsys.readouterr()
     retargeted = read_auto_dev_state(TaskState(task_path).read()["autodev_path"])
+    assert retargeted["mode"] == "everything"
+    assert TaskState(task_path).read()["auto_dev_mode"] == "everything"
     assert retargeted["requested_stage"] == "groom"
     assert retargeted["current_stage"] == "groom"
     assert retargeted["start_stage"] == before_resume["start_stage"]
@@ -3681,12 +4352,15 @@ def test_auto_dev_health_audits_then_relinks_finished_packet(
         "app",
         ["CC-54"],
         run_id="health-finished-packet",
+        touched_paths=["src/rules_engine.py"],
+        subjects=["rulebook"],
         auto_dev_mode="everything",
         goal="delivery_complete",
         apply=True,
     )
     task_path = Path(run["tasks"][0]["state_ref"])
     task = TaskState(task_path)
+    original_context_selection = task.read()["context_selection"]
     work_item = Path(task.read()["work_item"])
     reviewed_head = "a" * 40
     pull_request = "github:acme/app#54"
@@ -4593,6 +5267,24 @@ def test_auto_dev_health_audits_then_relinks_finished_packet(
         "create_isolated_worktree",
         provision_reopened_worktree,
     )
+    assert main(
+        [
+            "auto-dev",
+            "reopen",
+            "--state",
+            str(finished),
+            "--run-id",
+            "cc-54-context-without-reselect",
+            "--reason",
+            "Attempted selector replacement without an explicit reselect.",
+            "--touched-path",
+            "src/other.py",
+            "--root",
+            str(root),
+            "--json",
+        ]
+    ) == 2
+    assert "--reselect-context" in capsys.readouterr().err
     reopen_args = [
         "auto-dev",
         "reopen",
@@ -4646,12 +5338,22 @@ def test_auto_dev_health_audits_then_relinks_finished_packet(
     assert reopen_receipt["health_sha256"] == hashlib.sha256(
         (finished / reopen_receipt["health_receipt"]).read_bytes()
     ).hexdigest()
+    assert reopen_receipt["context"]["mode"] == "carried"
+    assert reopen_receipt["context"]["prior_content_sha256"] == original_context_selection[
+        "content_sha256"
+    ]
+    assert reopen_receipt["context"]["selected_content_sha256"] == original_context_selection[
+        "content_sha256"
+    ]
+    assert reopen_receipt["context"]["touched_paths"] == ["src/rules_engine.py"]
+    assert reopen_receipt["context"]["subjects"] == ["rulebook"]
     reopened_task = TaskState(
         Path(reopened["delivery"]["tasks"][0]["state_ref"])
     ).read()
     assert Path(reopened_task["work_item"]) == active_packet
     assert reopened_task["worktree"]["name"] == "cc-54-qa-reopen"
     assert reopened_task["runtime"]["ownership"] == "not_managed"
+    assert reopened_task["context_selection"] == original_context_selection
     assert {
         path.relative_to(finished).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
         for path in finished.rglob("*")
