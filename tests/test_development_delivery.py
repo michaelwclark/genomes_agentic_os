@@ -4184,6 +4184,31 @@ def test_release_propagation_appends_exact_head_supersession_without_rewriting_p
     )
     assert replayed == refreshed
 
+    # A second PR rewrite before any fresh review advances the active fence.
+    # The intermediate B head must never be able to consume the older A->B
+    # marker and become merge authority after propagation has reached C.
+    newest_head = "c" * 40
+    newest_receipt = family_receipt(
+        "newest",
+        newest_head,
+        supersedes_source_head_sha=new_head,
+    )
+    newest = run_development_stage(
+        task.path,
+        stage="release_propagation",
+        receipts={"release_propagation": str(newest_receipt)},
+        idempotency_prefix="cc-52:pr-create:newest",
+    )
+    newest_task = task.read()
+    assert newest["supersedes"]["source_head_sha"] == new_head
+    assert [
+        item["to_source_head_sha"] for item in newest_task["subject_supersessions"]
+    ] == [new_head, newest_head]
+    assert newest_task["state"] == "local_validation"
+    assert newest_task["subject_revision"] is None
+    current = newest_task["stage_receipts"]["release_propagation"]
+    current_wrapper = Path(current["ref"])
+
     def review_receipts(name: str, head: str) -> dict[str, str]:
         review_root = work_item / "artifacts" / f"review-{name}"
         authority = _provider_authority(task, pull_request="github:acme/app#52")
@@ -4207,8 +4232,8 @@ def test_release_propagation_appends_exact_head_supersession_without_rewriting_p
             ),
         }
 
-    # The append-only wrapper is an active fence: old review proof cannot
-    # re-promote this task after its PR head changed.
+    # The append-only wrapper is an active fence: the intermediate B review
+    # proof cannot re-promote this task after its PR head advanced to C.
     with pytest.raises(
         DevelopmentDeliveryError,
         match="must bind the refreshed release-propagation head",
@@ -4216,7 +4241,7 @@ def test_release_propagation_appends_exact_head_supersession_without_rewriting_p
         run_development_stage(
             task.path,
             stage="review",
-            receipts=review_receipts("stale", old_head),
+            receipts=review_receipts("stale", new_head),
             idempotency_prefix="cc-52:review:stale",
         )
     assert task.read()["state"] == "local_validation"
@@ -4233,15 +4258,18 @@ def test_release_propagation_appends_exact_head_supersession_without_rewriting_p
     reviewed = run_development_stage(
         task.path,
         stage="review",
-        receipts=review_receipts("fresh", new_head),
+        receipts=review_receipts("fresh", newest_head),
         idempotency_prefix="cc-52:review:fresh",
     )
     assert reviewed["state"] == "ready_for_merge"
     reviewed_task = task.read()
-    assert reviewed_task["subject_revision"] == new_head
-    assert reviewed_task["subject_supersession_resolutions"][-1]["subject_revision"] == new_head
+    assert reviewed_task["subject_revision"] == newest_head
+    assert [
+        item["subject_revision"]
+        for item in reviewed_task["subject_supersession_resolutions"]
+    ] == [newest_head, newest_head]
     projection = read_auto_dev_state(task.read()["autodev_path"])
-    assert projection["subject_revision"] == new_head
+    assert projection["subject_revision"] == newest_head
     assert projection["stages"]["review_self"]["status"] == "completed"
     assert projection["stages"]["qa"]["status"] == "not_started"
     assert projection["stages"]["finalize"]["status"] == "not_started"
@@ -4249,12 +4277,12 @@ def test_release_propagation_appends_exact_head_supersession_without_rewriting_p
         AutoDevStateError,
         match="qa evidence subject_revision must match the canonical reviewed pull-request head",
     ):
-        _record_standalone_stage(task, "qa", revision=old_head)
-    _record_standalone_stage(task, "qa", revision=new_head)
+        _record_standalone_stage(task, "qa", revision=new_head)
+    _record_standalone_stage(task, "qa", revision=newest_head)
     _record_standalone_stage(
         task,
         "finalize",
-        revision=new_head,
+        revision=newest_head,
         pull_request="github:acme/app#52",
     )
     projection = read_auto_dev_state(task.read()["autodev_path"])
@@ -4263,8 +4291,8 @@ def test_release_propagation_appends_exact_head_supersession_without_rewriting_p
 
     malformed_new_receipt = family_receipt(
         "malformed-new-pr",
-        "c" * 40,
-        supersedes_source_head_sha=new_head,
+        "d" * 40,
+        supersedes_source_head_sha=newest_head,
     )
     malformed_new_payload = json.loads(malformed_new_receipt.read_text(encoding="utf-8"))
     malformed_new_payload["evidence"]["pull_request"] = "github:acme/app#"
@@ -4305,8 +4333,8 @@ def test_release_propagation_appends_exact_head_supersession_without_rewriting_p
     task.path.write_text(json.dumps(task_mismatch_state), encoding="utf-8")
     arbitrary_receipt = family_receipt(
         "task-mismatch",
-        "c" * 40,
-        supersedes_source_head_sha=new_head,
+        "d" * 40,
+        supersedes_source_head_sha=newest_head,
     )
     arbitrary_payload = json.loads(arbitrary_receipt.read_text(encoding="utf-8"))
     arbitrary_payload["evidence"].update(task_mismatch)
@@ -4383,7 +4411,7 @@ def test_release_propagation_appends_exact_head_supersession_without_rewriting_p
     malformed_prior_receipt = family_receipt(
         "malformed-prior-pr",
         "d" * 40,
-        supersedes_source_head_sha=new_head,
+        supersedes_source_head_sha=newest_head,
     )
     with pytest.raises(
         DevelopmentDeliveryError,

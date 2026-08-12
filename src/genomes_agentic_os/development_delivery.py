@@ -4980,10 +4980,10 @@ def run_development_stage(
             or ""
         ).strip()
 
-    def pending_subject_supersession(
+    def pending_subject_supersessions(
         task_value: Mapping[str, Any],
-    ) -> Mapping[str, Any] | None:
-        """Return the newest refreshed head without fresh review authority."""
+    ) -> list[Mapping[str, Any]]:
+        """Return every refreshed PR head that lacks fresh review authority."""
 
         resolutions = task_value.get("subject_supersession_resolutions")
         resolved = {
@@ -4991,8 +4991,9 @@ def run_development_stage(
             for item in resolutions or []
             if isinstance(item, Mapping)
         }
+        pending: list[Mapping[str, Any]] = []
         supersessions = task_value.get("subject_supersessions")
-        for item in reversed(supersessions or []):
+        for item in supersessions or []:
             if not isinstance(item, Mapping):
                 continue
             identifier = supersession_identifier(item)
@@ -5002,8 +5003,16 @@ def run_development_stage(
                 str(item.get(field) or "").strip()
                 for field in ("from_subject_revision", "to_source_head_sha")
             ):
-                return item
-        return None
+                pending.append(item)
+        return pending
+
+    def pending_subject_supersession(
+        task_value: Mapping[str, Any],
+    ) -> Mapping[str, Any] | None:
+        """Return the newest refreshed head without fresh review authority."""
+
+        pending = pending_subject_supersessions(task_value)
+        return pending[-1] if pending else None
 
     def persist_delivery_revision_metadata() -> dict[str, Any]:
         """Keep reviewed-head and terminal merge/deploy revisions distinct."""
@@ -5028,19 +5037,23 @@ def run_development_stage(
             if review_sha and task_value.get("subject_revision") != review_sha:
                 task_value["subject_revision"] = review_sha
                 changed = True
-            pending_supersession = pending_subject_supersession(task_value)
+            pending_supersessions = pending_subject_supersessions(task_value)
+            pending_supersession = (
+                pending_supersessions[-1] if pending_supersessions else None
+            )
             if (
                 pending_supersession is not None
                 and review_sha
                 and review_sha
                 == str(pending_supersession.get("to_source_head_sha") or "").strip()
             ):
-                task_value.setdefault("subject_supersession_resolutions", []).append(
+                task_value.setdefault("subject_supersession_resolutions", []).extend(
                     {
-                        "supersession_id": supersession_identifier(pending_supersession),
+                        "supersession_id": supersession_identifier(item),
                         "subject_revision": review_sha,
                         "recorded_at": utc_now(),
                     }
+                    for item in pending_supersessions
                 )
                 changed = True
             if merge_sha and task_value.get("terminal_revision") != merge_sha:
@@ -5510,6 +5523,7 @@ def run_development_stage(
         with _file_lock(state.path.with_suffix(state.path.suffix + ".lock")):
             task_value = state.read()
             superseded_ready_for_merge = False
+            refreshed_subject_fence = False
             stage_receipts = (
                 task_value.get("stage_receipts")
                 if isinstance(task_value.get("stage_receipts"), Mapping)
@@ -5854,6 +5868,10 @@ def run_development_stage(
                             separators=(",", ":"),
                         ).encode("utf-8")
                     ).hexdigest()
+                    refreshed_subject_fence = (
+                        superseded_ready_for_merge
+                        or pending_subject_supersession(task_value) is not None
+                    )
                     output = (
                         legacy_output.parent
                         / "release-propagation"
@@ -5888,17 +5906,24 @@ def run_development_stage(
                 "ref": str(output),
                 "sha256": hashlib.sha256(output.read_bytes()).hexdigest(),
             }
-            if superseded_ready_for_merge:
-                task_value.setdefault("subject_supersessions", []).append(
-                    {
-                        "supersession_id": f"release-propagation:{supersession_key}",
-                        "from_subject_revision": payload["supersedes"]["source_head_sha"],
-                        "to_source_head_sha": refreshed_head,
-                        "pull_request_identity": refreshed_identity,
-                        "release_propagation_wrapper": str(output),
-                        "recorded_at": utc_now(),
-                    }
-                )
+            if refreshed_subject_fence:
+                supersession_id = f"release-propagation:{supersession_key}"
+                existing_fences = task_value.setdefault("subject_supersessions", [])
+                if not any(
+                    isinstance(item, Mapping)
+                    and str(item.get("supersession_id") or "") == supersession_id
+                    for item in existing_fences
+                ):
+                    existing_fences.append(
+                        {
+                            "supersession_id": supersession_id,
+                            "from_subject_revision": payload["supersedes"]["source_head_sha"],
+                            "to_source_head_sha": refreshed_head,
+                            "pull_request_identity": refreshed_identity,
+                            "release_propagation_wrapper": str(output),
+                            "recorded_at": utc_now(),
+                        }
+                    )
                 task_value["state"] = "local_validation"
                 task_value["subject_revision"] = None
             _atomic_json(state.path, task_value)
