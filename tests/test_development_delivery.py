@@ -4469,10 +4469,63 @@ def test_release_propagation_appends_exact_head_supersession_without_rewriting_p
 
 
 @pytest.mark.parametrize(
-    ("repository_id", "legacy_repository", "accepts_legacy_flat_identity"),
+    (
+        "repository_id",
+        "legacy_repository",
+        "registered_source_branch",
+        "legacy_source_branch",
+        "refreshed_source_branch",
+        "expected_refresh_error",
+    ),
     [
-        ("git:github.com/acme/app", "acme/app", True),
-        ("github:acme/app", "github:acme/app", False),
+        (
+            "git:github.com/acme/app",
+            "acme/app",
+            "feature/cc-53",
+            "feature/cc-53",
+            "feature/cc-53",
+            None,
+        ),
+        (
+            "git:github.com/acme/app",
+            "acme/app",
+            "feature/cc-53",
+            None,
+            "feature/cc-53",
+            None,
+        ),
+        (
+            "git:github.com/acme/app",
+            "acme/app",
+            None,
+            None,
+            "feature/cc-53",
+            "requires complete prior and new PR identity",
+        ),
+        (
+            "git:github.com/acme/app",
+            "acme/app",
+            "feature/cc-53",
+            None,
+            "feature/other",
+            "requires complete prior and new PR identity",
+        ),
+        (
+            "git:github.com/acme/app",
+            "acme/app",
+            "feature/cc-53",
+            "feature/other",
+            "feature/cc-53",
+            "must retain the same source_branch",
+        ),
+        (
+            "github:acme/app",
+            "github:acme/app",
+            "feature/cc-53",
+            "feature/cc-53",
+            "feature/cc-53",
+            "prior pull_request.*non-empty numeric identifier",
+        ),
     ],
 )
 def test_release_propagation_normalizes_only_selected_legacy_flat_github_identity(
@@ -4480,7 +4533,10 @@ def test_release_propagation_normalizes_only_selected_legacy_flat_github_identit
     monkeypatch: pytest.MonkeyPatch,
     repository_id: str,
     legacy_repository: str,
-    accepts_legacy_flat_identity: bool,
+    registered_source_branch: str | None,
+    legacy_source_branch: str | None,
+    refreshed_source_branch: str,
+    expected_refresh_error: str | None,
 ) -> None:
     repo, base_sha = _repository(tmp_path)
     root = tmp_path / "os"
@@ -4491,7 +4547,7 @@ def test_release_propagation_normalizes_only_selected_legacy_flat_github_identit
         lambda **kwargs: {
             "name": "cc-53",
             "path": "/tmp/cc-53",
-            "branch": "feature/cc-53",
+            "branch": registered_source_branch,
             "base_sha": base_sha,
         },
     )
@@ -4530,11 +4586,14 @@ def test_release_propagation_normalizes_only_selected_legacy_flat_github_identit
             "base_branch": "main",
             "provider": "github",
             "pull_request": "53" if legacy else "github:acme/app#53",
-            "source_branch": "feature/cc-53",
             "source_head_sha": head,
             "readback_verified": True,
             "provider_observed": {"head_sha": head},
         }
+        if not legacy or legacy_source_branch is not None:
+            evidence["source_branch"] = (
+                legacy_source_branch if legacy else refreshed_source_branch
+            )
         if not legacy:
             evidence["supersession"] = {
                 "supersedes_source_head_sha": supersedes,
@@ -4564,8 +4623,11 @@ def test_release_propagation_normalizes_only_selected_legacy_flat_github_identit
         receipts={"release_propagation": str(old)},
         idempotency_prefix="cc-53:pr-create:old",
     )
+    old_bytes = old.read_bytes()
+    old_wrapper = Path(task.read()["stage_receipts"]["release_propagation"]["ref"])
+    old_wrapper_bytes = old_wrapper.read_bytes()
     refreshed = receipt("new", "b" * 40)
-    if accepts_legacy_flat_identity:
+    if expected_refresh_error is None:
         output = run_development_stage(
             task.path,
             stage="release_propagation",
@@ -4573,10 +4635,20 @@ def test_release_propagation_normalizes_only_selected_legacy_flat_github_identit
             idempotency_prefix="cc-53:pr-create:new",
         )
         assert output["supersedes"]["source_head_sha"] == "a" * 40
+        assert old.read_bytes() == old_bytes
+        assert old_wrapper.read_bytes() == old_wrapper_bytes
+        if legacy_source_branch is None:
+            assert output["supersedes"]["legacy_identity_normalization"] == {
+                "field": "source_branch",
+                "source": "selected_task.worktree.branch",
+                "value": registered_source_branch,
+            }
+        else:
+            assert "legacy_identity_normalization" not in output["supersedes"]
     else:
         with pytest.raises(
             DevelopmentDeliveryError,
-            match="prior pull_request.*non-empty numeric identifier",
+            match=expected_refresh_error,
         ):
             run_development_stage(
                 task.path,
@@ -4584,6 +4656,8 @@ def test_release_propagation_normalizes_only_selected_legacy_flat_github_identit
                 receipts={"release_propagation": str(refreshed)},
                 idempotency_prefix="cc-53:pr-create:new",
             )
+        assert old.read_bytes() == old_bytes
+        assert old_wrapper.read_bytes() == old_wrapper_bytes
 
 
 def test_heartbeat_does_not_refresh_milestone_evidence_timestamp(
