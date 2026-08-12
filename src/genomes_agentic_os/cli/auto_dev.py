@@ -17,6 +17,7 @@ from ..development_delivery import (
     DEVELOPMENT_POLICY_PLANES,
     DevelopmentDeliveryError,
     correct_failed_base_selection,
+    recover_active_worktree_ready_delivery,
     reconcile_historical_delivery,
     reopen_auto_dev_item,
     start_development_run,
@@ -292,6 +293,17 @@ def handle_correct_base_selection(args: argparse.Namespace) -> int:
     return 0
 
 
+def handle_recover_worktree_ready_delivery(args: argparse.Namespace) -> int:
+    result = recover_active_worktree_ready_delivery(
+        args.state,
+        reason=args.reason,
+        idempotency_key=args.idempotency_key,
+        apply=args.apply,
+    )
+    _print(result, json_output=args.json)
+    return 0
+
+
 def handle_record(args: argparse.Namespace) -> int:
     result = record_auto_dev_stage(
         args.state,
@@ -534,6 +546,31 @@ def register(subparsers) -> None:
     )
     _common_output(correct_base)
     correct_base.set_defaults(handler=handle_correct_base_selection)
+
+    recover_worktree_ready = sub.add_parser(
+        "recover-worktree-ready-delivery",
+        help=(
+            "Recover only the exact active legacy worktree_ready/readiness "
+            "single-stage packet into fresh governed delivery."
+        ),
+    )
+    recover_worktree_ready.add_argument(
+        "--state", required=True, help="Exact active development task state.json."
+    )
+    recover_worktree_ready.add_argument(
+        "--reason", required=True, help="Durable recovery reason."
+    )
+    recover_worktree_ready.add_argument("--idempotency-key", required=True)
+    recover_worktree_ready.add_argument(
+        "--apply",
+        action="store_true",
+        help=(
+            "Record one immutable recovery provenance receipt and require fresh Review, "
+            "QA, Finalize, and Merge evidence; never creates provider actions."
+        ),
+    )
+    _common_output(recover_worktree_ready)
+    recover_worktree_ready.set_defaults(handler=handle_recover_worktree_ready_delivery)
 
     record = sub.add_parser(
         "record",

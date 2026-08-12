@@ -16,9 +16,11 @@ from datetime import datetime, timedelta, timezone
 import hashlib
 import fcntl
 import json
+import os
 from pathlib import Path
 import re
 import sqlite3
+import stat
 import subprocess
 import time
 from typing import Any, Callable, Mapping, Sequence
@@ -158,6 +160,14 @@ DEVELOPMENT_STAGE_RANGES = {
     "deploy": ("merged", "post_deploy_validation"),
     "closeout": ("post_deploy_validation", "delivery_complete"),
 }
+ACTIVE_WORKTREE_READY_DELIVERY_RECOVERY_SCHEMA = "active-worktree-ready-delivery-recovery/v1"
+_ACTIVE_WORKTREE_READY_DELIVERY_FRESH_STAGES = (
+    "review_self",
+    "review_others",
+    "qa",
+    "finalize",
+    "merge",
+)
 
 
 class DevelopmentDeliveryError(ValueError):
@@ -2776,6 +2786,1055 @@ def _task_provisioning_admission_lock(state_path: Path):
 
     with _file_lock(state_path.with_suffix(state_path.suffix + ".provisioning-admission.lock")):
         yield
+
+
+def _worktree_ready_recovery_read_file(
+    candidate: Path,
+    *,
+    label: str,
+    work_item: Path | None = None,
+) -> tuple[Path, bytes]:
+    """Read one stable regular input without following a replacement symlink."""
+
+    if not candidate.is_absolute():
+        raise DevelopmentDeliveryError(
+            f"worktree_ready delivery recovery {label} must be an absolute regular file"
+        )
+    try:
+        resolved = candidate.resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        raise DevelopmentDeliveryError(
+            f"worktree_ready delivery recovery {label} is missing or unsafe"
+        ) from exc
+    if work_item is not None:
+        try:
+            resolved.relative_to(work_item)
+        except ValueError as exc:
+            raise DevelopmentDeliveryError(
+                f"worktree_ready delivery recovery {label} is outside its work-item packet"
+            ) from exc
+    no_follow = getattr(os, "O_NOFOLLOW", None)
+    if no_follow is None:
+        raise DevelopmentDeliveryError(
+            f"worktree_ready delivery recovery {label} cannot be opened safely on this platform"
+        )
+    try:
+        descriptor = os.open(candidate, os.O_RDONLY | no_follow)
+    except OSError as exc:
+        raise DevelopmentDeliveryError(
+            f"worktree_ready delivery recovery {label} is missing or unsafe"
+        ) from exc
+    try:
+        opened = os.fstat(descriptor)
+        if not stat.S_ISREG(opened.st_mode):
+            raise DevelopmentDeliveryError(
+                f"worktree_ready delivery recovery {label} is missing or unsafe"
+            )
+        with os.fdopen(descriptor, "rb", closefd=False) as handle:
+            content = handle.read()
+        try:
+            current_entry = os.stat(candidate, follow_symlinks=False)
+            current_resolved = candidate.resolve(strict=True)
+        except (OSError, RuntimeError) as exc:
+            raise DevelopmentDeliveryError(
+                f"worktree_ready delivery recovery {label} is missing or unsafe"
+            ) from exc
+        if not (
+            stat.S_ISREG(current_entry.st_mode)
+            and (current_entry.st_dev, current_entry.st_ino)
+            == (opened.st_dev, opened.st_ino)
+            and current_resolved == resolved
+        ):
+            raise DevelopmentDeliveryError(
+                f"worktree_ready delivery recovery {label} is missing or unsafe"
+            )
+        if work_item is not None:
+            try:
+                current_resolved.relative_to(work_item)
+            except ValueError as exc:
+                raise DevelopmentDeliveryError(
+                    f"worktree_ready delivery recovery {label} is outside its work-item packet"
+                ) from exc
+        return resolved, content
+    finally:
+        os.close(descriptor)
+
+
+def _worktree_ready_recovery_packet_file(
+    raw_path: Any,
+    *,
+    work_item: Path,
+    label: str,
+) -> tuple[Path, bytes]:
+    """Resolve a packet-local immutable input while refusing traversal and links."""
+
+    raw = str(raw_path or "").strip()
+    if not raw:
+        raise DevelopmentDeliveryError(
+            f"worktree_ready delivery recovery {label} is missing"
+        )
+    candidate = Path(raw).expanduser()
+    if not candidate.is_absolute():
+        candidate = work_item / candidate
+    return _worktree_ready_recovery_read_file(
+        candidate, label=label, work_item=work_item
+    )
+
+
+def _worktree_ready_recovery_mapping(content: bytes, *, label: str) -> dict[str, Any]:
+    """Decode a descriptor-verified immutable JSON/YAML mapping."""
+
+    try:
+        value = yaml.safe_load(content.decode("utf-8")) or {}
+    except (UnicodeDecodeError, yaml.YAMLError) as exc:
+        raise DevelopmentDeliveryError(
+            f"worktree_ready delivery recovery {label} is malformed"
+        ) from exc
+    if not isinstance(value, Mapping):
+        raise DevelopmentDeliveryError(
+            f"worktree_ready delivery recovery {label} is malformed"
+        )
+    return dict(value)
+
+
+def _worktree_ready_recovery_release_identity(
+    task: Mapping[str, Any], *, work_item: Path
+) -> dict[str, Any]:
+    """Accept exactly one hash-bound, current PR-family evidence pair."""
+
+    repository = task.get("repository") if isinstance(task.get("repository"), Mapping) else {}
+    worktree = task.get("worktree") if isinstance(task.get("worktree"), Mapping) else {}
+    repository_id = str(repository.get("id") or "").strip()
+    base_branch = str(repository.get("base_branch") or "").strip()
+    source_branch = str(worktree.get("branch") or "").strip()
+    if not repository_id.startswith("git:github.com/") or not base_branch or not source_branch:
+        raise DevelopmentDeliveryError(
+            "worktree_ready delivery recovery requires the selected GitHub repository, base, and worktree branch"
+        )
+    github_repository = repository_id.removeprefix("git:github.com/")
+    evidence_root = work_item / "artifacts" / "auto-dev-pr-create"
+    candidates: list[dict[str, Any]] = []
+    for family_candidate in sorted(evidence_root.glob("refresh-*-family-complete.json")):
+        family_path, family_bytes = _worktree_ready_recovery_read_file(
+            family_candidate, label="release family evidence", work_item=work_item
+        )
+        family = _worktree_ready_recovery_mapping(family_bytes, label="release family evidence")
+        details = family.get("evidence") if isinstance(family.get("evidence"), Mapping) else {}
+        source_head_sha = str(details.get("source_head_sha") or "").strip()
+        observed = (
+            details.get("provider_observed")
+            if isinstance(details.get("provider_observed"), Mapping)
+            else {}
+        )
+        pull_request = str(details.get("pull_request") or "").strip()
+        base_sha = str(details.get("base_sha") or "").strip()
+        if not (
+            family.get("schema") == "development-stage-evidence/v1"
+            and family.get("state") == "release_propagation"
+            and family.get("status") == "completed"
+            and details.get("repository") == repository_id
+            and details.get("base_branch") == base_branch
+            and str(details.get("provider") or "").lower() == "github"
+            and pull_request.startswith(f"github:{github_repository}#")
+            and re.fullmatch(r"[1-9][0-9]*", pull_request.rsplit("#", 1)[-1])
+            and details.get("source_branch") == source_branch
+            and re.fullmatch(r"[a-fA-F0-9]{7,64}", source_head_sha)
+            and re.fullmatch(r"[a-fA-F0-9]{7,64}", base_sha)
+            and details.get("readback_verified") is True
+            and observed.get("state") == "OPEN"
+            and observed.get("is_draft") is False
+            and str(observed.get("head_sha") or "").strip() == source_head_sha
+            and str(observed.get("base_sha") or "").strip() == base_sha
+            and family_path.name
+            == f"refresh-{source_head_sha.lower()[:8]}-family-complete.json"
+        ):
+            continue
+        provider_path, provider_bytes = _worktree_ready_recovery_packet_file(
+            family_path.with_name(
+                f"refresh-{source_head_sha.lower()[:8]}-provider-readback.json"
+            ),
+            work_item=work_item,
+            label="release provider readback",
+        )
+        provider = _worktree_ready_recovery_mapping(
+            provider_bytes, label="release provider readback"
+        )
+        if not (
+            str(provider.get("provider") or "").lower() == "github"
+            and provider.get("repository") == repository_id
+            and provider.get("base_branch") == base_branch
+            and str(provider.get("base_sha") or "").strip() == base_sha
+            and provider.get("pull_request") == pull_request
+            and provider.get("source_branch") == source_branch
+            and str(provider.get("source_head_sha") or "").strip() == source_head_sha
+            and provider.get("readback_verified") is True
+            and provider.get("state") == "OPEN"
+            and provider.get("is_draft") is False
+            and provider_path.name
+            == f"refresh-{source_head_sha.lower()[:8]}-provider-readback.json"
+        ):
+            continue
+        candidates.append(
+            {
+                "family": family_path,
+                "family_sha256": hashlib.sha256(family_bytes).hexdigest(),
+                "provider": provider_path,
+                "provider_sha256": hashlib.sha256(provider_bytes).hexdigest(),
+                "pull_request_identity": {
+                    "provider": "github",
+                    "repository": repository_id,
+                    "base_branch": base_branch,
+                    "base_sha": base_sha,
+                    "pull_request": pull_request,
+                    "source_branch": source_branch,
+                    "source_head_sha": source_head_sha,
+                },
+            }
+        )
+    if len(candidates) != 1:
+        raise DevelopmentDeliveryError(
+            "worktree_ready delivery recovery requires exactly one current hash-bound release family/readback pair"
+        )
+    return candidates[0]
+
+
+def _worktree_ready_recovery_post_review_self_handoffs(
+    task: Mapping[str, Any], *, state_path: Path
+) -> None:
+    """Prove the one recoverable executor boundary emitted before Review Self.
+
+    The only extended compatibility shape is a packet that entered Everything
+    through the normal Review Self admission path, but could not obtain an
+    executor before any stage was recorded.  Its original Everything dispatch
+    may have one pending groom handoff; every later handoff must be the exact
+    pending Review Self retry.  Anything else is a generic Everything packet
+    and remains ineligible for this recovery.
+    """
+
+    failure = task.get("failure") if isinstance(task.get("failure"), Mapping) else {}
+    attempts = task.get("attempts") if isinstance(task.get("attempts"), Mapping) else {}
+    count = attempts.get("executor_unavailable")
+    maximum = task.get("max_attempts")
+    if not (
+        set(attempts) == {"executor_unavailable"}
+        and type(count) is int
+        and type(maximum) is int
+        and 1 <= count < maximum
+        and failure.get("kind") == "executor_unavailable"
+        and failure.get("recoverable") is True
+        and failure.get("retry_state") == "worktree_ready"
+        and task.get("last_failure_key")
+        == f"{task.get('run_id')}:{task.get('ticket')}:executor-unavailable:{count}"
+    ):
+        raise DevelopmentDeliveryError(
+            "worktree_ready delivery recovery requires only the bounded recoverable Review Self executor handoff"
+        )
+    handoff_root = state_path.parent / "handoffs"
+    try:
+        root_stat = handoff_root.lstat()
+        names = sorted(path.name for path in handoff_root.iterdir())
+    except OSError as exc:
+        raise DevelopmentDeliveryError(
+            "worktree_ready delivery recovery requires the exact pending executor handoff receipts"
+        ) from exc
+    expected_names = [f"executor-unavailable-attempt-{attempt:02d}.json" for attempt in range(1, count + 1)]
+    if not stat.S_ISDIR(root_stat.st_mode) or names != expected_names:
+        raise DevelopmentDeliveryError(
+            "worktree_ready delivery recovery requires only the exact pending executor handoff receipts"
+        )
+    worktree = task.get("worktree") if isinstance(task.get("worktree"), Mapping) else {}
+    runtime = task.get("runtime") if isinstance(task.get("runtime"), Mapping) else {}
+    for attempt, name in enumerate(expected_names, start=1):
+        receipt_path, receipt_bytes = _worktree_ready_recovery_read_file(
+            handoff_root / name, label="executor handoff"
+        )
+        handoff = _worktree_ready_recovery_mapping(receipt_bytes, label="executor handoff")
+        review_self_handoff = attempt > 1 or count == 1
+        requested_stage = "review_self" if review_self_handoff else None
+        next_stage = "review_self" if review_self_handoff else "groom"
+        if not (
+            receipt_path == (handoff_root / name).resolve()
+            and handoff.get("schema") == "development-executor-handoff/v1"
+            and handoff.get("status") == "pending"
+            and handoff.get("outcome") == "executor_unavailable"
+            and handoff.get("attempt") == attempt
+            and handoff.get("max_attempts") == maximum
+            and handoff.get("recoverable") is True
+            and handoff.get("run_id") == task.get("run_id")
+            and handoff.get("ticket") == task.get("ticket")
+            and handoff.get("canonical_work_id") == task.get("canonical_work_id")
+            and Path(str(handoff.get("task_state") or "")).expanduser().resolve() == state_path
+            and handoff.get("task_state_before_handoff") == "worktree_ready"
+            and handoff.get("requested_stage") == requested_stage
+            and handoff.get("next_stage") == next_stage
+            and handoff.get("worktree") == worktree
+            and handoff.get("runtime") == runtime
+            and isinstance(handoff.get("policy"), Mapping)
+            and handoff["policy"].get("fingerprint") == task.get("policy_fingerprint")
+            and handoff["policy"].get("receipt") == task.get("policy_receipt")
+            and str(handoff.get("recorded_at") or "").strip()
+        ):
+            raise DevelopmentDeliveryError(
+                "worktree_ready delivery recovery executor handoff does not match the exact Review Self admission"
+            )
+        if attempt == count and not (
+            Path(str(failure.get("receipt") or "")).expanduser().resolve() == receipt_path
+            and failure.get("failed_at") == handoff.get("recorded_at")
+        ):
+            raise DevelopmentDeliveryError(
+                "worktree_ready delivery recovery current executor handoff does not match task failure"
+            )
+
+
+def _worktree_ready_recovery_portfolio(
+    portfolio: Mapping[str, Any],
+    *,
+    task: Mapping[str, Any],
+    state_path: Path,
+    post_review_self_admission: bool,
+) -> dict[str, Any]:
+    """Recognize only the historical readiness or post-Review-Self shapes."""
+
+    auto_dev = portfolio.get("auto_dev") if isinstance(portfolio.get("auto_dev"), Mapping) else {}
+    rows = portfolio.get("tasks") if isinstance(portfolio.get("tasks"), list) else []
+    ticket = str(task.get("ticket") or "")
+    common = (
+        portfolio.get("run_id") == task.get("run_id")
+        and portfolio.get("tickets") == [ticket]
+        and auto_dev.get("stage_order") == task.get("auto_dev_stage_order")
+        and auto_dev.get("stage_policies") == task.get("auto_dev_stage_policies")
+        and not portfolio.get("active_worktree_ready_delivery_recoveries")
+        and len(rows) == 1
+        and isinstance(rows[0], Mapping)
+        and rows[0].get("ticket") == ticket
+        and Path(str(rows[0].get("state_ref") or "")).expanduser().resolve() == state_path
+        and rows[0].get("canonical_work_id") == task.get("canonical_work_id")
+    )
+    legacy_readiness = (
+        portfolio.get("state") == "dispatching"
+        and auto_dev.get("mode") == "single_stage"
+        # This legacy shape was emitted with detective as the portfolio selector
+        # while its task and completion boundary remained readiness.  Accepting
+        # either selector would turn this narrow migration into a generic widen.
+        and auto_dev.get("requested_stage") == "detective"
+        and auto_dev.get("goal") == "readiness"
+        and auto_dev.get("start_stage") == "groom"
+        and auto_dev.get("completion_stage") == "readiness"
+        and auto_dev.get("provision_worktree") is False
+    )
+    post_review_self = (
+        portfolio.get("state") == "pending"
+        and auto_dev.get("mode") == "everything"
+        and auto_dev.get("requested_stage") is None
+        and auto_dev.get("goal") == "delivery_complete"
+        and auto_dev.get("start_stage") == "groom"
+        and auto_dev.get("completion_stage") == "health"
+        and auto_dev.get("provision_worktree") is True
+    )
+    if not common or not (
+        post_review_self if post_review_self_admission else legacy_readiness
+    ):
+        raise DevelopmentDeliveryError(
+            "worktree_ready delivery recovery requires the exact active one-task portfolio boundary"
+        )
+    return dict(auto_dev)
+
+
+def _active_worktree_ready_delivery_recovery_context(state_path: Path) -> dict[str, Any]:
+    """Prove the sole historical readiness packet is safe to widen once.
+
+    This is intentionally disjoint from both blocked-task recovery and the
+    local-validation PR Create escalation.  It neither invents past workflow
+    receipts nor accepts any previous review/QA/finalize/merge authority.
+    """
+
+    state_path = state_path.expanduser().resolve()
+    task_path, task_bytes = _worktree_ready_recovery_read_file(
+        state_path, label="task state"
+    )
+    task = _worktree_ready_recovery_mapping(task_bytes, label="task state")
+    common_task_shape = (
+        task.get("state") == "worktree_ready"
+        and task.get("stage_receipts") in (None, {})
+        and not task.get("active_worktree_ready_delivery_recoveries")
+        and not task.get("subject_supersessions")
+        and not task.get("subject_supersession_resolutions")
+        and not any(
+            task.get(field)
+            for field in ("subject_revision", "terminal_revision", "deployed_revision")
+        )
+    )
+    legacy_readiness = (
+        common_task_shape
+        and task.get("failure") is None
+        and task.get("auto_dev_mode") == "single_stage"
+        and task.get("requested_stage") == "readiness"
+        and task.get("goal") == "readiness"
+        and task.get("auto_dev_start_stage") == "groom"
+        and task.get("auto_dev_completion_stage") == "readiness"
+    )
+    post_review_self_admission = (
+        common_task_shape
+        and isinstance(task.get("failure"), Mapping)
+        and task.get("auto_dev_mode") == "everything"
+        and task.get("requested_stage") == "review_self"
+        and task.get("goal") == "delivery_complete"
+        and task.get("auto_dev_start_stage") == "groom"
+        and task.get("auto_dev_completion_stage") == "health"
+    )
+    if post_review_self_admission:
+        _worktree_ready_recovery_post_review_self_handoffs(task, state_path=state_path)
+    if not legacy_readiness and not post_review_self_admission:
+        raise DevelopmentDeliveryError(
+            "worktree_ready delivery recovery requires the exact active single-stage readiness or post-Review-Self admission task"
+        )
+    recovery_shape = (
+        "post_review_self_executor_handoff" if post_review_self_admission else "single_stage_readiness"
+    )
+    required = (
+        "os_root",
+        "domain",
+        "project",
+        "ticket",
+        "run_id",
+        "work_item",
+        "autodev_path",
+        "canonical_work_id",
+    )
+    if not all(str(task.get(field) or "").strip() for field in required):
+        raise DevelopmentDeliveryError(
+            "worktree_ready delivery recovery requires a fully linked canonical task"
+        )
+    expected_receipts = {
+        "claimed",
+        "groom_check",
+        "context_ready",
+        "work_item_ready",
+        "worktree_ready",
+    }
+    receipts = task.get("receipts")
+    if not (
+        isinstance(receipts, list)
+        and len(receipts) == len(expected_receipts)
+        and {
+            str(row.get("state") or "")
+            for row in receipts
+            if isinstance(row, Mapping) and str(row.get("ref") or "").strip()
+        }
+        == expected_receipts
+    ):
+        raise DevelopmentDeliveryError(
+            "worktree_ready delivery recovery requires exactly the immutable pre-delivery task receipts"
+        )
+    stage_order = validate_auto_dev_stage_order(list(task.get("auto_dev_stage_order") or []))
+    stage_policies = validate_auto_dev_stage_policies(
+        task.get("auto_dev_stage_policies")
+        if isinstance(task.get("auto_dev_stage_policies"), Mapping)
+        else {}
+    )
+    root = expand_path(str(task["os_root"]))
+    domain = normalize_domain(str(task["domain"]))
+    project = validate_name(str(task["project"]), "project")
+    ticket = str(task["ticket"])
+    work_item = Path(str(task["work_item"])).expanduser().resolve()
+    project_path = project_root(root, domain, project)
+    if not (
+        work_item.is_dir()
+        and (work_item / "work.yml").is_file()
+        and _project_work_item_lane(work_item, project_path) == "02-active"
+    ):
+        raise DevelopmentDeliveryError(
+            "worktree_ready delivery recovery requires one active canonical work-item packet"
+        )
+    autodev_path, autodev_bytes = _worktree_ready_recovery_read_file(
+        Path(str(task["autodev_path"])).expanduser(),
+        label="Auto-Dev projection",
+        work_item=work_item,
+    )
+    if autodev_path != (work_item / "autodev.json").resolve():
+        raise DevelopmentDeliveryError(
+            "worktree_ready delivery recovery Auto-Dev projection is not packet-local"
+        )
+    projection = _worktree_ready_recovery_mapping(
+        autodev_bytes, label="Auto-Dev projection"
+    )
+    projection_delivery = (
+        projection.get("delivery") if isinstance(projection.get("delivery"), Mapping) else {}
+    )
+    stages = projection.get("stages") if isinstance(projection.get("stages"), Mapping) else {}
+    common_projection = (
+        projection.get("canonical_work_id") == task["canonical_work_id"]
+        and projection.get("subject_revision") in (None, "")
+        and projection.get("terminal_revision") in (None, "")
+        and projection.get("deployed_revision") in (None, "")
+        and projection_delivery.get("state") == "worktree_ready"
+        and projection_delivery.get("run_id") == task["run_id"]
+        and projection_delivery.get("subject_revision") in (None, "")
+        and projection_delivery.get("terminal_revision") in (None, "")
+        and projection_delivery.get("deployed_revision") in (None, "")
+        and Path(str(projection_delivery.get("task_state_ref") or "")).expanduser().resolve()
+        == state_path
+        and Path(str(projection_delivery.get("work_item") or "")).expanduser().resolve()
+        == work_item
+        and projection_delivery.get("canonical_work_id") == task["canonical_work_id"]
+        and isinstance(projection.get("source"), Mapping)
+        and projection["source"].get("key") == ticket
+        and set(stages) == set(AUTO_DEV_STAGE_ORDER)
+        and all(
+            isinstance(row, Mapping)
+            and row.get("status") in {"not_started", "out_of_scope"}
+            and row.get("receipt_refs") == []
+            for row in stages.values()
+        )
+    )
+    legacy_projection = (
+        common_projection
+        and projection.get("mode") == "single_stage"
+        and projection.get("requested_stage") == "readiness"
+        and projection.get("start_stage") == "groom"
+        and projection.get("completion_stage") == "readiness"
+        and projection.get("current_stage") == "readiness"
+        and projection_delivery.get("goal") == "readiness"
+    )
+    post_review_self_projection = (
+        common_projection
+        and projection.get("mode") == "everything"
+        and projection.get("requested_stage") == "review_self"
+        and projection.get("start_stage") == "groom"
+        and projection.get("completion_stage") == "health"
+        and projection.get("current_stage") == "review_self"
+        and projection.get("status") == "paused"
+        and projection.get("blocker") == task.get("failure")
+        and projection_delivery.get("goal") == "delivery_complete"
+    )
+    if not (
+        post_review_self_projection if post_review_self_admission else legacy_projection
+    ):
+        raise DevelopmentDeliveryError(
+            "worktree_ready delivery recovery requires the exact eligible Auto-Dev projection"
+        )
+    stage_root = work_item / "artifacts" / "auto-dev-orchestration" / "stages"
+    stages_without_authority = (
+        AUTO_DEV_STAGE_ORDER if post_review_self_admission else _ACTIVE_WORKTREE_READY_DELIVERY_FRESH_STAGES
+    )
+    for stage in stages_without_authority:
+        if any(
+            path.exists() or path.is_symlink()
+            for path in (stage_root / f"{stage}.json", stage_root / stage / "latest.json")
+        ):
+            raise DevelopmentDeliveryError(
+                "worktree_ready delivery recovery refuses latent downstream authority artifacts"
+            )
+    worktree = task.get("worktree") if isinstance(task.get("worktree"), Mapping) else {}
+    worktree_path = Path(str(worktree.get("path") or "")).expanduser()
+    if not (
+        worktree_path.is_dir()
+        and str(worktree.get("branch") or "").strip()
+        and re.fullmatch(r"[a-fA-F0-9]{7,64}", str(worktree.get("base_sha") or "").strip())
+    ):
+        raise DevelopmentDeliveryError(
+            "worktree_ready delivery recovery requires the original registered worktree receipt"
+        )
+    release = _worktree_ready_recovery_release_identity(task, work_item=work_item)
+    run_dir = state_path.parent.parent.parent.resolve()
+    portfolio_path, portfolio_bytes = _worktree_ready_recovery_read_file(
+        run_dir / "portfolio.json", label="portfolio"
+    )
+    portfolio = _worktree_ready_recovery_mapping(portfolio_bytes, label="portfolio")
+    portfolio_auto_dev = _worktree_ready_recovery_portfolio(
+        portfolio,
+        task=task,
+        state_path=state_path,
+        post_review_self_admission=post_review_self_admission,
+    )
+    canonical = _read_canonical_development_work(
+        root,
+        canonical_work_id=str(task["canonical_work_id"]),
+        ticket=ticket,
+        packet=work_item,
+        diagnostic_root=run_dir,
+    )
+    if not (
+        isinstance(canonical, Mapping)
+        and canonical.get("id") == task["canonical_work_id"]
+        and canonical.get("state") == "building"
+        and canonical.get("attention") == "active"
+        and canonical.get("domain") == domain
+        and canonical.get("project") == project
+        and canonical.get("source_key") == ticket
+        and canonical.get("packet_path") == str(work_item)
+        and canonical.get("worktree_path") == str(worktree_path)
+        and canonical.get("branch") == worktree.get("branch")
+    ):
+        raise DevelopmentDeliveryError(
+            "worktree_ready delivery recovery requires one active canonical worktree-ready row"
+        )
+    recovered_portfolio_auto_dev = {
+        **portfolio_auto_dev,
+        "mode": "everything",
+        "requested_stage": None,
+        "goal": "merge",
+        "stage_order": stage_order,
+        "start_stage": "review_self",
+        "completion_stage": "merge",
+        "stage_policies": stage_policies,
+    }
+    return {
+        "task": task,
+        "state_path": state_path,
+        "task_sha256": hashlib.sha256(task_bytes).hexdigest(),
+        "work_item": work_item,
+        "autodev_path": autodev_path,
+        "autodev_sha256": hashlib.sha256(autodev_bytes).hexdigest(),
+        "portfolio_path": portfolio_path,
+        "portfolio_sha256": hashlib.sha256(portfolio_bytes).hexdigest(),
+        "portfolio_auto_dev": portfolio_auto_dev,
+        "recovered_portfolio_auto_dev": recovered_portfolio_auto_dev,
+        "canonical": dict(canonical),
+        "canonical_sha256": _json_sha256(dict(canonical)),
+        "stage_order": stage_order,
+        "stage_policies": stage_policies,
+        "worktree": dict(worktree),
+        "recovery_shape": recovery_shape,
+        "release": release,
+    }
+
+
+def _worktree_ready_recovery_original(context: Mapping[str, Any]) -> dict[str, Any]:
+    release = context["release"]
+    return {
+        "task_state_ref": str(context["state_path"]),
+        "task_state_sha256": context["task_sha256"],
+        "portfolio_ref": str(context["portfolio_path"]),
+        "portfolio_sha256": context["portfolio_sha256"],
+        "autodev_ref": str(context["autodev_path"]),
+        "autodev_sha256": context["autodev_sha256"],
+        "canonical_work_id": context["task"]["canonical_work_id"],
+        "canonical_sha256": context["canonical_sha256"],
+        "work_item": str(context["work_item"]),
+        "worktree": context["worktree"],
+        "recovery_shape": context["recovery_shape"],
+        "release_propagation": {
+            "family_ref": str(release["family"]),
+            "family_sha256": release["family_sha256"],
+            "provider_ref": str(release["provider"]),
+            "provider_sha256": release["provider_sha256"],
+            "pull_request_identity": release["pull_request_identity"],
+        },
+        "stage_receipts_sha256": _json_sha256(context["task"].get("stage_receipts") or {}),
+    }
+
+
+def _worktree_ready_recovery_projection_is_derived(
+    projection: Mapping[str, Any], *, task: Mapping[str, Any], state_path: Path
+) -> bool:
+    delivery = projection.get("delivery") if isinstance(projection.get("delivery"), Mapping) else {}
+    stages = projection.get("stages") if isinstance(projection.get("stages"), Mapping) else {}
+    return bool(
+        projection.get("mode") == "everything"
+        and projection.get("requested_stage") is None
+        and projection.get("start_stage") == "review_self"
+        and projection.get("completion_stage") == "merge"
+        and projection.get("current_stage") == "review_self"
+        and projection.get("stage_order") == task.get("auto_dev_stage_order")
+        and projection.get("stage_policies") == task.get("auto_dev_stage_policies")
+        and projection.get("canonical_work_id") == task.get("canonical_work_id")
+        and projection.get("subject_revision") is None
+        and projection.get("terminal_revision") is None
+        and delivery.get("state") == "local_validation"
+        and delivery.get("goal") == "merge"
+        and delivery.get("run_id") == task.get("run_id")
+        and Path(str(delivery.get("task_state_ref") or "")).expanduser().resolve()
+        == state_path
+        and all(
+            isinstance(stages.get(stage), Mapping)
+            and stages[stage].get("status") == "not_started"
+            and stages[stage].get("receipt_refs") == []
+            for stage in _ACTIVE_WORKTREE_READY_DELIVERY_FRESH_STAGES
+        )
+    )
+
+
+def _complete_active_worktree_ready_delivery_recovery(
+    state_path: Path,
+    *,
+    current: Mapping[str, Any],
+    recovery: Mapping[str, Any],
+    apply: bool,
+) -> None:
+    """Finish only the derived state of an exact interrupted recovery replay."""
+
+    work_item = Path(str(current.get("work_item") or "")).expanduser().resolve()
+    receipt_path, receipt_bytes = _worktree_ready_recovery_packet_file(
+        recovery.get("receipt"), work_item=work_item, label="recovery provenance"
+    )
+    receipt = _worktree_ready_recovery_mapping(receipt_bytes, label="recovery provenance")
+    if not (
+        receipt.get("schema") == ACTIVE_WORKTREE_READY_DELIVERY_RECOVERY_SCHEMA
+        and receipt.get("kind") == "recover-active-worktree-ready-delivery"
+        and receipt.get("idempotency_key") == recovery.get("idempotency_key")
+        and _json_sha256(receipt) == recovery.get("sha256")
+    ):
+        raise DevelopmentDeliveryError(
+            "worktree_ready delivery recovery provenance does not match task state"
+        )
+    recovered = receipt.get("recovered") if isinstance(receipt.get("recovered"), Mapping) else {}
+    expected_portfolio_auto_dev = recovered.get("portfolio_auto_dev")
+    if not (
+        current.get("state") == "local_validation"
+        and current.get("failure") is None
+        and current.get("auto_dev_mode") == "everything"
+        and current.get("requested_stage") is None
+        and current.get("goal") == "merge"
+        and current.get("auto_dev_start_stage") == "review_self"
+        and current.get("auto_dev_completion_stage") == "merge"
+        and current.get("auto_dev_stage_order") == recovered.get("stage_order")
+        and current.get("auto_dev_stage_policies") == recovered.get("stage_policies")
+        and isinstance(expected_portfolio_auto_dev, Mapping)
+    ):
+        raise DevelopmentDeliveryError("worktree_ready delivery recovery task state is not replayable")
+    matching = [
+        row
+        for row in current.get("active_worktree_ready_delivery_recoveries") or []
+        if isinstance(row, Mapping) and row.get("idempotency_key") == recovery.get("idempotency_key")
+    ]
+    if len(matching) != 1 or dict(matching[0]) != dict(recovery):
+        raise DevelopmentDeliveryError("worktree_ready delivery recovery history is not replayable")
+    original = receipt.get("original") if isinstance(receipt.get("original"), Mapping) else {}
+    release = _worktree_ready_recovery_release_identity(current, work_item=work_item)
+    expected_release = {
+        "family_ref": str(release["family"]),
+        "family_sha256": release["family_sha256"],
+        "provider_ref": str(release["provider"]),
+        "provider_sha256": release["provider_sha256"],
+        "pull_request_identity": release["pull_request_identity"],
+    }
+    if not (
+        original.get("release_propagation") == expected_release
+        and original.get("stage_receipts_sha256")
+        == _json_sha256(current.get("stage_receipts") or {})
+        and original.get("task_state_ref") == str(state_path)
+        and current.get("worktree") == original.get("worktree")
+        and not any(
+            current.get(field)
+            for field in ("subject_revision", "terminal_revision", "deployed_revision")
+        )
+    ):
+        raise DevelopmentDeliveryError(
+            "worktree_ready delivery recovery immutable release evidence changed before replay"
+        )
+    autodev_path, autodev_bytes = _worktree_ready_recovery_read_file(
+        Path(str(current.get("autodev_path") or "")).expanduser(),
+        label="Auto-Dev projection",
+        work_item=work_item,
+    )
+    projection = _worktree_ready_recovery_mapping(autodev_bytes, label="Auto-Dev projection")
+    if not (
+        str(autodev_path) == str(original.get("autodev_ref") or "")
+        and (
+            hashlib.sha256(autodev_bytes).hexdigest() == original.get("autodev_sha256")
+            or _worktree_ready_recovery_projection_is_derived(
+                projection, task=current, state_path=state_path
+            )
+        )
+    ):
+        raise DevelopmentDeliveryError(
+            "worktree_ready delivery recovery Auto-Dev projection changed before replay"
+        )
+    run_dir = state_path.parent.parent.parent.resolve()
+    root = expand_path(str(current.get("os_root") or ""))
+    canonical = _read_canonical_development_work(
+        root,
+        canonical_work_id=str(current.get("canonical_work_id") or ""),
+        ticket=str(current.get("ticket") or ""),
+        packet=work_item,
+        diagnostic_root=run_dir,
+    )
+    known_derived_canonical = (
+        isinstance(canonical, Mapping)
+        and canonical.get("state") == "validating"
+        and canonical.get("attention") == "active"
+        and canonical.get("id") == current.get("canonical_work_id")
+        and canonical.get("domain") == current.get("domain")
+        and canonical.get("project") == current.get("project")
+        and canonical.get("source_key") == current.get("ticket")
+        and canonical.get("packet_path") == str(work_item)
+        and canonical.get("worktree_path") == str((current.get("worktree") or {}).get("path") or "")
+        and canonical.get("branch") == (current.get("worktree") or {}).get("branch")
+    )
+    if not (
+        isinstance(canonical, Mapping)
+        and (
+            _json_sha256(dict(canonical)) == original.get("canonical_sha256")
+            or known_derived_canonical
+        )
+    ):
+        raise DevelopmentDeliveryError(
+            "canonical work row changed before worktree_ready delivery recovery replay"
+        )
+    if not apply:
+        return
+    portfolio_path = run_dir / "portfolio.json"
+    with _file_lock(portfolio_path.with_suffix(portfolio_path.suffix + ".lock")):
+        portfolio_path_checked, portfolio_bytes = _worktree_ready_recovery_read_file(
+            portfolio_path, label="portfolio"
+        )
+        portfolio = _worktree_ready_recovery_mapping(portfolio_bytes, label="portfolio")
+        rows = portfolio.get("tasks") if isinstance(portfolio.get("tasks"), list) else []
+        expected_row = {**dict(recovery), "task_state_ref": str(state_path)}
+        recorded = [
+            row
+            for row in portfolio.get("active_worktree_ready_delivery_recoveries") or []
+            if isinstance(row, Mapping) and row.get("idempotency_key") == recovery.get("idempotency_key")
+        ]
+        if not (
+            portfolio_path_checked == portfolio_path
+            and portfolio.get("run_id") == current.get("run_id")
+            and portfolio.get("tickets") == [current.get("ticket")]
+            and len(rows) == 1
+            and isinstance(rows[0], Mapping)
+            and Path(str(rows[0].get("state_ref") or "")).expanduser().resolve() == state_path
+            and rows[0].get("canonical_work_id") == current.get("canonical_work_id")
+            and len(recorded) <= 1
+            and (not recorded or dict(recorded[0]) == expected_row)
+        ):
+            raise DevelopmentDeliveryError(
+                "portfolio changed during worktree_ready delivery recovery; rerun preflight"
+            )
+        changed = False
+        if portfolio.get("auto_dev") != expected_portfolio_auto_dev:
+            if (
+                hashlib.sha256(portfolio_bytes).hexdigest() != original.get("portfolio_sha256")
+                or str(portfolio_path) != str(original.get("portfolio_ref") or "")
+                or recorded
+            ):
+                raise DevelopmentDeliveryError(
+                    "worktree_ready delivery recovery refuses a portfolio outside its exact recovered projection"
+                )
+            portfolio["auto_dev"] = dict(expected_portfolio_auto_dev)
+            portfolio["state"] = "local_validation"
+            changed = True
+        elif portfolio.get("state") != "local_validation":
+            raise DevelopmentDeliveryError(
+                "worktree_ready delivery recovery refuses a partial portfolio projection"
+            )
+        if not recorded:
+            portfolio.setdefault("active_worktree_ready_delivery_recoveries", []).append(
+                expected_row
+            )
+            changed = True
+        if changed:
+            portfolio["updated_at"] = utc_now()
+            _atomic_json(portfolio_path, portfolio)
+
+    synced = _sync_auto_dev_projection(state_path)
+    if not (
+        isinstance(synced, Mapping)
+        and _worktree_ready_recovery_projection_is_derived(
+            synced, task=current, state_path=state_path
+        )
+    ):
+        raise DevelopmentDeliveryError(
+            "worktree_ready delivery recovery could not refresh its fresh-authority Auto-Dev projection"
+        )
+    _sync_canonical_task_progress(state_path)
+    canonical = _read_canonical_development_work(
+        root,
+        canonical_work_id=str(current.get("canonical_work_id") or ""),
+        ticket=str(current.get("ticket") or ""),
+        packet=work_item,
+        diagnostic_root=run_dir,
+    )
+    if not (
+        isinstance(canonical, Mapping)
+        and canonical.get("state") == "validating"
+        and canonical.get("attention") == "active"
+        and canonical.get("packet_path") == str(work_item)
+        and canonical.get("branch") == (current.get("worktree") or {}).get("branch")
+    ):
+        raise DevelopmentDeliveryError(
+            "worktree_ready delivery recovery could not refresh the canonical work projection"
+        )
+    TaskState(state_path).emit(
+        event_type="development.task.active_worktree_ready_delivery_recovered",
+        idempotency_key=str(recovery["idempotency_key"]),
+        payload={
+            "ticket": current.get("ticket"),
+            "receipt": str(receipt_path),
+            "next_action": "record fresh review_self, review_others, qa, finalize, and merge evidence",
+        },
+    )
+
+
+def recover_active_worktree_ready_delivery(
+    state_file: str | Path,
+    *,
+    reason: str,
+    idempotency_key: str,
+    apply: bool = False,
+) -> dict[str, Any]:
+    """Recover one active legacy readiness packet into fresh governed delivery."""
+
+    state_path = Path(state_file).expanduser().resolve()
+    normalized_reason = reason.strip()
+    if not normalized_reason:
+        raise DevelopmentDeliveryError("worktree_ready delivery recovery requires a reason")
+    if not idempotency_key.strip():
+        raise DevelopmentDeliveryError("worktree_ready delivery recovery requires an idempotency key")
+    state = TaskState(state_path)
+    with _task_provisioning_admission_lock(state_path):
+        current = state.read()
+        recoveries = current.get("active_worktree_ready_delivery_recoveries")
+        if isinstance(recoveries, list):
+            for recovery in recoveries:
+                if not isinstance(recovery, Mapping) or recovery.get("idempotency_key") != idempotency_key:
+                    continue
+                if recovery.get("reason") != normalized_reason:
+                    raise DevelopmentDeliveryError(
+                        "idempotency key belongs to a different worktree_ready delivery recovery"
+                    )
+                _complete_active_worktree_ready_delivery_recovery(
+                    state_path, current=current, recovery=recovery, apply=apply
+                )
+                return {
+                    "schema": "active-worktree-ready-delivery-recovery-result/v1",
+                    "result": "replayed",
+                    "state": str(state_path),
+                    "ticket": current.get("ticket"),
+                    "receipt": str(recovery["receipt"]),
+                    "receipt_sha256": str(recovery["sha256"]),
+                    "next_action": "record fresh review_self, review_others, qa, finalize, and merge evidence",
+                }
+        context = _active_worktree_ready_delivery_recovery_context(state_path)
+        original = _worktree_ready_recovery_original(context)
+        receipt_path = (
+            context["work_item"]
+            / "artifacts"
+            / "development-delivery"
+            / "active-worktree-ready-delivery-recovery"
+            / f"{hashlib.sha256(idempotency_key.encode('utf-8')).hexdigest()[:20]}.json"
+        )
+        recovered = {
+            "state": "local_validation",
+            "mode": "everything",
+            "requested_stage": None,
+            "goal": "merge",
+            "stage_order": context["stage_order"],
+            "start_stage": "review_self",
+            "completion_stage": "merge",
+            "stage_policies": context["stage_policies"],
+            "portfolio_auto_dev": context["recovered_portfolio_auto_dev"],
+            "fresh_stages_required": list(_ACTIVE_WORKTREE_READY_DELIVERY_FRESH_STAGES),
+        }
+        receipt = {
+            "schema": ACTIVE_WORKTREE_READY_DELIVERY_RECOVERY_SCHEMA,
+            "kind": "recover-active-worktree-ready-delivery",
+            "idempotency_key": idempotency_key,
+            "reason": normalized_reason,
+            "recorded_at": utc_now(),
+            "original": original,
+            "recovered": recovered,
+        }
+        if receipt_path.exists() or receipt_path.is_symlink():
+            _, existing_bytes = _worktree_ready_recovery_packet_file(
+                receipt_path, work_item=context["work_item"], label="recovery provenance"
+            )
+            existing = _worktree_ready_recovery_mapping(
+                existing_bytes, label="recovery provenance"
+            )
+            if not (
+                existing.get("schema") == receipt["schema"]
+                and existing.get("kind") == receipt["kind"]
+                and existing.get("idempotency_key") == idempotency_key
+                and existing.get("reason") == normalized_reason
+                and existing.get("original") == original
+                and existing.get("recovered") == recovered
+            ):
+                raise DevelopmentDeliveryError(
+                    "worktree_ready delivery recovery receipt path already has different content"
+                )
+            receipt = existing
+        receipt_sha256 = _json_sha256(receipt)
+        result = {
+            "schema": "active-worktree-ready-delivery-recovery-result/v1",
+            "result": "planned" if not apply else "recovered",
+            "state": str(state_path),
+            "ticket": current.get("ticket"),
+            "receipt": str(receipt_path),
+            "receipt_sha256": receipt_sha256,
+            "next_action": "record fresh review_self, review_others, qa, finalize, and merge evidence",
+        }
+        if not apply:
+            return result
+        with _file_lock(context["portfolio_path"].with_suffix(context["portfolio_path"].suffix + ".lock")):
+            locked = _active_worktree_ready_delivery_recovery_context(state_path)
+            if not (
+                locked["task_sha256"] == context["task_sha256"]
+                and locked["portfolio_sha256"] == context["portfolio_sha256"]
+                and locked["autodev_sha256"] == context["autodev_sha256"]
+                and locked["canonical_sha256"] == context["canonical_sha256"]
+                and _worktree_ready_recovery_original(locked) == original
+            ):
+                raise DevelopmentDeliveryError(
+                    "portfolio, task, projection, canonical row, or release evidence changed during worktree_ready delivery recovery; rerun preflight"
+                )
+            with _file_lock(state_path.with_suffix(state_path.suffix + ".lock")):
+                _, latest_bytes = _worktree_ready_recovery_read_file(
+                    state_path, label="task state"
+                )
+                if hashlib.sha256(latest_bytes).hexdigest() != context["task_sha256"]:
+                    raise DevelopmentDeliveryError(
+                        "task changed during worktree_ready delivery recovery; rerun preflight"
+                    )
+                if receipt_path.exists() or receipt_path.is_symlink():
+                    _, current_receipt = _worktree_ready_recovery_packet_file(
+                        receipt_path, work_item=context["work_item"], label="recovery provenance"
+                    )
+                    if _worktree_ready_recovery_mapping(
+                        current_receipt, label="recovery provenance"
+                    ) != receipt:
+                        raise DevelopmentDeliveryError(
+                            "worktree_ready delivery recovery receipt path changed during preflight"
+                        )
+                else:
+                    _atomic_json(receipt_path, receipt)
+                recovery = {
+                    "idempotency_key": idempotency_key,
+                    "reason": normalized_reason,
+                    "receipt": str(receipt_path),
+                    "sha256": receipt_sha256,
+                    "recorded_at": receipt["recorded_at"],
+                }
+                latest = state.read()
+                latest.update(
+                    {
+                        "state": "local_validation",
+                        "failure": None,
+                        "auto_dev_mode": "everything",
+                        "requested_stage": None,
+                        "goal": "merge",
+                        "auto_dev_stage_order": context["stage_order"],
+                        "auto_dev_start_stage": "review_self",
+                        "auto_dev_completion_stage": "merge",
+                        "auto_dev_stage_policies": context["stage_policies"],
+                        "updated_at": utc_now(),
+                        "last_active_worktree_ready_delivery_recovery_key": idempotency_key,
+                    }
+                )
+                latest.setdefault("active_worktree_ready_delivery_recoveries", []).append(recovery)
+                latest.setdefault("receipts", []).append(
+                    {
+                        "state": "local_validation",
+                        "ref": str(receipt_path),
+                        "sha256": receipt_sha256,
+                        "recorded_at": receipt["recorded_at"],
+                    }
+                )
+                _atomic_json(state_path, latest)
+        _complete_active_worktree_ready_delivery_recovery(
+            state_path, current=latest, recovery=recovery, apply=True
+        )
+        return result
 
 
 def _is_retryable_origin_main_provisioning_failure(task: Mapping[str, Any]) -> bool:
@@ -6123,6 +7182,8 @@ def run_development_stage(
                     legacy_repository = expected_repository.removeprefix("git:github.com/")
                     legacy_pull_request = str(previous_details.get("pull_request") or "").strip()
                     legacy_flat_github_identity = False
+                    legacy_canonical_github_identity = False
+                    legacy_expected_pull_request = ""
                     if (
                         expected_repository.startswith("git:github.com/")
                         and expected_provider == "github"
@@ -6138,6 +7199,41 @@ def run_development_stage(
                             "pull_request": pull_request_prefix + legacy_pull_request,
                         }
                         legacy_flat_github_identity = True
+                        legacy_expected_pull_request = (
+                            pull_request_prefix + legacy_pull_request
+                        )
+                    # A later predecessor already used the canonical GitHub
+                    # repository and qualified PR fields, but can still lack
+                    # only source_branch.  Treat that distinct historical
+                    # shape as compatible solely when every available prior
+                    # identity field already binds to the selected task.
+                    # Unlike the flat predecessor above, no field is
+                    # normalized here.
+                    canonical_pull_request = str(
+                        previous_details.get("pull_request") or ""
+                    ).strip()
+                    canonical_pull_request_identifier = canonical_pull_request.removeprefix(
+                        pull_request_prefix
+                    )
+                    if (
+                        not legacy_flat_github_identity
+                        and expected_repository.startswith("git:github.com/")
+                        and expected_provider == "github"
+                        and expected_base_branch
+                        and not str(previous_details.get("source_branch") or "").strip()
+                        and str(previous_details.get("repository") or "").strip()
+                        == expected_repository
+                        and str(previous_details.get("base_branch") or "").strip()
+                        == expected_base_branch
+                        and str(previous_details.get("provider") or "").strip().lower()
+                        == "github"
+                        and canonical_pull_request.startswith(pull_request_prefix)
+                        and re.fullmatch(
+                            r"[1-9][0-9]*", canonical_pull_request_identifier
+                        )
+                    ):
+                        legacy_canonical_github_identity = True
+                        legacy_expected_pull_request = canonical_pull_request
                     refreshed_details = (
                         release_receipt_payload.get("evidence")
                         if isinstance(release_receipt_payload.get("evidence"), Mapping)
@@ -6187,7 +7283,10 @@ def run_development_stage(
                     # evidence is never rewritten.
                     legacy_source_branch_derived = False
                     if (
-                        legacy_flat_github_identity
+                        (
+                            legacy_flat_github_identity
+                            or legacy_canonical_github_identity
+                        )
                         and not str(previous_details.get("source_branch") or "").strip()
                         and expected_base_branch
                         and expected_source_branch
@@ -6198,12 +7297,12 @@ def run_development_stage(
                         and str(previous_details.get("provider") or "").strip().lower()
                         == expected_provider
                         and str(previous_details.get("pull_request") or "").strip()
-                        == pull_request_prefix + legacy_pull_request
+                        == legacy_expected_pull_request
                         and refreshed_identity["repository"] == expected_repository
                         and refreshed_identity["base_branch"] == expected_base_branch
                         and refreshed_identity["provider"].lower() == expected_provider
                         and refreshed_identity["pull_request"]
-                        == pull_request_prefix + legacy_pull_request
+                        == legacy_expected_pull_request
                         and refreshed_identity["source_branch"] == expected_source_branch
                     ):
                         previous_details = {
@@ -6337,7 +7436,7 @@ def run_development_stage(
                         "source_head_sha": previous_head,
                     }
                     if legacy_source_branch_derived:
-                        payload["supersedes"]["legacy_identity_normalization"] = {
+                        legacy_normalization = {
                             "field": "source_branch",
                             "source": "selected_task.worktree.branch",
                             "value": expected_source_branch,
@@ -6345,6 +7444,14 @@ def run_development_stage(
                     if legacy_family_identity_normalization is not None:
                         payload["supersedes"]["legacy_identity_normalization"] = (
                             legacy_family_identity_normalization
+                        )
+                    elif legacy_source_branch_derived:
+                        if legacy_canonical_github_identity:
+                            legacy_normalization["identity_shape"] = (
+                                "canonical_qualified_github"
+                            )
+                        payload["supersedes"]["legacy_identity_normalization"] = (
+                            legacy_normalization
                         )
                     supersession_key = hashlib.sha256(
                         json.dumps(
