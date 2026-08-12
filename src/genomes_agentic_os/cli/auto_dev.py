@@ -21,6 +21,7 @@ from ..development_delivery import (
     escalate_active_nonblocked_pr_create_delivery,
     recover_active_worktree_ready_delivery,
     recover_active_worktree_ready_pr_create_delivery,
+    recover_active_blocked_single_stage_delivery,
     reconcile_historical_delivery,
     reopen_auto_dev_item,
     start_development_run,
@@ -341,6 +342,10 @@ def handle_bind_recovered_worktree_ready_pr_family(args: argparse.Namespace) -> 
 
 def handle_escalate_pr_create_delivery(args: argparse.Namespace) -> int:
     result = escalate_active_nonblocked_pr_create_delivery(
+
+
+def handle_recover_blocked_single_stage(args: argparse.Namespace) -> int:
+    result = recover_active_blocked_single_stage_delivery(
         args.state,
         reason=args.reason,
         idempotency_key=args.idempotency_key,
@@ -697,6 +702,27 @@ def register(subparsers) -> None:
     )
     _common_output(escalate_pr_create)
     escalate_pr_create.set_defaults(handler=handle_escalate_pr_create_delivery)
+
+    recover_blocked = sub.add_parser(
+        "recover-blocked-single-stage",
+        help=(
+            "Recover only the immutable-receipt-backed legacy blocked single-stage "
+            "delivery shape; it never executes delivery stages."
+        ),
+    )
+    recover_blocked.add_argument("--state", required=True, help="Exact blocked development task state.json.")
+    recover_blocked.add_argument("--reason", required=True, help="Durable recovery reason.")
+    recover_blocked.add_argument("--idempotency-key", required=True)
+    recover_blocked.add_argument(
+        "--apply",
+        action="store_true",
+        help=(
+            "Record the immutable recovery receipt and restore only the exact legacy "
+            "task boundary; resume delivery separately."
+        ),
+    )
+    _common_output(recover_blocked)
+    recover_blocked.set_defaults(handler=handle_recover_blocked_single_stage)
 
     record = sub.add_parser(
         "record",

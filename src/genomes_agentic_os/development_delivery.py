@@ -221,6 +221,9 @@ _ACTIVE_PR_CREATE_ESCALATION_DERIVED_OUT_OF_SCOPE_STAGES = (
     "closeout",
     "health",
 )
+ACTIVE_BLOCKED_SINGLE_STAGE_RECOVERY_SCHEMA = (
+    "active-blocked-single-stage-delivery-recovery/v1"
+)
 
 
 class DevelopmentDeliveryError(ValueError):
@@ -5866,6 +5869,537 @@ def _is_retryable_origin_main_provisioning_failure(task: Mapping[str, Any]) -> b
         and "origin/main" in detail
         and "remote ref" in detail
     )
+
+
+def _validate_active_blocked_single_stage_legacy_portfolio(
+    portfolio: Mapping[str, Any],
+    *,
+    task: Mapping[str, Any],
+    state_path: Path,
+) -> dict[str, Any]:
+    """Validate the exact prematurely widened one-task portfolio shape."""
+
+    portfolio_auto_dev = (
+        portfolio.get("auto_dev") if isinstance(portfolio.get("auto_dev"), Mapping) else {}
+    )
+    rows = portfolio.get("tasks") if isinstance(portfolio.get("tasks"), list) else []
+    ticket = str(task.get("ticket") or "")
+    if not (
+        portfolio.get("state") == "blocked"
+        and portfolio.get("run_id") == task.get("run_id")
+        and portfolio.get("tickets") == [ticket]
+        and portfolio_auto_dev.get("mode") == "everything"
+        and portfolio_auto_dev.get("requested_stage") is None
+        and portfolio_auto_dev.get("goal") == "delivery_complete"
+        and portfolio_auto_dev.get("start_stage") is None
+        and portfolio_auto_dev.get("completion_stage") is None
+        and not portfolio.get("active_blocked_single_stage_recoveries")
+        and len(rows) == 1
+        and isinstance(rows[0], Mapping)
+        and rows[0].get("ticket") == ticket
+        and Path(str(rows[0].get("state_ref") or "")).expanduser().resolve() == state_path
+        and rows[0].get("canonical_work_id") == task.get("canonical_work_id")
+    ):
+        raise DevelopmentDeliveryError(
+            "active blocked recovery requires the exact prematurely widened one-task portfolio"
+        )
+    return dict(portfolio_auto_dev)
+
+
+def _active_blocked_single_stage_recovery_context(state_path: Path) -> dict[str, Any]:
+    """Prove the one legacy AGE-163-shaped recovery is still safe to repair.
+
+    The old one-time promotion path could widen a portfolio before noticing a
+    non-recoverable independent-review block.  This preflight deliberately
+    recognizes that incomplete, single-task shape only; it is not a general
+    mechanism for reopening blocked work or bypassing review evidence.
+    """
+
+    task = TaskState(state_path).read()
+    failure = task.get("failure") if isinstance(task.get("failure"), Mapping) else {}
+    if not (
+        task.get("state") == "blocked"
+        and task.get("auto_dev_mode") == "single_stage"
+        and task.get("requested_stage") == "detective"
+        and task.get("goal") == "detective"
+        and task.get("auto_dev_start_stage") is None
+        and task.get("auto_dev_completion_stage") is None
+        and failure.get("kind") == "independent-review-unavailable"
+        and failure.get("recoverable") is False
+        and failure.get("retry_state") is None
+        and str(failure.get("detail") or "").strip()
+    ):
+        raise DevelopmentDeliveryError(
+            "active blocked recovery requires the exact independent-review-unavailable "
+            "single-stage legacy failure"
+        )
+    if any(task.get(field) for field in ("subject_revision", "terminal_revision", "deployed_revision")):
+        raise DevelopmentDeliveryError(
+            "active blocked recovery refuses tasks with prior delivery revision authority"
+        )
+    receipts = task.get("receipts")
+    if not (
+        isinstance(receipts, list)
+        and receipts
+        and all(
+            isinstance(row, Mapping)
+            and str(row.get("state") or "").strip()
+            and str(row.get("ref") or "").strip()
+            for row in receipts
+        )
+    ):
+        raise DevelopmentDeliveryError(
+            "active blocked recovery requires immutable original task receipts"
+        )
+    recorded_states = {str(row.get("state") or "") for row in receipts if isinstance(row, Mapping)}
+    if any(state in recorded_states for state in ("pr_open", "ready_for_merge", "merged", "delivery_complete")):
+        raise DevelopmentDeliveryError(
+            "active blocked recovery refuses prior pull-request or terminal authority"
+        )
+    stage_receipts = task.get("stage_receipts") or {}
+    if not isinstance(stage_receipts, Mapping) or set(stage_receipts) - {"release_propagation"}:
+        raise DevelopmentDeliveryError(
+            "active blocked recovery refuses non-legacy stage receipt authority"
+        )
+    if any(
+        not isinstance(row, Mapping)
+        or not str(row.get("ref") or "").strip()
+        or not str(row.get("sha256") or "").strip()
+        for row in stage_receipts.values()
+    ):
+        raise DevelopmentDeliveryError(
+            "active blocked recovery requires hash-bound legacy stage receipts"
+        )
+
+    required = ("os_root", "domain", "project", "ticket", "run_id", "work_item", "autodev_path", "canonical_work_id")
+    if not all(str(task.get(field) or "").strip() for field in required):
+        raise DevelopmentDeliveryError("active blocked recovery requires a fully linked canonical task")
+    root = expand_path(str(task["os_root"]))
+    domain = normalize_domain(str(task["domain"]))
+    project = validate_name(str(task["project"]), "project")
+    ticket = str(task["ticket"])
+    work_item = Path(str(task["work_item"])).expanduser().resolve()
+    project_path = project_root(root, domain, project)
+    try:
+        work_item.relative_to((project_path / "work-items").resolve())
+    except ValueError as exc:
+        raise DevelopmentDeliveryError(
+            "active blocked recovery work item is outside its owning project"
+        ) from exc
+    if not (
+        work_item.is_dir()
+        and (work_item / "work.yml").is_file()
+        and _project_work_item_lane(work_item, project_path) == "02-active"
+    ):
+        raise DevelopmentDeliveryError(
+            "active blocked recovery requires one active canonical work-item packet"
+        )
+    autodev_path = Path(str(task["autodev_path"])).expanduser().resolve()
+    if autodev_path != (work_item / "autodev.json").resolve() or not autodev_path.is_file():
+        raise DevelopmentDeliveryError("active blocked recovery autodev projection is not packet-local")
+    projection = read_auto_dev_state(autodev_path)
+    projection_delivery = projection.get("delivery") if isinstance(projection.get("delivery"), Mapping) else {}
+    if not (
+        projection.get("mode") == "single_stage"
+        and projection.get("requested_stage") == "detective"
+        and projection.get("start_stage") == "detective"
+        and projection.get("completion_stage") == "detective"
+        and projection_delivery.get("state") == "blocked"
+        and Path(str(projection_delivery.get("task_state_ref") or "")).expanduser().resolve() == state_path
+        and Path(str(projection_delivery.get("work_item") or "")).expanduser().resolve() == work_item
+        and projection_delivery.get("run_id") == task["run_id"]
+        and projection.get("canonical_work_id") == task["canonical_work_id"]
+        and isinstance(projection.get("source"), Mapping)
+        and projection["source"].get("key") == ticket
+    ):
+        raise DevelopmentDeliveryError(
+            "active blocked recovery requires the exact single-stage Auto-Dev projection"
+        )
+
+    worktree = task.get("worktree") if isinstance(task.get("worktree"), Mapping) else {}
+    if not (
+        str(worktree.get("path") or "").strip()
+        and Path(str(worktree["path"])).expanduser().is_dir()
+        and str(worktree.get("branch") or "").strip()
+        and str(worktree.get("base_sha") or "").strip()
+    ):
+        raise DevelopmentDeliveryError(
+            "active blocked recovery requires the original registered worktree receipt"
+        )
+
+    run_dir = state_path.parent.parent.parent
+    portfolio_path = run_dir / "portfolio.json"
+    portfolio_bytes = portfolio_path.read_bytes()
+    portfolio_value = yaml.safe_load(portfolio_bytes.decode("utf-8")) or {}
+    if not isinstance(portfolio_value, Mapping):
+        raise DevelopmentDeliveryError(f"expected a mapping: {portfolio_path}")
+    portfolio = dict(portfolio_value)
+    portfolio_auto_dev = _validate_active_blocked_single_stage_legacy_portfolio(
+        portfolio,
+        task=task,
+        state_path=state_path,
+    )
+
+    stage_order = validate_auto_dev_stage_order(list(task.get("auto_dev_stage_order") or []))
+    stage_policies = validate_auto_dev_stage_policies(
+        task.get("auto_dev_stage_policies")
+        if isinstance(task.get("auto_dev_stage_policies"), Mapping)
+        else {}
+    )
+    recovered_portfolio_auto_dev = {
+        **portfolio_auto_dev,
+        "mode": "everything",
+        "requested_stage": None,
+        "goal": "delivery_complete",
+        "stage_order": stage_order,
+        "start_stage": "groom",
+        "completion_stage": "health",
+        "stage_policies": stage_policies,
+    }
+    canonical = _read_canonical_development_work(
+        root,
+        canonical_work_id=str(task["canonical_work_id"]),
+        ticket=ticket,
+        packet=work_item,
+        diagnostic_root=run_dir,
+    )
+    if not (
+        isinstance(canonical, Mapping)
+        and canonical.get("state") == "blocked"
+        and canonical.get("attention") == "active"
+        and canonical.get("id") == task["canonical_work_id"]
+        and canonical.get("domain") == domain
+        and canonical.get("project") == project
+        and canonical.get("source_key") == ticket
+        and canonical.get("packet_path") == str(work_item)
+        and canonical.get("worktree_path") == str(worktree["path"])
+        and canonical.get("branch") == worktree["branch"]
+    ):
+        raise DevelopmentDeliveryError(
+            "active blocked recovery requires one active canonical blocked work row"
+        )
+    failure_receipt = Path(str(failure.get("receipt") or "")).expanduser()
+    if not failure_receipt.is_file():
+        raise DevelopmentDeliveryError("active blocked recovery failure receipt is missing")
+    return {
+        "task": task,
+        "failure": dict(failure),
+        "failure_receipt": failure_receipt,
+        "work_item": work_item,
+        "autodev_path": autodev_path,
+        "projection": projection,
+        "portfolio": portfolio,
+        "portfolio_path": portfolio_path,
+        "portfolio_sha256": hashlib.sha256(portfolio_bytes).hexdigest(),
+        "recovered_portfolio_auto_dev": recovered_portfolio_auto_dev,
+        "canonical": dict(canonical),
+        "stage_order": stage_order,
+        "stage_policies": stage_policies,
+        "worktree": dict(worktree),
+    }
+
+
+def _complete_active_blocked_single_stage_recovery(
+    state_path: Path,
+    *,
+    current: Mapping[str, Any],
+    recovery: Mapping[str, Any],
+    apply: bool,
+) -> dict[str, Any]:
+    """Verify one immutable recovery receipt and complete derived projections."""
+
+    receipt_path = Path(str(recovery.get("receipt") or "")).expanduser()
+    if not receipt_path.is_file():
+        raise DevelopmentDeliveryError("active blocked recovery receipt is missing")
+    receipt = _read_mapping(receipt_path)
+    if (
+        receipt.get("schema") != ACTIVE_BLOCKED_SINGLE_STAGE_RECOVERY_SCHEMA
+        or receipt.get("kind") != "recover-active-blocked-single-stage-delivery"
+        or receipt.get("idempotency_key") != recovery.get("idempotency_key")
+        or _json_sha256(receipt) != recovery.get("sha256")
+    ):
+        raise DevelopmentDeliveryError("active blocked recovery receipt identity does not match task state")
+    recovered = receipt.get("recovered") if isinstance(receipt.get("recovered"), Mapping) else {}
+    stage_order = recovered.get("stage_order")
+    stage_policies = recovered.get("stage_policies")
+    recovered_portfolio_auto_dev = recovered.get("portfolio_auto_dev")
+    if not (
+        recovered.get("state") == "worktree_ready"
+        and recovered.get("mode") == "everything"
+        and recovered.get("start_stage") == "groom"
+        and recovered.get("completion_stage") == "health"
+        and recovered.get("goal") == "delivery_complete"
+        and isinstance(stage_order, list)
+        and isinstance(stage_policies, Mapping)
+        and isinstance(recovered_portfolio_auto_dev, Mapping)
+        and current.get("state") == "worktree_ready"
+        and current.get("failure") is None
+        and current.get("auto_dev_mode") == "everything"
+        and current.get("requested_stage") is None
+        and current.get("auto_dev_start_stage") == "groom"
+        and current.get("auto_dev_completion_stage") == "health"
+        and current.get("goal") == "delivery_complete"
+        and current.get("auto_dev_stage_order") == stage_order
+        and current.get("auto_dev_stage_policies") == stage_policies
+    ):
+        raise DevelopmentDeliveryError("active blocked recovery task state is not replayable")
+    matching_rows = [
+        row
+        for row in current.get("active_blocked_single_stage_recoveries") or []
+        if isinstance(row, Mapping) and row.get("idempotency_key") == recovery.get("idempotency_key")
+    ]
+    if len(matching_rows) != 1 or dict(matching_rows[0]) != dict(recovery):
+        raise DevelopmentDeliveryError("active blocked recovery history is not replayable")
+    if not apply:
+        return receipt
+
+    run_dir = state_path.parent.parent.parent
+    portfolio_path = run_dir / "portfolio.json"
+    with _file_lock(portfolio_path.with_suffix(portfolio_path.suffix + ".lock")):
+        portfolio = _read_mapping(portfolio_path)
+        portfolio_sha256 = hashlib.sha256(portfolio_path.read_bytes()).hexdigest()
+        rows = portfolio.get("tasks") if isinstance(portfolio.get("tasks"), list) else []
+        if not (
+            portfolio.get("run_id") == current.get("run_id")
+            and portfolio.get("tickets") == [current.get("ticket")]
+            and len(rows) == 1
+            and isinstance(rows[0], Mapping)
+            and Path(str(rows[0].get("state_ref") or "")).expanduser().resolve() == state_path
+        ):
+            raise DevelopmentDeliveryError("portfolio changed during active blocked recovery; rerun preflight")
+        expected_auto_dev = dict(recovered_portfolio_auto_dev)
+        portfolio_rows = [
+            row
+            for row in portfolio.get("active_blocked_single_stage_recoveries") or []
+            if isinstance(row, Mapping) and row.get("idempotency_key") == recovery.get("idempotency_key")
+        ]
+        expected_row = {**dict(recovery), "task_state_ref": str(state_path)}
+        if len(portfolio_rows) > 1 or (portfolio_rows and dict(portfolio_rows[0]) != expected_row):
+            raise DevelopmentDeliveryError("active blocked recovery portfolio history is not replayable")
+        if portfolio.get("auto_dev") != expected_auto_dev:
+            original = receipt.get("original") if isinstance(receipt.get("original"), Mapping) else {}
+            if (
+                original.get("portfolio_ref") != str(portfolio_path)
+                or original.get("portfolio_sha256") != portfolio_sha256
+                or portfolio_rows
+            ):
+                raise DevelopmentDeliveryError(
+                    "active blocked recovery refuses a portfolio that is not its exact recovered projection"
+                )
+            portfolio["auto_dev"] = expected_auto_dev
+        if not portfolio_rows:
+            portfolio.setdefault("active_blocked_single_stage_recoveries", []).append(expected_row)
+        if portfolio.get("auto_dev") != expected_auto_dev or not portfolio_rows:
+            portfolio["updated_at"] = utc_now()
+            _atomic_json(portfolio_path, portfolio)
+
+    state = TaskState(state_path)
+    state.emit(
+        event_type="development.task.active_blocked_single_stage_recovered",
+        idempotency_key=str(recovery["idempotency_key"]),
+        payload={
+            "ticket": current.get("ticket"),
+            "receipt": str(receipt_path),
+            "failure_receipt": (receipt.get("original") or {}).get("failure_receipt"),
+            "next_action": "resume_full_delivery_with_fresh_review_and_qa_evidence",
+        },
+    )
+    projection = _sync_auto_dev_projection(state_path)
+    if not (
+        isinstance(projection, Mapping)
+        and projection.get("mode") == "everything"
+        and projection.get("start_stage") == "groom"
+        and projection.get("completion_stage") == "health"
+        and projection.get("delivery", {}).get("state") == "worktree_ready"
+    ):
+        raise DevelopmentDeliveryError("active blocked recovery could not refresh its Auto-Dev projection")
+    _sync_canonical_task_progress(state_path, allow_unblock=True)
+    _refresh_portfolio_state(state_path)
+    return receipt
+
+
+def recover_active_blocked_single_stage_delivery(
+    state_file: str | Path,
+    *,
+    reason: str,
+    idempotency_key: str,
+    apply: bool = False,
+) -> dict[str, Any]:
+    """Recover only the receipt-backed legacy AGE-163 blocked-task shape.
+
+    It records a new immutable migration receipt, restores the exact task to
+    its pre-delivery worktree boundary, and binds a complete Everything
+    boundary. It never opens a PR, executes a stage, or reuses historical
+    review/QA/Finalize authority.
+    """
+
+    state_path = Path(state_file).expanduser().resolve()
+    normalized_reason = reason.strip()
+    if not normalized_reason:
+        raise DevelopmentDeliveryError("active blocked recovery requires a reason")
+    if not idempotency_key.strip():
+        raise DevelopmentDeliveryError("active blocked recovery requires an idempotency key")
+    state = TaskState(state_path)
+    with _task_provisioning_admission_lock(state_path):
+        current = state.read()
+        recoveries = current.get("active_blocked_single_stage_recoveries")
+        if isinstance(recoveries, list):
+            for recovery in recoveries:
+                if not isinstance(recovery, Mapping) or recovery.get("idempotency_key") != idempotency_key:
+                    continue
+                if recovery.get("reason") != normalized_reason:
+                    raise DevelopmentDeliveryError(
+                        "idempotency key belongs to a different active blocked recovery"
+                    )
+                receipt = _complete_active_blocked_single_stage_recovery(
+                    state_path,
+                    current=current,
+                    recovery=recovery,
+                    apply=apply,
+                )
+                return {
+                    "schema": "active-blocked-single-stage-recovery-result/v1",
+                    "result": "replayed",
+                    "state": str(state_path),
+                    "ticket": current.get("ticket"),
+                    "receipt": str(recovery["receipt"]),
+                    "receipt_sha256": str(recovery["sha256"]),
+                    "next_action": "resume the same run through fresh delivery stages; do not reuse review, QA, or Finalize evidence",
+                }
+        context = _active_blocked_single_stage_recovery_context(state_path)
+        original_state_sha256 = hashlib.sha256(state_path.read_bytes()).hexdigest()
+        failure_receipt_sha256 = hashlib.sha256(context["failure_receipt"].read_bytes()).hexdigest()
+        receipt = {
+            "schema": ACTIVE_BLOCKED_SINGLE_STAGE_RECOVERY_SCHEMA,
+            "kind": "recover-active-blocked-single-stage-delivery",
+            "idempotency_key": idempotency_key,
+            "reason": normalized_reason,
+            "recorded_at": utc_now(),
+            "original": {
+                "task_state_ref": str(state_path),
+                "task_state_sha256": original_state_sha256,
+                "portfolio_ref": str(context["portfolio_path"]),
+                "portfolio_sha256": context["portfolio_sha256"],
+                "autodev_ref": str(context["autodev_path"]),
+                "autodev_sha256": hashlib.sha256(context["autodev_path"].read_bytes()).hexdigest(),
+                "failure": context["failure"],
+                "failure_receipt": str(context["failure_receipt"]),
+                "failure_receipt_sha256": failure_receipt_sha256,
+                "canonical_work_id": context["task"]["canonical_work_id"],
+                "work_item": str(context["work_item"]),
+                "worktree": context["worktree"],
+                "stage_receipts_sha256": _json_sha256(
+                    context["task"].get("stage_receipts") or {}
+                ),
+            },
+            "recovered": {
+                "state": "worktree_ready",
+                "mode": "everything",
+                "requested_stage": None,
+                "goal": "delivery_complete",
+                "stage_order": context["stage_order"],
+                "start_stage": "groom",
+                "completion_stage": "health",
+                "stage_policies": context["stage_policies"],
+                "portfolio_auto_dev": context["recovered_portfolio_auto_dev"],
+                "fresh_review_and_qa_required": True,
+            },
+        }
+        digest = _json_sha256(receipt)
+        receipt_path = (
+            context["work_item"]
+            / "artifacts"
+            / "development-delivery"
+            / "active-blocked-single-stage-recovery"
+            / f"{digest}.json"
+        )
+        result = {
+            "schema": "active-blocked-single-stage-recovery-result/v1",
+            "result": "planned" if not apply else "recovered",
+            "state": str(state_path),
+            "ticket": current.get("ticket"),
+            "receipt": str(receipt_path),
+            "receipt_sha256": digest,
+            "next_action": "resume the same run through fresh delivery stages; do not reuse review, QA, or Finalize evidence",
+        }
+        if not apply:
+            return result
+        # Normal delivery mutations release their task lock before taking the
+        # portfolio lock. Keep the same order here (admission -> portfolio ->
+        # task) and retain the portfolio lock through the task write so a
+        # concurrent resume cannot replace the source boundary we just proved.
+        with _file_lock(
+            context["portfolio_path"].with_suffix(
+                context["portfolio_path"].suffix + ".lock"
+            )
+        ):
+            if (
+                hashlib.sha256(context["portfolio_path"].read_bytes()).hexdigest()
+                != receipt["original"]["portfolio_sha256"]
+            ):
+                raise DevelopmentDeliveryError(
+                    "portfolio changed during active blocked recovery; rerun preflight"
+                )
+            locked_portfolio = _read_mapping(context["portfolio_path"])
+            _validate_active_blocked_single_stage_legacy_portfolio(
+                locked_portfolio,
+                task=context["task"],
+                state_path=state_path,
+            )
+            with _file_lock(state_path.with_suffix(state_path.suffix + ".lock")):
+                latest = state.read()
+                if hashlib.sha256(state_path.read_bytes()).hexdigest() != original_state_sha256:
+                    raise DevelopmentDeliveryError("task changed during active blocked recovery; rerun preflight")
+                if receipt_path.exists() and receipt_path.read_bytes() != (
+                    json.dumps(receipt, indent=2, sort_keys=True) + "\n"
+                ).encode("utf-8"):
+                    raise DevelopmentDeliveryError("active blocked recovery receipt path already has different content")
+                _atomic_json(receipt_path, receipt)
+                recovery = {
+                    "idempotency_key": idempotency_key,
+                    "reason": normalized_reason,
+                    "receipt": str(receipt_path),
+                    "sha256": digest,
+                    "recorded_at": receipt["recorded_at"],
+                }
+                latest.update(
+                    {
+                        "state": "worktree_ready",
+                        "failure": None,
+                        "auto_dev_mode": "everything",
+                        "requested_stage": None,
+                        "goal": "delivery_complete",
+                        "auto_dev_stage_order": context["stage_order"],
+                        "auto_dev_start_stage": "groom",
+                        "auto_dev_completion_stage": "health",
+                        "auto_dev_stage_policies": context["stage_policies"],
+                        "updated_at": utc_now(),
+                        "last_active_blocked_single_stage_recovery_key": idempotency_key,
+                    }
+                )
+                latest.setdefault("active_blocked_single_stage_recoveries", []).append(recovery)
+                latest.setdefault("receipts", []).append(
+                    {
+                        "state": "worktree_ready",
+                        "ref": str(receipt_path),
+                        "sha256": digest,
+                        "recorded_at": receipt["recorded_at"],
+                    }
+                )
+                _atomic_json(state_path, latest)
+            locked_portfolio["auto_dev"] = dict(context["recovered_portfolio_auto_dev"])
+            locked_portfolio.setdefault("active_blocked_single_stage_recoveries", []).append(
+                {**recovery, "task_state_ref": str(state_path)}
+            )
+            locked_portfolio["updated_at"] = utc_now()
+            _atomic_json(context["portfolio_path"], locked_portfolio)
+        _complete_active_blocked_single_stage_recovery(
+            state_path,
+            current=latest,
+            recovery=recovery,
+            apply=True,
+        )
+        return result
 
 
 def _base_selection_correction_context(
