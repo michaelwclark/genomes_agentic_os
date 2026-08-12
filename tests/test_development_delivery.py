@@ -5857,6 +5857,90 @@ def test_pr_open_receipt_error_names_the_fields_that_branch_checks(
     assert "pull_request" not in message
 
 
+def test_review_stage_follows_pr_create_without_requiring_its_own_completion(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A review records Review Self; it cannot require that result beforehand."""
+
+    repo, base_sha = _repository(tmp_path)
+    root = tmp_path / "os"
+    _project(root, repo)
+    monkeypatch.setattr(
+        delivery,
+        "create_isolated_worktree",
+        lambda **kwargs: {
+            "name": "cc-review-cycle",
+            "path": "/tmp/cc-review-cycle",
+            "branch": "feature/cc-review-cycle",
+            "base_sha": base_sha,
+        },
+    )
+    run = delivery.start_development_run(
+        root,
+        "acme",
+        "app",
+        ["CC-REVIEW-CYCLE"],
+        run_id="review-cycle",
+        auto_dev_mode="everything",
+        apply=True,
+    )
+    task = TaskState(Path(run["tasks"][0]["state_ref"]))
+    work_item = Path(task.read()["work_item"])
+    run_development_stage(
+        task.path,
+        stage="readiness",
+        receipts={"planned": _stage_receipt(work_item, "planned")},
+        idempotency_prefix="cc-review-cycle:readiness",
+    )
+    run_development_stage(
+        task.path,
+        stage="implementation",
+        receipts={
+            "implementing": _stage_receipt(work_item, "implementing"),
+            "local_validation": _stage_receipt(work_item, "local_validation"),
+        },
+        idempotency_prefix="cc-review-cycle:implementation",
+    )
+    for stage_name in ("groom", "detective", "create_artifacts", "document"):
+        _record_standalone_stage(task, stage_name)
+    run_development_stage(
+        task.path,
+        stage="release_propagation",
+        receipts={
+            "release_propagation": _stage_receipt(
+                work_item / "artifacts" / "delivery", "release_propagation"
+            )
+        },
+        idempotency_prefix="cc-review-cycle:pr-create",
+    )
+    authority = _provider_authority(task, pull_request="github:acme/app#77")
+    reviewed = run_development_stage(
+        task.path,
+        stage="review",
+        receipts={
+            "pre_pr_review": _stage_receipt(work_item, "pre_pr_review"),
+            "pr_open": _stage_receipt(work_item, "pr_open", evidence=authority),
+            "ci_repair": _stage_receipt(work_item, "ci_repair"),
+            "review_repair": _stage_receipt(work_item, "review_repair"),
+            "post_pr_review": _stage_receipt(work_item, "post_pr_review"),
+            "ready_for_merge": _stage_receipt(
+                work_item,
+                "ready_for_merge",
+                evidence={
+                    **authority,
+                    "checks_verified": True,
+                    "reviews_verified": True,
+                    "subject_revision": base_sha,
+                },
+            ),
+        },
+        idempotency_prefix="cc-review-cycle:review",
+    )
+    assert reviewed["state"] == "ready_for_merge"
+    projection = read_auto_dev_state(task.read()["autodev_path"])
+    assert projection["stages"]["review_self"]["status"] == "completed"
+
+
 def test_record_rejects_inline_evidence_json_with_a_usage_error() -> None:
     inline = json.dumps({"schema": AUTO_DEV_STAGE_EVIDENCE_SCHEMA, "stage": "qa"})
     with pytest.raises(AutoDevStateError) as caught:
