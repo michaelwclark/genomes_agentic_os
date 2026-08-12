@@ -4792,6 +4792,228 @@ def test_release_propagation_normalizes_only_selected_legacy_flat_github_identit
         assert old_wrapper.read_bytes() == old_wrapper_bytes
 
 
+@pytest.mark.parametrize(
+    ("previous_overrides", "refreshed_overrides", "expected_refresh_error"),
+    [
+        ({}, {}, None),
+        (
+            {"repository": "git:github.com/acme/other"},
+            {},
+            "requires complete prior and new PR identity",
+        ),
+        (
+            {"base_branch": "release"},
+            {},
+            "requires complete prior and new PR identity",
+        ),
+        (
+            {"provider": "gitlab"},
+            {},
+            "requires complete prior and new PR identity",
+        ),
+        (
+            {"pull_request": "github:acme/app#55"},
+            {},
+            "requires complete prior and new PR identity",
+        ),
+        (
+            {"pull_request": "github:acme/app#not-numeric"},
+            {},
+            "requires complete prior and new PR identity",
+        ),
+        (
+            {"source_branch": "feature/other"},
+            {},
+            "must retain the same source_branch",
+        ),
+        (
+            {},
+            {"source_branch": "feature/other"},
+            "requires complete prior and new PR identity",
+        ),
+        (
+            {},
+            {"provider_observed": {"head_sha": "c" * 40}},
+            "requires provider-read new head",
+        ),
+        (
+            {},
+            {
+                "supersession": {
+                    "supersedes_source_head_sha": "c" * 40,
+                    "reason": "The successor must bind the exact prior head.",
+                }
+            },
+            "requires provider-read new head",
+        ),
+        (
+            {"source_head_sha": "AbCd" * 10},
+            {
+                "source_head_sha": ("AbCd" * 10).lower(),
+                "provider_observed": {"head_sha": ("AbCd" * 10).lower()},
+                "supersession": {
+                    "supersedes_source_head_sha": "AbCd" * 10,
+                    "reason": "The successor must bind the exact prior head.",
+                },
+            },
+            "requires provider-read new head",
+        ),
+    ],
+)
+def test_release_propagation_derives_only_blank_canonical_github_source_branch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    previous_overrides: dict[str, object],
+    refreshed_overrides: dict[str, object],
+    expected_refresh_error: str | None,
+) -> None:
+    repo, base_sha = _repository(tmp_path)
+    root = tmp_path / "os"
+    repository_id = "git:github.com/acme/app"
+    source_branch = "feature/cc-54"
+    pull_request = "github:acme/app#54"
+    _project(root, repo, repository_id=repository_id)
+    monkeypatch.setattr(
+        delivery,
+        "create_isolated_worktree",
+        lambda **kwargs: {
+            "name": "cc-54",
+            "path": "/tmp/cc-54",
+            "branch": source_branch,
+            "base_sha": base_sha,
+        },
+    )
+    run = delivery.start_development_run(
+        root,
+        "acme",
+        "app",
+        ["CC-54"],
+        run_id="release-propagation-canonical-identity",
+        auto_dev_mode="everything",
+        apply=True,
+    )
+    task = TaskState(Path(run["tasks"][0]["state_ref"]))
+    _advance_auto_dev_task_to_ready(
+        task,
+        subject_revision=base_sha,
+        pull_request=pull_request,
+    )
+    for stage_name in ("groom", "detective", "create_artifacts", "document"):
+        _record_standalone_stage(task, stage_name)
+    task_value = task.read()
+    task_value["state"] = "local_validation"
+    task.path.write_text(json.dumps(task_value), encoding="utf-8")
+    work_item = Path(task_value["work_item"])
+
+    def receipt(
+        name: str,
+        head: str,
+        *,
+        previous: bool,
+        overrides: dict[str, object],
+    ) -> Path:
+        evidence: dict[str, object] = {
+            "ticket": "CC-54",
+            "repository": repository_id,
+            "base_branch": "main",
+            "provider": "github",
+            "pull_request": pull_request,
+            "source_head_sha": head,
+            "readback_verified": True,
+            "provider_observed": {"head_sha": head},
+        }
+        if not previous:
+            evidence.update(
+                {
+                    "source_branch": source_branch,
+                    "supersession": {
+                        "supersedes_source_head_sha": "a" * 40,
+                        "reason": "The verified PR head changed after the prior family receipt.",
+                    },
+                }
+            )
+        evidence.update(overrides)
+        path = work_item / "artifacts" / "auto-dev-pr-create" / f"canonical-{name}.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(
+                {
+                    "schema": "development-stage-evidence/v1",
+                    "state": "release_propagation",
+                    "status": "completed",
+                    "summary": f"PR family is current at {head}",
+                    "verified_at": "2026-08-12T08:00:00Z",
+                    "evidence": evidence,
+                }
+            ),
+            encoding="utf-8",
+        )
+        return path
+
+    old = receipt("old", "a" * 40, previous=True, overrides=previous_overrides)
+    run_development_stage(
+        task.path,
+        stage="release_propagation",
+        receipts={"release_propagation": str(old)},
+        idempotency_prefix="cc-54:pr-create:old",
+    )
+    old_bytes = old.read_bytes()
+    old_wrapper = Path(task.read()["stage_receipts"]["release_propagation"]["ref"])
+    old_wrapper_bytes = old_wrapper.read_bytes()
+    old_wrapper_hash = hashlib.sha256(old_wrapper_bytes).hexdigest()
+    old_wrapper_evidence_hash = json.loads(old_wrapper_bytes)["evidence_sha256"]
+    refreshed = receipt(
+        "new", "b" * 40, previous=False, overrides=refreshed_overrides
+    )
+
+    if expected_refresh_error is None:
+        output = run_development_stage(
+            task.path,
+            stage="release_propagation",
+            receipts={"release_propagation": str(refreshed)},
+            idempotency_prefix="cc-54:pr-create:new",
+        )
+        assert output["supersedes"]["source_head_sha"] == "a" * 40
+        assert output["supersedes"]["wrapper_sha256"] == old_wrapper_hash
+        assert output["supersedes"]["evidence_sha256"] == old_wrapper_evidence_hash
+        assert output["supersedes"]["legacy_identity_normalization"] == {
+            "field": "source_branch",
+            "source": "selected_task.worktree.branch",
+            "value": source_branch,
+            "identity_shape": "canonical_qualified_github",
+        }
+        assert old.read_bytes() == old_bytes
+        assert old_wrapper.read_bytes() == old_wrapper_bytes
+    else:
+        task_bytes = task.path.read_bytes()
+        autodev_path = Path(task.read()["autodev_path"])
+        autodev_bytes = autodev_path.read_bytes()
+        task_ledger_bytes = task.ledger.read_bytes()
+        predecessor_binding = dict(
+            task.read()["stage_receipts"]["release_propagation"]
+        )
+        successor_directory = old_wrapper.parent / "release-propagation"
+        assert not successor_directory.exists()
+        with pytest.raises(
+            DevelopmentDeliveryError,
+            match=expected_refresh_error,
+        ):
+            run_development_stage(
+                task.path,
+                stage="release_propagation",
+                receipts={"release_propagation": str(refreshed)},
+                idempotency_prefix="cc-54:pr-create:new",
+            )
+        assert task.path.read_bytes() == task_bytes
+        assert autodev_path.read_bytes() == autodev_bytes
+        assert task.ledger.read_bytes() == task_ledger_bytes
+        assert task.read()["stage_receipts"]["release_propagation"] == predecessor_binding
+        assert not successor_directory.exists()
+        assert old.read_bytes() == old_bytes
+        assert old_wrapper.read_bytes() == old_wrapper_bytes
+        assert hashlib.sha256(old_wrapper.read_bytes()).hexdigest() == old_wrapper_hash
+
+
 def test_heartbeat_does_not_refresh_milestone_evidence_timestamp(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
