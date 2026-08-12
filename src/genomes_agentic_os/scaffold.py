@@ -765,7 +765,9 @@ _KNOWN_AUTO_DEV_POLICY_SUPERSET_REPLACEMENTS = {
 }
 
 
-def _is_known_auto_dev_policy_superset(source: Path, destination: Path) -> bool:
+def _is_known_auto_dev_policy_superset(
+    source: Path, destination: Path, relative_path: Path
+) -> bool:
     """Return whether this is one exact package-owned policy replacement.
 
     The canonical v0.6 performance policy is a verified strict superset of
@@ -778,6 +780,7 @@ def _is_known_auto_dev_policy_superset(source: Path, destination: Path) -> bool:
     )
     if (
         expected is None
+        or relative_path != Path("PERFORMANCE_LEAKS.md")
         or source.is_symlink()
         or destination.is_symlink()
         or not source.is_file()
@@ -815,7 +818,8 @@ def migrate_auto_dev_policy_directories(parent: Path, result: ScaffoldResult) ->
             key=lambda path: path.relative_to(legacy).as_posix(),
         )
         for source in files:
-            destination = canonical / source.relative_to(legacy)
+            relative_path = source.relative_to(legacy)
+            destination = canonical / relative_path
             if destination.exists() or destination.is_symlink():
                 if (
                     source.is_file()
@@ -826,7 +830,7 @@ def migrate_auto_dev_policy_directories(parent: Path, result: ScaffoldResult) ->
                 ):
                     operations.append(("collapse", source, destination))
                     continue
-                if _is_known_auto_dev_policy_superset(source, destination):
+                if _is_known_auto_dev_policy_superset(source, destination, relative_path):
                     operations.append(("collapse", source, destination))
                     continue
                 if (

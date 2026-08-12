@@ -3288,6 +3288,35 @@ def test_policy_migration_rejects_divergent_user_authored_files(tmp_path: Path) 
     assert canonical.read_text(encoding="utf-8") == "# Custom canonical policy\n"
 
 
+def test_policy_migration_preserves_known_policy_pair_below_allowlisted_path(
+    tmp_path: Path,
+) -> None:
+    policy_root = tmp_path / "05-knowledge"
+    legacy = (
+        policy_root
+        / "dev_standards/user/dev_standards/PERFORMANCE_LEAKS.md"
+    )
+    canonical = (
+        policy_root
+        / "auto_dev/dev_standards/user/dev_standards/PERFORMANCE_LEAKS.md"
+    )
+    legacy_seed = (
+        Path(__file__).resolve().parents[1]
+        / "harness/shared_factory/05-knowledge/dev_standards/PERFORMANCE_LEAKS.md"
+    ).read_bytes()
+    canonical_bytes = V06_CANONICAL_PERFORMANCE_LEAKS.encode("utf-8")
+    legacy.parent.mkdir(parents=True)
+    canonical.parent.mkdir(parents=True)
+    legacy.write_bytes(legacy_seed)
+    canonical.write_bytes(canonical_bytes)
+
+    with pytest.raises(ValueError, match="Auto-Dev policy migration conflict"):
+        migrate_auto_dev_policy_directories(policy_root, ScaffoldResult())
+
+    assert legacy.read_bytes() == legacy_seed
+    assert canonical.read_bytes() == canonical_bytes
+
+
 def test_project_create_rejects_invalid_names_and_accepts_any_domain(tmp_path: Path) -> None:
     root = tmp_path / "agentic_os"
 
