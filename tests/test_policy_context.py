@@ -7,6 +7,7 @@ import hashlib
 import importlib.machinery
 import importlib.util
 import json
+import os
 from pathlib import Path
 import subprocess
 import uuid
@@ -510,6 +511,45 @@ def test_declared_multi_segment_rule_globs_match_full_relative_paths(tmp_path: P
         "AGENTS.md",
         "docs/rules/style.md",
     }
+
+
+def test_declared_rule_glob_accepts_a_checkout_local_regular_file(tmp_path: Path) -> None:
+    module = load_policy_context()
+    checkout = tmp_path / "checkout"
+    rule = checkout / "AGENTS.md"
+    checkout.mkdir()
+    rule.write_text("# checkout-local rule\n", encoding="utf-8")
+
+    assert module.expand_rule_globs(checkout, ["AGENTS.md"], declared=True) == [rule]
+
+
+def test_declared_rule_glob_rejects_a_symlinked_rule_outside_checkout(tmp_path: Path) -> None:
+    module = load_policy_context()
+    checkout = tmp_path / "checkout"
+    external_rule = tmp_path / "external-policy.md"
+    checkout.mkdir()
+    external_rule.write_text("# external host policy\n", encoding="utf-8")
+    (checkout / "AGENTS.md").symlink_to(external_rule)
+
+    config = module.rule_surface_config(
+        {"repository": {"rule_surfaces": {"globs": ["AGENTS.md"], "required": True}}}
+    )
+    with pytest.raises(module.Blocker, match="not a symlink"):
+        module.resolve_source_rules({"root": str(checkout)}, config, strict=True)
+
+
+def test_declared_rule_glob_rejects_a_non_regular_rule_file(tmp_path: Path) -> None:
+    module = load_policy_context()
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    fifo = checkout / "AGENTS.md"
+    os.mkfifo(fifo)
+
+    config = module.rule_surface_config(
+        {"repository": {"rule_surfaces": {"globs": ["AGENTS.md"], "required": True}}}
+    )
+    with pytest.raises(module.Blocker, match="must be a regular file"):
+        module.resolve_source_rules({"root": str(checkout)}, config, strict=True)
 
 
 def test_declared_rule_glob_that_matches_nothing_is_a_blocker(tmp_path: Path) -> None:

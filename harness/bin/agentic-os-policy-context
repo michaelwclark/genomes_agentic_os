@@ -86,6 +86,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import stat
 import subprocess
 import sys
 from typing import Any
@@ -639,6 +640,7 @@ def expand_rule_globs(
     convention globs remain best-effort because not every repository uses every
     supported rule surface.
     """
+    checkout_root = checkout.resolve()
     matched: set[Path] = set()
     for pattern in globs:
         if pattern.startswith("/") or ".." in Path(pattern).parts:
@@ -656,13 +658,41 @@ def expand_rule_globs(
         # a path separator matches the full relative path at its declared depth.
         root_only = "/" not in pattern and "**" not in pattern
         pattern_matches: set[Path] = set()
-        for directory, dirnames, filenames in os.walk(checkout, topdown=True):
+        for directory, dirnames, filenames in os.walk(checkout_root, topdown=True):
             dirnames[:] = sorted(name for name in dirnames if name not in SKIP_DIRS)
-            relative_dir = Path(directory).relative_to(checkout)
+            relative_dir = Path(directory).relative_to(checkout_root)
             for filename in filenames:
                 relative = relative_dir / filename
                 if _matches_rule_pattern(relative, pattern):
-                    pattern_matches.add(checkout / relative)
+                    candidate = checkout_root / relative
+                    if candidate.is_symlink():
+                        raise Blocker(
+                            f"source-rule file must be a checkout-local regular file, not a symlink: {relative}",
+                            "Replace the symlink with a regular file inside the selected checkout; "
+                            "external policy bytes cannot contribute to the effective-policy fingerprint.",
+                        )
+                    try:
+                        resolved = candidate.resolve(strict=True)
+                        mode = candidate.lstat().st_mode
+                    except OSError as exc:
+                        raise Blocker(
+                            f"source-rule file cannot be safely inspected: {relative}",
+                            "Restore a readable regular file inside the selected checkout; "
+                            "do not emit a partial policy fingerprint.",
+                        ) from exc
+                    if not resolved.is_relative_to(checkout_root):
+                        raise Blocker(
+                            f"source-rule file resolves outside the selected checkout: {relative}",
+                            "Restore a checkout-local regular rule file; external policy bytes "
+                            "cannot contribute to the effective-policy fingerprint.",
+                        )
+                    if not stat.S_ISREG(mode):
+                        raise Blocker(
+                            f"source-rule file must be a regular file: {relative}",
+                            "Replace the non-regular entry with a regular file inside the selected checkout; "
+                            "do not emit a partial policy fingerprint.",
+                        )
+                    pattern_matches.add(candidate)
             if root_only:
                 # Bare non-recursive patterns only inspect the checkout root.
                 break
