@@ -160,7 +160,7 @@ def test_no_config_stays_local(tmp_path: Path) -> None:
         config_path.unlink()
 
     transport = FakeTransport([])
-    result = apply_runtime_tracking(str(root), verified_workspace="Genome's Notion", fetcher=transport)
+    result = apply_runtime_tracking(str(root), verified_workspace="Genome's Notion", fetcher=transport, allow_live=True)
 
     # No network calls made
     transport.assert_no_requests()
@@ -191,7 +191,7 @@ def test_no_config_local_path_token_env_unset(tmp_path: Path) -> None:
     # Ensure the token env is absent
     with patch.dict(os.environ, {}, clear=False):
         os.environ.pop("GENOMES_NOTION_PAT", None)
-        result = apply_runtime_tracking(str(root), verified_workspace="Genome's Notion", fetcher=transport)
+        result = apply_runtime_tracking(str(root), verified_workspace="Genome's Notion", fetcher=transport, allow_live=True)
 
     transport.assert_no_requests()
     assert result.get("live") is False
@@ -352,7 +352,7 @@ def test_live_path_creates_cockpit_and_mapped_databases(tmp_path: Path) -> None:
     transport = FakeTransport(responses)
 
     with patch.dict(os.environ, {"GENOMES_NOTION_PAT": SENTINEL_TOKEN}):
-        result = apply_runtime_tracking(str(root), verified_workspace="Genome's Notion", fetcher=transport)
+        result = apply_runtime_tracking(str(root), verified_workspace="Genome's Notion", fetcher=transport, allow_live=True)
 
     assert result.get("live") is True
     assert result.get("cockpit_created") is True
@@ -398,7 +398,7 @@ def test_live_path_propagates_approved_notion_parent_to_bridge_calls(tmp_path: P
          patch.object(notion_api, "create_page", wraps=notion_api.create_page) as create_page, \
          patch.object(notion_api, "create_database", wraps=notion_api.create_database) as create_database, \
          patch.object(notion_api, "create_database_page", wraps=notion_api.create_database_page) as create_database_page:
-        result = apply_runtime_tracking(str(root), verified_workspace="Genome's Notion", fetcher=transport)
+        result = apply_runtime_tracking(str(root), verified_workspace="Genome's Notion", fetcher=transport, allow_live=True)
 
     assert result["live"] is True
     assert workspace.call_args.kwargs["parent_page_id"] == PARENT_PAGE_ID
@@ -482,7 +482,7 @@ def test_second_apply_is_idempotent(tmp_path: Path) -> None:
     transport = FakeTransport(responses)
 
     with patch.dict(os.environ, {"GENOMES_NOTION_PAT": SENTINEL_TOKEN}):
-        result = apply_runtime_tracking(str(root), verified_workspace="Genome's Notion", fetcher=transport)
+        result = apply_runtime_tracking(str(root), verified_workspace="Genome's Notion", fetcher=transport, allow_live=True)
 
     assert result.get("live") is True
     assert result.get("cockpit_created") is False
@@ -511,7 +511,7 @@ def test_live_api_workspace_mismatch_refuses(tmp_path: Path) -> None:
 
     with patch.dict(os.environ, {"GENOMES_NOTION_PAT": SENTINEL_TOKEN}):
         with pytest.raises((ValueError, RuntimeError)) as exc_info:
-            apply_runtime_tracking(str(root), verified_workspace="Genome's Notion", fetcher=transport)
+            apply_runtime_tracking(str(root), verified_workspace="Genome's Notion", fetcher=transport, allow_live=True)
 
     error_message = str(exc_info.value)
     # Must mention the mismatch
@@ -564,7 +564,7 @@ def test_token_never_leaks(tmp_path: Path) -> None:
     transport = FakeTransport(responses)
 
     with patch.dict(os.environ, {"GENOMES_NOTION_PAT": SENTINEL_TOKEN}):
-        result = apply_runtime_tracking(str(root), verified_workspace="Genome's Notion", fetcher=transport)
+        result = apply_runtime_tracking(str(root), verified_workspace="Genome's Notion", fetcher=transport, allow_live=True)
 
     # Manifest must not contain token
     manifest_path = root / ".notion-runtime-tracking" / "manifest.yml"

@@ -4323,19 +4323,24 @@ def apply_runtime_tracking(
     path — pass a fake in tests to avoid network access.
     """
     os_root = expand_path(root)
-    workspace = verify_workspace(os_root, verified_workspace)
-    plan = build_runtime_tracking_plan(os_root)
-    manifest_path = _runtime_path(os_root, NOTION_RUNTIME_MANIFEST)
-
     config = _load_notion_tracking_config(os_root)
-    parent_page_id, token_env, cockpit_title, _config_workspace = _live_notion_config(config)
+    parent_page_id, token_env, cockpit_title, config_workspace = _live_notion_config(config)
+    if config_workspace and verified_workspace and config_workspace != verified_workspace:
+        raise ValueError(
+            f"configured Notion workspace {config_workspace!r} does not match "
+            f"verified workspace {verified_workspace!r}"
+        )
+    workspace = verify_workspace(os_root, config_workspace or verified_workspace)
+    plan = build_runtime_tracking_plan(os_root)
+    plan["workspace"] = workspace
+    manifest_path = _runtime_path(os_root, NOTION_RUNTIME_MANIFEST)
 
     from .notion_api import resolve_token
     token_present = resolve_token(token_env) is not None
 
     go_live = bool(parent_page_id and token_present)
 
-    if go_live and not (allow_live or fetcher is not None):
+    if go_live and not allow_live:
         raise RuntimeError(
             f"live runtime tracking requires explicit confirmation; pass --live "
             f"to authorize parent_page_id={parent_page_id!r} with token env {token_env!r}"
