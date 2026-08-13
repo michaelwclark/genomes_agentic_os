@@ -1861,7 +1861,7 @@ printf 'systemctl %s\n' "$*" >>"$ACTIVATION_LOG"
     )
 
 
-def test_macos_activation_preflights_before_bootstrap_and_skips_loaded_jobs(
+def test_macos_activation_preflights_before_restarting_loaded_jobs(
     tmp_path: Path,
 ) -> None:
     home = tmp_path / "home"
@@ -1898,6 +1898,11 @@ case "$1" in
     label=$(basename "$3" .plist)
     printf 'bootstrap %s\n' "$label" >>"$ACTIVATION_LOG"
     : >"$LAUNCH_STATE/$label"
+    ;;
+  bootout)
+    label=${2##*/}
+    printf 'bootout %s\n' "$label" >>"$ACTIVATION_LOG"
+    rm -f "$LAUNCH_STATE/$label"
     ;;
   *) exit 64 ;;
 esac
@@ -1952,7 +1957,10 @@ esac
     lines = activation_log.read_text(encoding="utf-8").splitlines()
     assert lines[0] == "preflight standby"
     assert lines.count("preflight standby") == 2
-    assert len([line for line in lines if line.startswith("bootstrap ")]) == len(
+    assert len([line for line in lines if line.startswith("bootstrap ")]) == 2 * len(
+        suffixes
+    )
+    assert len([line for line in lines if line.startswith("bootout ")]) == len(
         suffixes
     )
 

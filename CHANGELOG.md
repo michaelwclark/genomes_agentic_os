@@ -9,6 +9,14 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.6.3] - 2026-08-13
+
+### Fixed
+
+- Restart loaded macOS Execution Fabric launchd services only after the
+  complete activation preflight passes, so an activated release cannot leave a
+  worker running the previous package through the `current` symlink switch.
+
 ## [0.6.2] - 2026-08-13
 
 ### Fixed
