@@ -40,6 +40,8 @@ commands:
     path: harness/commands/auto-dev-review-others.md
   - id: auto-dev-finalize
     path: harness/commands/auto-dev-finalize.md
+  - id: auto-dev-validate-production-release
+    path: harness/commands/auto-dev-validate-production-release.md
   - id: auto-dev-merge
     path: harness/commands/auto-dev-merge.md
   - id: auto-dev-release-propagation
@@ -89,6 +91,8 @@ skills:
     path: harness/skills/auto-dev-review-others/SKILL.md
   - id: auto-dev-finalize
     path: harness/skills/auto-dev-finalize/SKILL.md
+  - id: auto-dev-validate-production-release
+    path: harness/skills/auto-dev-validate-production-release/SKILL.md
   - id: auto-dev-merge
     path: harness/skills/auto-dev-merge/SKILL.md
   - id: auto-dev-release-propagation

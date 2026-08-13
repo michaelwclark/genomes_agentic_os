@@ -44,6 +44,7 @@ ACTION_TO_STAGE = {
     "propagate": "pr_create",
     "release-propagation": "pr_create",
     "finalize": "finalize",
+    "validate-production-release": "validate_production_release",
     "release": "release",
     "merge": "merge",
     "deploy": "deploy",
@@ -57,12 +58,19 @@ WORKTREE_REQUIRED_STAGES = {
     "qa",
     "review_self",
     "finalize",
+    "validate_production_release",
     "merge",
     "release",
     "deploy",
     "closeout",
 }
-EXISTING_STATE_REQUIRED_ACTIONS = {"merge", "deploy", "closeout", "health"}
+EXISTING_STATE_REQUIRED_ACTIONS = {
+    "validate-production-release",
+    "merge",
+    "deploy",
+    "closeout",
+    "health",
+}
 
 _STAGE_COMMANDS = {
     "groom": "/auto-dev-grooming",
@@ -76,6 +84,7 @@ _STAGE_COMMANDS = {
     "review_others": "/auto-dev-review-others",
     "qa": "/auto-dev-qa",
     "finalize": "/auto-dev-finalize",
+    "validate_production_release": "/auto-dev-validate-production-release",
     "merge": "/auto-dev-merge",
     "release": "/auto-dev-release",
     "deploy": "/auto-dev-deploy",

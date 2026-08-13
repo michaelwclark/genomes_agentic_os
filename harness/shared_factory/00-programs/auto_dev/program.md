@@ -35,11 +35,12 @@ specialize each workflow without forking shared code.
 | 9 | Review Others | review another author's live PR without merging | `/auto-dev-review-others` | clean review-only receipt or typed policy decision |
 | 10 | QA | independently callable risk-based validation | `/auto-dev-qa` | QA receipt for the exact reviewed revision |
 | 11 | Finalize | converge our PR family and record readiness without merging | `/auto-dev-finalize` | immutable readiness receipt or typed policy decision |
-| 12 | Merge | apply the governed merge decision and read back provider truth | `/auto-dev-merge` | typed `merged` proof or exact hold |
-| 13 | Release | publish a version, tag, package, changelog, or provider release | `/auto-dev-release` | release receipt or typed policy decision |
-| 14 | Deploy | deploy and validate the exact artifact | `/auto-dev-deploy` | deployed-version proof or typed policy decision |
-| 15 | Closeout | reconcile provider and delivery state | `/auto-dev-closeout` | `delivery_complete` |
-| 16 | Health | audit receipts, remove exact reconstructable resources, and preserve the finished packet | `/auto-dev-health` | Health receipt and resume manifest |
+| 12 | Production Release Validation | read-only release-family, revision, QA, and policy validation after Finalize | `/auto-dev-validate-production-release` | current validation receipt or typed policy decision |
+| 13 | Merge | apply the governed merge decision and read back provider truth | `/auto-dev-merge` | typed `merged` proof or exact hold |
+| 14 | Release | publish a version, tag, package, changelog, or provider release | `/auto-dev-release` | release receipt or typed policy decision |
+| 15 | Deploy | deploy and validate the exact artifact | `/auto-dev-deploy` | deployed-version proof or typed policy decision |
+| 16 | Closeout | reconcile provider and delivery state | `/auto-dev-closeout` | `delivery_complete` |
+| 17 | Health | audit receipts, remove exact reconstructable resources, and preserve the finished packet | `/auto-dev-health` | Health receipt and resume manifest |
 
 Release Propagation has no numbered row. Its legacy command delegates to PR
 Create, and Development Delivery retains `release_propagation` only as the
