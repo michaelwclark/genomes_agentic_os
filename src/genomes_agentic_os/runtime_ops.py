@@ -1045,14 +1045,15 @@ def _materialize_inline_script_lease(root: Path, item: dict[str, Any]) -> dict[s
 
 
 def _dispatch_lease_seconds(item: dict[str, Any], timeout_seconds: int) -> int:
+    floor = timeout_seconds + LEASE_SAFETY_MARGIN_SECONDS
     value = item.get("lease_seconds")
     if value is None and isinstance(item.get("runtime_policy"), dict):
         value = item["runtime_policy"].get("lease_seconds")
     try:
-        lease = int(value) if value is not None and not isinstance(value, bool) else timeout_seconds + 60
+        lease = int(value) if value is not None and not isinstance(value, bool) else floor
     except (TypeError, ValueError):
-        lease = timeout_seconds + 60
-    return min(MAX_LEASE_SECONDS, max(timeout_seconds + LEASE_SAFETY_MARGIN_SECONDS, lease))
+        lease = floor
+    return max(floor, min(MAX_LEASE_SECONDS, lease))
 
 
 def _provider_from_text(text: str) -> str | None:
@@ -4065,15 +4066,29 @@ def build_runtime_tracking_plan(root: str | Path) -> dict[str, Any]:
     queue = {**deepcopy(DEFAULT_RUN_QUEUE), "items": queue_items_all, "run_queue": queue_items_all}
     queue_items = _runtime_tracking_queue_items(queue)
     records = []
-    for target in runtime_registry.get("execution_targets") or []:
-        records.append({"kind": "execution_target", "key": target["id"], "title": target["display_name"], "action": "create-or-update"})
-    for heartbeat in runtime_registry.get("heartbeats") or []:
-        records.append({"kind": "heartbeat", "key": heartbeat["id"], "title": heartbeat["display_name"], "action": "create-or-update"})
-    for schedule in runtime_registry.get("schedules") or []:
-        records.append({"kind": "schedule", "key": schedule["id"], "title": schedule["display_name"], "action": "create-or-update"})
-    for integration in integration_registry.get("integrations") or []:
-        records.append({"kind": "integration", "key": integration["id"], "title": integration["display_name"], "action": "create-or-update"})
+    skipped: list[dict[str, str]] = []
+
+    def add_registry_records(entries: Any, kind: str) -> None:
+        for entry in entries or []:
+            if not isinstance(entry, dict) or not entry.get("id"):
+                skipped.append({"kind": kind, "reason": "entry is not a mapping with an id"})
+                continue
+            key = str(entry["id"])
+            records.append({
+                "kind": kind,
+                "key": key,
+                "title": str(entry.get("display_name") or key),
+                "action": "create-or-update",
+            })
+
+    add_registry_records(runtime_registry.get("execution_targets"), "execution_target")
+    add_registry_records(runtime_registry.get("heartbeats"), "heartbeat")
+    add_registry_records(runtime_registry.get("schedules"), "schedule")
+    add_registry_records(integration_registry.get("integrations"), "integration")
     for item in queue_items:
+        if not isinstance(item, dict) or not item.get("id"):
+            skipped.append({"kind": "run_queue_item", "reason": "entry is not a mapping with an id"})
+            continue
         records.append(
             {
                 "kind": "run_queue_item",
@@ -4100,6 +4115,7 @@ def build_runtime_tracking_plan(root: str | Path) -> dict[str, Any]:
             "run_queue_projected_items": len(queue_items),
             "run_queue_omitted_items": max(0, len(queue.get("items") or []) - len(queue_items)),
         },
+        "skipped": skipped,
         "records": records,
     }
 
@@ -4368,6 +4384,14 @@ def apply_runtime_tracking(
     token_present = resolve_token(token_env) is not None
 
     go_live = bool(parent_page_id and token_present)
+
+    if allow_live and not go_live:
+        missing = []
+        if not parent_page_id:
+            missing.append("parent_page_id is empty in notion-tracking.yml")
+        if not token_present:
+            missing.append(f"token env {token_env!r} is not set")
+        raise RuntimeError("--live was requested but the live path is unavailable: " + "; ".join(missing))
 
     if go_live and not allow_live:
         raise RuntimeError(

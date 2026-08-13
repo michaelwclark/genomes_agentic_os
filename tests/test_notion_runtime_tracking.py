@@ -160,7 +160,7 @@ def test_no_config_stays_local(tmp_path: Path) -> None:
         config_path.unlink()
 
     transport = FakeTransport([])
-    result = apply_runtime_tracking(str(root), verified_workspace="Genome's Notion", fetcher=transport, allow_live=True)
+    result = apply_runtime_tracking(str(root), verified_workspace="Genome's Notion", fetcher=transport)
 
     # No network calls made
     transport.assert_no_requests()
@@ -191,10 +191,33 @@ def test_no_config_local_path_token_env_unset(tmp_path: Path) -> None:
     # Ensure the token env is absent
     with patch.dict(os.environ, {}, clear=False):
         os.environ.pop("GENOMES_NOTION_PAT", None)
-        result = apply_runtime_tracking(str(root), verified_workspace="Genome's Notion", fetcher=transport, allow_live=True)
+        result = apply_runtime_tracking(str(root), verified_workspace="Genome's Notion", fetcher=transport)
 
     transport.assert_no_requests()
     assert result.get("live") is False
+
+
+def test_explicit_live_request_fails_closed_without_prerequisites(tmp_path: Path) -> None:
+    from genomes_agentic_os.runtime_ops import apply_runtime_tracking
+
+    root = _installed_root(tmp_path)
+    with pytest.raises(RuntimeError, match="live path is unavailable"):
+        apply_runtime_tracking(str(root), verified_workspace="Genome's Notion", allow_live=True)
+
+
+def test_partial_registry_entries_are_reported_and_skipped(tmp_path: Path) -> None:
+    from genomes_agentic_os.runtime_ops import build_runtime_tracking_plan
+    from genomes_agentic_os.scaffold import shared_factory_path
+
+    root = _installed_root(tmp_path)
+    registry_path = shared_factory_path(root, "00-control-plane", "runtime-registry.yml")
+    registry = yaml.safe_load(registry_path.read_text(encoding="utf-8"))
+    registry["execution_targets"] = [{"id": "valid-target"}, "malformed-target", {"display_name": "missing id"}]
+    registry_path.write_text(yaml.safe_dump(registry, sort_keys=False), encoding="utf-8")
+
+    plan = build_runtime_tracking_plan(str(root))
+    assert {record["key"] for record in plan["records"] if record["kind"] == "execution_target"} == {"valid-target"}
+    assert sum(item["kind"] == "execution_target" for item in plan["skipped"]) == 2
 
 
 def test_runtime_tracking_plan_bounds_run_queue_projection(tmp_path: Path) -> None:
