@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -846,8 +847,15 @@ def _write_yaml(path: Path, data: dict[str, Any]) -> None:
             handle.write(yaml.safe_dump(payload, sort_keys=False))
             handle.flush()
             os.fsync(handle.fileno())
+        if path.exists():
+            shutil.copymode(path, temporary_path)
         os.replace(temporary_path, path)
         temporary_path = None
+        directory_fd = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
     finally:
         if temporary_path is not None:
             temporary_path.unlink(missing_ok=True)
@@ -4450,10 +4458,14 @@ def apply_runtime_tracking(
         raise RuntimeError("--live was requested but the live path is unavailable: " + "; ".join(missing))
 
     if go_live and not allow_live:
-        raise RuntimeError(
-            f"live runtime tracking requires explicit confirmation; pass --live "
-            f"to authorize parent_page_id={parent_page_id!r} with token env {token_env!r}"
-        )
+        return {
+            **plan,
+            "applied": False,
+            "mode": "skipped",
+            "live": False,
+            "reason": "live tracking is configured but --live was not passed",
+            "parent_page_id": parent_page_id,
+        }
 
     existing_manifest: dict[str, Any] = _load_yaml(manifest_path, {})
     if go_live:
@@ -4474,10 +4486,14 @@ def apply_runtime_tracking(
     # A local fallback must never destroy a live manifest. Operators can resume
     # the existing live projection with --live once credentials are available.
     if existing_manifest.get("live") is True:
-        raise RuntimeError(
-            "local runtime tracking apply would overwrite a live manifest; "
-            "restore live credentials and pass --live to resume"
-        )
+        return {
+            **plan,
+            "applied": False,
+            "mode": "skipped",
+            "live": True,
+            "reason": "live manifest preserved while live credentials are unavailable",
+            "manifest_path": str(manifest_path),
+        }
 
     # --- local path (original behaviour + live: false) ---
     database_ids = {database: _local_id(f"database:{workspace}:{database}") for database in plan["databases"]}

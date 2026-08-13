@@ -217,8 +217,10 @@ def test_local_apply_refuses_to_overwrite_live_manifest(tmp_path: Path) -> None:
 
     with patch.dict(os.environ, {}, clear=False):
         os.environ.pop("GENOMES_NOTION_PAT", None)
-        with pytest.raises(RuntimeError, match="would overwrite a live manifest"):
-            apply_runtime_tracking(str(root), verified_workspace="Genome's Notion", fetcher=FakeTransport([]))
+        result = apply_runtime_tracking(str(root), verified_workspace="Genome's Notion", fetcher=FakeTransport([]))
+        assert result["mode"] == "skipped"
+        assert result["live"] is True
+        assert "credentials are unavailable" in result["reason"]
 
     after = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
     assert after["live"] is True

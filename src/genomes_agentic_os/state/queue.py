@@ -47,8 +47,8 @@ DISPATCH_PRIORITY_BOOST = 10
 # Keep every dispatcher on the same aging/tie-break policy. The first two
 # placeholders receive the same starvation cutoff timestamp.
 DISPATCH_ORDER_SQL = """\
-COALESCE(priority, 0) + CASE WHEN COALESCE(due_at, created_at) <= ? THEN {boost} ELSE 0 END DESC,
-COALESCE(CASE WHEN COALESCE(due_at, created_at) <= ? THEN substr(COALESCE(due_at, created_at), 1, 13) END, '~') ASC,
+COALESCE(priority, 0) + CASE WHEN datetime(COALESCE(due_at, created_at)) <= datetime(?) THEN {boost} ELSE 0 END DESC,
+COALESCE(CASE WHEN datetime(COALESCE(due_at, created_at)) <= datetime(?) THEN substr(datetime(COALESCE(due_at, created_at)), 1, 13) END, '~') ASC,
 priority DESC,
 (due_at IS NULL) ASC, due_at ASC, created_at ASC, id ASC
 """.format(boost=DISPATCH_PRIORITY_BOOST)

@@ -146,6 +146,28 @@ def test_claim_next_preserves_priority_inside_starvation_class(conn: sqlite3.Con
     assert queue.get(conn, oldest_low["id"])["status"] == "queued"
 
 
+def test_claim_next_normalizes_timestamp_spellings_for_starvation_cutoff(conn: sqlite3.Connection) -> None:
+    queue.enqueue(
+        conn,
+        kind="schedule",
+        id="fresh-offset",
+        priority=9,
+        created_at="2026-07-01T00:30:00-05:00",
+    )
+    queue.enqueue(
+        conn,
+        kind="aged-zulu",
+        id="aged-zulu",
+        priority=0,
+        created_at="2026-07-01T04:00:00Z",
+    )
+
+    claimed = queue.claim_next(conn, worker_id="worker-a", now="2026-07-01T05:00:00Z")
+
+    assert claimed is not None
+    assert claimed["id"] == "aged-zulu"
+
+
 def test_claim_next_respects_due_at(conn: sqlite3.Connection) -> None:
     queue.enqueue(conn, kind="schedule", due_at="2026-06-01T00:00:00Z")
     assert queue.claim_next(conn, worker_id="worker-a", now="2026-01-01T00:00:00Z") is None
