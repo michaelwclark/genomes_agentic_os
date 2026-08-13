@@ -222,6 +222,15 @@ export interface LedgerPort {
     expectedCandidateFingerprint: string;
     operatorOverride?: PolicyReloadOperatorOverride;
   }): Promise<ConfigReloadReceipt>;
+  findPolicyReloadReceipt(input: {
+    rotationId: string;
+    preparationTokenHash: string;
+    authorizationIssuedAt?: string;
+    expectedEpoch: number;
+    expectedCurrentFingerprint: string;
+    expectedCandidateFingerprint: string;
+    operatorOverride?: PolicyReloadOperatorOverride;
+  }): Promise<ConfigReloadReceipt | null>;
   activateLeadership(input: LeadershipActivation): Promise<void>;
   ping(): Promise<void>;
 }
@@ -1708,6 +1717,107 @@ export class PostgresLedger implements LedgerPort {
           : {}),
       };
     });
+  }
+
+  async findPolicyReloadReceipt(input: {
+    rotationId: string;
+    preparationTokenHash: string;
+    authorizationIssuedAt?: string;
+    expectedEpoch: number;
+    expectedCurrentFingerprint: string;
+    expectedCandidateFingerprint: string;
+    operatorOverride?: PolicyReloadOperatorOverride;
+  }): Promise<ConfigReloadReceipt | null> {
+    const replay = await this.pool.query<{
+      id: string;
+      rotation_id: string;
+      preparation_token_hash: string;
+      expected_current_fingerprint: string;
+      expected_candidate_fingerprint: string;
+      applied_fingerprint: string;
+      fabric_epoch: string | number;
+      host_id: string;
+      applied_at: string;
+      decision: ConfigReloadReceipt["decision"] | null;
+      recovery_action: string | null;
+      operator_id: string | null;
+      override_reason: string | null;
+      approval_reference: string | null;
+      maintenance_window_start: string | null;
+      maintenance_window_end: string | null;
+      authorization_issued_at: string | null;
+    }>(
+      `SELECT id,rotation_id,preparation_token_hash,
+              expected_current_fingerprint,expected_candidate_fingerprint,
+              applied_fingerprint,fabric_epoch,host_id,applied_at,decision,
+              recovery_action,operator_id,override_reason,approval_reference,
+              maintenance_window_start,maintenance_window_end,
+              authorization_issued_at
+         FROM fabric_config_reload_receipts
+        WHERE rotation_id=$1`,
+      [input.rotationId],
+    );
+    const prior = replay.rows[0];
+    if (
+      !prior ||
+      prior.preparation_token_hash !== input.preparationTokenHash ||
+      (input.authorizationIssuedAt !== undefined &&
+        iso(prior.authorization_issued_at!) !== iso(input.authorizationIssuedAt)) ||
+      Number(prior.fabric_epoch) !== input.expectedEpoch ||
+      prior.expected_current_fingerprint !== input.expectedCurrentFingerprint ||
+      prior.expected_candidate_fingerprint !== input.expectedCandidateFingerprint ||
+      (prior.operator_id === null) !== (input.operatorOverride === undefined) ||
+      (input.operatorOverride !== undefined &&
+        (prior.operator_id !== input.operatorOverride.actor ||
+          prior.override_reason !== input.operatorOverride.reason ||
+          prior.approval_reference !== input.operatorOverride.approvalReference ||
+          iso(prior.maintenance_window_start!) !==
+            iso(input.operatorOverride.maintenanceWindow.startsAt) ||
+          iso(prior.maintenance_window_end!) !==
+            iso(input.operatorOverride.maintenanceWindow.endsAt)))
+    ) {
+      return null;
+    }
+    return {
+      schemaVersion: "execution-fabric-config-reload-receipt/v1",
+      receiptId: prior.id,
+      rotationId: prior.rotation_id,
+      preparationTokenHash: prior.preparation_token_hash,
+      expectedCurrentFingerprint: prior.expected_current_fingerprint,
+      expectedCandidateFingerprint: prior.expected_candidate_fingerprint,
+      appliedFingerprint: prior.applied_fingerprint,
+      fabricEpoch: Number(prior.fabric_epoch),
+      hostId: prior.host_id,
+      ...(prior.authorization_issued_at
+        ? { authorizedAt: iso(prior.authorization_issued_at) }
+        : {}),
+      appliedAt: iso(prior.applied_at),
+      decision:
+        prior.decision ??
+        (prior.operator_id
+          ? "standalone_policy_override_applied"
+          : "policy_reload_applied"),
+      recoveryAction:
+        prior.recovery_action ??
+        "verify witness commit or run rotate-policy.sh --resume",
+      ...(prior.operator_id &&
+      prior.override_reason &&
+      prior.approval_reference &&
+      prior.maintenance_window_start &&
+      prior.maintenance_window_end
+        ? {
+            operatorOverride: {
+              actor: prior.operator_id,
+              reason: prior.override_reason,
+              approvalReference: prior.approval_reference,
+              maintenanceWindow: {
+                startsAt: iso(prior.maintenance_window_start),
+                endsAt: iso(prior.maintenance_window_end),
+              },
+            },
+          }
+        : {}),
+    };
   }
 
   async activateLeadership(input: LeadershipActivation): Promise<void> {

@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
+import { writeFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
+import { stringify } from "yaml";
 import type { Config } from "../src/config.js";
 import type { TaskRecord } from "../src/contracts.js";
 import type { DeliveryPort } from "../src/delivery.js";
@@ -146,6 +148,7 @@ function fixture() {
       hostId: "test-host",
       appliedAt: new Date().toISOString(),
     })),
+    findPolicyReloadReceipt: vi.fn().mockResolvedValue(null),
     activateLeadership: vi.fn().mockResolvedValue(undefined),
     ping: vi.fn().mockResolvedValue(undefined),
   } satisfies LedgerPort;
@@ -156,7 +159,7 @@ function fixture() {
     ping: vi.fn().mockResolvedValue(undefined),
     close: vi.fn(),
   } satisfies DeliveryPort;
-  const { policy } = createTestPolicy();
+  const { policy, source: policySource, value: policyValue } = createTestPolicy();
   const leadership = {
     assertMutation: vi.fn(),
     assertTaskMutation: vi.fn(),
@@ -297,6 +300,8 @@ function fixture() {
     task,
     fabric,
     leadership,
+    policySource,
+    policyValue,
   };
 }
 
@@ -1095,9 +1100,21 @@ describe("HTTP contract", () => {
     await server.close();
   });
 
-  it("does not report a committed override as failed when its outcome alert errors", async () => {
-    const { server, ledger, reliability, fabric, leadership } = fixture();
+  it("replays a committed override when its outcome alert fails", async () => {
+    const {
+      server,
+      ledger,
+      reliability,
+      fabric,
+      leadership,
+      policySource,
+      policyValue,
+    } = fixture();
     const fingerprint = fabric.policy.snapshot().appliedFingerprint;
+    policyValue.execution_fabric.degraded_primary.allow_scheduler = true;
+    writeFileSync(policySource, stringify(policyValue));
+    const candidateFingerprint = fabric.policy.prepareReload().candidateFingerprint;
+    const rotationId = randomUUID();
     const operatorOverride = {
       actor: "operator-1",
       reason: "confirm applied outcome handling",
@@ -1113,33 +1130,93 @@ describe("HTTP contract", () => {
       expectedEpoch: 1,
       operatorOverride,
     });
+    const committedReceipt = {
+      schemaVersion: "execution-fabric-config-reload-receipt/v1" as const,
+      receiptId: randomUUID(),
+      rotationId,
+      preparationTokenHash:
+        "0d1b4f4f14b47a69d41311d57c0ec31583804d173d4a930ed16adf63a1ead8b1",
+      expectedCurrentFingerprint: fingerprint,
+      expectedCandidateFingerprint: candidateFingerprint,
+      appliedFingerprint: candidateFingerprint,
+      fabricEpoch: 1,
+      hostId: "test-host",
+      appliedAt: new Date().toISOString(),
+      decision: "standalone_policy_override_applied" as const,
+      recoveryAction: "verify witness commit or run rotate-policy.sh --resume",
+      operatorOverride,
+    };
+    (ledger.activatePolicyReload as ReturnType<typeof vi.fn>).mockResolvedValue(
+      committedReceipt,
+    );
+    (ledger.findPolicyReloadReceipt as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(committedReceipt);
     (reliability.ingestExternalObservation as ReturnType<typeof vi.fn>)
       .mockResolvedValueOnce({
         admitted: true,
         idempotent: false,
         alarmDerived: true,
       })
-      .mockRejectedValueOnce(new Error("outcome alert unavailable"));
+      .mockRejectedValueOnce(new Error("outcome alert unavailable"))
+      .mockResolvedValueOnce({ admitted: false, idempotent: true, alarmDerived: true })
+      .mockResolvedValueOnce({ admitted: true, idempotent: false, alarmDerived: true });
 
-    const response = await server.inject({
+    const payload = {
+      rotationId,
+      preparationToken: "cpr1.payload.signature",
+      expectedCurrentFingerprint: fingerprint,
+      expectedCandidateFingerprint: candidateFingerprint,
+      operatorOverride,
+    };
+    const first = await server.inject({
       method: "POST",
       url: "/api/v1/admin/config/reload",
       headers: { authorization: `Bearer ${config.adminToken}` },
-      payload: {
-        rotationId: randomUUID(),
-        preparationToken: "cpr1.payload.signature",
-        expectedCurrentFingerprint: fingerprint,
-        expectedCandidateFingerprint: fingerprint,
-        operatorOverride,
-      },
+      payload,
     });
-    expect(response.statusCode).toBe(500);
+    expect(first.statusCode).toBe(500);
     expect(ledger.activatePolicyReload).toHaveBeenCalledOnce();
     expect(reliability.ingestExternalObservation).toHaveBeenCalledTimes(2);
     expect(reliability.ingestExternalObservation).toHaveBeenLastCalledWith(
       expect.objectContaining({ code: "standalone_policy_override_succeeded" }),
       1,
     );
+
+    const replay = await server.inject({
+      method: "POST",
+      url: "/api/v1/admin/config/reload",
+      headers: { authorization: `Bearer ${config.adminToken}` },
+      payload,
+    });
+    expect(replay.statusCode).toBe(200);
+    expect(replay.json()).toMatchObject({
+      appliedFingerprint: candidateFingerprint,
+      receipt: committedReceipt,
+      alerts: {
+        invocation: { idempotent: true },
+        outcome: { admitted: true },
+      },
+    });
+    expect(ledger.activatePolicyReload).toHaveBeenCalledOnce();
+    expect(ledger.findPolicyReloadReceipt).toHaveBeenCalledTimes(2);
+    expect(reliability.ingestExternalObservation).toHaveBeenCalledTimes(4);
+
+    const changedEnvelope = await server.inject({
+      method: "POST",
+      url: "/api/v1/admin/config/reload",
+      headers: { authorization: `Bearer ${config.adminToken}` },
+      payload: {
+        ...payload,
+        operatorOverride: {
+          ...operatorOverride,
+          reason: "different signed reason",
+        },
+      },
+    });
+    expect(changedEnvelope.statusCode).toBe(409);
+    expect(ledger.activatePolicyReload).toHaveBeenCalledOnce();
+    expect(ledger.findPolicyReloadReceipt).toHaveBeenCalledTimes(3);
     await server.close();
   });
 
