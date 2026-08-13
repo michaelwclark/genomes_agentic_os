@@ -11,13 +11,12 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 - Align all twelve canonical release/version sources and document the
-  ordered route/object-library rollout and recommended Team PR queue
-  coordination during upgrades.
-- Recommended precaution: pause review workers and admit no new review jobs
-  while the route and paired producer are upgraded. The persisted first-format
-  guard preserves legacy/current effect-key dedup for already queued intents;
-  quiescing avoids mixed-version operational surprises but is not required for
-  correctness when that guard is present.
+  ordered route/object-library rollout and required Team PR queue quiescence
+  during upgrades.
+- Pause review workers and admit no new review jobs while the route and paired
+  producer are upgraded. Keep the queue quiesced until queued intents have been
+  drained or reconciled; this conservative rule applies whenever the running
+  route's persisted first-format guard has not been independently verified.
 
 ### Fixed
 - Recover legacy PR-create and worktree-ready delivery packets through the
@@ -37,10 +36,9 @@ All notable changes to this project are documented here. The format follows
   successes terminalize the marker.
 - Normalize case-insensitive repository, head, and source-key fields before
   deriving the cross-repository review identity and helper run ID.
-- Document the persisted first-format guard introduced in `v0.6.0`: already-
-  admitted tasks that omitted `review_mode` keep the legacy projection key,
-  while explicit current tasks use the full-intent key, preserving effect
-  dedup across the upgrade boundary.
+- Document the persisted first-format guard and the conservative queue
+  quiescence rule for upgrades when that guard's provenance is not independently
+  verified.
 - Keep enough bounded review attempts for error-driven retries to outlive the
   helper fence, and classify transient durable-write, lock, and host-identity
   failures as retryable.
@@ -63,9 +61,8 @@ All notable changes to this project are documented here. The format follows
   immediately instead of spending an extra retry as in progress.
 - Document the route-before-producer ordering: the producer emits explicit
   `review_mode`, which an older closed route rejects. Quiesce the review queue
-  only when upgrading from before `v0.6.0`, whose queued intents lack the
-  persisted first-format field; upgrades from `v0.6.0` or later need only the
-  recommended precaution described above.
+  throughout the transition so an unacknowledged legacy effect key cannot be
+  replayed under a different format.
 
 ## [0.6.0] - 2026-08-01
 
