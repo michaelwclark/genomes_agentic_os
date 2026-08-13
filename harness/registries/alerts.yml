@@ -55,6 +55,12 @@ sources:
     min_level: warning
     sound: Submarine
     override_dnd: true
+  automation.team_pr_sync:
+    enabled: true
+    min_level: warning
+    cooldown_seconds: 1800
+    max_deliveries_per_hour: 4
+    sound: Basso
   os.doctor:
     enabled: true
     min_level: critical

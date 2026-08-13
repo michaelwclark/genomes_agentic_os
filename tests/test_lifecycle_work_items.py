@@ -477,6 +477,10 @@ def _health_gate(
     record_stage("review_others", not_required=True)
     record_stage("qa", revision=subject_revision)
     record_stage("finalize", revision=subject_revision)
+    # Production-release validation is a required delivery stage whenever it
+    # is present in the frozen workflow order.  Record its terminal fixture
+    # evidence after Finalize so Health can validate every earlier stage.
+    record_stage("validate_production_release", revision=subject_revision)
     record_stage("release", revision=terminal_revision)
     if runtime_collision:
         collision = (

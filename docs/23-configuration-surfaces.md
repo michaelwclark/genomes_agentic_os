@@ -127,6 +127,13 @@ uses the distinct admin credential, verifies an expected fingerprint, performs
 observer pre-read and readback, fences both current and candidate fingerprints
 server-side, and writes a redacted durable receipt.
 
+For `execution_fabric.standalone_primary`, intentional candidate drift is only
+accepted by that prepared admin reload when the local witnessed leader has the
+exact canonical host opt-in, verified local durability, a current unexpired
+proof, and a preparation bound to the supplied current and candidate
+fingerprints. An admin credential or changed file alone cannot bypass the
+normal fence, authorize a retry, or enable HA promotion or failover.
+
 ---
 
 ## 4. agentic-os.lock.json — Install Lock

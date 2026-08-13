@@ -131,11 +131,12 @@ Everything is the orchestrator, not another stage. It uses this one exact order:
 | 9 | Review Others | `/auto-dev-review-others` | `auto-dev record --stage review_others` |
 | 10 | QA | `/auto-dev-qa` | `auto-dev record --stage qa` |
 | 11 | Finalize | `/auto-dev-finalize` | `auto-dev record --stage finalize` after PR-family convergence |
-| 12 | Merge | `/auto-dev-merge` | `develop stage --stage merge` after typed provider readback |
-| 13 | Release | `/auto-dev-release` | `auto-dev record --stage release` |
-| 14 | Deploy | `/auto-dev-deploy` | `develop stage --stage deploy` |
-| 15 | Closeout | `/auto-dev-closeout` | `develop stage --stage closeout` |
-| 16 | Health | `/auto-dev-health` | strict Health receipt after cleanup and finished-state readback |
+| 12 | Production Release Validation | `/auto-dev-validate-production-release` | `auto-dev record --stage validate_production_release` with read-only evidence |
+| 13 | Merge | `/auto-dev-merge` | `develop stage --stage merge` after typed provider readback |
+| 14 | Release | `/auto-dev-release` | `auto-dev record --stage release` |
+| 15 | Deploy | `/auto-dev-deploy` | `develop stage --stage deploy` |
+| 16 | Closeout | `/auto-dev-closeout` | `develop stage --stage closeout` |
+| 17 | Health | `/auto-dev-health` | strict Health receipt after cleanup and finished-state readback |
 
 When PR Create must refresh an existing PR after its commit ID changes, it
 does not rewrite the old record. It requires provider readback for the new

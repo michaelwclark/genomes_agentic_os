@@ -42,6 +42,7 @@ AUTO_DEV_STAGE_ORDER = (
     "review_others",
     "qa",
     "finalize",
+    "validate_production_release",
     "merge",
     "release",
     "deploy",
@@ -61,6 +62,7 @@ AUTO_DEV_STAGE_COMMANDS = {
     "review_others": "/auto-dev-review-others",
     "qa": "/auto-dev-qa",
     "finalize": "/auto-dev-finalize",
+    "validate_production_release": "/auto-dev-validate-production-release",
     "release": "/auto-dev-release",
     "merge": "/auto-dev-merge",
     "deploy": "/auto-dev-deploy",
@@ -95,6 +97,7 @@ REVISION_SENSITIVE_STAGES = REVIEW_REVISION_STAGES | TERMINAL_REVISION_STAGES | 
 STAGE_MINIMUM_DELIVERY_STATE = {
     "qa": "worktree_ready",
     "finalize": "ready_for_merge",
+    "validate_production_release": "ready_for_merge",
     "release": "merged",
     "health": "delivery_complete",
 }
@@ -173,6 +176,8 @@ REQUIRED_STAGE_PRECEDENCE = (
     ("review_self", "review_others"),
     ("review_others", "qa"),
     ("qa", "finalize"),
+    ("finalize", "validate_production_release"),
+    ("validate_production_release", "merge"),
     ("finalize", "merge"),
     ("pr_create", "merge"),
     ("merge", "release"),

@@ -243,8 +243,56 @@ export const openApiDocument = {
       post: {
         operationId: "reloadFabricConfig",
         summary: "Compare-and-swap validate and activate the canonical queue policy with a durable receipt",
+        description:
+          "Normal witness-backed reloads omit operatorOverride. The disabled-by-default standalone-primary drift exception requires an exact signed operator reason, approval reference, and current maintenance window; invocation and outcome produce durable critical alarms.",
         security: [{ adminBearerAuth: [] }],
-        responses: { "200": { description: "Applied config receipt" }, "503": { description: "Invalid config" } },
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                additionalProperties: false,
+                required: [
+                  "rotationId",
+                  "preparationToken",
+                  "expectedCurrentFingerprint",
+                  "expectedCandidateFingerprint",
+                ],
+                properties: {
+                  rotationId: { type: "string", format: "uuid" },
+                  preparationToken: { type: "string", pattern: "^cpr1\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$" },
+                  expectedCurrentFingerprint: { type: "string", pattern: "^[a-f0-9]{64}$" },
+                  expectedCandidateFingerprint: { type: "string", pattern: "^[a-f0-9]{64}$" },
+                  operatorOverride: {
+                    type: "object",
+                    additionalProperties: false,
+                    required: ["actor", "reason", "approvalReference", "maintenanceWindow"],
+                    properties: {
+                      actor: { type: "string", pattern: "^[a-zA-Z0-9._:-]{1,128}$" },
+                      reason: { type: "string", minLength: 1, maxLength: 2048 },
+                      approvalReference: { type: "string", minLength: 1, maxLength: 512 },
+                      maintenanceWindow: {
+                        type: "object",
+                        additionalProperties: false,
+                        required: ["startsAt", "endsAt"],
+                        properties: {
+                          startsAt: { type: "string", format: "date-time" },
+                          endsAt: { type: "string", format: "date-time" },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          "200": { description: "Applied config receipt and durable alert receipts" },
+          "409": { description: "Fenced, expired, or outside the maintenance window" },
+          "503": { description: "Invalid config or durable alert plane unavailable" },
+        },
       },
     },
     "/admin/schedules/{scheduleId}": {

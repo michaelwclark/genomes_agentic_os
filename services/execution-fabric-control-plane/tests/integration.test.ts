@@ -401,6 +401,57 @@ describe.skipIf(!enabled)("PostgreSQL + Valkey integration", () => {
     expect(acknowledgedAlarms.rows).toEqual([{ status: "acknowledged" }]);
   });
 
+  it("replays a signed policy-override invocation but fences a changed envelope", async () => {
+    const store = new PostgresReliabilityStore(pool, "integration-host");
+    const rotationId = randomUUID();
+    const operatorOverride = {
+      actor: "operator:primary",
+      reason: "resume a pre-commit policy reload",
+      approvalReference: "AGE-161",
+      maintenanceWindow: {
+        startsAt: new Date(Date.now() - 30_000).toISOString(),
+        endsAt: new Date(Date.now() + 60_000).toISOString(),
+      },
+    };
+    const observation = {
+      source: "control-plane-policy-override",
+      incidentKey: `policy-rotation:${rotationId}:invoked`,
+      revision: 1,
+      active: true,
+      severity: "critical" as const,
+      code: "standalone_policy_override_invoked",
+      summary:
+        "Standalone policy override invoked; signed maintenance authorization is being checked.",
+      evidence: {
+        rotationId,
+        ...operatorOverride,
+        expectedCurrentFingerprint: "a".repeat(64),
+        expectedCandidateFingerprint: "b".repeat(64),
+        fabricEpoch: 1,
+      },
+      affected: { kind: "policy_rotation", id: rotationId },
+      runbook: { ref: "installers/execution-fabric/bin/rotate-policy.sh" },
+      observedAt: operatorOverride.maintenanceWindow.startsAt,
+    };
+    const first = await store.ingestExternalObservation(observation, 1);
+    const retry = await store.ingestExternalObservation(observation, 1);
+    expect(first).toMatchObject({ admitted: true, alarmDerived: true });
+    expect(retry).toMatchObject({
+      admitted: false,
+      idempotent: true,
+      finding: { id: first.finding.id },
+    });
+    await expect(
+      store.ingestExternalObservation(
+        {
+          ...observation,
+          evidence: { ...observation.evidence, reason: "different signed reason" },
+        },
+        1,
+      ),
+    ).rejects.toBeInstanceOf(ConflictError);
+  });
+
   it("enforces queue depth and provider concurrency transactionally", async () => {
     const namespace = `policy-${randomUUID()}`;
     const task = (idempotencyKey: string) => ({
@@ -742,6 +793,160 @@ describe.skipIf(!enabled)("PostgreSQL + Valkey integration", () => {
     expect((await leaderLedger.systemSnapshot()).databasePolicyFingerprint).toBe(
       candidateFingerprint,
     );
+  });
+
+  it("persists a scoped standalone override receipt and rejects an expired maintenance window", async () => {
+    const currentFingerprint =
+      createTestPolicy().policy.snapshot().appliedFingerprint;
+    const candidateFingerprint = "c".repeat(64);
+    const leaderLedger = new PostgresLedger(pool, 45, "genomesbox");
+    await leaderLedger.activateLeadership({
+      clusterId: "test-fabric",
+      leaderHostId: "genomesbox",
+      fabricEpoch: 1,
+      receiptId: "standalone-override-epoch-1",
+      fenceDigest: "d".repeat(64),
+      leaseExpiresAt: new Date(Date.now() + 60_000).toISOString(),
+      recoveryHoldUntil: null,
+    });
+    const expiredOverride = {
+      actor: "operator-1",
+      reason: "expired standalone maintenance",
+      approvalReference: "AGE-161",
+      maintenanceWindow: {
+        startsAt: new Date(Date.now() - 60_000).toISOString(),
+        endsAt: new Date(Date.now() - 1_000).toISOString(),
+      },
+    };
+    await expect(
+      leaderLedger.activatePolicyReload({
+        rotationId: randomUUID(),
+        preparationTokenHash: "1".repeat(64),
+        authorizationExpiresAt: expiredOverride.maintenanceWindow.endsAt,
+        expectedEpoch: 1,
+        expectedCurrentFingerprint: currentFingerprint,
+        expectedCandidateFingerprint: candidateFingerprint,
+        operatorOverride: expiredOverride,
+      }),
+    ).rejects.toBeInstanceOf(FencedError);
+    expect((await leaderLedger.systemSnapshot()).databasePolicyFingerprint).toBe(
+      currentFingerprint,
+    );
+
+    const operatorOverride = {
+      actor: "operator-1",
+      reason: "restore fenced standalone policy reload",
+      approvalReference: "AGE-161",
+      maintenanceWindow: {
+        startsAt: new Date(Date.now() - 30_000).toISOString(),
+        endsAt: new Date(Date.now() + 60_000).toISOString(),
+      },
+    };
+    const rotationId = randomUUID();
+    const authorizationIssuedAt = new Date(Date.now() - 5_000).toISOString();
+    const receipt = await leaderLedger.activatePolicyReload({
+      rotationId,
+      preparationTokenHash: "2".repeat(64),
+      authorizationIssuedAt,
+      authorizationExpiresAt: new Date(Date.now() + 30_000).toISOString(),
+      expectedEpoch: 1,
+      expectedCurrentFingerprint: currentFingerprint,
+      expectedCandidateFingerprint: candidateFingerprint,
+      operatorOverride,
+    });
+    expect(receipt).toMatchObject({
+      decision: "standalone_policy_override_applied",
+      operatorOverride,
+      authorizedAt: authorizationIssuedAt,
+      expectedCurrentFingerprint: currentFingerprint,
+      appliedFingerprint: candidateFingerprint,
+    });
+    const persisted = await pool.query<{
+      operator_id: string;
+      override_reason: string;
+      approval_reference: string;
+      maintenance_window_start: string;
+      maintenance_window_end: string;
+      decision: string;
+      authorization_issued_at: string;
+    }>(
+      `SELECT operator_id,override_reason,approval_reference,
+              maintenance_window_start,maintenance_window_end,decision
+              ,authorization_issued_at
+         FROM fabric_config_reload_receipts
+        WHERE rotation_id=$1`,
+      [rotationId],
+    );
+    expect(persisted.rows[0]).toMatchObject({
+      operator_id: operatorOverride.actor,
+      override_reason: operatorOverride.reason,
+      approval_reference: operatorOverride.approvalReference,
+      decision: "standalone_policy_override_applied",
+    });
+    expect(new Date(persisted.rows[0]!.maintenance_window_start).toISOString()).toBe(
+      operatorOverride.maintenanceWindow.startsAt,
+    );
+    expect(new Date(persisted.rows[0]!.maintenance_window_end).toISOString()).toBe(
+      operatorOverride.maintenanceWindow.endsAt,
+    );
+    expect(new Date(persisted.rows[0]!.authorization_issued_at).toISOString()).toBe(
+      authorizationIssuedAt,
+    );
+  });
+
+  it("replays signed policy-override timestamps with equivalent offsets", async () => {
+    const currentFingerprint =
+      createTestPolicy().policy.snapshot().appliedFingerprint;
+    const candidateFingerprint = "c".repeat(64);
+    const leaderLedger = new PostgresLedger(pool, 45, "genomesbox");
+    await leaderLedger.activateLeadership({
+      clusterId: "test-fabric",
+      leaderHostId: "genomesbox",
+      fabricEpoch: 1,
+      receiptId: "offset-replay-epoch-1",
+      fenceDigest: "d".repeat(64),
+      leaseExpiresAt: new Date(Date.now() + 60_000).toISOString(),
+      recoveryHoldUntil: null,
+    });
+    const timestampWithOffset = (timestamp: number, offsetMinutes: number) => {
+      const shifted = new Date(timestamp + offsetMinutes * 60_000)
+        .toISOString()
+        .slice(0, -1);
+      const sign = offsetMinutes >= 0 ? "+" : "-";
+      const absoluteMinutes = Math.abs(offsetMinutes);
+      return `${shifted}${sign}${String(Math.floor(absoluteMinutes / 60)).padStart(2, "0")}:${String(absoluteMinutes % 60).padStart(2, "0")}`;
+    };
+    const now = Date.now();
+    const input = {
+      rotationId: randomUUID(),
+      preparationTokenHash: "2".repeat(64),
+      authorizationIssuedAt: timestampWithOffset(now - 5_000, 0),
+      authorizationExpiresAt: timestampWithOffset(now + 30_000, 330),
+      expectedEpoch: 1,
+      expectedCurrentFingerprint: currentFingerprint,
+      expectedCandidateFingerprint: candidateFingerprint,
+      operatorOverride: {
+        actor: "operator-1",
+        reason: "restore fenced standalone policy reload",
+        approvalReference: "AGE-161",
+        maintenanceWindow: {
+          startsAt: timestampWithOffset(now - 30_000, -420),
+          endsAt: timestampWithOffset(now + 60_000, 330),
+        },
+      },
+    };
+    const first = await leaderLedger.activatePolicyReload(input);
+    const retry = await leaderLedger.activatePolicyReload(input);
+
+    expect(retry.receiptId).toBe(first.receiptId);
+    expect(retry.rotationId).toBe(input.rotationId);
+    expect(retry.authorizedAt).toBe(
+      new Date(input.authorizationIssuedAt).toISOString(),
+    );
+    expect(retry.operatorOverride?.maintenanceWindow).toEqual({
+      startsAt: new Date(input.operatorOverride.maintenanceWindow.startsAt).toISOString(),
+      endsAt: new Date(input.operatorOverride.maintenanceWindow.endsAt).toISOString(),
+    });
   });
 
   it("rejects a signed policy authorization that expires while its transaction waits", async () => {

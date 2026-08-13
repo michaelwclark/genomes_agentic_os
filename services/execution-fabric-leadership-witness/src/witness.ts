@@ -267,6 +267,9 @@ export class LeadershipWitness {
         expectedEpoch: request.expectedEpoch,
         expectedCurrentDigest: request.expectedCurrentDigest,
         candidateDigest: request.candidateDigest,
+        ...(request.operatorOverride
+          ? { operatorOverride: request.operatorOverride }
+          : {}),
         issuedAt,
         expiresAt,
       }),
@@ -316,6 +319,8 @@ export class LeadershipWitness {
         decoded.expectedCurrentDigest ===
           preparation.expectedCurrentDigest &&
         decoded.candidateDigest === preparation.candidateDigest &&
+        JSON.stringify(decoded.operatorOverride ?? null) ===
+          JSON.stringify(preparation.operatorOverride ?? null) &&
         decoded.issuedAt === preparation.issuedAt &&
         decoded.expiresAt === preparation.expiresAt
       );
@@ -336,6 +341,9 @@ export class LeadershipWitness {
         expectedEpoch: request.expectedEpoch,
         expectedCurrentDigest: request.expectedCurrentDigest,
         candidateDigest: request.candidateDigest,
+        ...(request.operatorOverride
+          ? { operatorOverride: request.operatorOverride }
+          : {}),
         candidateHosts,
       }),
     );
@@ -671,6 +679,16 @@ export class LeadershipWitness {
         "configuration digest rotation requires at least two configured failover hosts",
       );
     }
+    if (standaloneRotation && !request.operatorOverride) {
+      throw new WitnessConflictError(
+        "standalone-primary configuration rotation requires an operator reason, approval reference, and maintenance window",
+      );
+    }
+    if (!standaloneRotation && request.operatorOverride) {
+      throw new WitnessConflictError(
+        "operator override is restricted to the configured standalone-primary rotation path",
+      );
+    }
     const requestDigest = this.configRotationRequestDigest(
       request,
       candidateHosts,
@@ -709,6 +727,26 @@ export class LeadershipWitness {
       throw new WitnessConflictError(
         `another unresolved configuration rotation is active: ${activePreparations[0]!.rotationId}`,
       );
+    }
+
+    if (request.operatorOverride) {
+      const startsAt = new Date(
+        request.operatorOverride.maintenanceWindow.startsAt,
+      ).getTime();
+      const endsAt = new Date(
+        request.operatorOverride.maintenanceWindow.endsAt,
+      ).getTime();
+      const now = this.now().getTime();
+      if (
+        !Number.isFinite(startsAt) ||
+        !Number.isFinite(endsAt) ||
+        startsAt > now ||
+        endsAt <= now
+      ) {
+        throw new WitnessConflictError(
+          "standalone-primary configuration rotation is outside its maintenance window",
+        );
+      }
     }
 
     const [state, candidates] = await Promise.all([
@@ -846,7 +884,20 @@ export class LeadershipWitness {
     }
 
     const issuedAt = this.timestamp();
-    const expiresAtEpoch = nowEpoch + this.config.planTtlSeconds;
+    const expiresAtEpoch = request.operatorOverride
+      ? Math.min(
+          nowEpoch + this.config.planTtlSeconds,
+          Math.floor(
+            new Date(request.operatorOverride.maintenanceWindow.endsAt).getTime() /
+              1000,
+          ),
+        )
+      : nowEpoch + this.config.planTtlSeconds;
+    if (expiresAtEpoch <= nowEpoch) {
+      throw new WitnessConflictError(
+        "standalone-primary configuration rotation maintenance window expires too soon",
+      );
+    }
     const expiresAt = new Date(expiresAtEpoch * 1000).toISOString();
     const preparationToken = this.configRotationPreparationToken(
       request,
@@ -862,6 +913,9 @@ export class LeadershipWitness {
       expectedEpoch: state.fabricEpoch,
       expectedCurrentDigest: state.configDigest,
       candidateDigest: request.candidateDigest,
+      ...(request.operatorOverride
+        ? { operatorOverride: request.operatorOverride }
+        : {}),
       candidateHosts,
       expectedTimelineId: state.timelineId,
       expectedLeaderWalPosition: state.leaderWalPosition,
@@ -904,6 +958,9 @@ export class LeadershipWitness {
             expectedEpoch: state.fabricEpoch,
             expectedCurrentDigest: state.configDigest,
             candidateDigest: request.candidateDigest,
+            ...(request.operatorOverride
+              ? { operatorOverride: request.operatorOverride }
+              : {}),
             candidateHosts,
             preparationTokenHash: preparation.preparationTokenHash,
             expiresAt,
@@ -1043,6 +1100,9 @@ export class LeadershipWitness {
       fabricEpoch: state.fabricEpoch,
       previousConfigDigest: state.configDigest,
       configDigest: preparation.candidateDigest,
+      ...(preparation.operatorOverride
+        ? { operatorOverride: preparation.operatorOverride }
+        : {}),
       candidateHosts: preparation.candidateHosts,
       preparationTokenHash,
       committedAt,
@@ -1077,6 +1137,9 @@ export class LeadershipWitness {
             fabricEpoch: state.fabricEpoch,
             previousConfigDigest: state.configDigest,
             configDigest: preparation.candidateDigest,
+            ...(preparation.operatorOverride
+              ? { operatorOverride: preparation.operatorOverride }
+              : {}),
             candidateHosts: preparation.candidateHosts,
             preparationTokenHash,
             appliedEvidenceHost: commitCandidate.candidate,
