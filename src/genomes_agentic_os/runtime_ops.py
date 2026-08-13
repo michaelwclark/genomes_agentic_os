@@ -14,6 +14,7 @@ import re
 import shlex
 import subprocess
 import sys
+import tempfile
 import time
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -827,7 +828,25 @@ def _write_yaml(path: Path, data: dict[str, Any]) -> None:
     payload = deepcopy(data)
     payload["updated_at"] = _now()
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            temporary_path = Path(handle.name)
+            handle.write(yaml.safe_dump(payload, sort_keys=False))
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary_path, path)
+        temporary_path = None
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
 
 
 def _seed_yaml(path: Path, data: dict[str, Any], result: dict[str, Any]) -> None:
@@ -4183,7 +4202,10 @@ def _apply_runtime_tracking_live(
     now = _now()
 
     # --- cockpit page ---
-    existing_cockpit_id: str | None = existing_manifest.get("cockpit_page_id")
+    # A local projection uses synthetic IDs. Never reuse those IDs on a live
+    # apply; only a manifest previously written by the live path is trusted.
+    resume_manifest = existing_manifest if existing_manifest.get("live") is True else {}
+    existing_cockpit_id: str | None = resume_manifest.get("cockpit_page_id")
     cockpit_id: str | None = None
     cockpit_created = False
 
@@ -4211,7 +4233,7 @@ def _apply_runtime_tracking_live(
     databases_created = 0
     databases_reused = 0
 
-    existing_db_ids: dict[str, str] = existing_manifest.get("database_ids") or {}
+    existing_db_ids: dict[str, str] = resume_manifest.get("database_ids") or {}
 
     child_dbs = search_child_databases(cockpit_id, token_env, fetcher=fetcher)
     live_db_by_title: dict[str, str] = {db["title"]: db["id"] for db in child_dbs}
@@ -4242,17 +4264,17 @@ def _apply_runtime_tracking_live(
 
     def persist_manifest(records: list[dict[str, Any]], *, status: str, error_type: str | None = None) -> None:
         merged_database_ids = {
-            **(existing_manifest.get("database_ids") or {}),
+            **(resume_manifest.get("database_ids") or {}),
             **database_ids,
         }
         merged_databases = list(dict.fromkeys([
-            *(existing_manifest.get("databases") or []),
+            *(resume_manifest.get("databases") or []),
             *plan["databases"],
             *merged_database_ids,
         ]))
         records_by_key = {
             str(item.get("record_key")): item
-            for item in (existing_manifest.get("records") or [])
+            for item in (resume_manifest.get("records") or [])
             if isinstance(item, dict) and item.get("record_key")
         }
         records_by_key.update({
@@ -4277,7 +4299,7 @@ def _apply_runtime_tracking_live(
 
     # Persist remote container IDs before any record loop so an interrupted
     # apply can resume without losing the cockpit/database identity.
-    prior_records = list(existing_manifest.get("records") or [])
+    prior_records = list(resume_manifest.get("records") or [])
     persist_manifest(prior_records, status="in_progress")
 
     # --- upsert records ---
@@ -4399,8 +4421,8 @@ def apply_runtime_tracking(
             f"to authorize parent_page_id={parent_page_id!r} with token env {token_env!r}"
         )
 
+    existing_manifest: dict[str, Any] = _load_yaml(manifest_path, {})
     if go_live:
-        existing_manifest: dict[str, Any] = _load_yaml(manifest_path, {})
         from . import notion_api as _notion_api
         _fetcher = fetcher if fetcher is not None else _notion_api._default_fetcher
         return _apply_runtime_tracking_live(
@@ -4413,6 +4435,14 @@ def apply_runtime_tracking(
             token_env=token_env,
             cockpit_title=cockpit_title,
             fetcher=_fetcher,
+        )
+
+    # A local fallback must never destroy a live manifest. Operators can resume
+    # the existing live projection with --live once credentials are available.
+    if existing_manifest.get("live") is True:
+        raise RuntimeError(
+            "local runtime tracking apply would overwrite a live manifest; "
+            "restore live credentials and pass --live to resume"
         )
 
     # --- local path (original behaviour + live: false) ---

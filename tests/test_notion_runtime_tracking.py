@@ -197,6 +197,35 @@ def test_no_config_local_path_token_env_unset(tmp_path: Path) -> None:
     assert result.get("live") is False
 
 
+def test_local_apply_refuses_to_overwrite_live_manifest(tmp_path: Path) -> None:
+    """A credential-less fallback must preserve real Notion identities."""
+    from genomes_agentic_os.runtime_ops import apply_runtime_tracking, build_runtime_tracking_plan
+
+    root = _installed_root(tmp_path)
+    _set_notion_tracking_config(root, parent_page_id=PARENT_PAGE_ID)
+    record_count = len(build_runtime_tracking_plan(str(root))["records"])
+    transport = FakeTransport(_build_live_responses(records_count=record_count))
+
+    with patch.dict(os.environ, {"GENOMES_NOTION_PAT": SENTINEL_TOKEN}):
+        apply_runtime_tracking(
+            str(root), verified_workspace="Genome's Notion", fetcher=transport, allow_live=True
+        )
+
+    manifest_path = root / ".notion-runtime-tracking" / "manifest.yml"
+    before = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+    assert before["live"] is True
+
+    with patch.dict(os.environ, {}, clear=False):
+        os.environ.pop("GENOMES_NOTION_PAT", None)
+        with pytest.raises(RuntimeError, match="would overwrite a live manifest"):
+            apply_runtime_tracking(str(root), verified_workspace="Genome's Notion", fetcher=FakeTransport([]))
+
+    after = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+    assert after["live"] is True
+    assert after["cockpit_page_id"] == before["cockpit_page_id"]
+    assert after["database_ids"] == before["database_ids"]
+
+
 def test_explicit_live_request_fails_closed_without_prerequisites(tmp_path: Path) -> None:
     from genomes_agentic_os.runtime_ops import apply_runtime_tracking
 
