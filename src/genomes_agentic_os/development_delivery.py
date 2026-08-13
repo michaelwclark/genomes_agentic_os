@@ -7062,6 +7062,107 @@ def reopen_auto_dev_item(
     }
 
 
+def _normalize_exact_legacy_family_identity(
+    details: Mapping[str, Any],
+    *,
+    expected_repository: str,
+    expected_base_branch: str,
+    expected_provider: str,
+    expected_source_branch: str,
+    pull_request_prefix: str,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Normalize one exact legacy ``evidence.family`` item for refresh comparison.
+
+    This is intentionally not a general family parser.  It admits only the
+    historical GitHub shape that can be fully bound to the selected task before
+    the immutable predecessor receipt is compared to a refreshed PR head.
+    """
+
+    family = details.get("family")
+    if not isinstance(family, list) or len(family) != 1 or not isinstance(family[0], Mapping):
+        raise DevelopmentDeliveryError(
+            "legacy evidence.family identity requires exactly one object"
+        )
+    if any(
+        details.get(field) is not None
+        for field in (
+            "repository",
+            "base_branch",
+            "provider",
+            "pull_request",
+            "source_branch",
+            "source_head_sha",
+            "source",
+            "targets",
+        )
+    ):
+        raise DevelopmentDeliveryError(
+            "legacy evidence.family identity must not mix with another prior identity format"
+        )
+    if not (
+        expected_repository.startswith("git:github.com/")
+        and expected_provider == "github"
+        and expected_base_branch
+        and expected_source_branch
+    ):
+        raise DevelopmentDeliveryError(
+            "legacy evidence.family identity must bind the selected GitHub task"
+        )
+
+    item = family[0]
+    repository = str(item.get("repository") or "").strip()
+    base_branch = str(item.get("base") or "").strip()
+    provider = str(item.get("provider") or "").strip().lower()
+    pull_request = item.get("pull_request")
+    source_branch = str(item.get("source_branch") or "").strip()
+    source_head = str(item.get("source_head") or "").strip()
+    expected_legacy_repository = expected_repository.removeprefix("git:github.com/")
+    if not (
+        repository == expected_legacy_repository
+        and base_branch == expected_base_branch
+        and provider == expected_provider
+        and type(pull_request) is int
+        and pull_request > 0
+        and source_branch == expected_source_branch
+        and re.fullmatch(r"[a-fA-F0-9]{7,64}", source_head)
+        and item.get("provider_readback_verified") is True
+    ):
+        raise DevelopmentDeliveryError(
+            "legacy evidence.family identity does not exactly bind the selected task"
+        )
+
+    normalized_pull_request = f"{pull_request_prefix}{pull_request}"
+    normalized = {
+        **details,
+        "repository": expected_repository,
+        "base_branch": expected_base_branch,
+        "provider": expected_provider,
+        "pull_request": normalized_pull_request,
+        "source_branch": expected_source_branch,
+        "source_head_sha": source_head,
+    }
+    provenance = {
+        "source": "evidence.family[0]",
+        "legacy_fields": {
+            "repository": repository,
+            "base": base_branch,
+            "provider": provider,
+            "pull_request": pull_request,
+            "source_branch": source_branch,
+            "source_head": source_head,
+        },
+        "normalized_identity": {
+            "repository": expected_repository,
+            "base_branch": expected_base_branch,
+            "provider": expected_provider,
+            "pull_request": normalized_pull_request,
+            "source_branch": expected_source_branch,
+            "source_head_sha": source_head,
+        },
+    }
+    return normalized, provenance
+
+
 def run_development_stage(
     state_file: str | Path,
     *,
@@ -7893,6 +7994,22 @@ def run_development_stage(
                             "git:bitbucket.org/"
                         )
                     pull_request_prefix = f"{pull_request_repository}#"
+                    legacy_family_identity_normalization: dict[str, Any] | None = None
+                    if (
+                        not previous_details.get("source_head_sha")
+                        and "family" in previous_details
+                    ):
+                        (
+                            previous_details,
+                            legacy_family_identity_normalization,
+                        ) = _normalize_exact_legacy_family_identity(
+                            previous_details,
+                            expected_repository=expected_repository,
+                            expected_base_branch=expected_base_branch,
+                            expected_provider=expected_provider,
+                            expected_source_branch=expected_source_branch,
+                            pull_request_prefix=pull_request_prefix,
+                        )
                     # The immediate predecessor of the repository-qualified
                     # family contract stored a bare GitHub owner/repository
                     # and numeric PR.  Normalize only that exact historical
@@ -8161,6 +8278,11 @@ def run_development_stage(
                             "source": "selected_task.worktree.branch",
                             "value": expected_source_branch,
                         }
+                    if legacy_family_identity_normalization is not None:
+                        payload["supersedes"]["legacy_identity_normalization"] = (
+                            legacy_family_identity_normalization
+                        )
+                    elif legacy_source_branch_derived:
                         if legacy_canonical_github_identity:
                             legacy_normalization["identity_shape"] = (
                                 "canonical_qualified_github"
