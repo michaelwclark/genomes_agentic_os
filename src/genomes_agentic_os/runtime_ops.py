@@ -94,8 +94,9 @@ ACTIVE_RUN_QUEUE_STATES = {"queued", "running", "approval-needed"}
 RUN_QUEUE_STALE_GRACE = timedelta(hours=24)
 SAFE_DISPATCH_TARGETS = {"script", "codex_harness", "claude_harness"}
 SCRIPT_DISPATCH_TIMEOUT_SECONDS = 900
-INLINE_SCRIPT_LEASE_SECONDS = 3600
 LEASE_SAFETY_MARGIN_SECONDS = 60
+# Default dispatch timeout (900s) plus the normal reclaim safety margin.
+INLINE_SCRIPT_LEASE_SECONDS = SCRIPT_DISPATCH_TIMEOUT_SECONDS + LEASE_SAFETY_MARGIN_SECONDS
 MAX_LEASE_SECONDS = 24 * 3600
 LONG_RUNNING_THRESHOLD_SECONDS = 120
 SCRIPT_DISPATCH_OUTPUT_LIMIT = 20000
@@ -4285,7 +4286,16 @@ def _apply_runtime_tracking_live(
             persist_manifest(records, status="in_progress")
     except Exception as exc:
         persist_manifest(records, status="partial", error_type=type(exc).__name__)
-        raise RuntimeError("live runtime tracking apply incomplete; resume from manifest") from exc
+        error = RuntimeError("live runtime tracking apply incomplete; resume from manifest")
+        error.partial_result = {
+            "applied": True,
+            "sync_status": "partial",
+            "cockpit_page_id": cockpit_id,
+            "records_created": records_created,
+            "records_updated": records_updated,
+            "records_completed": len(records),
+        }
+        raise error from exc
 
     persist_manifest(records, status="complete")
 

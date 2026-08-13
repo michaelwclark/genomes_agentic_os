@@ -696,7 +696,14 @@ def handle_runtime_tracking(args: argparse.Namespace) -> int:
                       "would_go_live": bool(parent_page_id and token_present),
                       "token_configured": token_present}
     except Exception as exc:
-        result = {"applied": False, "ok": False, "error_type": type(exc).__name__, "error": str(exc), "manifest_path": str(Path(args.root) / ".notion-runtime-tracking" / "manifest.yml")}
+        result = {
+            "applied": bool(getattr(exc, "partial_result", {}).get("applied", False)),
+            "ok": False,
+            "error_type": type(exc).__name__,
+            "error": str(exc),
+            **getattr(exc, "partial_result", {}),
+            "manifest_path": str(Path(args.root).expanduser().resolve() / ".notion-runtime-tracking" / "manifest.yml"),
+        }
         _print_structured(result, json_output=args.json)
         return 1
     _print_structured(result, json_output=args.json)
