@@ -23,6 +23,12 @@ All notable changes to this project are documented here. The format follows
   same review identity cannot project under two effect-key formats.
 
 ### Documentation
+- Document the persisted first-format guard and the conservative queue
+  quiescence rule for upgrades.
+- Document that the first effect-key format is persisted per immutable review
+  identity so legacy and current task shapes cannot project the same helper
+  result under two keys; classify PID-less governor exceptions as retryable
+  dispatch failures.
 
 ### Fixed
 - Recover legacy PR-create and worktree-ready delivery packets through the
@@ -31,26 +37,11 @@ All notable changes to this project are documented here. The format follows
   and exact legacy PR identity during delivery validation.
 - Make policy migration and admission contention handling fail closed and
   idempotent.
-- Persist full-identity Team PR review intent before helper launch, recover a
-  completed helper receipt after worker interruption, fence overlapping
-  attempts per review identity, and bind the helper to the exact review mode,
-  run ID, and summary path. Full-digest receipt paths, fsync-backed
-  persistence, and a durable helper-launch marker prevent cross-ticket recovery collisions,
-  torn intent writes, and relaunch while the PID still belongs to the exact
-  helper run. A shared marker lock prevents dispatch-failure writes from
-  clobbering a concurrently registered helper PID. Fresh and recovered
-  successes terminalize the marker.
 - Normalize case-insensitive repository, head, and source-key fields before
   deriving the cross-repository review identity and helper run ID.
-- Document the persisted first-format guard and the conservative queue
-  quiescence rule for upgrades.
 - Keep enough bounded review attempts for error-driven retries to outlive the
   helper fence, and classify transient durable-write, lock, and host-identity
   failures as retryable.
-- Document that the first effect-key format is persisted per immutable review
-  identity so legacy and current task shapes cannot project the same helper
-  result under two keys; classify PID-less governor exceptions as retryable
-  dispatch failures.
 - Validate each recorded effect key against its declared format, durably
   materialize a valid stdout fallback summary, and remove host-ineligible
   pinned queues before worker registration and claim.
@@ -82,6 +73,15 @@ All notable changes to this project are documented here. The format follows
 ### Fixed
 - Support legacy execution-fabric role-health bootstrap during protected
   rollout reconciliation.
+- Persist full-identity Team PR review intent before helper launch, recover a
+  completed helper receipt after worker interruption, fence overlapping
+  attempts per review identity, and bind the helper to the exact review mode,
+  run ID, and summary path. Full-digest receipt paths, fsync-backed
+  persistence, and a durable helper-launch marker prevent cross-ticket recovery
+  collisions, torn intent writes, and relaunch while the PID still belongs to
+  the exact helper run. A shared marker lock prevents dispatch-failure writes
+  from clobbering a concurrently registered helper PID. Fresh and recovered
+  successes terminalize the marker.
 ## [0.5.7] - 2026-07-29
 
 ### Added
