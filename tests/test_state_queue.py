@@ -166,6 +166,7 @@ def test_claim_next_normalizes_timestamp_spellings_for_starvation_cutoff(conn: s
 
     assert claimed is not None
     assert claimed["id"] == "aged-zulu"
+    assert queue.get(conn, "fresh-offset")["status"] == "queued"
 
 
 def test_claim_next_respects_due_at(conn: sqlite3.Connection) -> None:
