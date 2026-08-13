@@ -95,6 +95,8 @@ RUN_QUEUE_STALE_GRACE = timedelta(hours=24)
 SAFE_DISPATCH_TARGETS = {"script", "codex_harness", "claude_harness"}
 SCRIPT_DISPATCH_TIMEOUT_SECONDS = 900
 INLINE_SCRIPT_LEASE_SECONDS = 3600
+LEASE_SAFETY_MARGIN_SECONDS = 60
+MAX_LEASE_SECONDS = 24 * 3600
 LONG_RUNNING_THRESHOLD_SECONDS = 120
 SCRIPT_DISPATCH_OUTPUT_LIMIT = 20000
 DEFAULT_RUN_QUEUE_ACTIVE_MAX_AGE_HOURS = 24
@@ -1038,7 +1040,8 @@ def _dispatch_lease_seconds(item: dict[str, Any], timeout_seconds: int) -> int:
         lease = int(value) if value is not None and not isinstance(value, bool) else timeout_seconds + 60
     except (TypeError, ValueError):
         lease = timeout_seconds + 60
-    return max(timeout_seconds + 1, lease)
+    lease = min(lease, MAX_LEASE_SECONDS)
+    return max(timeout_seconds + LEASE_SAFETY_MARGIN_SECONDS, lease)
 
 
 def _provider_from_text(text: str) -> str | None:
@@ -2748,8 +2751,8 @@ def runtime_run_batch(
                 SELECT id FROM run_queue
                 WHERE status = 'queued' AND (due_at IS NULL OR due_at <= ?)
                 ORDER BY
-              priority + CASE WHEN COALESCE(due_at, created_at) <= ? THEN 10 ELSE 0 END DESC,
-                  CASE WHEN COALESCE(due_at, created_at) <= ? THEN substr(COALESCE(due_at, created_at), 1, 13) END ASC,
+              COALESCE(priority, 0) + CASE WHEN COALESCE(due_at, created_at) <= ? THEN 10 ELSE 0 END DESC,
+                  COALESCE(CASE WHEN COALESCE(due_at, created_at) <= ? THEN substr(COALESCE(due_at, created_at), 1, 13) END, '~') ASC,
                   priority DESC,
                   (due_at IS NULL) ASC, due_at, created_at, id
                 """,
@@ -3141,8 +3144,8 @@ def _prepare_execution_fabric_dispatch(
                             "SELECT id FROM run_queue",
                             "WHERE " + " AND ".join(candidate_clauses),
                             "ORDER BY",
-                            "  CASE WHEN COALESCE(due_at, created_at) <= ? THEN 0 ELSE 1 END,",
-                            "  CASE WHEN COALESCE(due_at, created_at) <= ? THEN substr(COALESCE(due_at, created_at), 1, 13) END ASC,",
+                            "  COALESCE(priority, 0) + CASE WHEN COALESCE(due_at, created_at) <= ? THEN 10 ELSE 0 END DESC,",
+                            "  COALESCE(CASE WHEN COALESCE(due_at, created_at) <= ? THEN substr(COALESCE(due_at, created_at), 1, 13) END, '~') ASC,",
                             "  priority DESC,",
                             "  (due_at IS NULL) ASC, due_at, created_at, id",
                             "LIMIT 1",
