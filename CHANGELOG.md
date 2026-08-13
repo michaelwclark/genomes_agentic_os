@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Run the BigMac Execution Fabric alarm dispatcher through its immutable worker
+  Python runtime, so governed notification delivery does not silently fail when
+  launchd resolves a system interpreter without PyYAML.
+
 All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/) computed from Conventional Commits

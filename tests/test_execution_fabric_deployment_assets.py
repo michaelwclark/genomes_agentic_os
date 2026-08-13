@@ -1679,6 +1679,7 @@ def test_alarm_dispatch_is_separate_filtered_and_receipt_backed() -> None:
     assert "/api/v1/alarms/${alarm_id}/fail" in dispatcher
     assert "--source runtime.execution_fabric.health" in dispatcher
     assert "FABRIC_ALARM_DISPATCHER_TOKEN_FILE" in dispatcher
+    assert '"$FABRIC_WORKER_PYTHON" "$notifier"' in dispatcher
     assert 'fabric_api_post_bearer_value' in dispatcher
     assert '"$claim_token"' in dispatcher
     assert "FABRIC_ADMIN_TOKEN_FILE" not in dispatcher
