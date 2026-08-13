@@ -11,6 +11,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
+import json
 from pathlib import Path
 from typing import Any, Protocol
 from uuid import uuid4
@@ -65,8 +66,15 @@ class EvidenceRecord:
         document["payload_metadata"] = dict(self.payload_metadata)
         document["id"] = self.id or str(uuid4())
         document["ingested_at"] = _timestamp(self.ingested_at)
+        identity = {
+            "host_id": self.host_id,
+            "model_key": self.model_key,
+            "occurred_at": self.occurred_at,
+            "payload": payload,
+            "source": self.source,
+        }
         document["content_hash"] = self.content_hash or sha256(
-            repr((self.model_key, self.host_id, self.source, self.occurred_at, payload)).encode("utf-8")
+            json.dumps(identity, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
         ).hexdigest()
         return document
 

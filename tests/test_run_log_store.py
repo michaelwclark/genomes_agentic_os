@@ -62,6 +62,17 @@ def test_memory_fake_satisfies_append_search_aggregate_and_idempotency_contract(
     assert store.health()["ready"] is True
 
 
+def test_memory_idempotency_canonicalizes_reordered_nested_payloads() -> None:
+    store = _store()
+    first = store.append(_record(payload={"result": "success", "nested": {"one": 1, "two": 2}}))
+    duplicate = store.import_idempotently(
+        [_record(id="reordered", payload={"nested": {"two": 2, "one": 1}, "result": "success"})]
+    )[0]
+
+    assert duplicate["id"] == first["id"]
+    assert duplicate["content_hash"] == first["content_hash"]
+
+
 def test_store_rejects_unknown_hosts_and_wrong_model_schema() -> None:
     store = _store()
     with pytest.raises(UnknownHostError, match="unknown evidence host"):

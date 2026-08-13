@@ -200,9 +200,12 @@ def test_mongodb_adapter_conforms_without_a_live_database() -> None:
     assert indexes["hosts"] == ["host_id_unique", "aliases_lookup"]
     assert database["hosts"].index_calls[0][1] == {"unique": True, "name": "host_id_unique"}
 
-    first = adapter.append(_record(id="first"))
-    duplicate = adapter.import_idempotently([_record(id="duplicate")])[0]
+    first = adapter.append(_record(id="first", payload={"result": "success", "nested": {"one": 1, "two": 2}}))
+    duplicate = adapter.import_idempotently(
+        [_record(id="duplicate", payload={"nested": {"two": 2, "one": 1}, "result": "success"})]
+    )[0]
     assert duplicate["id"] == first["id"]
+    assert duplicate["content_hash"] == first["content_hash"]
     assert adapter.get("run_log", first["id"])["host_id"] == "bigmac"  # type: ignore[index]
 
     collection = database[adapter.config.models["run_log"]["collection"]]
