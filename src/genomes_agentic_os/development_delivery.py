@@ -2900,10 +2900,74 @@ def _worktree_ready_recovery_mapping(content: bytes, *, label: str) -> dict[str,
     return dict(value)
 
 
+def _worktree_ready_recovery_registered_head(task: Mapping[str, Any]) -> str:
+    """Return the clean, registered Git worktree HEAD without guessing history."""
+
+    worktree = task.get("worktree") if isinstance(task.get("worktree"), Mapping) else {}
+    raw_path = str(worktree.get("path") or "").strip()
+    branch = str(worktree.get("branch") or "").strip()
+    if not raw_path or not branch:
+        raise DevelopmentDeliveryError(
+            "worktree_ready delivery recovery requires the original registered Git worktree"
+        )
+    candidate = Path(raw_path).expanduser()
+    if not candidate.is_absolute() or candidate.is_symlink():
+        raise DevelopmentDeliveryError(
+            "worktree_ready delivery recovery registered worktree is missing or unsafe"
+        )
+    try:
+        worktree_path = candidate.resolve(strict=True)
+        entry = candidate.lstat()
+    except OSError as exc:
+        raise DevelopmentDeliveryError(
+            "worktree_ready delivery recovery registered worktree is missing or unsafe"
+        ) from exc
+    if not stat.S_ISDIR(entry.st_mode) or worktree_path != candidate:
+        raise DevelopmentDeliveryError(
+            "worktree_ready delivery recovery registered worktree is missing or unsafe"
+        )
+
+    def git_output(*arguments: str) -> str:
+        completed = subprocess.run(
+            ["git", "-C", str(worktree_path), *arguments],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        if completed.returncode:
+            raise DevelopmentDeliveryError(
+                "worktree_ready delivery recovery requires a clean registered Git worktree"
+            )
+        return completed.stdout.strip()
+
+    if git_output("rev-parse", "--is-inside-work-tree") != "true":
+        raise DevelopmentDeliveryError(
+            "worktree_ready delivery recovery requires a clean registered Git worktree"
+        )
+    if git_output("rev-parse", "--show-toplevel") != str(worktree_path):
+        raise DevelopmentDeliveryError(
+            "worktree_ready delivery recovery registered worktree root changed"
+        )
+    if git_output("branch", "--show-current") != branch:
+        raise DevelopmentDeliveryError(
+            "worktree_ready delivery recovery registered worktree branch changed"
+        )
+    if git_output("status", "--porcelain=v1", "--untracked-files=all"):
+        raise DevelopmentDeliveryError(
+            "worktree_ready delivery recovery requires a clean registered Git worktree"
+        )
+    head = git_output("rev-parse", "--verify", "HEAD^{commit}")
+    if not re.fullmatch(r"[a-fA-F0-9]{40}", head):
+        raise DevelopmentDeliveryError(
+            "worktree_ready delivery recovery registered worktree HEAD is invalid"
+        )
+    return head.lower()
+
+
 def _worktree_ready_recovery_release_identity(
     task: Mapping[str, Any], *, work_item: Path
 ) -> dict[str, Any]:
-    """Accept exactly one hash-bound, current PR-family evidence pair."""
+    """Bind current PR evidence to the clean registered worktree HEAD only."""
 
     repository = task.get("repository") if isinstance(task.get("repository"), Mapping) else {}
     worktree = task.get("worktree") if isinstance(task.get("worktree"), Mapping) else {}
@@ -2914,6 +2978,7 @@ def _worktree_ready_recovery_release_identity(
         raise DevelopmentDeliveryError(
             "worktree_ready delivery recovery requires the selected GitHub repository, base, and worktree branch"
         )
+    worktree_head = _worktree_ready_recovery_registered_head(task)
     github_repository = repository_id.removeprefix("git:github.com/")
     evidence_root = work_item / "artifacts" / "auto-dev-pr-create"
     candidates: list[dict[str, Any]] = []
@@ -2994,11 +3059,16 @@ def _worktree_ready_recovery_release_identity(
                 },
             }
         )
-    if len(candidates) != 1:
+    matching = [
+        candidate
+        for candidate in candidates
+        if candidate["pull_request_identity"]["source_head_sha"].lower() == worktree_head
+    ]
+    if len(matching) != 1:
         raise DevelopmentDeliveryError(
-            "worktree_ready delivery recovery requires exactly one current hash-bound release family/readback pair"
+            "worktree_ready delivery recovery requires exactly one hash-bound release family/readback pair for the registered worktree HEAD"
         )
-    return candidates[0]
+    return matching[0]
 
 
 def _worktree_ready_recovery_post_review_self_handoffs(

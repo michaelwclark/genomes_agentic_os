@@ -530,6 +530,7 @@ def _active_worktree_ready_recovery_fixture(
     *,
     post_review_self_admission: bool = False,
     single_stage_pr_create: bool = False,
+    family_source_head: str | None = None,
 ) -> tuple[TaskState, Path, Path, Path]:
     """Build either supported worktree-ready recovery shape without provider mutation."""
 
@@ -537,8 +538,8 @@ def _active_worktree_ready_recovery_fixture(
     root = tmp_path / "os"
     _project(root, repo, repository_id="git:github.com/acme/app")
     worktree = tmp_path / "legacy-worktree"
-    worktree.mkdir()
     branch = "feature/cc-193-legacy-readiness"
+    _git("worktree", "add", "-b", branch, str(worktree), base_sha, cwd=repo)
     monkeypatch.setattr(
         delivery,
         "create_isolated_worktree",
@@ -623,7 +624,7 @@ def _active_worktree_ready_recovery_fixture(
         portfolio_path.write_text(
             json.dumps(portfolio, indent=2, sort_keys=True) + "\n", encoding="utf-8"
         )
-    head = "a" * 40
+    head = family_source_head or _git("rev-parse", "HEAD", cwd=worktree)
     evidence_dir = work_item / "artifacts" / "auto-dev-pr-create"
     evidence_dir.mkdir(parents=True)
     family = {
@@ -659,11 +660,33 @@ def _active_worktree_ready_recovery_fixture(
         "state": "OPEN",
         "is_draft": False,
     }
-    family_path = evidence_dir / "refresh-aaaaaaaa-family-complete.json"
-    provider_path = evidence_dir / "refresh-aaaaaaaa-provider-readback.json"
+    prefix = head.lower()[:8]
+    family_path = evidence_dir / f"refresh-{prefix}-family-complete.json"
+    provider_path = evidence_dir / f"refresh-{prefix}-provider-readback.json"
     family_path.write_text(json.dumps(family), encoding="utf-8")
     provider_path.write_text(json.dumps(provider), encoding="utf-8")
     return task, portfolio_path, family_path, provider_path
+
+
+def _add_valid_worktree_ready_recovery_family(
+    family_path: Path,
+    provider_path: Path,
+    *,
+    source_head: str,
+) -> tuple[Path, Path]:
+    """Add one separate valid historical family without replacing evidence."""
+
+    family = json.loads(family_path.read_text(encoding="utf-8"))
+    provider = json.loads(provider_path.read_text(encoding="utf-8"))
+    family["evidence"]["source_head_sha"] = source_head
+    family["evidence"]["provider_observed"]["head_sha"] = source_head
+    provider["source_head_sha"] = source_head
+    prefix = source_head[:8]
+    extra_family = family_path.with_name(f"refresh-{prefix}-family-complete.json")
+    extra_provider = provider_path.with_name(f"refresh-{prefix}-provider-readback.json")
+    extra_family.write_text(json.dumps(family), encoding="utf-8")
+    extra_provider.write_text(json.dumps(provider), encoding="utf-8")
+    return extra_family, extra_provider
 
 
 @pytest.mark.parametrize("schema_location", ["installed", "package"])
@@ -7414,6 +7437,152 @@ def test_recover_active_worktree_ready_delivery_rechecks_portfolio_drift_before_
     assert task.path.read_bytes() == task_before
     assert projection_path.read_bytes() == projection_before
     assert json.loads(portfolio_path.read_text(encoding="utf-8"))["state"] == "partial"
+
+
+def test_worktree_ready_recovery_selects_current_registered_head_from_two_valid_families(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    task, _, family_path, provider_path = _active_worktree_ready_recovery_fixture(
+        tmp_path, monkeypatch
+    )
+    _add_valid_worktree_ready_recovery_family(
+        family_path, provider_path, source_head="b" * 40
+    )
+
+    selected = delivery._worktree_ready_recovery_release_identity(
+        task.read(), work_item=Path(task.read()["work_item"])
+    )
+
+    assert selected["family"] == family_path.resolve()
+    assert selected["provider"] == provider_path.resolve()
+    assert selected["pull_request_identity"]["source_head_sha"] == _git(
+        "rev-parse", "HEAD", cwd=Path(task.read()["worktree"]["path"])
+    )
+
+
+def test_worktree_ready_recovery_refuses_two_valid_families_without_registered_head_match_without_mutation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    task, portfolio_path, family_path, provider_path = _active_worktree_ready_recovery_fixture(
+        tmp_path, monkeypatch, family_source_head="b" * 40
+    )
+    extra_family_path, extra_provider_path = _add_valid_worktree_ready_recovery_family(
+        family_path, provider_path, source_head="c" * 40
+    )
+    projection_path = Path(task.read()["autodev_path"])
+    work_item = Path(task.read()["work_item"])
+    root = Path(task.read()["os_root"])
+    connection = connect_state(default_db_path(root))
+    try:
+        canonical_before = canonical_work_items.get(
+            connection, task.read()["canonical_work_id"]
+        )
+    finally:
+        connection.close()
+    recovery_dir = (
+        work_item
+        / "artifacts"
+        / "development-delivery"
+        / "active-worktree-ready-delivery-recovery"
+    )
+    before = {
+        "task": task.path.read_bytes(),
+        "portfolio": portfolio_path.read_bytes(),
+        "projection": projection_path.read_bytes(),
+        "canonical": json.dumps(canonical_before, sort_keys=True),
+        "ledger": task.ledger.read_bytes() if task.ledger.is_file() else None,
+        "recovery_dir_exists": recovery_dir.exists(),
+        "family": family_path.read_bytes(),
+        "provider": provider_path.read_bytes(),
+        "extra_family": extra_family_path.read_bytes(),
+        "extra_provider": extra_provider_path.read_bytes(),
+    }
+
+    with pytest.raises(DevelopmentDeliveryError, match="registered worktree HEAD"):
+        delivery.recover_active_worktree_ready_delivery(
+            task.path,
+            reason="must refuse multiple families without the registered head",
+            idempotency_key="cc-420:no-head-match",
+            apply=True,
+        )
+
+    assert task.path.read_bytes() == before["task"]
+    assert portfolio_path.read_bytes() == before["portfolio"]
+    assert projection_path.read_bytes() == before["projection"]
+    connection = connect_state(default_db_path(root))
+    try:
+        canonical_after = canonical_work_items.get(
+            connection, task.read()["canonical_work_id"]
+        )
+    finally:
+        connection.close()
+    assert json.dumps(canonical_after, sort_keys=True) == before["canonical"]
+    assert (task.ledger.read_bytes() if task.ledger.is_file() else None) == before["ledger"]
+    assert recovery_dir.exists() is before["recovery_dir_exists"]
+    assert family_path.read_bytes() == before["family"]
+    assert provider_path.read_bytes() == before["provider"]
+    assert extra_family_path.read_bytes() == before["extra_family"]
+    assert extra_provider_path.read_bytes() == before["extra_provider"]
+
+
+def test_worktree_ready_recovery_refuses_dirty_registered_worktree_without_mutation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    task, portfolio_path, family_path, provider_path = _active_worktree_ready_recovery_fixture(
+        tmp_path, monkeypatch
+    )
+    projection_path = Path(task.read()["autodev_path"])
+    work_item = Path(task.read()["work_item"])
+    worktree = Path(task.read()["worktree"]["path"])
+    (worktree / "untracked-recovery-drift.txt").write_text("dirty\n", encoding="utf-8")
+    root = Path(task.read()["os_root"])
+    connection = connect_state(default_db_path(root))
+    try:
+        canonical_before = canonical_work_items.get(
+            connection, task.read()["canonical_work_id"]
+        )
+    finally:
+        connection.close()
+    recovery_dir = (
+        work_item
+        / "artifacts"
+        / "development-delivery"
+        / "active-worktree-ready-delivery-recovery"
+    )
+    before = {
+        "task": task.path.read_bytes(),
+        "portfolio": portfolio_path.read_bytes(),
+        "projection": projection_path.read_bytes(),
+        "canonical": json.dumps(canonical_before, sort_keys=True),
+        "ledger": task.ledger.read_bytes() if task.ledger.is_file() else None,
+        "recovery_dir_exists": recovery_dir.exists(),
+        "family": family_path.read_bytes(),
+        "provider": provider_path.read_bytes(),
+    }
+
+    with pytest.raises(DevelopmentDeliveryError, match="clean registered Git worktree"):
+        delivery.recover_active_worktree_ready_delivery(
+            task.path,
+            reason="must refuse a dirty registered worktree",
+            idempotency_key="cc-420:dirty-worktree",
+            apply=True,
+        )
+
+    assert task.path.read_bytes() == before["task"]
+    assert portfolio_path.read_bytes() == before["portfolio"]
+    assert projection_path.read_bytes() == before["projection"]
+    connection = connect_state(default_db_path(root))
+    try:
+        canonical_after = canonical_work_items.get(
+            connection, task.read()["canonical_work_id"]
+        )
+    finally:
+        connection.close()
+    assert json.dumps(canonical_after, sort_keys=True) == before["canonical"]
+    assert (task.ledger.read_bytes() if task.ledger.is_file() else None) == before["ledger"]
+    assert recovery_dir.exists() is before["recovery_dir_exists"]
+    assert family_path.read_bytes() == before["family"]
+    assert provider_path.read_bytes() == before["provider"]
 
 
 def test_recover_active_worktree_ready_pr_create_delivery_preserves_pr_family_and_requires_fresh_review_stages(
