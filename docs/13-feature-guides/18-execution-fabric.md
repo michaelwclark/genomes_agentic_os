@@ -488,6 +488,19 @@ cluster. The command waits for renewed active leadership and writes the final
 operator receipt. A stale role can adopt an identical durable fingerprint but
 cannot replace it during startup.
 
+On an explicitly opted-in `standalone_primary`, the same prepared admin reload
+may pass through the intentional on-disk candidate drift that the reload is
+meant to reconcile. This is a single-purpose exception, not a general mutation
+override: it requires the local witnessed leader, exact configured standalone
+host, verified local PostgreSQL durability, an unexpired proof whose current
+digest equals the request, no recovery hold, and an exact signed preparation
+binding the rotation ID, leader, epoch, current fingerprint, and candidate
+fingerprint. Tasks, effects, schedulers, promotion, failover, and every other
+mutation remain fenced while the mounted policy differs from the signed proof.
+The operator still uses the normal maintenance-window approval, pre-read,
+receipt, alert, and fail-closed/no-retry procedures; the endpoint does not
+create an unattended or HA bypass.
+
 The CLI's redacted preview and local reload receipts remain below
 `harness/shared_factory/06-runs-and-logs/execution-fabric/config-reloads/`.
 

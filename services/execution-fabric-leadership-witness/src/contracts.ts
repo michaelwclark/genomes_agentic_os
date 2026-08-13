@@ -104,6 +104,32 @@ export const promotionSchema = z.object({
   }
 });
 
+export const configDigestRotationOperatorOverrideSchema = z
+  .object({
+    actor: z.string().regex(/^[a-zA-Z0-9._:-]{1,128}$/),
+    reason: z.string().min(1).max(2048),
+    approvalReference: z.string().min(1).max(512),
+    maintenanceWindow: z
+      .object({
+        startsAt: z.string().datetime({ offset: true }),
+        endsAt: z.string().datetime({ offset: true }),
+      })
+      .strict(),
+  })
+  .strict()
+  .superRefine((override, context) => {
+    if (
+      new Date(override.maintenanceWindow.endsAt).getTime() <=
+      new Date(override.maintenanceWindow.startsAt).getTime()
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["maintenanceWindow", "endsAt"],
+        message: "maintenance window must end after it starts",
+      });
+    }
+  });
+
 export const configDigestRotationSchema = z
   .object({
     rotationId: z.string().uuid(),
@@ -111,6 +137,7 @@ export const configDigestRotationSchema = z
     expectedEpoch: z.number().int().min(1),
     expectedCurrentDigest: digestSchema,
     candidateDigest: digestSchema,
+    operatorOverride: configDigestRotationOperatorOverrideSchema.optional(),
   })
   .strict()
   .refine(
@@ -166,6 +193,9 @@ export type CandidateUpdate = z.infer<typeof candidateUpdateSchema>;
 export type PromotionRequest = z.infer<typeof promotionSchema>;
 export type ConfigDigestRotationRequest = z.infer<
   typeof configDigestRotationSchema
+>;
+export type ConfigDigestRotationOperatorOverride = z.infer<
+  typeof configDigestRotationOperatorOverrideSchema
 >;
 export type ConfigDigestRotationCommitRequest = z.infer<
   typeof configDigestRotationCommitSchema
@@ -246,6 +276,7 @@ export type ConfigDigestRotationPreparation = {
   expectedEpoch: number;
   expectedCurrentDigest: string;
   candidateDigest: string;
+  operatorOverride?: ConfigDigestRotationOperatorOverride;
   candidateHosts: string[];
   expectedTimelineId: number;
   expectedLeaderWalPosition: number;
@@ -268,6 +299,7 @@ export type ConfigDigestRotationReceipt = {
   fabricEpoch: number;
   previousConfigDigest: string;
   configDigest: string;
+  operatorOverride?: ConfigDigestRotationOperatorOverride;
   candidateHosts: string[];
   preparationTokenHash: string;
   committedAt: string;

@@ -12,6 +12,7 @@ import type {
   WorkerRegistrationReceipt,
   EffectAssignment,
   EffectClaim,
+  PolicyReloadOperatorOverride,
 } from "./contracts.js";
 import {
   evaluateRoleHealth,
@@ -217,6 +218,7 @@ export class ExecutionFabric {
     preparationToken: string;
     expectedCurrentFingerprint: string;
     expectedCandidateFingerprint: string;
+    operatorOverride?: PolicyReloadOperatorOverride;
   }): Promise<Record<string, unknown>> {
     if (!this.leadership) {
       throw new ConflictError(
@@ -228,9 +230,39 @@ export class ExecutionFabric {
       preparationToken: input.preparationToken,
       expectedCurrentDigest: input.expectedCurrentFingerprint,
       candidateDigest: input.expectedCandidateFingerprint,
+      ...(input.operatorOverride
+        ? { operatorOverride: input.operatorOverride }
+        : {}),
     });
     const prepared = this.policy.prepareReload();
-    if (prepared.previousFingerprint !== input.expectedCurrentFingerprint) {
+    const reloadInput = {
+      rotationId: input.rotationId,
+      preparationTokenHash: createHash("sha256")
+        .update(input.preparationToken)
+        .digest("hex"),
+      authorizationIssuedAt: authorization.issuedAt,
+      authorizationExpiresAt: authorization.expiresAt,
+      expectedEpoch: authorization.expectedEpoch,
+      expectedCurrentFingerprint: input.expectedCurrentFingerprint,
+      expectedCandidateFingerprint: input.expectedCandidateFingerprint,
+      ...(authorization.operatorOverride
+        ? { operatorOverride: authorization.operatorOverride }
+        : {}),
+    };
+    // A committed rotation can be retried after a post-commit caller failure
+    // (for example, while emitting its durable outcome alert).  Permit that
+    // replay only if a non-mutating ledger lookup proves this exact envelope
+    // already committed; a matching policy fingerprint alone is insufficient.
+    const persistedReplay = await this.ledger.findPolicyReloadReceipt(reloadInput);
+    const replayingCommittedRotation =
+      persistedReplay !== null &&
+      prepared.previousFingerprint !== input.expectedCurrentFingerprint &&
+      prepared.previousFingerprint === input.expectedCandidateFingerprint &&
+      prepared.candidateFingerprint === input.expectedCandidateFingerprint;
+    if (
+      !replayingCommittedRotation &&
+      prepared.previousFingerprint !== input.expectedCurrentFingerprint
+    ) {
       throw new ConflictError(
         "applied policy does not match expectedCurrentFingerprint",
       );
@@ -242,17 +274,11 @@ export class ExecutionFabric {
         "disk policy does not match expectedCandidateFingerprint",
       );
     }
-    const receipt = await this.ledger.activatePolicyReload({
-      rotationId: input.rotationId,
-      preparationTokenHash: createHash("sha256")
-        .update(input.preparationToken)
-        .digest("hex"),
-      authorizationExpiresAt: authorization.expiresAt,
-      expectedEpoch: authorization.expectedEpoch,
-      expectedCurrentFingerprint: input.expectedCurrentFingerprint,
-      expectedCandidateFingerprint: input.expectedCandidateFingerprint,
-    });
-    const snapshot = this.policy.activatePrepared(prepared);
+    const receipt =
+      persistedReplay ?? (await this.ledger.activatePolicyReload(reloadInput));
+    const snapshot = replayingCommittedRotation
+      ? this.policy.snapshot()
+      : this.policy.activatePrepared(prepared);
     return { ...snapshot, receipt, appliedFingerprint: snapshot.appliedFingerprint };
   }
 
