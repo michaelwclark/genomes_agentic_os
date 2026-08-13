@@ -3630,13 +3630,18 @@ def _worktree_ready_recovery_projection_is_derived(
     *,
     task: Mapping[str, Any],
     state_path: Path,
+    stage_order: Sequence[str],
+    stage_policies: Mapping[str, Any],
     requested_stage: str | None = None,
 ) -> bool:
     delivery = projection.get("delivery") if isinstance(projection.get("delivery"), Mapping) else {}
     stages = projection.get("stages") if isinstance(projection.get("stages"), Mapping) else {}
+    expected_stage_order = tuple(stage_order)
+    if "review_self" not in expected_stage_order:
+        return False
     pre_review_stages = tuple(
         stage
-        for stage in AUTO_DEV_STAGE_ORDER[: AUTO_DEV_STAGE_ORDER.index("review_self")]
+        for stage in expected_stage_order[: expected_stage_order.index("review_self")]
         if stage != "develop"
     )
     local_validation_refs = [
@@ -3653,8 +3658,8 @@ def _worktree_ready_recovery_projection_is_derived(
         and projection.get("current_stage") == "review_self"
         and projection.get("status") == "ready"
         and projection.get("blocker") is None
-        and projection.get("stage_order") == task.get("auto_dev_stage_order")
-        and projection.get("stage_policies") == task.get("auto_dev_stage_policies")
+        and projection.get("stage_order") == list(expected_stage_order)
+        and projection.get("stage_policies") == stage_policies
         and projection.get("canonical_work_id") == task.get("canonical_work_id")
         and projection.get("subject_revision") is None
         and projection.get("terminal_revision") is None
@@ -3667,7 +3672,10 @@ def _worktree_ready_recovery_projection_is_derived(
         and delivery.get("subject_revision") in (None, "")
         and delivery.get("terminal_revision") in (None, "")
         and delivery.get("deployed_revision") in (None, "")
-        and set(stages) == set(AUTO_DEV_STAGE_ORDER)
+        # Mapping keys cannot carry duplicate stages, while the separately
+        # hash-bound order proves their exact canonical sequence.  Do not use
+        # the mutable task order here: a recovery provenance receipt owns it.
+        and set(stages) == set(expected_stage_order)
         and all(
             isinstance(stages.get(stage), Mapping)
             and stages[stage].get("status") == "out_of_scope"
@@ -3687,6 +3695,75 @@ def _worktree_ready_recovery_projection_is_derived(
             and stages[stage].get("receipt_refs") == []
             for stage in _ACTIVE_WORKTREE_READY_DELIVERY_FRESH_STAGES
         )
+    )
+
+
+def _worktree_ready_recovery_stage_contract(
+    recovered: Mapping[str, Any],
+) -> tuple[tuple[str, ...], dict[str, Any]]:
+    """Return only a current or known pre-validation-stage recovery contract."""
+
+    recorded_order = recovered.get("stage_order")
+    recorded_policies = recovered.get("stage_policies")
+    if not isinstance(recorded_order, list) or not isinstance(recorded_policies, Mapping):
+        raise DevelopmentDeliveryError(
+            "worktree_ready delivery recovery provenance has no complete stage contract"
+        )
+    portfolio_auto_dev = recovered.get("portfolio_auto_dev")
+    expected_current = tuple(AUTO_DEV_STAGE_ORDER)
+    expected_legacy = tuple(
+        stage for stage in AUTO_DEV_STAGE_ORDER if stage != "validate_production_release"
+    )
+    stage_order = tuple(str(stage) for stage in recorded_order)
+    if stage_order not in {expected_current, expected_legacy}:
+        raise DevelopmentDeliveryError(
+            "worktree_ready delivery recovery provenance has an unsupported stage order"
+        )
+    if set(recorded_policies) != set(stage_order) or not all(
+        isinstance(policy, Mapping) for policy in recorded_policies.values()
+    ):
+        raise DevelopmentDeliveryError(
+            "worktree_ready delivery recovery provenance has an unsupported stage policy map"
+        )
+    if not (
+        isinstance(portfolio_auto_dev, Mapping)
+        and portfolio_auto_dev.get("stage_order") == list(stage_order)
+        and portfolio_auto_dev.get("stage_policies") == recorded_policies
+    ):
+        raise DevelopmentDeliveryError(
+            "worktree_ready delivery recovery provenance has an inconsistent portfolio stage contract"
+        )
+    return stage_order, dict(recorded_policies)
+
+
+def _worktree_ready_recovery_is_anchored_by_local_validation_receipt(
+    current: Mapping[str, Any],
+    *,
+    receipt_path: Path,
+    receipt_sha256: str,
+    recorded_at: str | None,
+) -> bool:
+    """Require the recovery payload to match its immutable task receipt row."""
+
+    rows = [
+        row
+        for row in current.get("receipts") or []
+        if isinstance(row, Mapping) and row.get("state") == "local_validation"
+    ]
+    if len(rows) != 1:
+        return False
+    row = rows[0]
+    ref = str(row.get("ref") or "").strip()
+    if not ref:
+        return False
+    try:
+        resolved_ref = Path(ref).expanduser().resolve()
+    except (OSError, RuntimeError):
+        return False
+    return bool(
+        resolved_ref == receipt_path
+        and row.get("sha256") == receipt_sha256
+        and row.get("recorded_at") == recorded_at
     )
 
 
@@ -3719,6 +3796,16 @@ def _complete_active_worktree_ready_delivery_recovery(
             "worktree_ready delivery recovery provenance does not match task state"
         )
     recovered = receipt.get("recovered") if isinstance(receipt.get("recovered"), Mapping) else {}
+    stage_order, stage_policies = _worktree_ready_recovery_stage_contract(recovered)
+    if not _worktree_ready_recovery_is_anchored_by_local_validation_receipt(
+        current,
+        receipt_path=receipt_path,
+        receipt_sha256=_json_sha256(receipt),
+        recorded_at=str(receipt.get("recorded_at") or "") or None,
+    ):
+        raise DevelopmentDeliveryError(
+            "worktree_ready delivery recovery provenance is not anchored by its immutable local_validation receipt"
+        )
     expected_portfolio_auto_dev = recovered.get("portfolio_auto_dev")
     requested_stage = current.get("requested_stage")
     if not (
@@ -3729,8 +3816,8 @@ def _complete_active_worktree_ready_delivery_recovery(
         and current.get("goal") == "merge"
         and current.get("auto_dev_start_stage") == "review_self"
         and current.get("auto_dev_completion_stage") == "merge"
-        and current.get("auto_dev_stage_order") == recovered.get("stage_order")
-        and current.get("auto_dev_stage_policies") == recovered.get("stage_policies")
+        and current.get("auto_dev_stage_order") == list(stage_order)
+        and current.get("auto_dev_stage_policies") == stage_policies
         and isinstance(expected_portfolio_auto_dev, Mapping)
     ):
         raise DevelopmentDeliveryError("worktree_ready delivery recovery task state is not replayable")
@@ -3790,6 +3877,8 @@ def _complete_active_worktree_ready_delivery_recovery(
                 projection,
                 task=current,
                 state_path=state_path,
+                stage_order=stage_order,
+                stage_policies=stage_policies,
                 requested_stage=requested_stage,
             )
         )
@@ -3888,6 +3977,8 @@ def _complete_active_worktree_ready_delivery_recovery(
             synced,
             task=current,
             state_path=state_path,
+            stage_order=stage_order,
+            stage_policies=stage_policies,
             requested_stage=requested_stage,
         )
     ):

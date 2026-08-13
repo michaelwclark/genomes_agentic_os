@@ -678,6 +678,69 @@ def _active_worktree_ready_recovery_fixture(
     return task, portfolio_path, family_path, provider_path
 
 
+def _recover_pr_create_worktree_ready_with_legacy_stage_order(
+    task: TaskState,
+    portfolio_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> dict[str, object]:
+    """Construct the pre-validation-stage packet before it receives a receipt."""
+
+    legacy_stage_order = [
+        stage for stage in AUTO_DEV_STAGE_ORDER if stage != "validate_production_release"
+    ]
+    legacy_stages = set(legacy_stage_order)
+    current = task.read()
+    current["auto_dev_stage_order"] = legacy_stage_order
+    current["auto_dev_stage_policies"] = {
+        stage: policy
+        for stage, policy in current["auto_dev_stage_policies"].items()
+        if stage in legacy_stages
+    }
+    task.path.write_text(
+        json.dumps(current, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    portfolio = json.loads(portfolio_path.read_text(encoding="utf-8"))
+    portfolio["auto_dev"]["stage_order"] = legacy_stage_order
+    portfolio["auto_dev"]["stage_policies"] = {
+        stage: policy
+        for stage, policy in portfolio["auto_dev"]["stage_policies"].items()
+        if stage in legacy_stages
+    }
+    portfolio_path.write_text(
+        json.dumps(portfolio, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    projection_path = Path(task.read()["autodev_path"])
+    projection = json.loads(projection_path.read_text(encoding="utf-8"))
+    projection["stage_order"] = legacy_stage_order
+    projection["stage_policies"] = {
+        stage: policy
+        for stage, policy in projection["stage_policies"].items()
+        if stage in legacy_stages
+    }
+    projection["stages"].pop("validate_production_release")
+    projection_path.write_text(
+        json.dumps(projection, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    with monkeypatch.context() as historical_runtime:
+        historical_runtime.setattr(auto_dev, "AUTO_DEV_STAGE_ORDER", tuple(legacy_stage_order))
+        historical_runtime.setattr(
+            auto_dev,
+            "REQUIRED_STAGE_PRECEDENCE",
+            tuple(
+                pair
+                for pair in auto_dev.REQUIRED_STAGE_PRECEDENCE
+                if set(pair) <= legacy_stages
+            ),
+        )
+        historical_runtime.setattr(delivery, "AUTO_DEV_STAGE_ORDER", tuple(legacy_stage_order))
+        return delivery.recover_active_worktree_ready_pr_create_delivery(
+            task.path,
+            reason="recover the exact legacy PR Create worktree-ready boundary",
+            idempotency_key="cc-419:pr-create-recover",
+            apply=True,
+        )
+
+
 def _add_valid_worktree_ready_recovery_family(
     family_path: Path,
     provider_path: Path,
@@ -7511,11 +7574,8 @@ def test_bind_recovered_worktree_ready_pr_family_accepts_pr_create_recovery(
     task, portfolio_path, family_path, provider_path = _active_worktree_ready_recovery_fixture(
         tmp_path, monkeypatch, single_stage_pr_create=True
     )
-    recovered = delivery.recover_active_worktree_ready_pr_create_delivery(
-        task.path,
-        reason="recover the exact legacy PR Create worktree-ready boundary",
-        idempotency_key="cc-419:pr-create-recover",
-        apply=True,
+    recovered = _recover_pr_create_worktree_ready_with_legacy_stage_order(
+        task, portfolio_path, monkeypatch
     )
     successor_family, successor_provider = _recovered_worktree_ready_successor_family(
         task, family_path, provider_path
@@ -7592,6 +7652,135 @@ def test_bind_recovered_worktree_ready_pr_family_accepts_pr_create_recovery(
     )
     assert replayed["result"] == "replayed"
     assert len(task.read()["active_worktree_ready_release_propagation_continuations"]) == 1
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ("receipt_digest", "receipt_ref", "reordered", "duplicate", "omitted"),
+)
+def test_bind_recovered_worktree_ready_pr_family_refuses_unanchored_or_noncanonical_legacy_order(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mutation: str
+) -> None:
+    task, portfolio_path, family_path, provider_path = _active_worktree_ready_recovery_fixture(
+        tmp_path, monkeypatch, single_stage_pr_create=True
+    )
+    recovered = _recover_pr_create_worktree_ready_with_legacy_stage_order(
+        task, portfolio_path, monkeypatch
+    )
+    successor_family, successor_provider = _recovered_worktree_ready_successor_family(
+        task, family_path, provider_path
+    )
+    recovery_path = Path(recovered["receipt"])
+    current = task.read()
+    current["requested_stage"] = "review_self"
+    task.path.write_text(
+        json.dumps(current, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    projection_path = Path(current["autodev_path"])
+    projection = json.loads(projection_path.read_text(encoding="utf-8"))
+    projection["requested_stage"] = "review_self"
+    projection_path.write_text(
+        json.dumps(projection, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+
+    if mutation == "receipt_digest":
+        payload = json.loads(recovery_path.read_text(encoding="utf-8"))
+        payload["reason"] = "tampered after its immutable local-validation receipt"
+        recovery_path.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
+    elif mutation == "receipt_ref":
+        current = task.read()
+        local_validation = next(
+            row for row in current["receipts"] if row["state"] == "local_validation"
+        )
+        local_validation["ref"] = str(successor_family)
+        task.path.write_text(
+            json.dumps(current, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+    else:
+        payload = json.loads(recovery_path.read_text(encoding="utf-8"))
+        legacy_order = list(payload["recovered"]["stage_order"])
+        if mutation == "reordered":
+            tampered_order = [*legacy_order[:2], legacy_order[3], legacy_order[2], *legacy_order[4:]]
+        elif mutation == "duplicate":
+            tampered_order = [*legacy_order, legacy_order[-1]]
+        else:
+            tampered_order = [stage for stage in legacy_order if stage != "document"]
+        payload["recovered"]["stage_order"] = tampered_order
+        payload["recovered"]["portfolio_auto_dev"]["stage_order"] = tampered_order
+        recovery_path.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
+        digest = delivery._json_sha256(payload)
+        current = task.read()
+        current["auto_dev_stage_order"] = tampered_order
+        current["active_worktree_ready_pr_create_delivery_recoveries"][0]["sha256"] = digest
+        local_validation = next(
+            row for row in current["receipts"] if row["state"] == "local_validation"
+        )
+        local_validation["sha256"] = digest
+        task.path.write_text(
+            json.dumps(current, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        projection = json.loads(projection_path.read_text(encoding="utf-8"))
+        projection["stage_order"] = tampered_order
+        projection_path.write_text(
+            json.dumps(projection, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+
+    work_item = Path(task.read()["work_item"])
+    root = Path(task.read()["os_root"])
+    connection = connect_state(default_db_path(root))
+    try:
+        canonical_before = canonical_work_items.get(
+            connection, task.read()["canonical_work_id"]
+        )
+    finally:
+        connection.close()
+    continuation_dir = (
+        work_item
+        / "artifacts"
+        / "development-delivery"
+        / "active-worktree-ready-release-propagation-continuation"
+    )
+    before = {
+        "task": task.path.read_bytes(),
+        "portfolio": portfolio_path.read_bytes(),
+        "projection": projection_path.read_bytes(),
+        "canonical": json.dumps(canonical_before, sort_keys=True),
+        "ledger": task.ledger.read_bytes() if task.ledger.is_file() else None,
+        "continuation_dir": continuation_dir.exists(),
+        "recovery": recovery_path.read_bytes(),
+        "family": family_path.read_bytes(),
+        "provider": provider_path.read_bytes(),
+        "successor_family": successor_family.read_bytes(),
+        "successor_provider": successor_provider.read_bytes(),
+    }
+
+    with pytest.raises(DevelopmentDeliveryError):
+        delivery.bind_recovered_worktree_ready_pr_family(
+            task.path,
+            family_ref=successor_family,
+            reason="refuse an unanchored or noncanonical legacy recovery order",
+            idempotency_key=f"cc-419:legacy-order-refuse:{mutation}",
+            apply=True,
+        )
+
+    assert task.path.read_bytes() == before["task"]
+    assert portfolio_path.read_bytes() == before["portfolio"]
+    assert projection_path.read_bytes() == before["projection"]
+    connection = connect_state(default_db_path(root))
+    try:
+        canonical_after = canonical_work_items.get(
+            connection, task.read()["canonical_work_id"]
+        )
+    finally:
+        connection.close()
+    assert json.dumps(canonical_after, sort_keys=True) == before["canonical"]
+    assert (task.ledger.read_bytes() if task.ledger.is_file() else None) == before["ledger"]
+    assert continuation_dir.exists() is before["continuation_dir"]
+    assert recovery_path.read_bytes() == before["recovery"]
+    assert family_path.read_bytes() == before["family"]
+    assert provider_path.read_bytes() == before["provider"]
+    assert successor_family.read_bytes() == before["successor_family"]
+    assert successor_provider.read_bytes() == before["successor_provider"]
 
 
 @pytest.mark.parametrize(
