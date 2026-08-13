@@ -2105,7 +2105,11 @@ def _validate_team_pr_helper_receipt_wrapper(
             retryable=False,
             receipt_path=str(receipt_path),
         )
-    return helper_status
+    # The wrapper's lifecycle state is deliberately distinct from the review
+    # outcome.  Downstream fabric consumers use this return value as the
+    # canonical review result, so exporting ``succeeded`` here would still
+    # turn a valid current-format receipt into a failed projection.
+    return str(canonical_outcome)
 
 
 def _team_pr_ai_review_worker_locked(
