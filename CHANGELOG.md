@@ -16,32 +16,6 @@ All notable changes to this project are documented here. The format follows
   and exact legacy PR identity during delivery validation.
 - Make policy migration and admission contention handling fail closed and
   idempotent.
-
-## [0.6.0] - 2026-08-01
-
-### Added
-- Consolidate GitHub, Jira, Linear, and Notion access through provider bridges
-  with bounded reads and explicit mutation boundaries.
-- Add a canonical, receipt-backed opposing-model Auto-Dev review command shared
-  by Claude and Codex harnesses.
-- Add guarded Docker and OrbStack reclaim reporting for orphaned worktree
-  resources without expanding Auto-Dev cleanup authority.
-
-### Fixed
-- Support legacy execution-fabric role-health bootstrap during protected
-  rollout reconciliation.
-- Persist full-identity Team PR review intent before helper launch, recover a
-  completed helper receipt after worker interruption, fence overlapping
-  attempts per review identity, and bind the helper to the exact review mode,
-  run ID, and summary path. Full-digest receipt paths, fsync-backed
-  persistence, and a durable helper-launch marker prevent cross-ticket recovery
-  collisions, torn intent writes, and relaunch while the PID still belongs to
-  the exact helper run. A shared marker lock prevents dispatch-failure writes
-  from clobbering a concurrently registered helper PID. Fresh and recovered
-  successes terminalize the marker.
-- Persist the first effect-key format per immutable review identity so legacy
-  and current task shapes cannot project the same helper result under two keys;
-  classify PID-less governor exceptions as retryable dispatch failures.
 - Persist full-identity Team PR review intent before helper launch, recover a
   completed helper receipt after worker interruption, fence overlapping
   attempts per review identity, and bind the helper to the exact review mode,
@@ -53,6 +27,12 @@ All notable changes to this project are documented here. The format follows
   successes terminalize the marker.
 - Normalize case-insensitive repository, head, and source-key fields before
   deriving the cross-repository review identity and helper run ID.
+- Keep the legacy projection key for already-admitted tasks that omitted
+  `review_mode`, while explicit current tasks use the full-intent key; this
+  preserves effect dedup across the upgrade boundary.
+- Persist the first effect-key format per immutable review identity so legacy
+  and current task shapes cannot project the same helper result under two keys;
+  classify PID-less governor exceptions as retryable dispatch failures.
 - Keep enough bounded review attempts for error-driven retries to outlive the
   helper fence, and classify transient durable-write, lock, and host-identity
   failures as retryable.
@@ -69,6 +49,26 @@ All notable changes to this project are documented here. The format follows
 - Preserve invalid-receipt classification and receipt paths for byte-corrupt
   JSON, and classify a dispatch exception with a dead registered helper PID
   immediately instead of spending an extra retry as in progress.
+- Ship the Agentic OS route before the paired object-library producer; the new
+  producer emits explicit `review_mode`, which an older closed route rejects.
+  Quiesce the review queue during that 0.5.x-to-0.6.0 upgrade so an
+  unacknowledged legacy effect key cannot be replayed once under the full-intent
+  key format. The ordering requirement is already satisfied for 0.6.0-to-0.6.1.
+
+## [0.6.0] - 2026-08-01
+
+### Added
+- Consolidate GitHub, Jira, Linear, and Notion access through provider bridges
+  with bounded reads and explicit mutation boundaries.
+- Add a canonical, receipt-backed opposing-model Auto-Dev review command shared
+  by Claude and Codex harnesses.
+- Add guarded Docker and OrbStack reclaim reporting for orphaned worktree
+  resources without expanding Auto-Dev cleanup authority.
+
+### Fixed
+- Support legacy execution-fabric role-health bootstrap during protected
+  rollout reconciliation.
+
 ## [0.5.7] - 2026-07-29
 
 ### Added
