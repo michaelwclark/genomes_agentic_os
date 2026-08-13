@@ -175,6 +175,7 @@ _ACTIVE_WORKTREE_READY_RELEASE_PROPAGATION_RECOVERY_VARIANTS = (
         "directory": "active-worktree-ready-delivery-recovery",
         "event_type": "development.task.active_worktree_ready_delivery_recovered",
         "recovery_shape": None,
+        "derived_requested_stages": (None,),
     },
     {
         "history_key": "active_worktree_ready_pr_create_delivery_recoveries",
@@ -183,6 +184,10 @@ _ACTIVE_WORKTREE_READY_RELEASE_PROPAGATION_RECOVERY_VARIANTS = (
         "directory": "active-worktree-ready-pr-create-delivery-recovery",
         "event_type": "development.task.active_worktree_ready_pr_create_delivery_recovered",
         "recovery_shape": "single_stage_pr_create_worktree_ready",
+        # A current projection can carry the selected Review Self entrypoint
+        # after the PR-Create recovery synchronizes it.  This is not Review
+        # authority: both task and projection must remain receipt-free.
+        "derived_requested_stages": (None, "review_self"),
     },
 )
 _ACTIVE_WORKTREE_READY_DELIVERY_FRESH_STAGES = (
@@ -3621,7 +3626,11 @@ def _worktree_ready_recovery_original(context: Mapping[str, Any]) -> dict[str, A
 
 
 def _worktree_ready_recovery_projection_is_derived(
-    projection: Mapping[str, Any], *, task: Mapping[str, Any], state_path: Path
+    projection: Mapping[str, Any],
+    *,
+    task: Mapping[str, Any],
+    state_path: Path,
+    requested_stage: str | None = None,
 ) -> bool:
     delivery = projection.get("delivery") if isinstance(projection.get("delivery"), Mapping) else {}
     stages = projection.get("stages") if isinstance(projection.get("stages"), Mapping) else {}
@@ -3637,10 +3646,13 @@ def _worktree_ready_recovery_projection_is_derived(
     ]
     return bool(
         projection.get("mode") == "everything"
-        and projection.get("requested_stage") is None
+        and task.get("requested_stage") == requested_stage
+        and projection.get("requested_stage") == requested_stage
         and projection.get("start_stage") == "review_self"
         and projection.get("completion_stage") == "merge"
         and projection.get("current_stage") == "review_self"
+        and projection.get("status") == "ready"
+        and projection.get("blocker") is None
         and projection.get("stage_order") == task.get("auto_dev_stage_order")
         and projection.get("stage_policies") == task.get("auto_dev_stage_policies")
         and projection.get("canonical_work_id") == task.get("canonical_work_id")
@@ -3688,6 +3700,7 @@ def _complete_active_worktree_ready_delivery_recovery(
     recovery_kind: str = "recover-active-worktree-ready-delivery",
     recovery_history_key: str = "active_worktree_ready_delivery_recoveries",
     recovery_event_type: str = "development.task.active_worktree_ready_delivery_recovered",
+    derived_requested_stages: Sequence[str | None] = (None,),
 ) -> None:
     """Finish only the derived state of an exact interrupted recovery replay."""
 
@@ -3707,11 +3720,12 @@ def _complete_active_worktree_ready_delivery_recovery(
         )
     recovered = receipt.get("recovered") if isinstance(receipt.get("recovered"), Mapping) else {}
     expected_portfolio_auto_dev = recovered.get("portfolio_auto_dev")
+    requested_stage = current.get("requested_stage")
     if not (
         current.get("state") == "local_validation"
         and current.get("failure") is None
         and current.get("auto_dev_mode") == "everything"
-        and current.get("requested_stage") is None
+        and requested_stage in derived_requested_stages
         and current.get("goal") == "merge"
         and current.get("auto_dev_start_stage") == "review_self"
         and current.get("auto_dev_completion_stage") == "merge"
@@ -3773,7 +3787,10 @@ def _complete_active_worktree_ready_delivery_recovery(
         and (
             hashlib.sha256(autodev_bytes).hexdigest() == original.get("autodev_sha256")
             or _worktree_ready_recovery_projection_is_derived(
-                projection, task=current, state_path=state_path
+                projection,
+                task=current,
+                state_path=state_path,
+                requested_stage=requested_stage,
             )
         )
     ):
@@ -3868,7 +3885,10 @@ def _complete_active_worktree_ready_delivery_recovery(
     if not (
         isinstance(synced, Mapping)
         and _worktree_ready_recovery_projection_is_derived(
-            synced, task=current, state_path=state_path
+            synced,
+            task=current,
+            state_path=state_path,
+            requested_stage=requested_stage,
         )
     ):
         raise DevelopmentDeliveryError(
@@ -4253,6 +4273,7 @@ def _active_worktree_ready_release_propagation_continuation_context(
         recovery_kind=str(recovery_variant["kind"]),
         recovery_history_key=str(recovery_variant["history_key"]),
         recovery_event_type=str(recovery_variant["event_type"]),
+        derived_requested_stages=tuple(recovery_variant["derived_requested_stages"]),
     )
     expected_receipt_states = {
         "claimed",

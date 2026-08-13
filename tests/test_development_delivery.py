@@ -7521,6 +7521,19 @@ def test_bind_recovered_worktree_ready_pr_family_accepts_pr_create_recovery(
         task, family_path, provider_path
     )
     projection_path = Path(task.read()["autodev_path"])
+    # The approved PR-Create recovery can synchronize the selected Review Self
+    # entrypoint without recording any Review Self authority.  The narrow
+    # continuation must accept only this coupled task/projection shape.
+    recovered_task = task.read()
+    recovered_task["requested_stage"] = "review_self"
+    task.path.write_text(
+        json.dumps(recovered_task, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    projection = json.loads(projection_path.read_text(encoding="utf-8"))
+    projection["requested_stage"] = "review_self"
+    projection_path.write_text(
+        json.dumps(projection, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
     before = {
         "task": task.path.read_bytes(),
         "portfolio": portfolio_path.read_bytes(),
@@ -7579,6 +7592,110 @@ def test_bind_recovered_worktree_ready_pr_family_accepts_pr_create_recovery(
     )
     assert replayed["result"] == "replayed"
     assert len(task.read()["active_worktree_ready_release_propagation_continuations"]) == 1
+
+
+@pytest.mark.parametrize(
+    ("recovery_kind", "task_requested_stage", "projection_requested_stage"),
+    (
+        # Generic recovery is never allowed to inherit the Review Self selector.
+        ("generic", "review_self", "review_self"),
+        # The PR-Create variant accepts only the Review Self selector.
+        ("pr_create", "qa", "qa"),
+        # Even that narrow PR-Create exception requires task/projection coupling.
+        ("pr_create", "review_self", "review_others"),
+    ),
+)
+def test_bind_recovered_worktree_ready_pr_family_refuses_uncoupled_requested_stage(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    recovery_kind: str,
+    task_requested_stage: str,
+    projection_requested_stage: str,
+) -> None:
+    task, portfolio_path, family_path, provider_path = _active_worktree_ready_recovery_fixture(
+        tmp_path, monkeypatch, single_stage_pr_create=recovery_kind == "pr_create"
+    )
+    recover = (
+        delivery.recover_active_worktree_ready_pr_create_delivery
+        if recovery_kind == "pr_create"
+        else delivery.recover_active_worktree_ready_delivery
+    )
+    recovered = recover(
+        task.path,
+        reason=f"recover the exact {recovery_kind} worktree-ready boundary",
+        idempotency_key=f"cc-419:{recovery_kind}:recover",
+        apply=True,
+    )
+    successor_family, successor_provider = _recovered_worktree_ready_successor_family(
+        task, family_path, provider_path
+    )
+    current = task.read()
+    current["requested_stage"] = task_requested_stage
+    task.path.write_text(
+        json.dumps(current, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    projection_path = Path(current["autodev_path"])
+    projection = json.loads(projection_path.read_text(encoding="utf-8"))
+    projection["requested_stage"] = projection_requested_stage
+    projection_path.write_text(
+        json.dumps(projection, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    work_item = Path(current["work_item"])
+    root = Path(current["os_root"])
+    connection = connect_state(default_db_path(root))
+    try:
+        canonical_before = canonical_work_items.get(connection, current["canonical_work_id"])
+    finally:
+        connection.close()
+    continuation_dir = (
+        work_item
+        / "artifacts"
+        / "development-delivery"
+        / "active-worktree-ready-release-propagation-continuation"
+    )
+    recovery_path = Path(recovered["receipt"])
+    before = {
+        "task": task.path.read_bytes(),
+        "portfolio": portfolio_path.read_bytes(),
+        "projection": projection_path.read_bytes(),
+        "canonical": json.dumps(canonical_before, sort_keys=True),
+        "ledger": task.ledger.read_bytes() if task.ledger.is_file() else None,
+        "continuation_dir": continuation_dir.exists(),
+        "recovery": recovery_path.read_bytes(),
+        "family": family_path.read_bytes(),
+        "provider": provider_path.read_bytes(),
+        "successor_family": successor_family.read_bytes(),
+        "successor_provider": successor_provider.read_bytes(),
+    }
+
+    with pytest.raises(DevelopmentDeliveryError):
+        delivery.bind_recovered_worktree_ready_pr_family(
+            task.path,
+            family_ref=successor_family,
+            reason="refuse a requested stage outside the exact recovered projection",
+            idempotency_key=(
+                "cc-419:"
+                f"{recovery_kind}:{task_requested_stage}:{projection_requested_stage}:refuse"
+            ),
+            apply=True,
+        )
+
+    assert task.path.read_bytes() == before["task"]
+    assert portfolio_path.read_bytes() == before["portfolio"]
+    assert projection_path.read_bytes() == before["projection"]
+    connection = connect_state(default_db_path(root))
+    try:
+        canonical_after = canonical_work_items.get(connection, current["canonical_work_id"])
+    finally:
+        connection.close()
+    assert json.dumps(canonical_after, sort_keys=True) == before["canonical"]
+    assert (task.ledger.read_bytes() if task.ledger.is_file() else None) == before["ledger"]
+    assert continuation_dir.exists() is before["continuation_dir"]
+    assert recovery_path.read_bytes() == before["recovery"]
+    assert family_path.read_bytes() == before["family"]
+    assert provider_path.read_bytes() == before["provider"]
+    assert successor_family.read_bytes() == before["successor_family"]
+    assert successor_provider.read_bytes() == before["successor_provider"]
 
 
 @pytest.mark.parametrize("mutation", ("mixed", "foreign", "tampered", "ambiguous"))
