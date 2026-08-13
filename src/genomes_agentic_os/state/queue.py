@@ -43,6 +43,15 @@ VALID_APPROVAL_STATES = ("not_required", "required", "approved", "denied", "expi
 
 TERMINAL_STATUSES = ("done", "failed", "skipped", "cancelled", "dead-letter")
 DISPATCH_STARVATION_AGE_SECONDS = 3600
+DISPATCH_PRIORITY_BOOST = 10
+# Keep every dispatcher on the same aging/tie-break policy. The first two
+# placeholders receive the same starvation cutoff timestamp.
+DISPATCH_ORDER_SQL = """\
+COALESCE(priority, 0) + CASE WHEN COALESCE(due_at, created_at) <= ? THEN {boost} ELSE 0 END DESC,
+COALESCE(CASE WHEN COALESCE(due_at, created_at) <= ? THEN substr(COALESCE(due_at, created_at), 1, 13) END, '~') ASC,
+priority DESC,
+(due_at IS NULL) ASC, due_at ASC, created_at ASC, id ASC
+""".format(boost=DISPATCH_PRIORITY_BOOST)
 
 _INSERT_SQL = """
 INSERT INTO run_queue (
@@ -210,11 +219,7 @@ def claim_next(
             WHERE status IN ({placeholders})
               AND (due_at IS NULL OR due_at <= ?)
               AND (lease_until IS NULL OR lease_until < ?)
-            ORDER BY
-              COALESCE(priority, 0) + CASE WHEN COALESCE(due_at, created_at) <= ? THEN 10 ELSE 0 END DESC,
-              COALESCE(CASE WHEN COALESCE(due_at, created_at) <= ? THEN substr(COALESCE(due_at, created_at), 1, 13) END, '~') ASC,
-              priority DESC,
-              (due_at IS NULL) ASC, due_at ASC, created_at ASC
+            ORDER BY {DISPATCH_ORDER_SQL}
             LIMIT 1
             """,
             (*statuses, now_value, now_value, starvation_cutoff_value, starvation_cutoff_value),

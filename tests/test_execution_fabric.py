@@ -632,6 +632,31 @@ def test_named_queue_bounded_aging_preserves_fresh_high_priority_work() -> None:
         conn.close()
 
 
+@pytest.mark.parametrize(("fresh_priority", "expected"), [(9, "aged-zero"), (11, "fresh-boundary")])
+def test_named_queue_starvation_boost_boundary(fresh_priority: int, expected: str) -> None:
+    conn = db.connect(":memory:")
+    try:
+        fabric.configure_queue(conn, "non_llm", max_concurrency=1)
+        fabric.configure_worker_pool(conn, "non_llm_workers", queue_name="non_llm", max_workers=1, max_concurrency=1)
+        worker = fabric.register_worker(conn, "worker-a", pool_name="non_llm_workers")
+        fabric.enqueue_task(
+            conn, queue_name="non_llm", worker_pool="non_llm_workers", kind="schedule",
+            id="fresh-boundary", priority=fresh_priority, created_at="2026-07-01T00:59:00Z",
+        )
+        fabric.enqueue_task(
+            conn, queue_name="non_llm", worker_pool="non_llm_workers", kind="schedule",
+            id="aged-zero", priority=0, created_at="2026-01-01T00:00:00Z",
+        )
+
+        claimed = fabric.claim_next(
+            conn, worker_id="worker-a", worker_token=worker["lease_token"], now="2026-07-01T01:00:00Z"
+        )
+
+        assert claimed is not None and claimed["id"] == expected
+    finally:
+        conn.close()
+
+
 def test_global_and_provider_caps_keep_work_queued() -> None:
     conn = db.connect(":memory:")
     try:

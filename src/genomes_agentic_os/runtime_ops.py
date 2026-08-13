@@ -103,6 +103,17 @@ DEFAULT_RUN_QUEUE_ACTIVE_MAX_AGE_HOURS = 24
 DEFAULT_RUN_QUEUE_TERMINAL_MAX_AGE_DAYS = 2
 DEFAULT_RUN_QUEUE_FAILED_MAX_AGE_DAYS = 7
 RUNTIME_TRACKING_RUN_QUEUE_LIMIT = 50
+RUNTIME_TRACKING_KIND_TO_DATABASE = {
+    "integration": "Integrations",
+    "execution_target": "Execution Targets",
+    "heartbeat": "Heartbeats",
+    "schedule": "Schedules",
+    "run_queue_item": "Run Queue",
+    "approval": "Approvals",
+    "heartbeat_run": "Runs",
+    "run": "Runs",
+    "self_improvement": "Self Improvement",
+}
 DEFAULT_RUN_QUEUE_SKIPPED_MAX_AGE_DAYS = 1
 DEFAULT_RUN_QUEUE_BACKUP_MAX_AGE_DAYS = 7
 DEFAULT_RETRY_BACKOFF_SECONDS = 60
@@ -1040,8 +1051,7 @@ def _dispatch_lease_seconds(item: dict[str, Any], timeout_seconds: int) -> int:
         lease = int(value) if value is not None and not isinstance(value, bool) else timeout_seconds + 60
     except (TypeError, ValueError):
         lease = timeout_seconds + 60
-    lease = min(lease, MAX_LEASE_SECONDS)
-    return max(timeout_seconds + LEASE_SAFETY_MARGIN_SECONDS, lease)
+    return min(MAX_LEASE_SECONDS, max(timeout_seconds + LEASE_SAFETY_MARGIN_SECONDS, lease))
 
 
 def _provider_from_text(text: str) -> str | None:
@@ -2747,14 +2757,10 @@ def runtime_run_batch(
         candidate_ids = [
             str(row["id"])
             for row in conn.execute(
-                """
+                f"""
                 SELECT id FROM run_queue
                 WHERE status = 'queued' AND (due_at IS NULL OR due_at <= ?)
-                ORDER BY
-              COALESCE(priority, 0) + CASE WHEN COALESCE(due_at, created_at) <= ? THEN 10 ELSE 0 END DESC,
-                  COALESCE(CASE WHEN COALESCE(due_at, created_at) <= ? THEN substr(COALESCE(due_at, created_at), 1, 13) END, '~') ASC,
-                  priority DESC,
-                  (due_at IS NULL) ASC, due_at, created_at, id
+                ORDER BY {state_queue.DISPATCH_ORDER_SQL}
                 """,
                 (
                     now_value,
@@ -3143,11 +3149,7 @@ def _prepare_execution_fabric_dispatch(
                         (
                             "SELECT id FROM run_queue",
                             "WHERE " + " AND ".join(candidate_clauses),
-                            "ORDER BY",
-                            "  COALESCE(priority, 0) + CASE WHEN COALESCE(due_at, created_at) <= ? THEN 10 ELSE 0 END DESC,",
-                            "  COALESCE(CASE WHEN COALESCE(due_at, created_at) <= ? THEN substr(COALESCE(due_at, created_at), 1, 13) END, '~') ASC,",
-                            "  priority DESC,",
-                            "  (due_at IS NULL) ASC, due_at, created_at, id",
+                            f"ORDER BY {state_queue.DISPATCH_ORDER_SQL}",
                             "LIMIT 1",
                         )
                     ),
@@ -4081,20 +4083,16 @@ def build_runtime_tracking_plan(root: str | Path) -> dict[str, Any]:
         )
     for log_path in sorted(_runtime_path(os_root, HEARTBEAT_LOG_DIR).glob("*.yml"))[-20:]:
         records.append({"kind": "heartbeat_run", "key": log_path.stem, "title": log_path.stem, "path": str(log_path), "action": "create-or-update"})
+    database_order = [
+        "Integrations", "Execution Targets", "Heartbeats", "Schedules",
+        "Run Queue", "Approvals", "Runs", "Self Improvement",
+    ]
+    database_names = {RUNTIME_TRACKING_KIND_TO_DATABASE.get(record["kind"]) for record in records}
     return {
         "root": str(os_root),
         "workspace": target_workspace(os_root),
         "manifest_path": str(_runtime_path(os_root, NOTION_RUNTIME_MANIFEST)),
-        "databases": [
-            "Integrations",
-            "Execution Targets",
-            "Heartbeats",
-            "Schedules",
-            "Run Queue",
-            "Approvals",
-            "Runs",
-            "Self Improvement",
-        ],
+        "databases": [name for name in database_order if name in database_names],
         "record_scope": {
             "run_queue_item_limit": RUNTIME_TRACKING_RUN_QUEUE_LIMIT,
             "run_queue_total_items": len(queue.get("items") or []),
@@ -4223,16 +4221,7 @@ def _apply_runtime_tracking_live(
             databases_created += 1
 
     # --- kind → database name mapping ---
-    KIND_TO_DATABASE: dict[str, str] = {
-        "integration": "Integrations",
-        "execution_target": "Execution Targets",
-        "heartbeat": "Heartbeats",
-        "schedule": "Schedules",
-        "run_queue_item": "Run Queue",
-        "approval": "Approvals",
-        "heartbeat_run": "Runs",
-        "run": "Runs",
-    }
+    KIND_TO_DATABASE = RUNTIME_TRACKING_KIND_TO_DATABASE
 
     def persist_manifest(records: list[dict[str, Any]], *, status: str, error_type: str | None = None) -> None:
         checkpoint = {

@@ -105,6 +105,24 @@ def test_claim_next_bounded_aging_preserves_fresh_high_priority_work(conn: sqlit
     assert claimed["id"] == fresh_high["id"]
 
 
+def test_claim_next_starvation_boost_beats_priority_nine_at_boundary(conn: sqlite3.Connection) -> None:
+    queue.enqueue(conn, kind="schedule", id="fresh-nine", priority=9, created_at="2026-07-01T00:59:00Z")
+    queue.enqueue(conn, kind="schedule", id="aged-zero", priority=0, created_at="2026-01-01T00:00:00Z")
+
+    claimed = queue.claim_next(conn, worker_id="worker-a", now="2026-07-01T01:00:00Z")
+
+    assert claimed is not None and claimed["id"] == "aged-zero"
+
+
+def test_claim_next_fresh_priority_eleven_beats_starvation_boost(conn: sqlite3.Connection) -> None:
+    queue.enqueue(conn, kind="schedule", id="fresh-eleven", priority=11, created_at="2026-07-01T00:59:00Z")
+    queue.enqueue(conn, kind="schedule", id="aged-zero", priority=0, created_at="2026-01-01T00:00:00Z")
+
+    claimed = queue.claim_next(conn, worker_id="worker-a", now="2026-07-01T01:00:00Z")
+
+    assert claimed is not None and claimed["id"] == "fresh-eleven"
+
+
 def test_claim_next_preserves_priority_inside_starvation_class(conn: sqlite3.Connection) -> None:
     newer_high = queue.enqueue(
         conn,

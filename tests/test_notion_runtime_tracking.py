@@ -261,10 +261,6 @@ DB_NAMES = [
     "Execution Targets",
     "Heartbeats",
     "Schedules",
-    "Run Queue",
-    "Approvals",
-    "Runs",
-    "Self Improvement",
 ]
 DB_IDS = {name: f"db{''.join(c for c in name if c.isalpha())[:8].lower()}1111111111111111111111" for name in DB_NAMES}
 
@@ -322,7 +318,7 @@ def _build_live_responses(
     return responses
 
 
-def test_live_path_creates_cockpit_and_7_databases(tmp_path: Path) -> None:
+def test_live_path_creates_cockpit_and_mapped_databases(tmp_path: Path) -> None:
     """Full live path creates the cockpit, runtime databases, and real ids."""
     from genomes_agentic_os.runtime_ops import apply_runtime_tracking
 
