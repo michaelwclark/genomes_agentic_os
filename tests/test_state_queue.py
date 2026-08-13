@@ -106,7 +106,7 @@ def test_claim_next_ages_old_work_ahead_of_fresh_high_priority_work(conn: sqlite
     assert queue.get(conn, fresh_high["id"])["status"] == "queued"
 
 
-def test_claim_next_uses_oldest_availability_inside_starvation_class(conn: sqlite3.Connection) -> None:
+def test_claim_next_preserves_priority_inside_starvation_class(conn: sqlite3.Connection) -> None:
     newer_high = queue.enqueue(
         conn,
         kind="schedule",
@@ -125,8 +125,8 @@ def test_claim_next_uses_oldest_availability_inside_starvation_class(conn: sqlit
     claimed = queue.claim_next(conn, worker_id="worker-a")
 
     assert claimed is not None
-    assert claimed["id"] == oldest_low["id"]
-    assert queue.get(conn, newer_high["id"])["status"] == "queued"
+    assert claimed["id"] == newer_high["id"]
+    assert queue.get(conn, oldest_low["id"])["status"] == "queued"
 
 
 def test_claim_next_respects_due_at(conn: sqlite3.Connection) -> None:

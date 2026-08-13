@@ -421,8 +421,9 @@ def claim_next(
               {item_filter}
             ORDER BY
               CASE WHEN COALESCE(due_at, created_at) <= ? THEN 0 ELSE 1 END,
+              priority DESC,
               CASE WHEN COALESCE(due_at, created_at) <= ? THEN COALESCE(due_at, created_at) END ASC,
-              priority DESC, (due_at IS NULL) ASC, due_at ASC, created_at ASC
+              (due_at IS NULL) ASC, due_at ASC, created_at ASC
             LIMIT 1
             """,
             params,

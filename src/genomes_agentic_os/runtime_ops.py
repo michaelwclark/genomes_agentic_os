@@ -2738,8 +2738,9 @@ def runtime_run_batch(
                 WHERE status = 'queued' AND (due_at IS NULL OR due_at <= ?)
                 ORDER BY
                   CASE WHEN COALESCE(due_at, created_at) <= ? THEN 0 ELSE 1 END,
+                  priority DESC,
                   CASE WHEN COALESCE(due_at, created_at) <= ? THEN COALESCE(due_at, created_at) END ASC,
-                  priority DESC, (due_at IS NULL) ASC, due_at, created_at, id
+                  (due_at IS NULL) ASC, due_at, created_at, id
                 """,
                 (
                     now_value,
@@ -3128,9 +3129,11 @@ def _prepare_execution_fabric_dispatch(
                         (
                             "SELECT id FROM run_queue",
                             "WHERE " + " AND ".join(candidate_clauses),
-                            "ORDER BY CASE WHEN COALESCE(due_at, created_at) <= ? THEN 0 ELSE 1 END, "
-                            "CASE WHEN COALESCE(due_at, created_at) <= ? THEN COALESCE(due_at, created_at) END ASC, "
-                            "priority DESC, (due_at IS NULL) ASC, due_at, created_at, id",
+                            "ORDER BY",
+                            "  CASE WHEN COALESCE(due_at, created_at) <= ? THEN 0 ELSE 1 END,",
+                            "  priority DESC,",
+                            "  CASE WHEN COALESCE(due_at, created_at) <= ? THEN COALESCE(due_at, created_at) END ASC,",
+                            "  (due_at IS NULL) ASC, due_at, created_at, id",
                             "LIMIT 1",
                         )
                     ),
