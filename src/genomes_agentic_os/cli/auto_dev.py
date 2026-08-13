@@ -17,6 +17,7 @@ from ..development_delivery import (
     DEVELOPMENT_POLICY_PLANES,
     DevelopmentDeliveryError,
     bind_recovered_worktree_ready_pr_family,
+    bootstrap_active_unbound_everything_delivery,
     correct_failed_base_selection,
     escalate_active_nonblocked_pr_create_delivery,
     recover_active_worktree_ready_delivery,
@@ -320,6 +321,16 @@ def handle_recover_worktree_ready_pr_create_delivery(args: argparse.Namespace) -
     result = recover_active_worktree_ready_pr_create_delivery(
         args.state,
         reason=args.reason,
+        idempotency_key=args.idempotency_key,
+        apply=args.apply,
+    )
+    _print(result, json_output=args.json)
+    return 0
+
+
+def handle_bootstrap_legacy_unbound_everything_delivery(args: argparse.Namespace) -> int:
+    result = bootstrap_active_unbound_everything_delivery(
+        args.state,
         idempotency_key=args.idempotency_key,
         apply=args.apply,
     )
@@ -643,6 +654,30 @@ def register(subparsers) -> None:
     _common_output(recover_worktree_ready_pr_create)
     recover_worktree_ready_pr_create.set_defaults(
         handler=handle_recover_worktree_ready_pr_create_delivery
+    )
+
+    bootstrap_legacy_everything = sub.add_parser(
+        "bootstrap-legacy-unbound-everything-delivery",
+        help=(
+            "Backfill only the exact former-v1 active Everything workflow boundary; "
+            "it never invokes Git or a provider."
+        ),
+    )
+    bootstrap_legacy_everything.add_argument(
+        "--state", required=True, help="Exact active former-v1 development task state.json."
+    )
+    bootstrap_legacy_everything.add_argument("--idempotency-key", required=True)
+    bootstrap_legacy_everything.add_argument(
+        "--apply",
+        action="store_true",
+        help=(
+            "Write one immutable bootstrap provenance receipt and synchronize only the "
+            "linked projection/canonical row; no provider or Git action occurs."
+        ),
+    )
+    _common_output(bootstrap_legacy_everything)
+    bootstrap_legacy_everything.set_defaults(
+        handler=handle_bootstrap_legacy_unbound_everything_delivery
     )
 
     bind_recovered_family = sub.add_parser(

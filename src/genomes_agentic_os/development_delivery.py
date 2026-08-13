@@ -168,6 +168,9 @@ ACTIVE_WORKTREE_READY_DELIVERY_RECOVERY_SCHEMA = "active-worktree-ready-delivery
 ACTIVE_WORKTREE_READY_PR_CREATE_DELIVERY_RECOVERY_SCHEMA = (
     "active-worktree-ready-pr-create-delivery-recovery/v1"
 )
+ACTIVE_UNBOUND_EVERYTHING_BOOTSTRAP_SCHEMA = (
+    "active-unbound-everything-delivery-bootstrap/v1"
+)
 ACTIVE_WORKTREE_READY_RELEASE_PROPAGATION_CONTINUATION_SCHEMA = (
     "active-worktree-ready-release-propagation-continuation/v1"
 )
@@ -220,6 +223,9 @@ _ACTIVE_PR_CREATE_ESCALATION_DERIVED_OUT_OF_SCOPE_STAGES = (
     "deploy",
     "closeout",
     "health",
+)
+_FORMER_V1_EVERYTHING_STAGE_ORDER = tuple(
+    stage for stage in AUTO_DEV_STAGE_ORDER if stage != "validate_production_release"
 )
 
 
@@ -4227,6 +4233,657 @@ def _recover_active_worktree_ready_delivery(
             recovery_kind=recovery_kind,
             recovery_history_key=recovery_history_key,
             recovery_event_type=recovery_event_type,
+        )
+        return result
+
+
+def _former_v1_everything_stage_policies(value: Any) -> dict[str, Any]:
+    """Accept only the former-v1 policy map, without inventing stage authority."""
+
+    if not isinstance(value, Mapping) or set(value) != set(_FORMER_V1_EVERYTHING_STAGE_ORDER):
+        raise DevelopmentDeliveryError(
+            "legacy unbound Everything bootstrap requires the exact former-v1 stage policy map"
+        )
+    try:
+        normalized = validate_auto_dev_stage_policies(value)
+    except AutoDevStateError as exc:
+        raise DevelopmentDeliveryError(
+            "legacy unbound Everything bootstrap has an invalid stage policy map"
+        ) from exc
+    policies = {stage: dict(value[stage]) for stage in _FORMER_V1_EVERYTHING_STAGE_ORDER}
+    if any(normalized[stage] != policies[stage] for stage in _FORMER_V1_EVERYTHING_STAGE_ORDER):
+        raise DevelopmentDeliveryError(
+            "legacy unbound Everything bootstrap has a noncanonical stage policy map"
+        )
+    return policies
+
+
+def _former_v1_everything_worktree(task: Mapping[str, Any]) -> dict[str, Any]:
+    """Verify the registered v1 worktree structurally, without invoking Git."""
+
+    repository = task.get("repository") if isinstance(task.get("repository"), Mapping) else {}
+    worktree = task.get("worktree") if isinstance(task.get("worktree"), Mapping) else {}
+    raw_path = str(worktree.get("path") or "").strip()
+    candidate = Path(raw_path).expanduser()
+    if not raw_path or not candidate.is_absolute() or candidate.is_symlink():
+        raise DevelopmentDeliveryError(
+            "legacy unbound Everything bootstrap requires its registered worktree"
+        )
+    try:
+        resolved = candidate.resolve(strict=True)
+        entry = candidate.lstat()
+    except (OSError, RuntimeError) as exc:
+        raise DevelopmentDeliveryError(
+            "legacy unbound Everything bootstrap registered worktree is missing or unsafe"
+        ) from exc
+    if not (
+        stat.S_ISDIR(entry.st_mode)
+        and resolved == candidate
+        and str(worktree.get("branch") or "").strip()
+        and re.fullmatch(r"[a-fA-F0-9]{7,64}", str(worktree.get("base_sha") or "").strip())
+        and worktree.get("repository_id") == repository.get("id")
+    ):
+        raise DevelopmentDeliveryError(
+            "legacy unbound Everything bootstrap has an invalid registered worktree"
+        )
+    return dict(worktree)
+
+
+def _former_v1_everything_receipts(
+    task: Mapping[str, Any], *, state_path: Path, work_item: Path, worktree: Mapping[str, Any]
+) -> None:
+    """Allow only canonical pre-delivery receipts and one verified resume duplicate."""
+
+    rows = task.get("receipts")
+    ticket = str(task.get("ticket") or "")
+    if not isinstance(rows, list) or len(rows) not in {5, 6} or not all(
+        isinstance(row, Mapping) for row in rows
+    ):
+        raise DevelopmentDeliveryError(
+            "legacy unbound Everything bootstrap requires only canonical pre-delivery receipts"
+        )
+    expected = (
+        ("claimed", f"linear:{ticket}"),
+        ("groom_check", f"linear:{ticket}"),
+        ("context_ready", str(work_item / "SPEC.md")),
+        ("work_item_ready", str(work_item)),
+        ("worktree_ready", str(worktree["path"])),
+    )
+    for row, (state_name, reference) in zip(rows[:5], expected, strict=True):
+        if row.get("state") != state_name or row.get("ref") != reference or not row.get("recorded_at"):
+            raise DevelopmentDeliveryError(
+                "legacy unbound Everything bootstrap requires only canonical pre-delivery receipts"
+            )
+    context_sha = rows[2].get("sha256")
+    if not isinstance(context_sha, str) or context_sha != hashlib.sha256(
+        (work_item / "SPEC.md").read_bytes()
+    ).hexdigest():
+        raise DevelopmentDeliveryError(
+            "legacy unbound Everything bootstrap context receipt is not hash-bound"
+        )
+    if len(rows) == 5:
+        return
+    resume = rows[5]
+    recovery_key = str(task.get("last_recovery_key") or "")
+    if not (
+        resume.get("state") == "worktree_ready"
+        and resume.get("ref") == "automatic provisioning resume"
+        and resume.get("recorded_at")
+        and recovery_key
+    ):
+        raise DevelopmentDeliveryError(
+            "legacy unbound Everything bootstrap requires a verified provisioning-resume duplicate"
+        )
+    ledger = state_path.parent / "events.jsonl"
+    try:
+        events = [json.loads(line) for line in ledger.read_text(encoding="utf-8").splitlines() if line]
+    except (OSError, json.JSONDecodeError) as exc:
+        raise DevelopmentDeliveryError(
+            "legacy unbound Everything bootstrap provisioning-resume ledger is invalid"
+        ) from exc
+    matching = [
+        event
+        for event in events
+        if isinstance(event, Mapping)
+        and event.get("idempotency_key") == recovery_key
+        and event.get("type") == "development.task.recovered"
+        and isinstance(event.get("payload"), Mapping)
+        and event["payload"].get("ticket") == ticket
+        and event["payload"].get("to") == "worktree_ready"
+        and event["payload"].get("receipt") == "automatic provisioning resume"
+    ]
+    if len(matching) != 1:
+        raise DevelopmentDeliveryError(
+            "legacy unbound Everything bootstrap provisioning-resume duplicate is not verified"
+        )
+
+
+def _active_unbound_everything_bootstrap_context(state_file: str | Path) -> dict[str, Any]:
+    """Prove the sole former-v1 Everything boundary before backfilling it once."""
+
+    state_path = Path(state_file).expanduser().resolve()
+    state_path, task_bytes = _worktree_ready_recovery_read_file(state_path, label="task state")
+    task = _worktree_ready_recovery_mapping(task_bytes, label="task state")
+    required = (
+        "os_root",
+        "domain",
+        "project",
+        "ticket",
+        "run_id",
+        "work_item",
+        "autodev_path",
+        "canonical_work_id",
+        "policy_fingerprint",
+        "policy_receipt",
+    )
+    if not all(str(task.get(field) or "").strip() for field in required):
+        raise DevelopmentDeliveryError(
+            "legacy unbound Everything bootstrap requires a fully linked task"
+        )
+    missing_boundary = all(
+        field not in task or task.get(field) is None
+        for field in (
+            "auto_dev_start_stage",
+            "auto_dev_completion_stage",
+            "auto_dev_stage_policies",
+        )
+    )
+    if not (
+        task.get("state") == "worktree_ready"
+        and task.get("failure") is None
+        and task.get("auto_dev_mode") == "everything"
+        and task.get("requested_stage") is None
+        and task.get("goal") == "delivery_complete"
+        and list(task.get("auto_dev_stage_order") or []) == list(_FORMER_V1_EVERYTHING_STAGE_ORDER)
+        and task.get("stage_receipts") in (None, {})
+        and missing_boundary
+        and not any(
+            task.get(field)
+            for field in (
+                "subject_revision",
+                "terminal_revision",
+                "deployed_revision",
+                "subject_supersessions",
+                "subject_supersession_resolutions",
+                "active_unbound_everything_bootstraps",
+            )
+        )
+    ):
+        raise DevelopmentDeliveryError(
+            "legacy unbound Everything bootstrap requires the exact former-v1 active task boundary"
+        )
+    root = expand_path(str(task["os_root"]))
+    domain = normalize_domain(str(task["domain"]))
+    project = validate_name(str(task["project"]), "project")
+    ticket = str(task["ticket"])
+    work_item = Path(str(task["work_item"])).expanduser().resolve()
+    project_path = project_root(root, domain, project)
+    if not (
+        work_item.is_dir()
+        and (work_item / "work.yml").is_file()
+        and _project_work_item_lane(work_item, project_path) == "02-active"
+    ):
+        raise DevelopmentDeliveryError(
+            "legacy unbound Everything bootstrap requires one active canonical work-item packet"
+        )
+    worktree = _former_v1_everything_worktree(task)
+    _former_v1_everything_receipts(task, state_path=state_path, work_item=work_item, worktree=worktree)
+    projection_path, projection_bytes = _worktree_ready_recovery_read_file(
+        Path(str(task["autodev_path"])).expanduser(), label="Auto-Dev projection", work_item=work_item
+    )
+    if projection_path != (work_item / "autodev.json").resolve():
+        raise DevelopmentDeliveryError(
+            "legacy unbound Everything bootstrap projection is not packet-local"
+        )
+    projection = _worktree_ready_recovery_mapping(projection_bytes, label="Auto-Dev projection")
+    delivery = projection.get("delivery") if isinstance(projection.get("delivery"), Mapping) else {}
+    stages = projection.get("stages") if isinstance(projection.get("stages"), Mapping) else {}
+    policies = _former_v1_everything_stage_policies(projection.get("stage_policies"))
+    if not (
+        projection.get("schema") == "auto-dev-work-item/v1"
+        and projection.get("canonical_work_id") == task["canonical_work_id"]
+        and projection.get("domain") == domain
+        and projection.get("project") == project
+        and isinstance(projection.get("source"), Mapping)
+        and projection["source"].get("key") == ticket
+        and projection.get("mode") == "everything"
+        and projection.get("requested_stage") is None
+        and projection.get("start_stage") == "groom"
+        and projection.get("completion_stage") == "health"
+        and projection.get("current_stage") == "groom"
+        and projection.get("status") == "ready"
+        and projection.get("blocker") is None
+        and projection.get("stage_order") == list(_FORMER_V1_EVERYTHING_STAGE_ORDER)
+        and set(stages) == set(_FORMER_V1_EVERYTHING_STAGE_ORDER)
+        and all(
+            isinstance(row, Mapping)
+            and row.get("status") == "not_started"
+            and row.get("receipt_refs") == []
+            for row in stages.values()
+        )
+        and projection.get("subject_revision") in (None, "")
+        and projection.get("terminal_revision") in (None, "")
+        and projection.get("deployed_revision") in (None, "")
+        and delivery.get("state") == "worktree_ready"
+        and delivery.get("run_id") == task["run_id"]
+        and delivery.get("goal") == "delivery_complete"
+        and delivery.get("canonical_work_id") == task["canonical_work_id"]
+        and Path(str(delivery.get("task_state_ref") or "")).expanduser().resolve() == state_path
+        and Path(str(delivery.get("work_item") or "")).expanduser().resolve() == work_item
+        and delivery.get("policy_fingerprint") == task["policy_fingerprint"]
+        and delivery.get("policy_receipt") == task["policy_receipt"]
+        and all(delivery.get(field) in (None, "") for field in ("subject_revision", "terminal_revision", "deployed_revision"))
+    ):
+        raise DevelopmentDeliveryError(
+            "legacy unbound Everything bootstrap requires the exact linked former-v1 projection"
+        )
+    run_dir = state_path.parent.parent.parent.resolve()
+    portfolio_path, portfolio_bytes = _worktree_ready_recovery_read_file(run_dir / "portfolio.json", label="portfolio")
+    portfolio = _worktree_ready_recovery_mapping(portfolio_bytes, label="portfolio")
+    portfolio_auto_dev = portfolio.get("auto_dev") if isinstance(portfolio.get("auto_dev"), Mapping) else {}
+    portfolio_rows = portfolio.get("tasks") if isinstance(portfolio.get("tasks"), list) else []
+    portfolio_missing_boundary = all(
+        field not in portfolio_auto_dev or portfolio_auto_dev.get(field) is None
+        for field in ("start_stage", "completion_stage", "stage_policies")
+    )
+    if not (
+        portfolio.get("schema") == "development-portfolio/v1"
+        and portfolio.get("state") == "dispatching"
+        and portfolio.get("run_id") == task["run_id"]
+        and portfolio.get("domain") == domain
+        and portfolio.get("project") == project
+        and portfolio.get("tickets") == [ticket]
+        and portfolio_auto_dev.get("mode") == "everything"
+        and portfolio_auto_dev.get("requested_stage") is None
+        and portfolio_auto_dev.get("goal") == "delivery_complete"
+        and portfolio_auto_dev.get("provision_worktree") is True
+        and portfolio_auto_dev.get("stage_order") == list(_FORMER_V1_EVERYTHING_STAGE_ORDER)
+        and portfolio_missing_boundary
+        and not portfolio.get("active_unbound_everything_bootstraps")
+        and len(portfolio_rows) == 1
+        and isinstance(portfolio_rows[0], Mapping)
+        and portfolio_rows[0].get("ticket") == ticket
+        and portfolio_rows[0].get("canonical_work_id") == task["canonical_work_id"]
+        and Path(str(portfolio_rows[0].get("state_ref") or "")).expanduser().resolve() == state_path
+        and portfolio_rows[0].get("work_item") == str(work_item)
+        and portfolio_rows[0].get("worktree") == worktree
+        and portfolio.get("policy_fingerprint") == task["policy_fingerprint"]
+    ):
+        raise DevelopmentDeliveryError(
+            "legacy unbound Everything bootstrap requires the exact one-task former-v1 portfolio"
+        )
+    policy_path, policy_bytes = _worktree_ready_recovery_read_file(
+        Path(str(task["policy_receipt"])).expanduser(), label="effective policy receipt"
+    )
+    if policy_path != (run_dir / "effective-policies.json").resolve():
+        raise DevelopmentDeliveryError(
+            "legacy unbound Everything bootstrap effective policy receipt is not run-local"
+        )
+    policy = _worktree_ready_recovery_mapping(policy_bytes, label="effective policy receipt")
+    try:
+        _validate_effective_policy_snapshot(policy, require_selected_profile=False)
+    except DevelopmentDeliveryError as exc:
+        raise DevelopmentDeliveryError(
+            "legacy unbound Everything bootstrap effective policy receipt is invalid"
+        ) from exc
+    if not (
+        policy.get("fingerprint") == task["policy_fingerprint"]
+        and policy.get("domain") == domain
+        and policy.get("project") == project
+    ):
+        raise DevelopmentDeliveryError(
+            "legacy unbound Everything bootstrap effective policy receipt does not match its task"
+        )
+    canonical = _read_canonical_development_work(
+        root,
+        canonical_work_id=str(task["canonical_work_id"]),
+        ticket=ticket,
+        packet=work_item,
+        diagnostic_root=run_dir,
+    )
+    if not (
+        isinstance(canonical, Mapping)
+        and canonical.get("id") == task["canonical_work_id"]
+        and canonical.get("state") == "building"
+        and canonical.get("attention") == "active"
+        and canonical.get("domain") == domain
+        and canonical.get("project") == project
+        and canonical.get("source_key") == ticket
+        and canonical.get("packet_path") == str(work_item)
+        and canonical.get("worktree_path") == str(worktree["path"])
+        and canonical.get("branch") == worktree["branch"]
+    ):
+        raise DevelopmentDeliveryError(
+            "legacy unbound Everything bootstrap requires one active canonical worktree-ready row"
+        )
+    boundary = {
+        "mode": "everything",
+        "requested_stage": None,
+        "goal": "delivery_complete",
+        "stage_order": list(_FORMER_V1_EVERYTHING_STAGE_ORDER),
+        "start_stage": "groom",
+        "completion_stage": "health",
+        "stage_policies": policies,
+    }
+    return {
+        "root": root,
+        "task": task,
+        "state_path": state_path,
+        "task_sha256": hashlib.sha256(task_bytes).hexdigest(),
+        "work_item": work_item,
+        "worktree": worktree,
+        "projection_path": projection_path,
+        "projection_sha256": hashlib.sha256(projection_bytes).hexdigest(),
+        "portfolio_path": portfolio_path,
+        "portfolio_sha256": hashlib.sha256(portfolio_bytes).hexdigest(),
+        "portfolio_auto_dev": dict(portfolio_auto_dev),
+        "policy_path": policy_path,
+        "policy_sha256": hashlib.sha256(policy_bytes).hexdigest(),
+        "canonical": dict(canonical),
+        "canonical_sha256": _json_sha256(dict(canonical)),
+        "boundary": boundary,
+    }
+
+
+def _active_unbound_everything_bootstrap_receipt_path(
+    context: Mapping[str, Any], idempotency_key: str
+) -> Path:
+    return (
+        Path(context["work_item"])
+        / "artifacts"
+        / "development-delivery"
+        / "legacy-unbound-everything-bootstrap"
+        / f"{hashlib.sha256(idempotency_key.encode('utf-8')).hexdigest()[:20]}.json"
+    )
+
+
+def _active_unbound_everything_bootstrap_receipt(
+    context: Mapping[str, Any], *, idempotency_key: str, receipt_path: Path
+) -> dict[str, Any]:
+    """Create or strictly recover the immutable receipt for an exact legacy context."""
+
+    original = {
+        "task_state_ref": str(context["state_path"]),
+        "task_state_sha256": context["task_sha256"],
+        "portfolio_ref": str(context["portfolio_path"]),
+        "portfolio_sha256": context["portfolio_sha256"],
+        "portfolio_auto_dev": context["portfolio_auto_dev"],
+        "autodev_ref": str(context["projection_path"]),
+        "autodev_sha256": context["projection_sha256"],
+        "effective_policy_ref": str(context["policy_path"]),
+        "effective_policy_sha256": context["policy_sha256"],
+        "canonical_work_id": context["task"]["canonical_work_id"],
+        "canonical_sha256": context["canonical_sha256"],
+        "worktree": context["worktree"],
+    }
+    next_action = "resume the exact Everything run; record every delivery stage afresh"
+    if receipt_path.exists() or receipt_path.is_symlink():
+        _, existing_bytes = _worktree_ready_recovery_packet_file(
+            receipt_path, work_item=Path(context["work_item"]), label="bootstrap provenance"
+        )
+        existing = _worktree_ready_recovery_mapping(existing_bytes, label="bootstrap provenance")
+        if not (
+            set(existing)
+            == {
+                "schema",
+                "kind",
+                "idempotency_key",
+                "recorded_at",
+                "original",
+                "boundary",
+                "next_action",
+            }
+            and existing.get("schema") == ACTIVE_UNBOUND_EVERYTHING_BOOTSTRAP_SCHEMA
+            and existing.get("kind") == "bootstrap-legacy-unbound-everything-delivery"
+            and existing.get("idempotency_key") == idempotency_key
+            and isinstance(existing.get("recorded_at"), str)
+            and existing["recorded_at"].strip()
+            and existing.get("original") == original
+            and existing.get("boundary") == context["boundary"]
+            and existing.get("next_action") == next_action
+        ):
+            raise DevelopmentDeliveryError(
+                "legacy unbound Everything bootstrap receipt does not bind the current exact pre-bootstrap context"
+            )
+        return dict(existing)
+    return {
+        "schema": ACTIVE_UNBOUND_EVERYTHING_BOOTSTRAP_SCHEMA,
+        "kind": "bootstrap-legacy-unbound-everything-delivery",
+        "idempotency_key": idempotency_key,
+        "recorded_at": utc_now(),
+        "original": original,
+        "boundary": context["boundary"],
+        "next_action": next_action,
+    }
+
+
+def _complete_active_unbound_everything_bootstrap(
+    state_path: Path,
+    *,
+    bootstrap: Mapping[str, Any],
+    apply: bool,
+) -> None:
+    """Validate or finish the derived projection of one immutable bootstrap receipt."""
+
+    task = _read_mapping(state_path)
+    work_item = Path(str(task.get("work_item") or "")).expanduser().resolve()
+    receipt_path, receipt_bytes = _worktree_ready_recovery_packet_file(
+        bootstrap.get("receipt"), work_item=work_item, label="bootstrap provenance"
+    )
+    receipt = _worktree_ready_recovery_mapping(receipt_bytes, label="bootstrap provenance")
+    if not (
+        receipt.get("schema") == ACTIVE_UNBOUND_EVERYTHING_BOOTSTRAP_SCHEMA
+        and receipt.get("kind") == "bootstrap-legacy-unbound-everything-delivery"
+        and receipt.get("idempotency_key") == bootstrap.get("idempotency_key")
+        and _json_sha256(receipt) == bootstrap.get("sha256")
+    ):
+        raise DevelopmentDeliveryError(
+            "legacy unbound Everything bootstrap provenance does not match task state"
+        )
+    boundary = receipt.get("boundary") if isinstance(receipt.get("boundary"), Mapping) else {}
+    original = receipt.get("original") if isinstance(receipt.get("original"), Mapping) else {}
+    expected_bootstrap = {
+        "idempotency_key": receipt.get("idempotency_key"),
+        "receipt": str(receipt_path),
+        "sha256": _json_sha256(receipt),
+        "recorded_at": receipt.get("recorded_at"),
+    }
+    matching = [
+        row
+        for row in task.get("active_unbound_everything_bootstraps") or []
+        if isinstance(row, Mapping) and row.get("idempotency_key") == expected_bootstrap["idempotency_key"]
+    ]
+    if not (
+        task.get("state") == "worktree_ready"
+        and task.get("failure") is None
+        and task.get("auto_dev_mode") == boundary.get("mode")
+        and task.get("requested_stage") == boundary.get("requested_stage")
+        and task.get("goal") == boundary.get("goal")
+        and task.get("auto_dev_stage_order") == boundary.get("stage_order")
+        and task.get("auto_dev_start_stage") == boundary.get("start_stage")
+        and task.get("auto_dev_completion_stage") == boundary.get("completion_stage")
+        and task.get("auto_dev_stage_policies") == boundary.get("stage_policies")
+        and task.get("stage_receipts") in (None, {})
+        and not any(task.get(field) for field in ("subject_revision", "terminal_revision", "deployed_revision", "subject_supersessions", "subject_supersession_resolutions"))
+        and len(matching) == 1
+        and dict(matching[0]) == expected_bootstrap
+        and task.get("last_active_unbound_everything_bootstrap_key") == expected_bootstrap["idempotency_key"]
+    ):
+        raise DevelopmentDeliveryError("legacy unbound Everything bootstrap task state is not replayable")
+    portfolio_path = state_path.parent.parent.parent / "portfolio.json"
+    portfolio = _read_mapping(portfolio_path)
+    portfolio_bootstraps = [
+        row
+        for row in portfolio.get("active_unbound_everything_bootstraps") or []
+        if isinstance(row, Mapping) and row.get("idempotency_key") == expected_bootstrap["idempotency_key"]
+    ]
+    expected_portfolio_auto_dev = {
+        **dict((receipt.get("original") or {}).get("portfolio_auto_dev") or {}),
+        "start_stage": boundary.get("start_stage"),
+        "completion_stage": boundary.get("completion_stage"),
+        "stage_policies": boundary.get("stage_policies"),
+    }
+    if portfolio.get("auto_dev") != expected_portfolio_auto_dev:
+        if not apply or (
+            hashlib.sha256(portfolio_path.read_bytes()).hexdigest() != original.get("portfolio_sha256")
+            or portfolio_bootstraps
+        ):
+            raise DevelopmentDeliveryError("legacy unbound Everything bootstrap portfolio is not replayable")
+        portfolio["auto_dev"] = expected_portfolio_auto_dev
+        portfolio.setdefault("active_unbound_everything_bootstraps", []).append(expected_bootstrap)
+        portfolio["updated_at"] = utc_now()
+        _atomic_json(portfolio_path, portfolio)
+    elif len(portfolio_bootstraps) != 1 or dict(portfolio_bootstraps[0]) != expected_bootstrap:
+        raise DevelopmentDeliveryError("legacy unbound Everything bootstrap portfolio provenance is not replayable")
+    if not apply:
+        return
+    synced = _sync_auto_dev_projection(state_path)
+    if not (
+        isinstance(synced, Mapping)
+        and synced.get("mode") == "everything"
+        and synced.get("requested_stage") is None
+        and synced.get("start_stage") == "groom"
+        and synced.get("completion_stage") == "health"
+        and synced.get("current_stage") == "groom"
+        and synced.get("status") == "ready"
+        and synced.get("blocker") is None
+        and synced.get("stage_order") == list(AUTO_DEV_STAGE_ORDER)
+        and all(
+            isinstance(row, Mapping)
+            and row.get("status") == "not_started"
+            and row.get("receipt_refs") == []
+            for row in (synced.get("stages") or {}).values()
+        )
+    ):
+        raise DevelopmentDeliveryError(
+            "legacy unbound Everything bootstrap could not synchronize an empty projection"
+        )
+    _sync_canonical_task_progress(state_path)
+    canonical = _read_canonical_development_work(
+        str(task["os_root"]),
+        canonical_work_id=str(task["canonical_work_id"]),
+        ticket=str(task["ticket"]),
+        packet=work_item,
+        diagnostic_root=state_path.parent.parent.parent,
+    )
+    if not (
+        isinstance(canonical, Mapping)
+        and canonical.get("state") == "building"
+        and canonical.get("attention") == "active"
+        and canonical.get("packet_path") == str(work_item)
+        and canonical.get("branch") == (task.get("worktree") or {}).get("branch")
+    ):
+        raise DevelopmentDeliveryError(
+            "legacy unbound Everything bootstrap could not synchronize the canonical work projection"
+        )
+    TaskState(state_path).emit(
+        event_type="development.task.legacy_unbound_everything_bootstrapped",
+        idempotency_key=str(expected_bootstrap["idempotency_key"]),
+        payload={
+            "ticket": task.get("ticket"),
+            "receipt": str(receipt_path),
+            "next_action": "resume the exact Everything run; record every delivery stage afresh",
+        },
+    )
+
+
+def bootstrap_active_unbound_everything_delivery(
+    state_file: str | Path, *, idempotency_key: str, apply: bool = False
+) -> dict[str, Any]:
+    """Backfill only the missing former-v1 Everything workflow boundary once."""
+
+    normalized_key = idempotency_key.strip()
+    if not normalized_key:
+        raise DevelopmentDeliveryError("legacy unbound Everything bootstrap requires an idempotency key")
+    state_path = Path(state_file).expanduser().resolve()
+    state = TaskState(state_path)
+    with _task_provisioning_admission_lock(state_path):
+        current = state.read()
+        for bootstrap in current.get("active_unbound_everything_bootstraps") or []:
+            if not isinstance(bootstrap, Mapping) or bootstrap.get("idempotency_key") != normalized_key:
+                continue
+            _complete_active_unbound_everything_bootstrap(
+                state_path, bootstrap=bootstrap, apply=apply
+            )
+            return {
+                "schema": "active-unbound-everything-delivery-bootstrap-result/v1",
+                "result": "replayed",
+                "state": str(state_path),
+                "ticket": current.get("ticket"),
+                "receipt": str(bootstrap["receipt"]),
+                "receipt_sha256": str(bootstrap["sha256"]),
+                "next_action": "resume the exact Everything run; record every delivery stage afresh",
+            }
+        context = _active_unbound_everything_bootstrap_context(state_path)
+        receipt_path = _active_unbound_everything_bootstrap_receipt_path(context, normalized_key)
+        receipt_existed = receipt_path.exists() or receipt_path.is_symlink()
+        receipt = _active_unbound_everything_bootstrap_receipt(
+            context, idempotency_key=normalized_key, receipt_path=receipt_path
+        )
+        receipt_sha256 = _json_sha256(receipt)
+        result = {
+            "schema": "active-unbound-everything-delivery-bootstrap-result/v1",
+            "result": "planned" if not apply else "bootstrapped",
+            "state": str(state_path),
+            "ticket": context["task"].get("ticket"),
+            "receipt": str(receipt_path),
+            "receipt_sha256": receipt_sha256,
+            "next_action": receipt["next_action"],
+        }
+        if not apply:
+            return result
+        with _file_lock(context["portfolio_path"].with_suffix(context["portfolio_path"].suffix + ".lock")):
+            locked = _active_unbound_everything_bootstrap_context(state_path)
+            if not (
+                locked["task_sha256"] == context["task_sha256"]
+                and locked["portfolio_sha256"] == context["portfolio_sha256"]
+                and locked["projection_sha256"] == context["projection_sha256"]
+                and locked["policy_sha256"] == context["policy_sha256"]
+                and locked["canonical_sha256"] == context["canonical_sha256"]
+                and locked["boundary"] == context["boundary"]
+            ):
+                raise DevelopmentDeliveryError(
+                    "portfolio, task, projection, policy receipt, or canonical row changed during legacy unbound Everything bootstrap; rerun preflight"
+                )
+            with _file_lock(state_path.with_suffix(state_path.suffix + ".lock")):
+                _, latest_bytes = _worktree_ready_recovery_read_file(state_path, label="task state")
+                if hashlib.sha256(latest_bytes).hexdigest() != context["task_sha256"]:
+                    raise DevelopmentDeliveryError(
+                        "task changed during legacy unbound Everything bootstrap; rerun preflight"
+                    )
+                if receipt_path.exists() or receipt_path.is_symlink():
+                    receipt = _active_unbound_everything_bootstrap_receipt(
+                        locked, idempotency_key=normalized_key, receipt_path=receipt_path
+                    )
+                    receipt_sha256 = _json_sha256(receipt)
+                    result["receipt_sha256"] = receipt_sha256
+                    result["next_action"] = receipt["next_action"]
+                elif receipt_existed:
+                    raise DevelopmentDeliveryError(
+                        "legacy unbound Everything bootstrap receipt disappeared during recovery"
+                    )
+                else:
+                    _atomic_json(receipt_path, receipt)
+                bootstrap = {
+                    "idempotency_key": normalized_key,
+                    "receipt": str(receipt_path),
+                    "sha256": receipt_sha256,
+                    "recorded_at": receipt["recorded_at"],
+                }
+                latest = state.read()
+                latest.update(
+                    {
+                        "auto_dev_start_stage": context["boundary"]["start_stage"],
+                        "auto_dev_completion_stage": context["boundary"]["completion_stage"],
+                        "auto_dev_stage_policies": context["boundary"]["stage_policies"],
+                        "last_active_unbound_everything_bootstrap_key": normalized_key,
+                        "updated_at": utc_now(),
+                    }
+                )
+                latest.setdefault("active_unbound_everything_bootstraps", []).append(bootstrap)
+                _atomic_json(state_path, latest)
+        _complete_active_unbound_everything_bootstrap(
+            state_path, bootstrap=bootstrap, apply=True
         )
         return result
 
