@@ -164,6 +164,9 @@ ACTIVE_WORKTREE_READY_DELIVERY_RECOVERY_SCHEMA = "active-worktree-ready-delivery
 ACTIVE_WORKTREE_READY_PR_CREATE_DELIVERY_RECOVERY_SCHEMA = (
     "active-worktree-ready-pr-create-delivery-recovery/v1"
 )
+ACTIVE_WORKTREE_READY_RELEASE_PROPAGATION_CONTINUATION_SCHEMA = (
+    "active-worktree-ready-release-propagation-continuation/v1"
+)
 _ACTIVE_WORKTREE_READY_DELIVERY_FRESH_STAGES = (
     "review_self",
     "review_others",
@@ -2965,7 +2968,7 @@ def _worktree_ready_recovery_registered_head(task: Mapping[str, Any]) -> str:
 
 
 def _worktree_ready_recovery_release_identity(
-    task: Mapping[str, Any], *, work_item: Path
+    task: Mapping[str, Any], *, work_item: Path, family_ref: Path | None = None
 ) -> dict[str, Any]:
     """Bind current PR evidence to the clean registered worktree HEAD only."""
 
@@ -2982,10 +2985,17 @@ def _worktree_ready_recovery_release_identity(
     github_repository = repository_id.removeprefix("git:github.com/")
     evidence_root = work_item / "artifacts" / "auto-dev-pr-create"
     candidates: list[dict[str, Any]] = []
-    for family_candidate in sorted(evidence_root.glob("refresh-*-family-complete.json")):
+    family_candidates = (
+        [family_ref]
+        if family_ref is not None
+        else sorted(evidence_root.glob("refresh-*-family-complete.json"))
+    )
+    for family_candidate in family_candidates:
         family_path, family_bytes = _worktree_ready_recovery_read_file(
             family_candidate, label="release family evidence", work_item=work_item
         )
+        if family_path.parent != evidence_root.resolve():
+            continue
         family = _worktree_ready_recovery_mapping(family_bytes, label="release family evidence")
         details = family.get("evidence") if isinstance(family.get("evidence"), Mapping) else {}
         source_head_sha = str(details.get("source_head_sha") or "").strip()
@@ -3687,7 +3697,16 @@ def _complete_active_worktree_ready_delivery_recovery(
     if len(matching) != 1 or dict(matching[0]) != dict(recovery):
         raise DevelopmentDeliveryError("worktree_ready delivery recovery history is not replayable")
     original = receipt.get("original") if isinstance(receipt.get("original"), Mapping) else {}
-    release = _worktree_ready_recovery_release_identity(current, work_item=work_item)
+    original_release = (
+        original.get("release_propagation")
+        if isinstance(original.get("release_propagation"), Mapping)
+        else {}
+    )
+    release = _worktree_ready_recovery_release_identity(
+        current,
+        work_item=work_item,
+        family_ref=Path(str(original_release.get("family_ref") or "")).expanduser(),
+    )
     expected_release = {
         "family_ref": str(release["family"]),
         "family_sha256": release["family_sha256"],
@@ -4091,6 +4110,380 @@ def recover_active_worktree_ready_pr_create_delivery(
         recovery_directory="active-worktree-ready-pr-create-delivery-recovery",
         recovery_event_type="development.task.active_worktree_ready_pr_create_delivery_recovered",
     )
+
+
+def _active_worktree_ready_release_propagation_continuation_context(
+    state_path: Path, *, family_ref: str | Path
+) -> dict[str, Any]:
+    """Prove one recovered packet may bind one current PR-family successor.
+
+    This intentionally does not use the normal release-propagation stage:
+    that stage records completed PR Create authority, which a recovered packet
+    must never backfill.  The only permitted continuation is an immutable
+    successor of the family pinned by its worktree-ready recovery provenance.
+    """
+
+    state_path = state_path.expanduser().resolve()
+    _, task_bytes = _worktree_ready_recovery_read_file(state_path, label="task state")
+    task = _worktree_ready_recovery_mapping(task_bytes, label="task state")
+    work_item = Path(str(task.get("work_item") or "")).expanduser().resolve()
+    recoveries = task.get("active_worktree_ready_delivery_recoveries")
+    continuations = task.get("active_worktree_ready_release_propagation_continuations")
+    if not (
+        isinstance(recoveries, list)
+        and len(recoveries) == 1
+        and isinstance(recoveries[0], Mapping)
+        and (
+            continuations in (None, [])
+            or (
+                isinstance(continuations, list)
+                and len(continuations) == 1
+                and isinstance(continuations[0], Mapping)
+            )
+        )
+    ):
+        raise DevelopmentDeliveryError(
+            "recovered release-propagation continuation requires exactly one recovered packet and at most one continuation"
+        )
+    if not work_item.is_dir():
+        raise DevelopmentDeliveryError(
+            "recovered release-propagation continuation requires its active packet"
+        )
+    recovery = dict(recoveries[0])
+    recovery_path, recovery_bytes = _worktree_ready_recovery_packet_file(
+        recovery.get("receipt"), work_item=work_item, label="recovery provenance"
+    )
+    recovery_receipt = _worktree_ready_recovery_mapping(
+        recovery_bytes, label="recovery provenance"
+    )
+    if not (
+        recovery_path
+        == (
+            work_item
+            / "artifacts"
+            / "development-delivery"
+            / "active-worktree-ready-delivery-recovery"
+            / f"{hashlib.sha256(str(recovery.get('idempotency_key') or '').encode('utf-8')).hexdigest()[:20]}.json"
+        ).resolve()
+        and recovery_receipt.get("schema")
+        == ACTIVE_WORKTREE_READY_DELIVERY_RECOVERY_SCHEMA
+        and recovery_receipt.get("kind") == "recover-active-worktree-ready-delivery"
+        and recovery_receipt.get("idempotency_key") == recovery.get("idempotency_key")
+        and recovery_receipt.get("reason") == recovery.get("reason")
+        and recovery_receipt.get("recorded_at") == recovery.get("recorded_at")
+        and _json_sha256(recovery_receipt) == recovery.get("sha256")
+    ):
+        raise DevelopmentDeliveryError(
+            "recovered release-propagation continuation recovery provenance is not immutable"
+        )
+    # Reuse the recovery's own replay verifier before admitting this narrower
+    # continuation.  It checks the recovered task/projection/canonical state
+    # and the original receipt pair without changing any derived projection.
+    _complete_active_worktree_ready_delivery_recovery(
+        state_path, current=task, recovery=recovery, apply=False
+    )
+    expected_receipt_states = {
+        "claimed",
+        "groom_check",
+        "context_ready",
+        "work_item_ready",
+        "worktree_ready",
+        "local_validation",
+    }
+    task_receipts = task.get("receipts")
+    if not (
+        isinstance(task_receipts, list)
+        and len(task_receipts) == len(expected_receipt_states)
+        and {
+            str(row.get("state") or "")
+            for row in task_receipts
+            if isinstance(row, Mapping) and str(row.get("ref") or "").strip()
+        }
+        == expected_receipt_states
+        and sum(
+            1
+            for row in task_receipts
+            if isinstance(row, Mapping) and row.get("state") == "local_validation"
+        )
+        == 1
+        and not task.get("subject_supersessions")
+        and not task.get("subject_supersession_resolutions")
+    ):
+        raise DevelopmentDeliveryError(
+            "recovered release-propagation continuation requires only its immutable pre-delivery and recovery receipts"
+        )
+    original = (
+        recovery_receipt.get("original")
+        if isinstance(recovery_receipt.get("original"), Mapping)
+        else {}
+    )
+    original_release = (
+        original.get("release_propagation")
+        if isinstance(original.get("release_propagation"), Mapping)
+        else {}
+    )
+    predecessor = _worktree_ready_recovery_release_identity(
+        task,
+        work_item=work_item,
+        family_ref=Path(str(original_release.get("family_ref") or "")).expanduser(),
+    )
+    expected_predecessor = {
+        "family_ref": str(predecessor["family"]),
+        "family_sha256": predecessor["family_sha256"],
+        "provider_ref": str(predecessor["provider"]),
+        "provider_sha256": predecessor["provider_sha256"],
+        "pull_request_identity": predecessor["pull_request_identity"],
+    }
+    if original_release != expected_predecessor:
+        raise DevelopmentDeliveryError(
+            "recovered release-propagation continuation predecessor evidence changed"
+        )
+    successor_path, successor_bytes = _worktree_ready_recovery_packet_file(
+        family_ref, work_item=work_item, label="current release family evidence"
+    )
+    successor = _worktree_ready_recovery_release_identity(
+        task, work_item=work_item, family_ref=successor_path
+    )
+    successor_payload = _worktree_ready_recovery_mapping(
+        successor_bytes, label="current release family evidence"
+    )
+    predecessor_identity = predecessor["pull_request_identity"]
+    successor_identity = successor["pull_request_identity"]
+    matching_identity_fields = (
+        "provider",
+        "repository",
+        "base_branch",
+        "pull_request",
+        "source_branch",
+    )
+    old_head = str(predecessor_identity["source_head_sha"] or "").strip()
+    new_head = str(successor_identity["source_head_sha"] or "").strip()
+    supersession = (
+        successor_payload.get("evidence", {}).get("supersession")
+        if isinstance(successor_payload.get("evidence"), Mapping)
+        and isinstance(successor_payload["evidence"].get("supersession"), Mapping)
+        else {}
+    )
+    if not (
+        successor_path != predecessor["family"]
+        and all(
+            successor_identity[field] == predecessor_identity[field]
+            for field in matching_identity_fields
+        )
+        and old_head.lower() != new_head.lower()
+        and str(supersession.get("supersedes_source_head_sha") or "").strip().lower()
+        == old_head.lower()
+        and str(supersession.get("reason") or "").strip()
+    ):
+        raise DevelopmentDeliveryError(
+            "recovered release-propagation continuation requires the exact current successor of its recovery-bound PR family"
+        )
+    return {
+        "state_path": state_path,
+        "task": task,
+        "task_sha256": hashlib.sha256(task_bytes).hexdigest(),
+        "work_item": work_item,
+        "recovery": recovery,
+        "recovery_receipt": recovery_receipt,
+        "predecessor": expected_predecessor,
+        "successor": {
+            "family_ref": str(successor["family"]),
+            "family_sha256": successor["family_sha256"],
+            "provider_ref": str(successor["provider"]),
+            "provider_sha256": successor["provider_sha256"],
+            "pull_request_identity": successor_identity,
+        },
+        "continuations": list(continuations or []),
+    }
+
+
+def bind_recovered_worktree_ready_pr_family(
+    state_file: str | Path,
+    *,
+    family_ref: str | Path,
+    reason: str,
+    idempotency_key: str,
+    apply: bool = False,
+) -> dict[str, Any]:
+    """Append one provenance-bound PR-family successor to a recovered packet.
+
+    This is a compatibility continuation, not PR Create.  It never records a
+    normal stage receipt or alters the fresh Review/QA/Finalize/Merge boundary.
+    """
+
+    state_path = Path(state_file).expanduser().resolve()
+    normalized_reason = reason.strip()
+    normalized_key = idempotency_key.strip()
+    if not normalized_reason or not normalized_key:
+        raise DevelopmentDeliveryError(
+            "recovered release-propagation continuation requires a reason and idempotency key"
+        )
+    state = TaskState(state_path)
+    with _task_provisioning_admission_lock(state_path):
+        context = _active_worktree_ready_release_propagation_continuation_context(
+            state_path, family_ref=family_ref
+        )
+        original = {
+            "recovery": {
+                "receipt": str(context["recovery"]["receipt"]),
+                "sha256": str(context["recovery"]["sha256"]),
+                "idempotency_key": str(context["recovery"]["idempotency_key"]),
+            },
+            "release_propagation": context["predecessor"],
+        }
+        continuation = {
+            "release_propagation": context["successor"],
+            "fresh_stages_required": list(_ACTIVE_WORKTREE_READY_DELIVERY_FRESH_STAGES),
+        }
+        receipt_path = (
+            context["work_item"]
+            / "artifacts"
+            / "development-delivery"
+            / "active-worktree-ready-release-propagation-continuation"
+            / f"{hashlib.sha256(normalized_key.encode('utf-8')).hexdigest()[:20]}.json"
+        )
+        existing_records = context["continuations"]
+        if existing_records:
+            existing_record = dict(existing_records[0])
+            if existing_record.get("idempotency_key") != normalized_key:
+                raise DevelopmentDeliveryError(
+                    "recovered release-propagation continuation is already bound to a different successor"
+                )
+            if existing_record.get("reason") != normalized_reason:
+                raise DevelopmentDeliveryError(
+                    "idempotency key belongs to a different recovered release-propagation continuation"
+                )
+            existing_path, existing_bytes = _worktree_ready_recovery_packet_file(
+                existing_record.get("receipt"),
+                work_item=context["work_item"],
+                label="release-propagation continuation provenance",
+            )
+            existing_receipt = _worktree_ready_recovery_mapping(
+                existing_bytes, label="release-propagation continuation provenance"
+            )
+            expected_without_timestamp = {
+                "schema": ACTIVE_WORKTREE_READY_RELEASE_PROPAGATION_CONTINUATION_SCHEMA,
+                "kind": "bind-recovered-worktree-ready-pr-family",
+                "idempotency_key": normalized_key,
+                "reason": normalized_reason,
+                "original": original,
+                "continuation": continuation,
+            }
+            if not (
+                existing_path == receipt_path
+                and _json_sha256(existing_receipt) == existing_record.get("sha256")
+                and {
+                    key: value
+                    for key, value in existing_receipt.items()
+                    if key != "recorded_at"
+                }
+                == expected_without_timestamp
+            ):
+                raise DevelopmentDeliveryError(
+                    "recovered release-propagation continuation provenance does not match task state"
+                )
+            return {
+                "schema": "active-worktree-ready-release-propagation-continuation-result/v1",
+                "result": "replayed",
+                "state": str(state_path),
+                "ticket": context["task"].get("ticket"),
+                "receipt": str(existing_path),
+                "receipt_sha256": str(existing_record["sha256"]),
+                "next_action": "record fresh review_self, review_others, qa, finalize, and merge evidence",
+            }
+        receipt = {
+            "schema": ACTIVE_WORKTREE_READY_RELEASE_PROPAGATION_CONTINUATION_SCHEMA,
+            "kind": "bind-recovered-worktree-ready-pr-family",
+            "idempotency_key": normalized_key,
+            "reason": normalized_reason,
+            "recorded_at": utc_now(),
+            "original": original,
+            "continuation": continuation,
+        }
+        if receipt_path.exists() or receipt_path.is_symlink():
+            _, existing_bytes = _worktree_ready_recovery_packet_file(
+                receipt_path,
+                work_item=context["work_item"],
+                label="release-propagation continuation provenance",
+            )
+            existing_receipt = _worktree_ready_recovery_mapping(
+                existing_bytes, label="release-propagation continuation provenance"
+            )
+            if {
+                key: value
+                for key, value in existing_receipt.items()
+                if key != "recorded_at"
+            } != {
+                key: value for key, value in receipt.items() if key != "recorded_at"
+            }:
+                raise DevelopmentDeliveryError(
+                    "recovered release-propagation continuation receipt path already has different content"
+                )
+            receipt = existing_receipt
+        receipt_sha256 = _json_sha256(receipt)
+        result = {
+            "schema": "active-worktree-ready-release-propagation-continuation-result/v1",
+            "result": "planned" if not apply else "bound",
+            "state": str(state_path),
+            "ticket": context["task"].get("ticket"),
+            "receipt": str(receipt_path),
+            "receipt_sha256": receipt_sha256,
+            "next_action": "record fresh review_self, review_others, qa, finalize, and merge evidence",
+        }
+        if not apply:
+            return result
+        with _file_lock(state_path.with_suffix(state_path.suffix + ".lock")):
+            locked = _active_worktree_ready_release_propagation_continuation_context(
+                state_path, family_ref=family_ref
+            )
+            if not (
+                locked["task_sha256"] == context["task_sha256"]
+                and locked["recovery"] == context["recovery"]
+                and locked["predecessor"] == context["predecessor"]
+                and locked["successor"] == context["successor"]
+                and not locked["continuations"]
+            ):
+                raise DevelopmentDeliveryError(
+                    "task, recovery provenance, or PR-family evidence changed during recovered release-propagation continuation; rerun preflight"
+                )
+            if receipt_path.exists() or receipt_path.is_symlink():
+                _, existing_bytes = _worktree_ready_recovery_packet_file(
+                    receipt_path,
+                    work_item=context["work_item"],
+                    label="release-propagation continuation provenance",
+                )
+                if _worktree_ready_recovery_mapping(
+                    existing_bytes, label="release-propagation continuation provenance"
+                ) != receipt:
+                    raise DevelopmentDeliveryError(
+                        "recovered release-propagation continuation receipt path already has different content"
+                    )
+            else:
+                _atomic_json(receipt_path, receipt)
+            latest = deepcopy(locked["task"])
+            latest.setdefault(
+                "active_worktree_ready_release_propagation_continuations", []
+            ).append(
+                {
+                    "idempotency_key": normalized_key,
+                    "reason": normalized_reason,
+                    "receipt": str(receipt_path),
+                    "sha256": receipt_sha256,
+                    "recorded_at": receipt["recorded_at"],
+                }
+            )
+            latest["updated_at"] = utc_now()
+            _atomic_json(state_path, latest)
+        state.emit(
+            event_type="development.task.recovered_pr_family_bound",
+            idempotency_key=normalized_key,
+            payload={
+                "ticket": context["task"].get("ticket"),
+                "receipt": str(receipt_path),
+                "next_action": result["next_action"],
+            },
+        )
+        return result
 
 
 def _is_retryable_origin_main_provisioning_failure(task: Mapping[str, Any]) -> bool:

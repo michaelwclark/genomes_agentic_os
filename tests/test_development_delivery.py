@@ -7376,6 +7376,248 @@ def test_recover_active_worktree_ready_delivery_accepts_only_the_post_review_sel
     assert work_item.is_dir()
 
 
+def _recovered_worktree_ready_successor_family(
+    task: TaskState,
+    family_path: Path,
+    provider_path: Path,
+    *,
+    head: str = "b" * 40,
+) -> tuple[Path, Path]:
+    """Write the provider-read successor required by the narrow continuation."""
+
+    family = json.loads(family_path.read_text(encoding="utf-8"))
+    provider = json.loads(provider_path.read_text(encoding="utf-8"))
+    family["evidence"]["source_head_sha"] = head
+    family["evidence"]["provider_observed"]["head_sha"] = head
+    family["evidence"]["supersession"] = {
+        "supersedes_source_head_sha": "a" * 40,
+        "reason": "normal non-destructive rebase onto current main",
+    }
+    provider["source_head_sha"] = head
+    successor_family = family_path.with_name(
+        f"refresh-{head[:8].lower()}-family-complete.json"
+    )
+    successor_provider = provider_path.with_name(
+        f"refresh-{head[:8].lower()}-provider-readback.json"
+    )
+    successor_family.write_text(json.dumps(family), encoding="utf-8")
+    successor_provider.write_text(json.dumps(provider), encoding="utf-8")
+    return successor_family, successor_provider
+
+
+def test_bind_recovered_worktree_ready_pr_family_preserves_fresh_stage_boundary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    task, portfolio_path, family_path, provider_path = _active_worktree_ready_recovery_fixture(
+        tmp_path, monkeypatch, post_review_self_admission=True
+    )
+    delivery.recover_active_worktree_ready_delivery(
+        task.path,
+        reason="recover the bounded unaccepted Review Self admission",
+        idempotency_key="cc-419:recover",
+        apply=True,
+    )
+    successor_family, successor_provider = _recovered_worktree_ready_successor_family(
+        task, family_path, provider_path
+    )
+    work_item = Path(task.read()["work_item"])
+    projection_path = Path(task.read()["autodev_path"])
+    before = {
+        "task": task.path.read_bytes(),
+        "portfolio": portfolio_path.read_bytes(),
+        "projection": projection_path.read_bytes(),
+        "family": family_path.read_bytes(),
+        "provider": provider_path.read_bytes(),
+        "successor_family": successor_family.read_bytes(),
+        "successor_provider": successor_provider.read_bytes(),
+    }
+
+    assert main(
+        [
+            "auto-dev",
+            "bind-recovered-worktree-ready-pr-family",
+            "--state",
+            str(task.path),
+            "--family",
+            str(successor_family),
+            "--reason",
+            "bind only the current provider-read successor after recovery",
+            "--idempotency-key",
+            "cc-419:bind",
+            "--json",
+        ]
+    ) == 0
+    planned = json.loads(capsys.readouterr().out)
+    assert planned["result"] == "planned"
+    assert task.path.read_bytes() == before["task"]
+    assert portfolio_path.read_bytes() == before["portfolio"]
+    assert projection_path.read_bytes() == before["projection"]
+
+    bound = delivery.bind_recovered_worktree_ready_pr_family(
+        task.path,
+        family_ref=successor_family,
+        reason="bind only the current provider-read successor after recovery",
+        idempotency_key="cc-419:bind",
+        apply=True,
+    )
+    assert bound["result"] == "bound"
+    receipt = json.loads(Path(bound["receipt"]).read_text(encoding="utf-8"))
+    assert receipt["original"]["release_propagation"]["family_ref"] == str(family_path)
+    assert receipt["continuation"]["release_propagation"]["family_ref"] == str(
+        successor_family
+    )
+    current = task.read()
+    assert current["state"] == "local_validation"
+    assert current.get("stage_receipts") in (None, {})
+    assert current.get("subject_revision") in (None, "")
+    assert len(current["active_worktree_ready_release_propagation_continuations"]) == 1
+    assert portfolio_path.read_bytes() == before["portfolio"]
+    assert projection_path.read_bytes() == before["projection"]
+    assert all(
+        read_auto_dev_state(projection_path)["stages"][stage]["status"] == "not_started"
+        for stage in ("review_self", "review_others", "qa", "finalize", "merge")
+    )
+    assert family_path.read_bytes() == before["family"]
+    assert provider_path.read_bytes() == before["provider"]
+    assert successor_family.read_bytes() == before["successor_family"]
+    assert successor_provider.read_bytes() == before["successor_provider"]
+    assert work_item.is_dir()
+
+    replayed = delivery.bind_recovered_worktree_ready_pr_family(
+        task.path,
+        family_ref=successor_family,
+        reason="bind only the current provider-read successor after recovery",
+        idempotency_key="cc-419:bind",
+        apply=True,
+    )
+    assert replayed["result"] == "replayed"
+    assert len(task.read()["active_worktree_ready_release_propagation_continuations"]) == 1
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        "generic",
+        "foreign",
+        "old",
+        "recovery_receipt",
+        "different_recovery_receipt",
+        "latent_task_receipt",
+        "projection_authority",
+    ),
+)
+def test_bind_recovered_worktree_ready_pr_family_refuses_without_mutation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mutation: str
+) -> None:
+    task, portfolio_path, family_path, provider_path = _active_worktree_ready_recovery_fixture(
+        tmp_path, monkeypatch
+    )
+    if mutation != "generic":
+        delivery.recover_active_worktree_ready_delivery(
+            task.path,
+            reason="recover the historical readiness packet",
+            idempotency_key="cc-419:recover",
+            apply=True,
+        )
+    successor_family, successor_provider = _recovered_worktree_ready_successor_family(
+        task, family_path, provider_path
+    )
+    work_item = Path(task.read()["work_item"])
+    projection_path = Path(task.read()["autodev_path"])
+    if mutation == "foreign":
+        value = json.loads(successor_family.read_text(encoding="utf-8"))
+        value["evidence"]["repository"] = "git:github.com/foreign/app"
+        successor_family.write_text(json.dumps(value), encoding="utf-8")
+    elif mutation == "old":
+        family_path.write_text("{\"tampered\":true}", encoding="utf-8")
+    elif mutation == "recovery_receipt":
+        recovery = task.read()["active_worktree_ready_delivery_recoveries"][0]
+        Path(recovery["receipt"]).write_text("{\"tampered\":true}", encoding="utf-8")
+    elif mutation == "different_recovery_receipt":
+        value = task.read()
+        recovery = value["active_worktree_ready_delivery_recoveries"][0]
+        original_receipt = Path(recovery["receipt"])
+        copied_receipt = original_receipt.with_name("copied-recovery-receipt.json")
+        copied_receipt.write_bytes(original_receipt.read_bytes())
+        recovery["receipt"] = str(copied_receipt)
+        task.path.write_text(
+            json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+    elif mutation == "latent_task_receipt":
+        value = task.read()
+        value["receipts"].append(
+            {
+                "state": "review_self",
+                "ref": "unexpected-review-self-receipt",
+                "sha256": "b" * 64,
+                "recorded_at": "2026-08-12T00:00:00Z",
+            }
+        )
+        task.path.write_text(
+            json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+    elif mutation == "projection_authority":
+        projection = json.loads(projection_path.read_text(encoding="utf-8"))
+        projection["stages"]["review_self"] = {
+            "status": "completed",
+            "receipt_refs": ["unexpected-review-self-receipt"],
+        }
+        projection_path.write_text(
+            json.dumps(projection, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+    root = Path(task.read()["os_root"])
+    connection = connect_state(default_db_path(root))
+    try:
+        canonical_before = canonical_work_items.get(
+            connection, task.read()["canonical_work_id"]
+        )
+    finally:
+        connection.close()
+    continuation_dir = (
+        work_item
+        / "artifacts"
+        / "development-delivery"
+        / "active-worktree-ready-release-propagation-continuation"
+    )
+    before = {
+        "task": task.path.read_bytes(),
+        "portfolio": portfolio_path.read_bytes(),
+        "projection": projection_path.read_bytes(),
+        "canonical": json.dumps(canonical_before, sort_keys=True),
+        "ledger": task.ledger.read_bytes() if task.ledger.is_file() else None,
+        "continuation_dir": continuation_dir.exists(),
+        "family": family_path.read_bytes(),
+        "provider": provider_path.read_bytes(),
+        "successor_family": successor_family.read_bytes(),
+        "successor_provider": successor_provider.read_bytes(),
+    }
+    with pytest.raises(DevelopmentDeliveryError):
+        delivery.bind_recovered_worktree_ready_pr_family(
+            task.path,
+            family_ref=successor_family,
+            reason="must reject all nonexact recovered shapes",
+            idempotency_key=f"cc-419:{mutation}",
+            apply=True,
+        )
+    assert task.path.read_bytes() == before["task"]
+    assert portfolio_path.read_bytes() == before["portfolio"]
+    assert projection_path.read_bytes() == before["projection"]
+    connection = connect_state(default_db_path(root))
+    try:
+        canonical_after = canonical_work_items.get(
+            connection, task.read()["canonical_work_id"]
+        )
+    finally:
+        connection.close()
+    assert json.dumps(canonical_after, sort_keys=True) == before["canonical"]
+    assert (task.ledger.read_bytes() if task.ledger.is_file() else None) == before["ledger"]
+    assert continuation_dir.exists() is before["continuation_dir"]
+    assert family_path.read_bytes() == before["family"]
+    assert provider_path.read_bytes() == before["provider"]
+    assert successor_family.read_bytes() == before["successor_family"]
+    assert successor_provider.read_bytes() == before["successor_provider"]
+
+
 @pytest.mark.parametrize(
     "mutation",
     (
