@@ -737,6 +737,11 @@ def test_escalate_active_nonblocked_pr_create_delivery_accepts_only_age190_shape
         projection["stages"][stage]["status"] == "not_started"
         for stage in ("review_self", "review_others", "qa", "finalize", "merge")
     )
+    assert projection["stages"]["validate_production_release"]["status"] in {
+        "out_of_scope",
+        "not_started",
+    }
+    assert projection["stages"]["validate_production_release"]["receipt_refs"] == []
     assert (
         delivery.escalate_active_nonblocked_pr_create_delivery(
             task.path,
@@ -806,6 +811,47 @@ def test_escalate_active_nonblocked_pr_create_delivery_reuses_receipt_before_tas
     assert _active_pr_create_escalation_surfaces(root, task, portfolio_path)[
         "recovery_receipts"
     ] == receipt_only["recovery_receipts"]
+
+
+def test_escalate_active_nonblocked_pr_create_delivery_refuses_locked_release_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root, task, portfolio_path, _release_wrapper, _release_evidence = (
+        _active_nonblocked_pr_create_escalation_fixture(tmp_path)
+    )
+    before = _active_pr_create_escalation_surfaces(root, task, portfolio_path)
+    original_context = delivery._active_pr_create_delivery_escalation_context
+    context_calls = 0
+
+    def drift_release_after_initial_context(path: Path) -> dict[str, object]:
+        nonlocal context_calls
+        context = original_context(path)
+        context_calls += 1
+        if context_calls == 1:
+            snapshot_path = Path(context["release"]["source_snapshot"])
+            snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+            snapshot["changed_after_initial_preflight"] = True
+            delivery._atomic_json(snapshot_path, snapshot)
+        return context
+
+    monkeypatch.setattr(
+        delivery,
+        "_active_pr_create_delivery_escalation_context",
+        drift_release_after_initial_context,
+    )
+    with pytest.raises(
+        DevelopmentDeliveryError, match="immutable release evidence changed"
+    ):
+        delivery.escalate_active_nonblocked_pr_create_delivery(
+            task.path,
+            reason="Reject release evidence that changed while the preflight lock was acquired.",
+            idempotency_key="cc-190:locked-release-drift",
+            apply=True,
+        )
+
+    assert context_calls == 2
+    assert _active_pr_create_escalation_surfaces(root, task, portfolio_path) == before
 
 
 @pytest.mark.parametrize(
@@ -948,6 +994,34 @@ def test_escalate_active_nonblocked_pr_create_delivery_refuses_post_pr_authority
             task.path,
             reason="Refuse inherited review authority.",
             idempotency_key="cc-190:post-pr-authority",
+            apply=True,
+        )
+
+    assert _active_pr_create_escalation_surfaces(root, task, portfolio_path) == before
+
+
+def test_escalate_active_nonblocked_pr_create_delivery_refuses_validate_production_authority(
+    tmp_path: Path,
+) -> None:
+    root, task, portfolio_path, _release_wrapper, _release_evidence = (
+        _active_nonblocked_pr_create_escalation_fixture(tmp_path)
+    )
+    projection_path = Path(task.read()["autodev_path"])
+    projection = json.loads(projection_path.read_text(encoding="utf-8"))
+    projection["stages"]["validate_production_release"].update(
+        {
+            "status": "completed",
+            "receipt_refs": ["untrusted-validate-production-release.json"],
+        }
+    )
+    delivery._atomic_json(projection_path, projection)
+    before = _active_pr_create_escalation_surfaces(root, task, portfolio_path)
+
+    with pytest.raises(DevelopmentDeliveryError, match="refuses existing post-PR authority"):
+        delivery.escalate_active_nonblocked_pr_create_delivery(
+            task.path,
+            reason="Refuse inherited production-release validation authority.",
+            idempotency_key="cc-190:validate-production-authority",
             apply=True,
         )
 

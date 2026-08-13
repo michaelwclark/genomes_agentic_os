@@ -203,7 +203,15 @@ _ACTIVE_PR_CREATE_ESCALATION_POST_PR_STAGES = (
     "review_others",
     "qa",
     "finalize",
+    "validate_production_release",
     "merge",
+    "release",
+    "deploy",
+    "closeout",
+    "health",
+)
+_ACTIVE_PR_CREATE_ESCALATION_DERIVED_OUT_OF_SCOPE_STAGES = (
+    "validate_production_release",
     "release",
     "deploy",
     "closeout",
@@ -5378,9 +5386,9 @@ def _revalidate_active_pr_create_escalation_projection(
         )
         and all(
             isinstance(stages.get(stage), Mapping)
-            and stages[stage].get("status") == "out_of_scope"
+            and stages[stage].get("status") in {"out_of_scope", "not_started"}
             and stages[stage].get("receipt_refs") == []
-            for stage in ("release", "deploy", "closeout", "health")
+            for stage in _ACTIVE_PR_CREATE_ESCALATION_DERIVED_OUT_OF_SCOPE_STAGES
         )
     )
     if not projected_known_derived:
@@ -5547,6 +5555,12 @@ def _complete_active_pr_create_delivery_escalation(
             projection.get("stages", {}).get(stage, {}).get("status") == "not_started"
             for stage in ("review_self", "review_others", "qa", "finalize", "merge")
         )
+        and all(
+            projection.get("stages", {}).get(stage, {}).get("status")
+            in {"out_of_scope", "not_started"}
+            and projection.get("stages", {}).get(stage, {}).get("receipt_refs") == []
+            for stage in _ACTIVE_PR_CREATE_ESCALATION_DERIVED_OUT_OF_SCOPE_STAGES
+        )
     ):
         raise DevelopmentDeliveryError(
             "active pr_create escalation could not refresh its fresh-authority Auto-Dev projection"
@@ -5702,9 +5716,10 @@ def escalate_active_nonblocked_pr_create_delivery(
                 and locked_context["portfolio_sha256"] == context["portfolio_sha256"]
                 and locked_context["autodev_sha256"] == context["autodev_sha256"]
                 and locked_context["canonical_sha256"] == context["canonical_sha256"]
+                and locked_context["release"] == context["release"]
             ):
                 raise DevelopmentDeliveryError(
-                    "portfolio, task, projection, or canonical row changed during active pr_create escalation; rerun preflight"
+                    "portfolio, task, projection, canonical row, or immutable release evidence changed during active pr_create escalation; rerun preflight"
                 )
             with _file_lock(state_path.with_suffix(state_path.suffix + ".lock")):
                 latest = state.read()
