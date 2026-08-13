@@ -59,11 +59,11 @@ All notable changes to this project are documented here. The format follows
 - Preserve invalid-receipt classification and receipt paths for byte-corrupt
   JSON, and classify a dispatch exception with a dead registered helper PID
   immediately instead of spending an extra retry as in progress.
-- The route-before-producer constraint is active when the paired producer
-  emits explicit
-  `review_mode`, which an older closed route rejects. Quiesce the review queue
-  throughout the transition so an unacknowledged legacy effect key cannot be
-  replayed under a different format.
+- Ship the Agentic OS route before the paired object-library producer; the
+  producer emits explicit `review_mode`, which an older closed route rejects.
+  Quiesce the review queue throughout the transition so an unacknowledged
+  legacy effect key cannot be replayed under a different format.
+- Classify PID-less governor exceptions as retryable dispatch failures.
 
 ## [0.6.0] - 2026-08-01
 
