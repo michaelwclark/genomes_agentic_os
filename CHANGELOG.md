@@ -26,7 +26,6 @@ All notable changes to this project are documented here. The format follows
   and exact legacy PR identity during delivery validation.
 - Make policy migration and admission contention handling fail closed and
   idempotent.
-
 - Persist full-identity Team PR review intent before helper launch, recover a
   completed helper receipt after worker interruption, fence overlapping
   attempts per review identity, and bind the helper to the exact review mode,
