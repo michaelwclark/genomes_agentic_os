@@ -495,10 +495,10 @@ def _complete_pre_merge_auto_dev(
 def _active_nonblocked_pr_create_escalation_fixture(
     tmp_path: Path,
 ) -> tuple[Path, TaskState, Path, Path, Path]:
-    """Materialize the exact historical AGE-188 PR Create boundary.
+    """Materialize the exact historical AGE-190 PR Create boundary.
 
-    This intentionally retains the odd portfolio-level ``groom`` request and
-    disabled worktree provisioning that the old, already-open PR record wrote.
+    This intentionally retains the odd portfolio-level ``develop`` request and
+    enabled worktree provisioning that the old, already-open PR record wrote.
     It is not a general single-stage fixture: every predecessor is receipt-backed
     and the only task-level stage receipt is the immutable release propagation
     wrapper that owns the PR identity.
@@ -538,18 +538,73 @@ def _active_nonblocked_pr_create_escalation_fixture(
     for stage in ("groom", "detective", "create_artifacts", "document"):
         _record_standalone_stage(task, stage)
     source_branch = str(task.read()["worktree"]["branch"])
+    source_head_sha = "d" * 40
+    pr_create_artifacts = work_item / "artifacts" / "auto-dev-pr-create"
+    pr_create_artifacts.mkdir(parents=True, exist_ok=True)
+    (pr_create_artifacts / "source-snapshot.json").write_text(
+        json.dumps(
+            {
+                "schema": "auto-dev-pr-create-source-snapshot/v1",
+                "repository": "acme/app",
+                "provider": "github",
+                "base_branch": "main",
+                "base_sha": base_sha,
+                "source_branch": source_branch,
+                "source_head_sha": source_head_sha,
+                "remote_head_sha": source_head_sha,
+                "remote_head_matches_local": True,
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (pr_create_artifacts / "provider-readback.json").write_text(
+        json.dumps(
+            {
+                "schema": "auto-dev-pr-create-provider-readback/v1",
+                "repository": "acme/app",
+                "provider": "github",
+                "pull_request": 190,
+                "url": "https://github.com/acme/app/pull/190",
+                "state": "OPEN",
+                "is_draft": False,
+                "base_branch": "main",
+                "base_sha": base_sha,
+                "source_branch": source_branch,
+                "source_head_sha": source_head_sha,
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     release_evidence = _stage_receipt(
         work_item / "artifacts" / "delivery",
         "release_propagation",
         evidence={
-            "repository": "git:github.com/acme/app",
-            "base_branch": "main",
-            "provider": "github",
-            "pull_request": "github:acme/app#190",
-            "source_branch": source_branch,
-            "source_head_sha": base_sha,
-            "provider_observed": {"head_sha": base_sha},
-            "readback_verified": True,
+            "family": [
+                {
+                    "base": "main",
+                    "base_sha": base_sha,
+                    "classification": "created",
+                    "merged": False,
+                    "provider": "github",
+                    "provider_readback_verified": True,
+                    "pull_request": 190,
+                    "repository": "acme/app",
+                    "source_branch": source_branch,
+                    "source_head": source_head_sha,
+                    "state": "open",
+                    "url": "https://github.com/acme/app/pull/190",
+                }
+            ],
+            "receipt_refs": [
+                "artifacts/auto-dev-pr-create/source-snapshot.json",
+                "artifacts/auto-dev-pr-create/provider-readback.json",
+            ],
         },
     )
     run_development_stage(
@@ -562,7 +617,7 @@ def _active_nonblocked_pr_create_escalation_fixture(
     portfolio = json.loads(portfolio_path.read_text(encoding="utf-8"))
     portfolio.update({"state": "local_validation"})
     portfolio["auto_dev"].update(
-        {"requested_stage": "groom", "provision_worktree": False}
+        {"requested_stage": "develop", "provision_worktree": True}
     )
     portfolio_path.write_text(
         json.dumps(portfolio, indent=2, sort_keys=True) + "\n", encoding="utf-8"
@@ -611,6 +666,273 @@ def _active_pr_create_escalation_surfaces(
             else []
         ),
     }
+
+
+def test_escalate_active_nonblocked_pr_create_delivery_accepts_only_age190_shape(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root, task, portfolio_path, release_wrapper, release_evidence = (
+        _active_nonblocked_pr_create_escalation_fixture(tmp_path)
+    )
+    original_wrapper = release_wrapper.read_bytes()
+    original_evidence = release_evidence.read_bytes()
+    original_canonical = _canonical_delivery_row(root, task)
+
+    assert main(
+        [
+            "auto-dev",
+            "escalate-pr-create-delivery",
+            "--state",
+            str(task.path),
+            "--reason",
+            "Recover the exact immutable AGE-190 PR Create boundary.",
+            "--idempotency-key",
+            "cc-190:active-pr-create-escalation:v2",
+            "--apply",
+            "--json",
+        ]
+    ) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["result"] == "escalated"
+    receipt = json.loads(Path(result["receipt"]).read_text(encoding="utf-8"))
+    assert receipt["schema"] == "active-pr-create-delivery-escalation/v1"
+    assert receipt["original"]["release_propagation"]["pull_request_identity"] == {
+        "provider": "github",
+        "repository": "git:github.com/acme/app",
+        "base_branch": "main",
+        "pull_request": "github:acme/app#190",
+        "source_branch": task.read()["worktree"]["branch"],
+        "source_head_sha": "d" * 40,
+    }
+    assert receipt["escalated"]["fresh_stages_required"] == [
+        "review_self",
+        "review_others",
+        "qa",
+        "finalize",
+        "merge",
+    ]
+    assert release_wrapper.read_bytes() == original_wrapper
+    assert release_evidence.read_bytes() == original_evidence
+    assert _canonical_delivery_row(root, task) == original_canonical
+
+    current = task.read()
+    assert current["state"] == "local_validation"
+    assert current["failure"] is None
+    assert current["auto_dev_mode"] == "everything"
+    assert current["requested_stage"] is None
+    assert current["goal"] == "merge"
+    assert current["auto_dev_start_stage"] == "groom"
+    assert current["auto_dev_completion_stage"] == "merge"
+    assert current["stage_receipts"]["release_propagation"]["ref"] == str(
+        release_wrapper
+    )
+    portfolio = json.loads(portfolio_path.read_text(encoding="utf-8"))
+    assert portfolio["auto_dev"]["mode"] == "everything"
+    assert portfolio["auto_dev"]["requested_stage"] is None
+    assert portfolio["auto_dev"]["goal"] == "merge"
+    projection = read_auto_dev_state(current["autodev_path"])
+    assert projection["current_stage"] == "review_self"
+    assert projection["stages"]["pr_create"]["status"] == "completed"
+    assert all(
+        projection["stages"][stage]["status"] == "not_started"
+        for stage in ("review_self", "review_others", "qa", "finalize", "merge")
+    )
+    assert (
+        delivery.escalate_active_nonblocked_pr_create_delivery(
+            task.path,
+            reason="Recover the exact immutable AGE-190 PR Create boundary.",
+            idempotency_key="cc-190:active-pr-create-escalation:v2",
+            apply=True,
+        )["result"]
+        == "replayed"
+    )
+
+
+@pytest.mark.parametrize(
+    ("requested_stage", "provision_worktree"),
+    [("groom", False), ("pr_create", True), ("develop", False)],
+)
+def test_escalate_active_nonblocked_pr_create_delivery_refuses_other_portfolio_shapes(
+    tmp_path: Path, requested_stage: str, provision_worktree: bool
+) -> None:
+    root, task, portfolio_path, _release_wrapper, _release_evidence = (
+        _active_nonblocked_pr_create_escalation_fixture(tmp_path)
+    )
+    portfolio = json.loads(portfolio_path.read_text(encoding="utf-8"))
+    portfolio["auto_dev"].update(
+        {
+            "requested_stage": requested_stage,
+            "provision_worktree": provision_worktree,
+        }
+    )
+    delivery._atomic_json(portfolio_path, portfolio)
+    before = _active_pr_create_escalation_surfaces(root, task, portfolio_path)
+
+    with pytest.raises(
+        DevelopmentDeliveryError, match="exact AGE-190 nonblocked one-task"
+    ):
+        delivery.escalate_active_nonblocked_pr_create_delivery(
+            task.path,
+            reason="Refuse another historical portfolio shape.",
+            idempotency_key=f"cc-190:portfolio:{requested_stage}:{provision_worktree}",
+            apply=True,
+        )
+
+    assert _active_pr_create_escalation_surfaces(root, task, portfolio_path) == before
+
+
+def test_escalate_active_nonblocked_pr_create_delivery_refuses_release_tamper(
+    tmp_path: Path,
+) -> None:
+    root, task, portfolio_path, release_wrapper, _release_evidence = (
+        _active_nonblocked_pr_create_escalation_fixture(tmp_path)
+    )
+    release_wrapper.write_text("tampered\n", encoding="utf-8")
+    before = _active_pr_create_escalation_surfaces(root, task, portfolio_path)
+
+    with pytest.raises(DevelopmentDeliveryError, match="receipt digest does not match"):
+        delivery.escalate_active_nonblocked_pr_create_delivery(
+            task.path,
+            reason="Refuse a changed release identity.",
+            idempotency_key="cc-190:tampered-release",
+            apply=True,
+        )
+
+    assert _active_pr_create_escalation_surfaces(root, task, portfolio_path) == before
+
+
+def test_escalate_active_nonblocked_pr_create_delivery_binds_provider_readback(
+    tmp_path: Path,
+) -> None:
+    root, task, portfolio_path, _release_wrapper, _release_evidence = (
+        _active_nonblocked_pr_create_escalation_fixture(tmp_path)
+    )
+    provider_path = (
+        Path(task.read()["work_item"])
+        / "artifacts"
+        / "auto-dev-pr-create"
+        / "provider-readback.json"
+    )
+    provider = json.loads(provider_path.read_text(encoding="utf-8"))
+    provider["source_head_sha"] = "e" * 40
+    delivery._atomic_json(provider_path, provider)
+    before = _active_pr_create_escalation_surfaces(root, task, portfolio_path)
+
+    with pytest.raises(
+        DevelopmentDeliveryError, match="release_propagation evidence identity"
+    ):
+        delivery.escalate_active_nonblocked_pr_create_delivery(
+            task.path,
+            reason="Refuse a provider readback detached from the immutable family.",
+            idempotency_key="cc-190:provider-readback-mismatch",
+            apply=True,
+        )
+
+    assert _active_pr_create_escalation_surfaces(root, task, portfolio_path) == before
+
+
+def test_escalate_active_nonblocked_pr_create_delivery_replay_binds_snapshot_bytes(
+    tmp_path: Path,
+) -> None:
+    _root, task, _portfolio_path, _release_wrapper, _release_evidence = (
+        _active_nonblocked_pr_create_escalation_fixture(tmp_path)
+    )
+    reason = "Bind the immutable PR Create source snapshot before fresh review."
+    key = "cc-190:immutable-source-snapshot"
+    assert (
+        delivery.escalate_active_nonblocked_pr_create_delivery(
+            task.path,
+            reason=reason,
+            idempotency_key=key,
+            apply=True,
+        )["result"]
+        == "escalated"
+    )
+    snapshot_path = (
+        Path(task.read()["work_item"])
+        / "artifacts"
+        / "auto-dev-pr-create"
+        / "source-snapshot.json"
+    )
+    snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+    snapshot["untrusted_after_the_fact_note"] = "same identity, different bytes"
+    delivery._atomic_json(snapshot_path, snapshot)
+
+    with pytest.raises(
+        DevelopmentDeliveryError, match="immutable release_propagation identity changed"
+    ):
+        delivery.escalate_active_nonblocked_pr_create_delivery(
+            task.path,
+            reason=reason,
+            idempotency_key=key,
+            apply=True,
+        )
+
+
+def test_escalate_active_nonblocked_pr_create_delivery_refuses_post_pr_authority(
+    tmp_path: Path,
+) -> None:
+    root, task, portfolio_path, _release_wrapper, _release_evidence = (
+        _active_nonblocked_pr_create_escalation_fixture(tmp_path)
+    )
+    projection_path = Path(task.read()["autodev_path"])
+    projection = json.loads(projection_path.read_text(encoding="utf-8"))
+    projection["stages"]["review_self"].update(
+        {"status": "completed", "receipt_refs": ["untrusted-review-self.json"]}
+    )
+    delivery._atomic_json(projection_path, projection)
+    before = _active_pr_create_escalation_surfaces(root, task, portfolio_path)
+
+    with pytest.raises(DevelopmentDeliveryError, match="refuses existing post-PR authority"):
+        delivery.escalate_active_nonblocked_pr_create_delivery(
+            task.path,
+            reason="Refuse inherited review authority.",
+            idempotency_key="cc-190:post-pr-authority",
+            apply=True,
+        )
+
+    assert _active_pr_create_escalation_surfaces(root, task, portfolio_path) == before
+
+
+@pytest.mark.parametrize("target_name", ["wrapper", "evidence", "snapshot", "provider"])
+def test_escalate_active_nonblocked_pr_create_delivery_refuses_symlink_read_race(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, target_name: str
+) -> None:
+    root, task, portfolio_path, release_wrapper, release_evidence = (
+        _active_nonblocked_pr_create_escalation_fixture(tmp_path)
+    )
+    work_item = Path(task.read()["work_item"])
+    target = {
+        "wrapper": release_wrapper,
+        "evidence": release_evidence,
+        "snapshot": work_item / "artifacts" / "auto-dev-pr-create" / "source-snapshot.json",
+        "provider": work_item / "artifacts" / "auto-dev-pr-create" / "provider-readback.json",
+    }[target_name]
+    external = tmp_path / f"external-{target_name}.json"
+    external.write_text("untrusted bytes\n", encoding="utf-8")
+    original_open = delivery.os.open
+    swapped = False
+
+    def swap_before_open(path: str | Path, flags: int, *args: object) -> int:
+        nonlocal swapped
+        if not swapped and Path(path) == target:
+            target.unlink()
+            target.symlink_to(external)
+            swapped = True
+        return original_open(path, flags, *args)
+
+    monkeypatch.setattr(delivery.os, "open", swap_before_open)
+    before = _active_pr_create_escalation_surfaces(root, task, portfolio_path)
+    with pytest.raises(DevelopmentDeliveryError, match="missing or unsafe"):
+        delivery.escalate_active_nonblocked_pr_create_delivery(
+            task.path,
+            reason="Refuse immutable input replacement.",
+            idempotency_key=f"cc-190:symlink-swap:{target_name}",
+            apply=True,
+        )
+
+    assert swapped
+    assert _active_pr_create_escalation_surfaces(root, task, portfolio_path) == before
 
 
 def _advance_auto_dev_task_to_ready(

@@ -18,6 +18,7 @@ from ..development_delivery import (
     DevelopmentDeliveryError,
     bind_recovered_worktree_ready_pr_family,
     correct_failed_base_selection,
+    escalate_active_nonblocked_pr_create_delivery,
     recover_active_worktree_ready_delivery,
     recover_active_worktree_ready_pr_create_delivery,
     reconcile_historical_delivery,
@@ -330,6 +331,17 @@ def handle_bind_recovered_worktree_ready_pr_family(args: argparse.Namespace) -> 
     result = bind_recovered_worktree_ready_pr_family(
         args.state,
         family_ref=args.family,
+        reason=args.reason,
+        idempotency_key=args.idempotency_key,
+        apply=args.apply,
+    )
+    _print(result, json_output=args.json)
+    return 0
+
+
+def handle_escalate_pr_create_delivery(args: argparse.Namespace) -> int:
+    result = escalate_active_nonblocked_pr_create_delivery(
+        args.state,
         reason=args.reason,
         idempotency_key=args.idempotency_key,
         apply=args.apply,
@@ -662,6 +674,29 @@ def register(subparsers) -> None:
     )
     _common_output(bind_recovered_family)
     bind_recovered_family.set_defaults(handler=handle_bind_recovered_worktree_ready_pr_family)
+
+    escalate_pr_create = sub.add_parser(
+        "escalate-pr-create-delivery",
+        help=(
+            "Escalate only the immutable AGE-190 active nonblocked "
+            "local-validation PR Create boundary into fresh governed delivery."
+        ),
+    )
+    escalate_pr_create.add_argument(
+        "--state", required=True, help="Exact nonblocked development task state.json."
+    )
+    escalate_pr_create.add_argument("--reason", required=True, help="Durable escalation reason.")
+    escalate_pr_create.add_argument("--idempotency-key", required=True)
+    escalate_pr_create.add_argument(
+        "--apply",
+        action="store_true",
+        help=(
+            "Record immutable escalation provenance and open only fresh Review, QA, "
+            "Finalize, and Merge authority; never creates provider actions."
+        ),
+    )
+    _common_output(escalate_pr_create)
+    escalate_pr_create.set_defaults(handler=handle_escalate_pr_create_delivery)
 
     record = sub.add_parser(
         "record",
