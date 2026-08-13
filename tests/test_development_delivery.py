@@ -529,6 +529,7 @@ def _active_worktree_ready_recovery_fixture(
     monkeypatch: pytest.MonkeyPatch,
     *,
     post_review_self_admission: bool = False,
+    single_stage_pr_create: bool = False,
 ) -> tuple[TaskState, Path, Path, Path]:
     """Build either supported worktree-ready recovery shape without provider mutation."""
 
@@ -550,6 +551,8 @@ def _active_worktree_ready_recovery_fixture(
             "resumed": False,
         },
     )
+    if post_review_self_admission and single_stage_pr_create:
+        raise AssertionError("recovery fixture shapes are mutually exclusive")
     if post_review_self_admission:
         run = delivery.start_development_run(
             root,
@@ -570,8 +573,8 @@ def _active_worktree_ready_recovery_fixture(
             ["CC-193"],
             run_id="legacy-worktree-ready-recovery",
             auto_dev_mode="single_stage",
-            requested_stage="readiness",
-            goal="readiness",
+            requested_stage="pr_create" if single_stage_pr_create else "readiness",
+            goal="pr_create" if single_stage_pr_create else "readiness",
             provision_worktree=True,
             apply=True,
         )
@@ -602,6 +605,14 @@ def _active_worktree_ready_recovery_fixture(
         assert admitted["requested_stage"] == "review_self"
         assert admitted["failure"]["kind"] == "executor_unavailable"
         assert admitted["attempts"]["executor_unavailable"] == 2
+    elif single_stage_pr_create:
+        portfolio = json.loads(portfolio_path.read_text(encoding="utf-8"))
+        # The historical worktree_ready PR Create packet retained develop as
+        # the portfolio selector while task/projection completion were PR Create.
+        portfolio["auto_dev"]["requested_stage"] = "develop"
+        portfolio_path.write_text(
+            json.dumps(portfolio, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
     else:
         portfolio = json.loads(portfolio_path.read_text(encoding="utf-8"))
         # This models the exact historical portfolio selector discrepancy: its
@@ -7403,3 +7414,313 @@ def test_recover_active_worktree_ready_delivery_rechecks_portfolio_drift_before_
     assert task.path.read_bytes() == task_before
     assert projection_path.read_bytes() == projection_before
     assert json.loads(portfolio_path.read_text(encoding="utf-8"))["state"] == "partial"
+
+
+def test_recover_active_worktree_ready_pr_create_delivery_preserves_pr_family_and_requires_fresh_review_stages(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    task, portfolio_path, family_path, provider_path = _active_worktree_ready_recovery_fixture(
+        tmp_path, monkeypatch, single_stage_pr_create=True
+    )
+    work_item = Path(task.read()["work_item"])
+    projection_path = Path(task.read()["autodev_path"])
+    original_task = task.path.read_bytes()
+    original_portfolio = portfolio_path.read_bytes()
+    original_family = family_path.read_bytes()
+    original_provider = provider_path.read_bytes()
+
+    assert main(
+        [
+            "auto-dev",
+            "recover-worktree-ready-pr-create-delivery",
+            "--state",
+            str(task.path),
+            "--reason",
+            "recover the exact historical PR Create boundary",
+            "--idempotency-key",
+            "cc-420:recover-pr-create",
+            "--json",
+        ]
+    ) == 0
+    planned = json.loads(capsys.readouterr().out)
+    assert planned["result"] == "planned"
+    assert task.path.read_bytes() == original_task
+    assert portfolio_path.read_bytes() == original_portfolio
+
+    recovered = delivery.recover_active_worktree_ready_pr_create_delivery(
+        task.path,
+        reason="recover the exact historical PR Create boundary",
+        idempotency_key="cc-420:recover-pr-create",
+        apply=True,
+    )
+    assert recovered["result"] == "recovered"
+    receipt = Path(recovered["receipt"])
+    receipt_payload = json.loads(receipt.read_text(encoding="utf-8"))
+    assert receipt_payload["original"]["recovery_shape"] == "single_stage_pr_create_worktree_ready"
+    assert receipt_payload["original"]["release_propagation"]["family_ref"] == str(family_path)
+    assert receipt_payload["original"]["release_propagation"]["provider_ref"] == str(provider_path)
+    assert family_path.read_bytes() == original_family
+    assert provider_path.read_bytes() == original_provider
+
+    current = task.read()
+    assert current["state"] == "local_validation"
+    assert current["auto_dev_mode"] == "everything"
+    assert current["auto_dev_start_stage"] == "review_self"
+    assert current["auto_dev_completion_stage"] == "merge"
+    assert current["requested_stage"] is None
+    assert current.get("stage_receipts") is None
+    assert [row["state"] for row in current["receipts"]].count("local_validation") == 1
+    assert current["receipts"][-1]["ref"] == str(receipt)
+    assert len(current["active_worktree_ready_pr_create_delivery_recoveries"]) == 1
+
+    projection = read_auto_dev_state(projection_path)
+    assert projection["current_stage"] == "review_self"
+    assert projection["start_stage"] == "review_self"
+    assert projection["stages"]["pr_create"]["receipt_refs"] == []
+    assert all(
+        projection["stages"][stage]["status"] == "not_started"
+        and projection["stages"][stage]["receipt_refs"] == []
+        for stage in ("review_self", "review_others", "qa", "finalize", "merge")
+    )
+    require_auto_dev_predecessors(projection_path, "review_self")
+
+    portfolio = json.loads(portfolio_path.read_text(encoding="utf-8"))
+    assert portfolio["state"] == "local_validation"
+    assert portfolio["auto_dev"]["start_stage"] == "review_self"
+    assert len(portfolio["active_worktree_ready_pr_create_delivery_recoveries"]) == 1
+    root = Path(current["os_root"])
+    connection = connect_state(default_db_path(root))
+    try:
+        canonical = canonical_work_items.get(connection, current["canonical_work_id"])
+    finally:
+        connection.close()
+    assert canonical is not None and canonical["state"] == "validating"
+
+    replayed = delivery.recover_active_worktree_ready_pr_create_delivery(
+        task.path,
+        reason="recover the exact historical PR Create boundary",
+        idempotency_key="cc-420:recover-pr-create",
+        apply=True,
+    )
+    assert replayed["result"] == "replayed"
+    assert len(task.read()["active_worktree_ready_pr_create_delivery_recoveries"]) == 1
+    assert len(
+        json.loads(portfolio_path.read_text(encoding="utf-8"))[
+            "active_worktree_ready_pr_create_delivery_recoveries"
+        ]
+    ) == 1
+    assert work_item.is_dir()
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        "generic_readiness",
+        "generic_everything",
+        "blocked",
+        "stage_receipt",
+        "stale_subject_revision",
+        "latent_pr_create_artifact",
+        "foreign_family",
+        "stale_family_head",
+        "provider_tamper",
+    ),
+)
+def test_recover_active_worktree_ready_pr_create_delivery_refuses_noncanonical_shapes_without_mutation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mutation: str
+) -> None:
+    task, portfolio_path, family_path, provider_path = _active_worktree_ready_recovery_fixture(
+        tmp_path, monkeypatch, single_stage_pr_create=mutation != "generic_readiness"
+    )
+    projection_path = Path(task.read()["autodev_path"])
+    work_item = Path(task.read()["work_item"])
+    if mutation == "blocked":
+        value = task.read()
+        value["state"] = "blocked"
+        value["failure"] = {"kind": "executor_unavailable", "recoverable": False}
+        task.path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    elif mutation == "generic_everything":
+        value = task.read()
+        value.update(
+            {
+                "auto_dev_mode": "everything",
+                "requested_stage": None,
+                "goal": "delivery_complete",
+                "auto_dev_completion_stage": "health",
+            }
+        )
+        task.path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    elif mutation == "stage_receipt":
+        value = task.read()
+        value["stage_receipts"] = {"pr_create": {"ref": "arbitrary"}}
+        task.path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    elif mutation == "stale_subject_revision":
+        projection = json.loads(projection_path.read_text(encoding="utf-8"))
+        projection["subject_revision"] = "b" * 40
+        projection_path.write_text(
+            json.dumps(projection, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+    elif mutation == "latent_pr_create_artifact":
+        artifact = work_item / "artifacts" / "auto-dev-orchestration" / "stages" / "pr_create.json"
+        artifact.parent.mkdir(parents=True)
+        artifact.write_text("{}", encoding="utf-8")
+    elif mutation == "foreign_family":
+        family = json.loads(family_path.read_text(encoding="utf-8"))
+        family["evidence"]["repository"] = "git:github.com/foreign/app"
+        family_path.write_text(json.dumps(family), encoding="utf-8")
+    elif mutation == "stale_family_head":
+        family = json.loads(family_path.read_text(encoding="utf-8"))
+        family["evidence"]["source_head_sha"] = "b" * 40
+        family["evidence"]["provider_observed"]["head_sha"] = "b" * 40
+        family_path.write_text(json.dumps(family), encoding="utf-8")
+    elif mutation == "provider_tamper":
+        provider_path.write_text('{"tampered":true}', encoding="utf-8")
+    root = Path(task.read()["os_root"])
+    connection = connect_state(default_db_path(root))
+    try:
+        canonical_before = canonical_work_items.get(
+            connection, task.read()["canonical_work_id"]
+        )
+    finally:
+        connection.close()
+    recovery_dir = (
+        work_item
+        / "artifacts"
+        / "development-delivery"
+        / "active-worktree-ready-pr-create-delivery-recovery"
+    )
+    before = {
+        "task": task.path.read_bytes(),
+        "portfolio": portfolio_path.read_bytes(),
+        "projection": projection_path.read_bytes(),
+        "canonical": json.dumps(canonical_before, sort_keys=True),
+        "ledger": task.ledger.read_bytes() if task.ledger.is_file() else None,
+        "recovery_dir_exists": recovery_dir.exists(),
+        "family": family_path.read_bytes(),
+        "provider": provider_path.read_bytes(),
+    }
+    with pytest.raises(DevelopmentDeliveryError):
+        delivery.recover_active_worktree_ready_pr_create_delivery(
+            task.path,
+            reason="must fail closed",
+            idempotency_key=f"cc-420:{mutation}",
+            apply=True,
+        )
+    assert task.path.read_bytes() == before["task"]
+    assert portfolio_path.read_bytes() == before["portfolio"]
+    assert projection_path.read_bytes() == before["projection"]
+    connection = connect_state(default_db_path(root))
+    try:
+        canonical_after = canonical_work_items.get(
+            connection, task.read()["canonical_work_id"]
+        )
+    finally:
+        connection.close()
+    assert json.dumps(canonical_after, sort_keys=True) == before["canonical"]
+    assert (task.ledger.read_bytes() if task.ledger.is_file() else None) == before["ledger"]
+    assert recovery_dir.exists() is before["recovery_dir_exists"]
+    assert family_path.read_bytes() == before["family"]
+    assert provider_path.read_bytes() == before["provider"]
+
+
+def test_recover_active_worktree_ready_pr_create_delivery_rechecks_portfolio_drift_before_mutation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    task, portfolio_path, _, _ = _active_worktree_ready_recovery_fixture(
+        tmp_path, monkeypatch, single_stage_pr_create=True
+    )
+    projection_path = Path(task.read()["autodev_path"])
+    task_before = task.path.read_bytes()
+    projection_before = projection_path.read_bytes()
+    original_context = delivery._active_worktree_ready_pr_create_delivery_recovery_context
+    calls = 0
+
+    def drift_before_locked_context(state_path: Path) -> dict:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            portfolio = json.loads(portfolio_path.read_text(encoding="utf-8"))
+            portfolio["state"] = "partial"
+            portfolio_path.write_text(
+                json.dumps(portfolio, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+            )
+        return original_context(state_path)
+
+    monkeypatch.setattr(
+        delivery,
+        "_active_worktree_ready_pr_create_delivery_recovery_context",
+        drift_before_locked_context,
+    )
+    with pytest.raises(DevelopmentDeliveryError, match="portfolio"):
+        delivery.recover_active_worktree_ready_pr_create_delivery(
+            task.path,
+            reason="must recheck source version under the portfolio lock",
+            idempotency_key="cc-420:drift",
+            apply=True,
+        )
+    assert task.path.read_bytes() == task_before
+    assert projection_path.read_bytes() == projection_before
+    assert json.loads(portfolio_path.read_text(encoding="utf-8"))["state"] == "partial"
+
+
+def test_recover_active_worktree_ready_pr_create_delivery_replay_refuses_backfilled_pr_create_authority(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    task, portfolio_path, family_path, provider_path = _active_worktree_ready_recovery_fixture(
+        tmp_path, monkeypatch, single_stage_pr_create=True
+    )
+    projection_path = Path(task.read()["autodev_path"])
+    recovered = delivery.recover_active_worktree_ready_pr_create_delivery(
+        task.path,
+        reason="recover the exact historical PR Create boundary",
+        idempotency_key="cc-420:replay-integrity",
+        apply=True,
+    )
+    projection = json.loads(projection_path.read_text(encoding="utf-8"))
+    projection["stages"]["pr_create"] = {
+        "status": "completed",
+        "receipt_refs": ["forged-pr-create-receipt"],
+    }
+    projection_path.write_text(
+        json.dumps(projection, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    root = Path(task.read()["os_root"])
+    connection = connect_state(default_db_path(root))
+    try:
+        canonical_before = canonical_work_items.get(
+            connection, task.read()["canonical_work_id"]
+        )
+    finally:
+        connection.close()
+    before = {
+        "task": task.path.read_bytes(),
+        "portfolio": portfolio_path.read_bytes(),
+        "projection": projection_path.read_bytes(),
+        "canonical": json.dumps(canonical_before, sort_keys=True),
+        "ledger": task.ledger.read_bytes() if task.ledger.is_file() else None,
+        "family": family_path.read_bytes(),
+        "provider": provider_path.read_bytes(),
+        "receipt": Path(recovered["receipt"]).read_bytes(),
+    }
+    with pytest.raises(DevelopmentDeliveryError, match="projection"):
+        delivery.recover_active_worktree_ready_pr_create_delivery(
+            task.path,
+            reason="recover the exact historical PR Create boundary",
+            idempotency_key="cc-420:replay-integrity",
+            apply=True,
+        )
+    assert task.path.read_bytes() == before["task"]
+    assert portfolio_path.read_bytes() == before["portfolio"]
+    assert projection_path.read_bytes() == before["projection"]
+    connection = connect_state(default_db_path(root))
+    try:
+        canonical_after = canonical_work_items.get(
+            connection, task.read()["canonical_work_id"]
+        )
+    finally:
+        connection.close()
+    assert json.dumps(canonical_after, sort_keys=True) == before["canonical"]
+    assert (task.ledger.read_bytes() if task.ledger.is_file() else None) == before["ledger"]
+    assert family_path.read_bytes() == before["family"]
+    assert provider_path.read_bytes() == before["provider"]
+    assert Path(recovered["receipt"]).read_bytes() == before["receipt"]
