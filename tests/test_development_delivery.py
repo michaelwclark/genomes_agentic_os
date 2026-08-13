@@ -5132,6 +5132,341 @@ def test_release_propagation_derives_only_blank_canonical_github_source_branch(
         assert old_wrapper.read_bytes() == old_wrapper_bytes
         assert hashlib.sha256(old_wrapper.read_bytes()).hexdigest() == old_wrapper_hash
 
+def test_release_propagation_normalizes_exact_legacy_family_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A historical family-complete receipt may refresh without rewriting history."""
+
+    repo, base_sha = _repository(tmp_path)
+    root = tmp_path / "os"
+    _project(root, repo, repository_id="git:github.com/acme/app")
+    monkeypatch.setattr(
+        delivery,
+        "create_isolated_worktree",
+        lambda **kwargs: {
+            "name": "cc-54",
+            "path": "/tmp/cc-54",
+            "branch": "feature/cc-54",
+            "base_sha": base_sha,
+        },
+    )
+    run = delivery.start_development_run(
+        root,
+        "acme",
+        "app",
+        ["CC-54"],
+        run_id="release-propagation-family-identity",
+        auto_dev_mode="everything",
+        apply=True,
+    )
+    task = TaskState(Path(run["tasks"][0]["state_ref"]))
+    _advance_auto_dev_task_to_ready(
+        task,
+        subject_revision=base_sha,
+        pull_request="github:acme/app#54",
+    )
+    for stage_name in ("groom", "detective", "create_artifacts", "document"):
+        _record_standalone_stage(task, stage_name)
+    task_value = task.read()
+    task_value["state"] = "local_validation"
+    task.path.write_text(json.dumps(task_value), encoding="utf-8")
+    work_item = Path(task_value["work_item"])
+
+    def receipt(name: str, evidence: dict[str, object]) -> Path:
+        path = work_item / "artifacts" / "auto-dev-pr-create" / f"family-{name}.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(
+                {
+                    "schema": "development-stage-evidence/v1",
+                    "state": "release_propagation",
+                    "status": "completed",
+                    "summary": f"PR family receipt {name}",
+                    "verified_at": "2026-08-12T18:00:00Z",
+                    "evidence": evidence,
+                }
+            ),
+            encoding="utf-8",
+        )
+        return path
+
+    old = receipt(
+        "old",
+        {
+            "family": [
+                {
+                    "repository": "acme/app",
+                    "provider": "github",
+                    "pull_request": 54,
+                    "base": "main",
+                    "source_branch": "feature/cc-54",
+                    "source_head": base_sha,
+                    "provider_readback_verified": True,
+                }
+            ],
+            "receipt_refs": ["artifacts/auto-dev-pr-create/provider-readback.json"],
+        },
+    )
+    run_development_stage(
+        task.path,
+        stage="release_propagation",
+        receipts={"release_propagation": str(old)},
+        idempotency_prefix="cc-54:pr-create:old",
+    )
+    old_wrapper = Path(task.read()["stage_receipts"]["release_propagation"]["ref"])
+    old_bytes = old.read_bytes()
+    old_wrapper_bytes = old_wrapper.read_bytes()
+
+    new_head = "b" * 40
+    refreshed = receipt(
+        "new",
+        {
+            "repository": "git:github.com/acme/app",
+            "base_branch": "main",
+            "provider": "github",
+            "pull_request": "github:acme/app#54",
+            "source_branch": "feature/cc-54",
+            "source_head_sha": new_head,
+            "readback_verified": True,
+            "provider_observed": {"head_sha": new_head},
+            "supersession": {
+                "supersedes_source_head_sha": base_sha,
+                "reason": "The provider readback reports the refreshed PR head.",
+            },
+        },
+    )
+    output = run_development_stage(
+        task.path,
+        stage="release_propagation",
+        receipts={"release_propagation": str(refreshed)},
+        idempotency_prefix="cc-54:pr-create:new",
+    )
+
+    current_wrapper = Path(task.read()["stage_receipts"]["release_propagation"]["ref"])
+    assert old.read_bytes() == old_bytes
+    assert old_wrapper.read_bytes() == old_wrapper_bytes
+    assert current_wrapper != old_wrapper
+    assert output["supersedes"]["legacy_identity_normalization"] == {
+        "source": "evidence.family[0]",
+        "legacy_fields": {
+            "repository": "acme/app",
+            "base": "main",
+            "provider": "github",
+            "pull_request": 54,
+            "source_branch": "feature/cc-54",
+            "source_head": base_sha,
+        },
+        "normalized_identity": {
+            "repository": "git:github.com/acme/app",
+            "base_branch": "main",
+            "provider": "github",
+            "pull_request": "github:acme/app#54",
+            "source_branch": "feature/cc-54",
+            "source_head_sha": base_sha,
+        },
+    }
+
+
+@pytest.mark.parametrize(
+    ("label", "family_mutation", "successor_mutation", "error"),
+    [
+        (
+            "missing",
+            "missing",
+            None,
+            "requires provider-read new head and explicit prior-head supersession",
+        ),
+        ("empty", "empty", None, "requires exactly one object"),
+        ("multiple", "multiple", None, "requires exactly one object"),
+        ("non-object", "non-object", None, "requires exactly one object"),
+        ("mixed", "mixed", None, "must not mix with another prior identity format"),
+        ("missing-readback", "missing-readback", None, "does not exactly bind"),
+        ("false-readback", "false-readback", None, "does not exactly bind"),
+        ("string-pr", "string-pr", None, "does not exactly bind"),
+        ("zero-pr", "zero-pr", None, "does not exactly bind"),
+        ("foreign-repository", "foreign-repository", None, "does not exactly bind"),
+        ("foreign-base", "foreign-base", None, "does not exactly bind"),
+        ("foreign-provider", "foreign-provider", None, "does not exactly bind"),
+        ("foreign-branch", "foreign-branch", None, "does not exactly bind"),
+        ("malformed-head", "malformed-head", None, "does not exactly bind"),
+        (
+            "case-only-head",
+            "uppercase-head",
+            "case-only-head",
+            "requires provider-read new head and explicit prior-head supersession",
+        ),
+        (
+            "successor-readback-drift",
+            None,
+            "successor-readback-drift",
+            "requires provider-read new head and explicit prior-head supersession",
+        ),
+        (
+            "successor-wrong-branch",
+            None,
+            "successor-wrong-branch",
+            "must retain the same source_branch",
+        ),
+    ],
+)
+def test_release_propagation_refuses_unsafe_legacy_family_identity_without_mutation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    label: str,
+    family_mutation: str | None,
+    successor_mutation: str | None,
+    error: str,
+) -> None:
+    """Malformed legacy family identity cannot mutate the active delivery binding."""
+
+    repo, base_sha = _repository(tmp_path)
+    root = tmp_path / "os"
+    _project(root, repo, repository_id="git:github.com/acme/app")
+    monkeypatch.setattr(
+        delivery,
+        "create_isolated_worktree",
+        lambda **kwargs: {
+            "name": f"cc-55-{label}",
+            "path": f"/tmp/cc-55-{label}",
+            "branch": "feature/cc-55",
+            "base_sha": base_sha,
+        },
+    )
+    run = delivery.start_development_run(
+        root,
+        "acme",
+        "app",
+        ["CC-55"],
+        run_id=f"release-propagation-family-refusal-{label}",
+        auto_dev_mode="everything",
+        apply=True,
+    )
+    task = TaskState(Path(run["tasks"][0]["state_ref"]))
+    _advance_auto_dev_task_to_ready(
+        task,
+        subject_revision=base_sha,
+        pull_request="github:acme/app#55",
+    )
+    for stage_name in ("groom", "detective", "create_artifacts", "document"):
+        _record_standalone_stage(task, stage_name)
+    task_value = task.read()
+    task_value["state"] = "local_validation"
+    task.path.write_text(json.dumps(task_value), encoding="utf-8")
+    work_item = Path(task_value["work_item"])
+
+    family_item: dict[str, object] = {
+        "repository": "acme/app",
+        "provider": "github",
+        "pull_request": 55,
+        "base": "main",
+        "source_branch": "feature/cc-55",
+        "source_head": base_sha,
+        "provider_readback_verified": True,
+    }
+    prior_evidence: dict[str, object] = {"family": [family_item]}
+    if family_mutation == "missing":
+        prior_evidence = {"receipt_refs": ["artifacts/auto-dev-pr-create/provider-readback.json"]}
+    elif family_mutation == "empty":
+        prior_evidence["family"] = []
+    elif family_mutation == "multiple":
+        prior_evidence["family"] = [family_item, dict(family_item)]
+    elif family_mutation == "non-object":
+        prior_evidence["family"] = ["not-an-object"]
+    elif family_mutation == "mixed":
+        prior_evidence["repository"] = "git:github.com/acme/app"
+    elif family_mutation == "missing-readback":
+        family_item.pop("provider_readback_verified")
+    elif family_mutation == "false-readback":
+        family_item["provider_readback_verified"] = False
+    elif family_mutation == "string-pr":
+        family_item["pull_request"] = "55"
+    elif family_mutation == "zero-pr":
+        family_item["pull_request"] = 0
+    elif family_mutation == "foreign-repository":
+        family_item["repository"] = "other/app"
+    elif family_mutation == "foreign-base":
+        family_item["base"] = "release"
+    elif family_mutation == "foreign-provider":
+        family_item["provider"] = "gitlab"
+    elif family_mutation == "foreign-branch":
+        family_item["source_branch"] = "feature/other"
+    elif family_mutation == "malformed-head":
+        family_item["source_head"] = "not-a-sha"
+    elif family_mutation == "uppercase-head":
+        family_item["source_head"] = base_sha.upper()
+
+    def receipt(name: str, evidence: dict[str, object]) -> Path:
+        path = work_item / "artifacts" / "auto-dev-pr-create" / f"refusal-{label}-{name}.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(
+                {
+                    "schema": "development-stage-evidence/v1",
+                    "state": "release_propagation",
+                    "status": "completed",
+                    "summary": f"PR family receipt {name}",
+                    "verified_at": "2026-08-12T18:00:00Z",
+                    "evidence": evidence,
+                }
+            ),
+            encoding="utf-8",
+        )
+        return path
+
+    old = receipt("old", prior_evidence)
+    run_development_stage(
+        task.path,
+        stage="release_propagation",
+        receipts={"release_propagation": str(old)},
+        idempotency_prefix=f"cc-55:{label}:old",
+    )
+    old_wrapper = Path(task.read()["stage_receipts"]["release_propagation"]["ref"])
+    new_head = base_sha if successor_mutation == "case-only-head" else "b" * 40
+    successor_evidence: dict[str, object] = {
+        "repository": "git:github.com/acme/app",
+        "base_branch": "main",
+        "provider": "github",
+        "pull_request": "github:acme/app#55",
+        "source_branch": "feature/cc-55",
+        "source_head_sha": new_head,
+        "readback_verified": True,
+        "provider_observed": {"head_sha": new_head},
+        "supersession": {
+            "supersedes_source_head_sha": base_sha,
+            "reason": "The provider readback reports the refreshed PR head.",
+        },
+    }
+    if successor_mutation == "successor-readback-drift":
+        successor_evidence["provider_observed"] = {"head_sha": base_sha}
+    elif successor_mutation == "successor-wrong-branch":
+        successor_evidence["source_branch"] = "feature/other"
+    refreshed = receipt("new", successor_evidence)
+
+    def snapshot(path: Path) -> bytes | None:
+        return path.read_bytes() if path.is_file() else None
+
+    autodev_path = Path(task.read()["autodev_path"])
+    before = {
+        "task": snapshot(task.path),
+        "autodev": snapshot(autodev_path),
+        "ledger": snapshot(task.ledger),
+        "wrapper": snapshot(old_wrapper),
+        "prior_evidence": snapshot(old),
+    }
+    with pytest.raises(DevelopmentDeliveryError, match=error):
+        run_development_stage(
+            task.path,
+            stage="release_propagation",
+            receipts={"release_propagation": str(refreshed)},
+            idempotency_prefix=f"cc-55:{label}:new",
+        )
+    assert {
+        "task": snapshot(task.path),
+        "autodev": snapshot(autodev_path),
+        "ledger": snapshot(task.ledger),
+        "wrapper": snapshot(old_wrapper),
+        "prior_evidence": snapshot(old),
+    } == before
 
 def test_heartbeat_does_not_refresh_milestone_evidence_timestamp(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
