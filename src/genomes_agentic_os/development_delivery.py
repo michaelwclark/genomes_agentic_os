@@ -167,6 +167,24 @@ ACTIVE_WORKTREE_READY_PR_CREATE_DELIVERY_RECOVERY_SCHEMA = (
 ACTIVE_WORKTREE_READY_RELEASE_PROPAGATION_CONTINUATION_SCHEMA = (
     "active-worktree-ready-release-propagation-continuation/v1"
 )
+_ACTIVE_WORKTREE_READY_RELEASE_PROPAGATION_RECOVERY_VARIANTS = (
+    {
+        "history_key": "active_worktree_ready_delivery_recoveries",
+        "schema": ACTIVE_WORKTREE_READY_DELIVERY_RECOVERY_SCHEMA,
+        "kind": "recover-active-worktree-ready-delivery",
+        "directory": "active-worktree-ready-delivery-recovery",
+        "event_type": "development.task.active_worktree_ready_delivery_recovered",
+        "recovery_shape": None,
+    },
+    {
+        "history_key": "active_worktree_ready_pr_create_delivery_recoveries",
+        "schema": ACTIVE_WORKTREE_READY_PR_CREATE_DELIVERY_RECOVERY_SCHEMA,
+        "kind": "recover-active-worktree-ready-pr-create-delivery",
+        "directory": "active-worktree-ready-pr-create-delivery-recovery",
+        "event_type": "development.task.active_worktree_ready_pr_create_delivery_recovered",
+        "recovery_shape": "single_stage_pr_create_worktree_ready",
+    },
+)
 _ACTIVE_WORKTREE_READY_DELIVERY_FRESH_STAGES = (
     "review_self",
     "review_others",
@@ -2968,7 +2986,11 @@ def _worktree_ready_recovery_registered_head(task: Mapping[str, Any]) -> str:
 
 
 def _worktree_ready_recovery_release_identity(
-    task: Mapping[str, Any], *, work_item: Path, family_ref: Path | None = None
+    task: Mapping[str, Any],
+    *,
+    work_item: Path,
+    family_ref: Path | None = None,
+    require_current_worktree_head: bool = True,
 ) -> dict[str, Any]:
     """Bind current PR evidence to the clean registered worktree HEAD only."""
 
@@ -2980,6 +3002,10 @@ def _worktree_ready_recovery_release_identity(
     if not repository_id.startswith("git:github.com/") or not base_branch or not source_branch:
         raise DevelopmentDeliveryError(
             "worktree_ready delivery recovery requires the selected GitHub repository, base, and worktree branch"
+        )
+    if not require_current_worktree_head and family_ref is None:
+        raise DevelopmentDeliveryError(
+            "worktree_ready delivery recovery allows an older source head only for its exact recovery-bound predecessor"
         )
     worktree_head = _worktree_ready_recovery_registered_head(task)
     github_repository = repository_id.removeprefix("git:github.com/")
@@ -3069,14 +3095,19 @@ def _worktree_ready_recovery_release_identity(
                 },
             }
         )
-    matching = [
-        candidate
-        for candidate in candidates
-        if candidate["pull_request_identity"]["source_head_sha"].lower() == worktree_head
-    ]
+    matching = (
+        [
+            candidate
+            for candidate in candidates
+            if candidate["pull_request_identity"]["source_head_sha"].lower() == worktree_head
+        ]
+        if require_current_worktree_head
+        else candidates
+    )
     if len(matching) != 1:
         raise DevelopmentDeliveryError(
-            "worktree_ready delivery recovery requires exactly one hash-bound release family/readback pair for the registered worktree HEAD"
+            "worktree_ready delivery recovery requires exactly one hash-bound release family/readback pair"
+            + (" for the registered worktree HEAD" if require_current_worktree_head else "")
         )
     return matching[0]
 
@@ -3706,6 +3737,9 @@ def _complete_active_worktree_ready_delivery_recovery(
         current,
         work_item=work_item,
         family_ref=Path(str(original_release.get("family_ref") or "")).expanduser(),
+        # Replay validates the immutable pre-rebase family path from recovery
+        # provenance; all newly selected successor evidence remains HEAD-bound.
+        require_current_worktree_head=False,
     )
     expected_release = {
         "family_ref": str(release["family"]),
@@ -4112,6 +4146,33 @@ def recover_active_worktree_ready_pr_create_delivery(
     )
 
 
+def _active_worktree_ready_release_propagation_recovery_variant(
+    task: Mapping[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Select one exact recovery provenance admitted for family continuation."""
+
+    populated: list[tuple[dict[str, Any], list[Any]]] = []
+    for configured in _ACTIVE_WORKTREE_READY_RELEASE_PROPAGATION_RECOVERY_VARIANTS:
+        rows = task.get(str(configured["history_key"]))
+        if rows in (None, []):
+            continue
+        if not isinstance(rows, list):
+            raise DevelopmentDeliveryError(
+                "recovered release-propagation continuation recovery history is malformed"
+            )
+        populated.append((dict(configured), rows))
+    if len(populated) != 1:
+        raise DevelopmentDeliveryError(
+            "recovered release-propagation continuation requires exactly one supported recovery history"
+        )
+    configured, rows = populated[0]
+    if len(rows) != 1 or not isinstance(rows[0], Mapping):
+        raise DevelopmentDeliveryError(
+            "recovered release-propagation continuation recovery history is ambiguous"
+        )
+    return configured, dict(rows[0])
+
+
 def _active_worktree_ready_release_propagation_continuation_context(
     state_path: Path, *, family_ref: str | Path
 ) -> dict[str, Any]:
@@ -4127,29 +4188,25 @@ def _active_worktree_ready_release_propagation_continuation_context(
     _, task_bytes = _worktree_ready_recovery_read_file(state_path, label="task state")
     task = _worktree_ready_recovery_mapping(task_bytes, label="task state")
     work_item = Path(str(task.get("work_item") or "")).expanduser().resolve()
-    recoveries = task.get("active_worktree_ready_delivery_recoveries")
     continuations = task.get("active_worktree_ready_release_propagation_continuations")
     if not (
-        isinstance(recoveries, list)
-        and len(recoveries) == 1
-        and isinstance(recoveries[0], Mapping)
-        and (
-            continuations in (None, [])
-            or (
-                isinstance(continuations, list)
-                and len(continuations) == 1
-                and isinstance(continuations[0], Mapping)
-            )
+        continuations in (None, [])
+        or (
+            isinstance(continuations, list)
+            and len(continuations) == 1
+            and isinstance(continuations[0], Mapping)
         )
     ):
         raise DevelopmentDeliveryError(
-            "recovered release-propagation continuation requires exactly one recovered packet and at most one continuation"
+            "recovered release-propagation continuation requires at most one continuation"
         )
     if not work_item.is_dir():
         raise DevelopmentDeliveryError(
             "recovered release-propagation continuation requires its active packet"
         )
-    recovery = dict(recoveries[0])
+    recovery_variant, recovery = _active_worktree_ready_release_propagation_recovery_variant(
+        task
+    )
     recovery_path, recovery_bytes = _worktree_ready_recovery_packet_file(
         recovery.get("receipt"), work_item=work_item, label="recovery provenance"
     )
@@ -4162,16 +4219,24 @@ def _active_worktree_ready_release_propagation_continuation_context(
             work_item
             / "artifacts"
             / "development-delivery"
-            / "active-worktree-ready-delivery-recovery"
+            / str(recovery_variant["directory"])
             / f"{hashlib.sha256(str(recovery.get('idempotency_key') or '').encode('utf-8')).hexdigest()[:20]}.json"
         ).resolve()
         and recovery_receipt.get("schema")
-        == ACTIVE_WORKTREE_READY_DELIVERY_RECOVERY_SCHEMA
-        and recovery_receipt.get("kind") == "recover-active-worktree-ready-delivery"
+        == recovery_variant["schema"]
+        and recovery_receipt.get("kind") == recovery_variant["kind"]
         and recovery_receipt.get("idempotency_key") == recovery.get("idempotency_key")
         and recovery_receipt.get("reason") == recovery.get("reason")
         and recovery_receipt.get("recorded_at") == recovery.get("recorded_at")
         and _json_sha256(recovery_receipt) == recovery.get("sha256")
+        and (
+            recovery_variant["recovery_shape"] is None
+            or (
+                isinstance(recovery_receipt.get("original"), Mapping)
+                and recovery_receipt["original"].get("recovery_shape")
+                == recovery_variant["recovery_shape"]
+            )
+        )
     ):
         raise DevelopmentDeliveryError(
             "recovered release-propagation continuation recovery provenance is not immutable"
@@ -4180,7 +4245,14 @@ def _active_worktree_ready_release_propagation_continuation_context(
     # continuation.  It checks the recovered task/projection/canonical state
     # and the original receipt pair without changing any derived projection.
     _complete_active_worktree_ready_delivery_recovery(
-        state_path, current=task, recovery=recovery, apply=False
+        state_path,
+        current=task,
+        recovery=recovery,
+        apply=False,
+        recovery_schema=str(recovery_variant["schema"]),
+        recovery_kind=str(recovery_variant["kind"]),
+        recovery_history_key=str(recovery_variant["history_key"]),
+        recovery_event_type=str(recovery_variant["event_type"]),
     )
     expected_receipt_states = {
         "claimed",
@@ -4226,6 +4298,9 @@ def _active_worktree_ready_release_propagation_continuation_context(
         task,
         work_item=work_item,
         family_ref=Path(str(original_release.get("family_ref") or "")).expanduser(),
+        # Only the stored recovery predecessor may predate the clean worktree
+        # HEAD.  The successor call below intentionally uses the strict default.
+        require_current_worktree_head=False,
     )
     expected_predecessor = {
         "family_ref": str(predecessor["family"]),
@@ -4283,6 +4358,7 @@ def _active_worktree_ready_release_propagation_continuation_context(
         "task": task,
         "task_sha256": hashlib.sha256(task_bytes).hexdigest(),
         "work_item": work_item,
+        "recovery_variant": recovery_variant,
         "recovery": recovery,
         "recovery_receipt": recovery_receipt,
         "predecessor": expected_predecessor,
