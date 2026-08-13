@@ -9,6 +9,14 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.6.3] - 2026-08-13
+
+### Fixed
+
+- Export the canonical Team PR review outcome after validating the helper's
+  successful lifecycle status, so `succeeded + findings` reaches the Fabric
+  projector as a completed review rather than a failed task.
+
 ## [0.6.2] - 2026-08-13
 
 ### Fixed
