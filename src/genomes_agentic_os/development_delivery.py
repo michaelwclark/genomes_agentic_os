@@ -4743,6 +4743,52 @@ def _active_pr_create_escalation_mapping(
     return dict(value)
 
 
+def _reuse_active_pr_create_escalation_receipt(
+    receipt_path: Path,
+    *,
+    work_item: Path,
+    receipt: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Reuse one exact orphaned receipt left before task history was written."""
+
+    if not (receipt_path.exists() or receipt_path.is_symlink()):
+        return dict(receipt)
+    existing_path, existing_bytes = _active_pr_create_escalation_packet_file(
+        receipt_path,
+        work_item=work_item,
+        label="escalation receipt",
+    )
+    existing = _active_pr_create_escalation_mapping(
+        existing_bytes, label="escalation receipt"
+    )
+    recorded_at = existing.get("recorded_at")
+    try:
+        parsed_recorded_at = datetime.fromisoformat(
+            str(recorded_at).replace("Z", "+00:00")
+        )
+    except ValueError:
+        parsed_recorded_at = None
+    expected_without_timestamp = {
+        key: value for key, value in receipt.items() if key != "recorded_at"
+    }
+    if not (
+        existing_path == receipt_path.resolve()
+        and set(existing) == set(receipt)
+        and isinstance(existing.get("recorded_at"), str)
+        and re.fullmatch(
+            r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z",
+            str(existing["recorded_at"]),
+        )
+        and parsed_recorded_at is not None
+        and {key: value for key, value in existing.items() if key != "recorded_at"}
+        == expected_without_timestamp
+    ):
+        raise DevelopmentDeliveryError(
+            "active pr_create escalation receipt path already has different content"
+        )
+    return existing
+
+
 def _active_pr_create_escalation_release_identity(
     task: Mapping[str, Any],
     *,
@@ -5624,14 +5670,19 @@ def escalate_active_nonblocked_pr_create_delivery(
                 "fresh_stages_required": list(_ACTIVE_WORKTREE_READY_DELIVERY_FRESH_STAGES),
             },
         }
-        digest = _json_sha256(receipt)
         receipt_path = (
             context["work_item"]
             / "artifacts"
             / "development-delivery"
             / "active-pr-create-delivery-escalation"
-            / f"{digest}.json"
+            / f"{hashlib.sha256(normalized_key.encode('utf-8')).hexdigest()[:20]}.json"
         )
+        receipt = _reuse_active_pr_create_escalation_receipt(
+            receipt_path,
+            work_item=context["work_item"],
+            receipt=receipt,
+        )
+        digest = _json_sha256(receipt)
         result = {
             "schema": "active-pr-create-delivery-escalation-result/v1",
             "result": "planned" if not apply else "escalated",
@@ -5667,12 +5718,15 @@ def escalate_active_nonblocked_pr_create_delivery(
                     json.dumps(receipt, indent=2, sort_keys=True) + "\n"
                 ).encode("utf-8")
                 if receipt_path.exists() or receipt_path.is_symlink():
-                    _, existing_receipt = _active_pr_create_escalation_packet_file(
+                    existing_path, existing_receipt = _active_pr_create_escalation_packet_file(
                         receipt_path,
                         work_item=context["work_item"],
                         label="escalation receipt",
                     )
-                    if existing_receipt != encoded_receipt:
+                    if (
+                        existing_path != receipt_path.resolve()
+                        or existing_receipt != encoded_receipt
+                    ):
                         raise DevelopmentDeliveryError(
                             "active pr_create escalation receipt path already has different content"
                         )

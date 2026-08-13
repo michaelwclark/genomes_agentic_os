@@ -748,6 +748,66 @@ def test_escalate_active_nonblocked_pr_create_delivery_accepts_only_age190_shape
     )
 
 
+def test_escalate_active_nonblocked_pr_create_delivery_reuses_receipt_before_task_history(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root, task, portfolio_path, _release_wrapper, _release_evidence = (
+        _active_nonblocked_pr_create_escalation_fixture(tmp_path)
+    )
+    before = _active_pr_create_escalation_surfaces(root, task, portfolio_path)
+    original_atomic_json = delivery._atomic_json
+    interrupted = False
+
+    def interrupt_before_task_history(path: Path, value: dict[str, object]) -> None:
+        nonlocal interrupted
+        if Path(path) == task.path:
+            interrupted = True
+            assert _active_pr_create_escalation_surfaces(root, task, portfolio_path)[
+                "recovery_receipts"
+            ]
+            raise RuntimeError("injected interruption before task history")
+        original_atomic_json(path, value)
+
+    monkeypatch.setattr(delivery, "_atomic_json", interrupt_before_task_history)
+    reason = "Finish the exact receipt-backed AGE-190 escalation after interruption."
+    key = "cc-190:receipt-before-task-history"
+    with pytest.raises(RuntimeError, match="injected interruption"):
+        delivery.escalate_active_nonblocked_pr_create_delivery(
+            task.path,
+            reason=reason,
+            idempotency_key=key,
+            apply=True,
+        )
+
+    assert interrupted
+    receipt_only = _active_pr_create_escalation_surfaces(root, task, portfolio_path)
+    assert receipt_only["task"] == before["task"]
+    assert receipt_only["portfolio"] == before["portfolio"]
+    assert receipt_only["autodev"] == before["autodev"]
+    assert receipt_only["canonical"] == before["canonical"]
+    assert receipt_only["events"] == before["events"]
+    assert len(receipt_only["recovery_receipts"]) == 1
+    orphan_path, orphan_bytes = receipt_only["recovery_receipts"][0]
+    orphan = json.loads(orphan_bytes)
+    assert orphan["idempotency_key"] == key
+
+    monkeypatch.setattr(delivery, "_atomic_json", original_atomic_json)
+    result = delivery.escalate_active_nonblocked_pr_create_delivery(
+        task.path,
+        reason=reason,
+        idempotency_key=key,
+        apply=True,
+    )
+    assert result["result"] == "escalated"
+    assert Path(result["receipt"]).name == orphan_path.name
+    assert result["receipt_sha256"] == delivery._json_sha256(orphan)
+    assert Path(result["receipt"]).read_bytes() == orphan_bytes
+    assert _active_pr_create_escalation_surfaces(root, task, portfolio_path)[
+        "recovery_receipts"
+    ] == receipt_only["recovery_receipts"]
+
+
 @pytest.mark.parametrize(
     ("requested_stage", "provision_worktree"),
     [("groom", False), ("pr_create", True), ("develop", False)],
