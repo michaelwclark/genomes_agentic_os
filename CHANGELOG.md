@@ -2,16 +2,24 @@
 
 ## Unreleased
 
-- Run the BigMac Execution Fabric alarm dispatcher through its immutable worker
-  Python runtime, so governed notification delivery does not silently fail when
-  launchd resolves a system interpreter without PyYAML.
-
 All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/) computed from Conventional Commits
 (breaking → major, `feat` → minor, `fix`/`perf` → patch).
 
 ## [Unreleased]
+
+## [0.6.2] - 2026-08-13
+
+### Fixed
+
+- Keep the Team PR Fabric receipt contract distinct between successful helper
+  execution and its canonical review outcome, with strict validation of current
+  and legacy receipt wrapper shapes so completed reviews with findings reach
+  projection instead of being dead-lettered.
+- Run the BigMac Execution Fabric alarm dispatcher through its immutable worker
+  Python runtime, so governed notification delivery does not silently fail when
+  launchd resolves a system interpreter without PyYAML.
 
 ## [0.6.1] - 2026-08-13
 

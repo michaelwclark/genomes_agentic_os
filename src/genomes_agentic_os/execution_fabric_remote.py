@@ -1787,6 +1787,10 @@ TEAM_PR_REVIEW_MODE = "review_no_merge"
 TEAM_PR_REVIEW_INTENT_SCHEMA = "agentic-os-team-pr-review-intent/v1"
 TEAM_PR_HELPER_TIMEOUT_SECONDS = 3700
 TEAM_PR_HELPER_STALE_SECONDS = TEAM_PR_HELPER_TIMEOUT_SECONDS + 600
+TEAM_PR_REVIEW_OUTCOMES = frozenset(
+    {"clean", "findings", "blocked", "incomplete", "unavailable"}
+)
+TEAM_PR_HELPER_COMPLETED_STATUS = "succeeded"
 
 
 def _team_pr_review_identity(payload: Mapping[str, Any]) -> dict[str, Any]:
@@ -2048,6 +2052,51 @@ def _team_pr_review_effect_key(
             receipt_path=str(record_path),
         )
     return recorded_key
+
+
+def _validate_team_pr_helper_receipt_wrapper(
+    helper_result: Mapping[str, Any],
+    canonical: Mapping[str, Any],
+    receipt_hash: str,
+    *,
+    receipt_path: Path,
+) -> str:
+    """Bind the helper wrapper's versioned result shape to its receipt.
+
+    Current helpers report a terminal execution status of ``succeeded`` and a
+    separate review outcome. Pre-versioned helpers omitted ``outcome`` and
+    encoded that outcome in ``status``. Accept only those two exact forms so a
+    malformed wrapper cannot silently turn into a successful projection.
+    """
+
+    helper_status = helper_result.get("status")
+    canonical_outcome = canonical.get("outcome")
+    wrapper_has_outcome = "outcome" in helper_result
+    wrapper_outcome = helper_result.get("outcome")
+    valid = (
+        isinstance(helper_status, str)
+        and isinstance(canonical_outcome, str)
+        and canonical_outcome in TEAM_PR_REVIEW_OUTCOMES
+        and helper_result.get("receipt_sha256") == receipt_hash
+    )
+    if wrapper_has_outcome:
+        valid = bool(
+            valid
+            and isinstance(wrapper_outcome, str)
+            and wrapper_outcome in TEAM_PR_REVIEW_OUTCOMES
+            and wrapper_outcome == canonical_outcome
+            and helper_status == TEAM_PR_HELPER_COMPLETED_STATUS
+        )
+    else:
+        valid = bool(valid and helper_status == canonical_outcome)
+    if not valid:
+        raise TaskExecutionError(
+            "invalid_team_pr_helper_receipt",
+            "Team PR review helper receipt wrapper is inconsistent",
+            retryable=False,
+            receipt_path=str(receipt_path),
+        )
+    return helper_status
 
 
 def _team_pr_ai_review_worker_locked(
@@ -2558,16 +2607,12 @@ def _team_pr_ai_review_worker_locked(
                 ensure_ascii=False,
             ).encode("utf-8")
         ).hexdigest()
-        if (
-            helper_result.get("receipt_sha256") != receipt_hash
-            or helper_status != canonical.get("outcome")
-        ):
-            raise TaskExecutionError(
-                "invalid_team_pr_helper_receipt",
-                "Team PR review helper receipt wrapper is inconsistent",
-                retryable=False,
-                receipt_path=str(receipt_path),
-            )
+        helper_status = _validate_team_pr_helper_receipt_wrapper(
+            helper_result,
+            canonical,
+            receipt_hash,
+            receipt_path=receipt_path,
+        )
         allowed_effects = {
             str(value) for value in route.get("allowed_effect_types") or []
         }
