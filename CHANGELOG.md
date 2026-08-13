@@ -9,22 +9,6 @@ All notable changes to this project are documented here. The format follows
 
 ## [0.6.1] - 2026-08-13
 
-### Changed
-- Align all twelve canonical release/version sources and document the
-  ordered route/object-library rollout and required Team PR queue quiescence
-  during upgrades.
-- Pause review workers and admit no new review jobs while the route and paired
-  producer are upgraded. Keep the queue quiesced until queued intents have been
-  drained or reconciled.
-- The reviewed `0.6.1` route ships the persisted first-format guard in
-  `execution_fabric_remote.py::_team_pr_review_effect_key`. Legacy admitted tasks without `review_mode` retain the legacy
-  projection key while explicit current tasks use the full-intent key, so the
-  same review identity cannot project under two effect-key formats.
-
-### Documentation
-- Document the persisted first-format guard and the conservative queue
-  quiescence rule for upgrades.
-
 ### Fixed
 - Recover legacy PR-create and worktree-ready delivery packets through the
   governed Auto-Dev workflow.
@@ -32,6 +16,32 @@ All notable changes to this project are documented here. The format follows
   and exact legacy PR identity during delivery validation.
 - Make policy migration and admission contention handling fail closed and
   idempotent.
+
+## [0.6.0] - 2026-08-01
+
+### Added
+- Consolidate GitHub, Jira, Linear, and Notion access through provider bridges
+  with bounded reads and explicit mutation boundaries.
+- Add a canonical, receipt-backed opposing-model Auto-Dev review command shared
+  by Claude and Codex harnesses.
+- Add guarded Docker and OrbStack reclaim reporting for orphaned worktree
+  resources without expanding Auto-Dev cleanup authority.
+
+### Fixed
+- Support legacy execution-fabric role-health bootstrap during protected
+  rollout reconciliation.
+- Persist full-identity Team PR review intent before helper launch, recover a
+  completed helper receipt after worker interruption, fence overlapping
+  attempts per review identity, and bind the helper to the exact review mode,
+  run ID, and summary path. Full-digest receipt paths, fsync-backed
+  persistence, and a durable helper-launch marker prevent cross-ticket recovery
+  collisions, torn intent writes, and relaunch while the PID still belongs to
+  the exact helper run. A shared marker lock prevents dispatch-failure writes
+  from clobbering a concurrently registered helper PID. Fresh and recovered
+  successes terminalize the marker.
+- Persist the first effect-key format per immutable review identity so legacy
+  and current task shapes cannot project the same helper result under two keys;
+  classify PID-less governor exceptions as retryable dispatch failures.
 - Persist full-identity Team PR review intent before helper launch, recover a
   completed helper receipt after worker interruption, fence overlapping
   attempts per review identity, and bind the helper to the exact review mode,
@@ -59,25 +69,6 @@ All notable changes to this project are documented here. The format follows
 - Preserve invalid-receipt classification and receipt paths for byte-corrupt
   JSON, and classify a dispatch exception with a dead registered helper PID
   immediately instead of spending an extra retry as in progress.
-- Ship the Agentic OS route before the paired object-library producer; the
-  producer emits explicit `review_mode`, which an older closed route rejects.
-  Quiesce the review queue throughout the transition so an unacknowledged
-  legacy effect key cannot be replayed under a different format.
-- Classify PID-less governor exceptions as retryable dispatch failures.
-
-## [0.6.0] - 2026-08-01
-
-### Added
-- Consolidate GitHub, Jira, Linear, and Notion access through provider bridges
-  with bounded reads and explicit mutation boundaries.
-- Add a canonical, receipt-backed opposing-model Auto-Dev review command shared
-  by Claude and Codex harnesses.
-- Add guarded Docker and OrbStack reclaim reporting for orphaned worktree
-  resources without expanding Auto-Dev cleanup authority.
-
-### Fixed
-- Support legacy execution-fabric role-health bootstrap during protected
-  rollout reconciliation.
 ## [0.5.7] - 2026-07-29
 
 ### Added
