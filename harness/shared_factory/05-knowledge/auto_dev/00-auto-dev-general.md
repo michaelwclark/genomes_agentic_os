@@ -37,11 +37,12 @@ The runtime order is:
 9. Review Others
 10. QA
 11. Finalize
-12. Merge
-13. Release
-14. Deploy
-15. Closeout
-16. Health
+12. Production Release Validation
+13. Merge
+14. Release
+15. Deploy
+16. Closeout
+17. Health
 
 PR Create is the only Auto-Dev stage that resolves and creates the required
 pull-request family. The lower-level Development Delivery recorder still uses

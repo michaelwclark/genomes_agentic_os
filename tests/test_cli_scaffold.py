@@ -599,6 +599,7 @@ def test_auto_dev_artifact_contracts_install_and_validate(tmp_path: Path) -> Non
         "auto-dev-review-self",
         "auto-dev-review-others",
         "auto-dev-finalize",
+        "auto-dev-validate-production-release",
         "auto-dev-merge",
         "auto-dev-release-propagation",
         "auto-dev-release",
@@ -673,11 +674,12 @@ def test_auto_dev_artifact_contracts_install_and_validate(tmp_path: Path) -> Non
         for line in installed_auto_dev_skill.splitlines()
         if re.match(r"^\d+\. ", line)
     ]
-    assert len(installed_numbered_stages) == 16
+    assert len(installed_numbered_stages) == 17
     assert installed_numbered_stages[6] == "7. `$auto-dev-pr-create`"
     assert "$auto-dev-review-self" in installed_numbered_stages[7]
     assert installed_numbered_stages[9] == "10. `$auto-dev-qa`"
     assert installed_numbered_stages[10] == "11. `$auto-dev-finalize`"
+    assert installed_numbered_stages[11] == "12. `$auto-dev-validate-production-release`"
     assert not any(
         "$auto-dev-release-propagation" in line
         for line in installed_numbered_stages
