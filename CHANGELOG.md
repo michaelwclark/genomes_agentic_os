@@ -16,7 +16,7 @@ All notable changes to this project are documented here. The format follows
 - Pause review workers and admit no new review jobs while the route and paired
   producer are upgraded. Keep the queue quiesced until queued intents have been
   drained or reconciled.
-- The reviewed `0.6.1` route retains the persisted first-format guard in
+- The reviewed `0.6.1` route ships the persisted first-format guard in
   `execution_fabric_remote.py::_team_pr_review_effect_key`. Legacy admitted tasks without `review_mode` retain the legacy
   projection key while explicit current tasks use the full-intent key, so the
   same review identity cannot project under two effect-key formats.
@@ -78,15 +78,6 @@ All notable changes to this project are documented here. The format follows
 ### Fixed
 - Support legacy execution-fabric role-health bootstrap during protected
   rollout reconciliation.
-- Persist full-identity Team PR review intent before helper launch, recover a
-  completed helper receipt after worker interruption, fence overlapping
-  attempts per review identity, and bind the helper to the exact review mode,
-  run ID, and summary path. Full-digest receipt paths, fsync-backed
-  persistence, and a durable helper-launch marker prevent cross-ticket recovery
-  collisions, torn intent writes, and relaunch while the PID still belongs to
-  the exact helper run. A shared marker lock prevents dispatch-failure writes
-  from clobbering a concurrently registered helper PID. Fresh and recovered
-  successes terminalize the marker.
 ## [0.5.7] - 2026-07-29
 
 ### Added
