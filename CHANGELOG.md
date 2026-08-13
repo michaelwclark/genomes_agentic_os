@@ -9,6 +9,10 @@ All notable changes to this project are documented here. The format follows
 
 ## [0.6.1] - 2026-08-13
 
+### Changed
+- Align all twelve canonical release/version sources and document the
+  ordered route/object-library rollout and Team PR queue quiesce requirement.
+
 ### Fixed
 - Recover legacy PR-create and worktree-ready delivery packets through the
   governed Auto-Dev workflow.
