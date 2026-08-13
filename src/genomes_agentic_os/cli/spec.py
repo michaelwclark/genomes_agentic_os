@@ -107,6 +107,10 @@ def handle_spec_add(args: argparse.Namespace) -> int:
 
 def handle_spec_show(args: argparse.Namespace) -> int:
     engine, filesystem, _ = _build_engine(args.root, args.domain, args.project)
+    if args.adapter == "jira":
+        raise ValueError(
+            "spec show is unsupported for the Jira adapter; use the provider issue key"
+        )
     adapter = engine.adapters[args.adapter] if args.adapter else filesystem
     item = adapter.get(args.spec_id)
     if item is None:

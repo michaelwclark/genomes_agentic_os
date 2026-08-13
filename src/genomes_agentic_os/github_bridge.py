@@ -21,7 +21,7 @@ BRIDGE_VERSION = 1
 # Provider revision reviewed with this first migration slice. Runtime selection
 # remains explicit through GENOMES_GITHUB_BRIDGE_COMMAND; this pin makes the
 # cross-repository contract auditable and forces later revisions through review.
-REVIEWED_PLATFORM_BRIDGE_REVISION = "448cd722d7feb8eb32c86b886627ade0346fdf4a"
+REVIEWED_PLATFORM_BRIDGE_REVISION = "9fd83043c275a0959323735ab35d8be014898173"
 
 
 class GitHubBridgeError(RuntimeError):
@@ -147,3 +147,69 @@ def list_issues(
     if not isinstance(issues, list) or not all(isinstance(item, dict) for item in issues):
         raise GitHubBridgeError("BRIDGE_INVALID_RESPONSE", "GitHub bridge returned invalid issues")
     return [dict(item) for item in issues]
+
+
+def get_pull_request(
+    command: Sequence[str],
+    *,
+    owner: str,
+    repo: str,
+    number: int,
+    token: str,
+    runner: BridgeRunner = subprocess.run,
+) -> dict[str, Any] | None:
+    """Return one JSON-safe pull request summary from the shared GitHub port."""
+    result = call_github_bridge(
+        command,
+        {
+            "operation": "getPullRequest",
+            "repo": {"owner": owner, "repo": repo},
+            "number": number,
+        },
+        token=token,
+        runner=runner,
+    )
+    pull_request = result.get("pullRequest")
+    if pull_request is None:
+        return None
+    if not isinstance(pull_request, dict):
+        raise GitHubBridgeError(
+            "BRIDGE_INVALID_RESPONSE",
+            "GitHub bridge returned an invalid pull request",
+        )
+    return dict(pull_request)
+
+
+def list_workflow_runs(
+    command: Sequence[str],
+    *,
+    owner: str,
+    repo: str,
+    token: str,
+    branch: str | None = None,
+    limit: int = 100,
+    runner: BridgeRunner = subprocess.run,
+) -> list[dict[str, Any]]:
+    """Return JSON-safe workflow runs from the shared GitHub port."""
+    workflow_filter: dict[str, Any] = {"limit": limit}
+    if branch is not None:
+        workflow_filter["branch"] = branch
+    result = call_github_bridge(
+        command,
+        {
+            "operation": "listWorkflowRuns",
+            "repo": {"owner": owner, "repo": repo},
+            "filter": workflow_filter,
+        },
+        token=token,
+        runner=runner,
+    )
+    workflow_runs = result.get("workflowRuns")
+    if not isinstance(workflow_runs, list) or not all(
+        isinstance(item, dict) for item in workflow_runs
+    ):
+        raise GitHubBridgeError(
+            "BRIDGE_INVALID_RESPONSE",
+            "GitHub bridge returned invalid workflow runs",
+        )
+    return [dict(item) for item in workflow_runs]

@@ -255,6 +255,8 @@ def select_provider(root: str | Path, system: dict[str, Any]) -> str | None:
         for provider in source_providers(root)
         if provider.get("id") and provider.get("status") != "unavailable"
     }
+    if system.get("system") == "jira" and "jira_bridge" in available:
+        return "jira_bridge"
     for provider_id in system.get("provider_priority") or []:
         if str(provider_id) in available:
             return str(provider_id)
@@ -492,6 +494,7 @@ def normalized_source_event(
             "item_count": item_count,
             "provider": (live_result or {}).get("provider", "direct_api"),
             "credential_env": (live_result or {}).get("credential_env"),
+            "partial": bool((live_result or {}).get("partial", False)),
         }
         adapter_mode = "live_apply" if not dry_run else "live_dry_run"
     else:
@@ -712,7 +715,8 @@ def poll_watch_source(
         Defaults to ``urllib.request.urlopen``.  Pass a fake in tests so no
         network calls are made.
     """
-    source = find_by_id(watch_sources(root), source_id)
+    os_root = ensure_registries(root)
+    source = find_by_id(watch_sources(os_root), source_id)
     if not source:
         raise ValueError(f"watch source not found: {source_id}")
     doctor = doctor_watch_source(root, source_id)
@@ -724,7 +728,12 @@ def poll_watch_source(
     live_kwargs: dict[str, Any] = {}
     if fetcher is not None:
         live_kwargs["fetcher"] = fetcher
-    live_result = poll_live_source(source, system, **live_kwargs)
+    poll_source = dict(source)
+    cursor_data = load_yaml(os_root / WATCH_CURSORS_FILE)
+    cursor = find_by_id(cursor_data.get("watch_cursors") or [], source_id)
+    if system.get("system") == "jira" and cursor and cursor.get("updated_at"):
+        poll_source["_cursor_since"] = str(cursor["updated_at"])
+    live_result = poll_live_source(poll_source, system, **live_kwargs)
 
     # Every live-adapter failure is terminal for this poll. Falling back to a
     # registry event would turn provider/configuration failures into false
@@ -764,6 +773,7 @@ def poll_watch_source(
             "live": live_result.get("live", False),
             "item_count": live_result.get("item_count", 0),
             "dry_run_reason": live_result.get("dry_run_reason"),
+            "partial": live_result.get("partial", False),
         }
 
     event_path = None
@@ -771,7 +781,12 @@ def poll_watch_source(
         event_path = write_source_event(root, event)
         event["path"] = str(event_path)
         result["written"] = [str(event_path)]
-        record_cursor(root, source_id, event)
+        # A bounded bridge result can be intentionally partial.  Persist the
+        # event so its visible items are handled, but do not advance beyond an
+        # unseen tail the bridge could not expose through its current command
+        # contract.
+        if not (live_result or {}).get("partial", False):
+            record_cursor(root, source_id, event)
     trigger_actions = apply_trigger_rules(root, source, event, dry_run=dry_run, event_path=event_path)
     if trigger_actions:
         result["trigger_actions"] = trigger_actions

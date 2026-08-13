@@ -19,25 +19,27 @@ watcher = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(watcher)
 
 
-def pr(sha: str = "expected-sha") -> dict:
+def pr(sha: str = "expected-sha", state: str = "open") -> dict:
     return {
-        "head": {"sha": sha},
-        "merged": False,
-        "state": "open",
+        "headBranch": "feature/test",
+        "headSha": sha,
+        "state": state,
     }
 
 
-def successful_check(name: str) -> dict:
+def successful_check(name: str, sha: str = "expected-sha") -> dict:
     return {
         "conclusion": "success",
+        "headSha": sha,
         "name": name,
         "status": "completed",
     }
 
 
-def completed_check(name: str, conclusion: str) -> dict:
+def completed_check(name: str, conclusion: str, sha: str = "expected-sha") -> dict:
     return {
         "conclusion": conclusion,
+        "headSha": sha,
         "name": name,
         "status": "completed",
     }
@@ -48,7 +50,6 @@ class WatchPrQuietTests(unittest.TestCase):
         state = watcher.summarize_checks(
             pr("stale-sha"),
             [successful_check("CodeQL")],
-            [],
             min_checks=1,
             expected_head_sha="expected-sha",
             required_checks=["PR Smoke"],
@@ -65,7 +66,6 @@ class WatchPrQuietTests(unittest.TestCase):
         state = watcher.summarize_checks(
             pr("stale-sha"),
             [completed_check("CodeQL", "failure")],
-            [],
             min_checks=1,
             expected_head_sha="expected-sha",
             required_checks=["PR Smoke"],
@@ -80,7 +80,6 @@ class WatchPrQuietTests(unittest.TestCase):
         state = watcher.summarize_checks(
             pr("newer-sha"),
             [successful_check("PR Smoke")],
-            [],
             min_checks=1,
             expected_head_sha="expected-sha",
             required_checks=["PR Smoke"],
@@ -94,7 +93,6 @@ class WatchPrQuietTests(unittest.TestCase):
         state = watcher.summarize_checks(
             pr(),
             [successful_check("CodeQL")],
-            [],
             min_checks=1,
             expected_head_sha="expected-sha",
             required_checks=["PR Smoke"],
@@ -107,7 +105,6 @@ class WatchPrQuietTests(unittest.TestCase):
         state = watcher.summarize_checks(
             pr(),
             [successful_check("CodeQL"), successful_check("PR Smoke")],
-            [],
             min_checks=1,
             expected_head_sha="expected-sha",
             required_checks=["PR Smoke"],
@@ -123,7 +120,6 @@ class WatchPrQuietTests(unittest.TestCase):
                 state = watcher.summarize_checks(
                     pr(),
                     [completed_check("PR Smoke", conclusion)],
-                    [],
                     min_checks=1,
                     expected_head_sha="expected-sha",
                     required_checks=["PR Smoke"],
@@ -134,6 +130,28 @@ class WatchPrQuietTests(unittest.TestCase):
                     state["failures"],
                     [f"required check did not pass: PR Smoke ({conclusion})"],
                 )
+
+    def test_ignores_workflow_runs_from_an_older_head_on_the_same_branch(self) -> None:
+        state = watcher.summarize_checks(
+            pr(),
+            [successful_check("PR Smoke", sha="older-sha")],
+            min_checks=1,
+            expected_head_sha="expected-sha",
+            required_checks=["PR Smoke"],
+        )
+
+        self.assertEqual(state["status"], "pending")
+        self.assertEqual(state["observed_count"], 0)
+        self.assertEqual(state["checks"], [])
+        self.assertEqual(state["missing_required_checks"], ["PR Smoke"])
+
+    def test_resolves_bridge_token_without_invoking_gh(self) -> None:
+        self.assertEqual(
+            watcher.github_token_from_environment({"GH_TOKEN": "bridge-token"}),
+            "bridge-token",
+        )
+        source = SCRIPT.read_text(encoding="utf-8")
+        self.assertNotIn('["gh",', source)
 
     def test_cli_accepts_expected_head_and_repeatable_required_checks(self) -> None:
         args = watcher.parse_args(

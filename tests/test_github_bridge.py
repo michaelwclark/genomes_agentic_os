@@ -13,13 +13,15 @@ from genomes_agentic_os.github_bridge import (
     REVIEWED_PLATFORM_BRIDGE_REVISION,
     call_github_bridge,
     command_from_environment,
+    get_pull_request,
     list_issues,
     list_pull_requests,
+    list_workflow_runs,
 )
 
 
 def test_reviewed_platform_bridge_revision_is_exact() -> None:
-    assert REVIEWED_PLATFORM_BRIDGE_REVISION == "448cd722d7feb8eb32c86b886627ade0346fdf4a"
+    assert REVIEWED_PLATFORM_BRIDGE_REVISION == "9fd83043c275a0959323735ab35d8be014898173"
 
 
 def _runner(*args, **kwargs):
@@ -118,6 +120,104 @@ def test_list_issues_omits_absent_since_and_rejects_invalid_result() -> None:
             runner=runner,
         )
     assert "since" not in json.loads(str(captured["input"]))["filter"]
+
+
+def test_get_pull_request_sends_versioned_read_request() -> None:
+    captured: dict[str, object] = {}
+
+    def runner(*args, **kwargs):
+        captured.update(kwargs)
+        return subprocess.CompletedProcess(
+            args=args[0],
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "version": BRIDGE_VERSION,
+                    "ok": True,
+                    "result": {
+                        "pullRequest": {
+                            "number": 42,
+                            "headBranch": "feature/read",
+                            "headSha": "exact-head",
+                        }
+                    },
+                }
+            ),
+            stderr="",
+        )
+
+    result = get_pull_request(
+        ["node", "bridge.mjs"],
+        owner="genome",
+        repo="os",
+        number=42,
+        token="secret-token",
+        runner=runner,
+    )
+
+    assert result == {
+        "number": 42,
+        "headBranch": "feature/read",
+        "headSha": "exact-head",
+    }
+    assert json.loads(str(captured["input"])) == {
+        "version": 1,
+        "operation": "getPullRequest",
+        "repo": {"owner": "genome", "repo": "os"},
+        "number": 42,
+    }
+
+
+def test_list_workflow_runs_sends_branch_filter_and_validates_result() -> None:
+    captured: dict[str, object] = {}
+
+    def runner(*args, **kwargs):
+        captured.update(kwargs)
+        return subprocess.CompletedProcess(
+            args=args[0],
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "version": BRIDGE_VERSION,
+                    "ok": True,
+                    "result": {
+                        "workflowRuns": [
+                            {
+                                "name": "CI",
+                                "headSha": "exact-head",
+                                "status": "completed",
+                                "conclusion": "success",
+                            }
+                        ]
+                    },
+                }
+            ),
+            stderr="",
+        )
+
+    result = list_workflow_runs(
+        ["node", "bridge.mjs"],
+        owner="genome",
+        repo="os",
+        token="secret-token",
+        branch="feature/read",
+        runner=runner,
+    )
+
+    assert result == [
+        {
+            "name": "CI",
+            "headSha": "exact-head",
+            "status": "completed",
+            "conclusion": "success",
+        }
+    ]
+    assert json.loads(str(captured["input"])) == {
+        "version": 1,
+        "operation": "listWorkflowRuns",
+        "repo": {"owner": "genome", "repo": "os"},
+        "filter": {"branch": "feature/read", "limit": 100},
+    }
 
 
 def test_bridge_failure_does_not_echo_stderr_or_token() -> None:
