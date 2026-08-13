@@ -15,8 +15,14 @@ All notable changes to this project are documented here. The format follows
   during upgrades.
 - Pause review workers and admit no new review jobs while the route and paired
   producer are upgraded. Keep the queue quiesced until queued intents have been
-  drained or reconciled; this conservative rule applies whenever the running
-  route's persisted first-format guard has not been independently verified.
+  drained or reconciled.
+- The reviewed `0.6.1` route retains the persisted first-format guard in
+  `execution_fabric_remote.py::_team_pr_review_effect_key`, first shipped in
+  `0.6.0`. Legacy admitted tasks without `review_mode` retain the legacy
+  projection key while explicit current tasks use the full-intent key, so the
+  same review identity cannot project under two effect-key formats.
+
+### Documentation
 
 ### Fixed
 - Recover legacy PR-create and worktree-ready delivery packets through the
@@ -37,8 +43,7 @@ All notable changes to this project are documented here. The format follows
 - Normalize case-insensitive repository, head, and source-key fields before
   deriving the cross-repository review identity and helper run ID.
 - Document the persisted first-format guard and the conservative queue
-  quiescence rule for upgrades when that guard's provenance is not independently
-  verified.
+  quiescence rule for upgrades.
 - Keep enough bounded review attempts for error-driven retries to outlive the
   helper fence, and classify transient durable-write, lock, and host-identity
   failures as retryable.
