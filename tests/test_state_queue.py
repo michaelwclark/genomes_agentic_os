@@ -89,7 +89,7 @@ def test_claim_next_two_items_two_claimants_get_distinct_ids(conn: sqlite3.Conne
     assert claimed_a["id"] == first["id"]
 
 
-def test_claim_next_ages_old_work_ahead_of_fresh_high_priority_work(conn: sqlite3.Connection) -> None:
+def test_claim_next_bounded_aging_preserves_fresh_high_priority_work(conn: sqlite3.Connection) -> None:
     fresh_high = queue.enqueue(conn, kind="schedule", id="fresh-high", priority=100)
     aged_low = queue.enqueue(
         conn,
@@ -102,8 +102,7 @@ def test_claim_next_ages_old_work_ahead_of_fresh_high_priority_work(conn: sqlite
     claimed = queue.claim_next(conn, worker_id="worker-a")
 
     assert claimed is not None
-    assert claimed["id"] == aged_low["id"]
-    assert queue.get(conn, fresh_high["id"])["status"] == "queued"
+    assert claimed["id"] == fresh_high["id"]
 
 
 def test_claim_next_preserves_priority_inside_starvation_class(conn: sqlite3.Connection) -> None:

@@ -594,7 +594,7 @@ def test_named_queue_pool_and_worker_capacity_are_transactional() -> None:
         conn.close()
 
 
-def test_named_queue_ages_old_work_ahead_of_fresh_high_priority_work() -> None:
+def test_named_queue_bounded_aging_preserves_fresh_high_priority_work() -> None:
     conn = db.connect(":memory:")
     try:
         fabric.configure_queue(conn, "non_llm", max_concurrency=1)
@@ -627,8 +627,7 @@ def test_named_queue_ages_old_work_ahead_of_fresh_high_priority_work() -> None:
         claimed = fabric.claim_next(conn, worker_id="worker-a", worker_token=worker["lease_token"])
 
         assert claimed is not None
-        assert claimed["id"] == aged_low["id"]
-        assert state_queue.get(conn, fresh_high["id"])["status"] == "queued"
+        assert claimed["id"] == fresh_high["id"]
     finally:
         conn.close()
 
@@ -1701,8 +1700,9 @@ def test_inline_root_scan_extends_execution_fabric_lease_budget(tmp_path: Path) 
         },
     )["queue_item"]
 
-    assert validation["timeout_seconds"] == runtime_ops.INLINE_SCRIPT_LEASE_SECONDS
-    assert morning_report["timeout_seconds"] == runtime_ops.INLINE_SCRIPT_LEASE_SECONDS
+    assert validation["lease_seconds"] == runtime_ops.INLINE_SCRIPT_LEASE_SECONDS
+    assert validation.get("timeout_seconds") in (None, runtime_ops.SCRIPT_DISPATCH_TIMEOUT_SECONDS)
+    assert morning_report["lease_seconds"] == runtime_ops.INLINE_SCRIPT_LEASE_SECONDS
 
 
 def test_registered_watcher_timeout_extends_execution_fabric_lease_budget(tmp_path: Path) -> None:

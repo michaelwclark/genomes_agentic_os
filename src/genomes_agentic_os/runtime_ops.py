@@ -1005,12 +1005,12 @@ def _prepare_queue_item(root: Path, item: dict[str, Any]) -> dict[str, Any]:
 def _materialize_inline_script_lease(root: Path, item: dict[str, Any]) -> dict[str, Any]:
     """Reserve a realistic lease for commands executed inside the dispatcher.
 
-    These commands bypass the subprocess timeout path and can legitimately scan
-    the full installed root. The default 15-minute lease made a healthy worker
-    appear abandoned before the in-process command returned.
+    These commands can legitimately scan the full installed root. Keep the
+    subprocess timeout bounded while extending only the queue lease so a healthy
+    worker is not reclaimed before the command returns.
     """
     runtime_policy = item.get("runtime_policy")
-    if item.get("timeout_seconds") or (
+    if item.get("timeout_seconds") or item.get("lease_seconds") or (
         isinstance(runtime_policy, dict) and runtime_policy.get("timeout_seconds")
     ):
         return item
@@ -1026,8 +1026,19 @@ def _materialize_inline_script_lease(root: Path, item: dict[str, Any]) -> dict[s
         f"agentic-os project worktree cleanup-closed --root {root} --apply",
     }
     if normalized in inline_exact or normalized.startswith(inline_prefixes):
-        item["timeout_seconds"] = INLINE_SCRIPT_LEASE_SECONDS
+        item["lease_seconds"] = INLINE_SCRIPT_LEASE_SECONDS
     return item
+
+
+def _dispatch_lease_seconds(item: dict[str, Any], timeout_seconds: int) -> int:
+    value = item.get("lease_seconds")
+    if value is None and isinstance(item.get("runtime_policy"), dict):
+        value = item["runtime_policy"].get("lease_seconds")
+    try:
+        lease = int(value) if value is not None and not isinstance(value, bool) else timeout_seconds + 60
+    except (TypeError, ValueError):
+        lease = timeout_seconds + 60
+    return max(timeout_seconds + 1, lease)
 
 
 def _provider_from_text(text: str) -> str | None:
@@ -2737,7 +2748,7 @@ def runtime_run_batch(
                 SELECT id FROM run_queue
                 WHERE status = 'queued' AND (due_at IS NULL OR due_at <= ?)
                 ORDER BY
-                  CASE WHEN COALESCE(due_at, created_at) <= ? THEN 0 ELSE 1 END,
+              priority + CASE WHEN COALESCE(due_at, created_at) <= ? THEN 10 ELSE 0 END DESC,
                   CASE WHEN COALESCE(due_at, created_at) <= ? THEN substr(COALESCE(due_at, created_at), 1, 13) END ASC,
                   priority DESC,
                   (due_at IS NULL) ASC, due_at, created_at, id
@@ -3240,12 +3251,13 @@ def _prepare_execution_fabric_dispatch(
             worker_pool = str(item.get("worker_pool") or "default")
             worker_id = f"runtime-{os.uname().nodename}-{os.getpid()}-{_digest(str(item['id']), 10)}"
             timeout_seconds = _dispatch_timeout_seconds(item)
+            lease_seconds = _dispatch_lease_seconds(item, timeout_seconds)
             worker = execution_fabric.register_worker(
                 conn,
                 worker_id,
                 pool_name=worker_pool,
                 capacity=1,
-                lease_seconds=timeout_seconds + 60,
+                lease_seconds=lease_seconds,
                 metadata={"dispatcher": "agentic-os runtime", "queue": queue_name},
             )
             claimed = execution_fabric.claim_next(
@@ -3253,7 +3265,7 @@ def _prepare_execution_fabric_dispatch(
                 worker_id=worker_id,
                 worker_token=str(worker["lease_token"]),
                 item_id=str(item["id"]),
-                lease_seconds=timeout_seconds + 60,
+                lease_seconds=lease_seconds,
             )
             if claimed is None:
                 execution_fabric.retire_worker(
@@ -4287,6 +4299,7 @@ def _apply_runtime_tracking_live(
     return {
         **plan,
         "applied": True,
+        "mode": "applied",
         "live": True,
         "cockpit_page_id": cockpit_id,
         "cockpit_created": cockpit_created,
@@ -4360,7 +4373,7 @@ def apply_runtime_tracking(
         "records": records,
     }
     _write_yaml(manifest_path, manifest)
-    return {**plan, "applied": True, "live": False, "database_ids": database_ids, "records": records}
+    return {**plan, "applied": True, "mode": "applied", "live": False, "database_ids": database_ids, "records": records}
 
 
 def format_runtime_result(result: dict[str, Any]) -> str:
