@@ -4252,7 +4252,8 @@ def _apply_runtime_tracking_live(
 
     # Persist remote container IDs before any record loop so an interrupted
     # apply can resume without losing the cockpit/database identity.
-    persist_manifest([], status="in_progress")
+    prior_records = list(existing_manifest.get("records") or [])
+    persist_manifest(prior_records, status="in_progress")
 
     # --- upsert records ---
     records_created = 0
@@ -4320,6 +4321,7 @@ def apply_runtime_tracking(
     *,
     verified_workspace: str | None,
     fetcher: Any = None,
+    allow_live: bool = False,
 ) -> dict[str, Any]:
     """Apply runtime tracking — writes a local manifest or goes live to Notion.
 
@@ -4343,6 +4345,12 @@ def apply_runtime_tracking(
     token_present = resolve_token(token_env) is not None
 
     go_live = bool(parent_page_id and token_present)
+
+    if go_live and not (allow_live or fetcher is not None):
+        raise RuntimeError(
+            f"live runtime tracking requires explicit confirmation; pass --live "
+            f"to authorize parent_page_id={parent_page_id!r} with token env {token_env!r}"
+        )
 
     if go_live:
         existing_manifest: dict[str, Any] = _load_yaml(manifest_path, {})

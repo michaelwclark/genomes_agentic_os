@@ -685,7 +685,7 @@ def handle_runtime_tracking(args: argparse.Namespace) -> int:
     try:
         os_root = Path(args.root).expanduser().resolve()
         if args.apply:
-            result = apply_runtime_tracking(os_root, verified_workspace=args.workspace)
+            result = apply_runtime_tracking(os_root, verified_workspace=args.workspace, allow_live=args.live)
         else:
             from ..runtime_ops import _live_notion_config, _load_notion_tracking_config
             from ..notion_api import resolve_token
@@ -909,6 +909,9 @@ def register(subparsers) -> None:
     runtime_tracking_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
     runtime_tracking_parser.add_argument(
         "--workspace", default="Genome's Notion", help="Verified Notion workspace name for live tracking."
+    )
+    runtime_tracking_parser.add_argument(
+        "--live", action="store_true", help="Explicitly authorize live Notion writes when --apply is used."
     )
     runtime_tracking_mode = runtime_tracking_parser.add_mutually_exclusive_group()
     runtime_tracking_mode.add_argument("--dry-run", action="store_true", default=False)
