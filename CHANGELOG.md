@@ -11,11 +11,13 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 - Align all twelve canonical release/version sources and document the
-  ordered route/object-library rollout and Team PR queue quiesce requirement.
-- Release operators must acknowledge the Team PR queue quiesce before rollout:
-  pause review workers, admit no new review jobs while the route and paired
-  producer are upgraded, and resume only after legacy queued intents are
-  drained or reconciled.
+  ordered route/object-library rollout and recommended Team PR queue
+  coordination during upgrades.
+- Recommended precaution: pause review workers and admit no new review jobs
+  while the route and paired producer are upgraded. The persisted first-format
+  guard preserves legacy/current effect-key dedup for already queued intents;
+  quiescing avoids mixed-version operational surprises but is not required for
+  correctness when that guard is present.
 
 ### Fixed
 - Recover legacy PR-create and worktree-ready delivery packets through the
