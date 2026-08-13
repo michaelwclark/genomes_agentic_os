@@ -227,9 +227,11 @@ def build_runtime_health(
     if recent_failed_count > recent_statuses.get("done", 0):
         severity = "degraded" if severity == "healthy" else severity
         findings.append("dispatch failures exceeded successful dispatches in the last hour")
-    elif recent_failed_count:
+    elif recent_failed_count >= 2:
         severity = "degraded" if severity == "healthy" else severity
         findings.append(f"{recent_failed_count} dispatch failures occurred in the last hour")
+    elif recent_failed_count:
+        findings.append("1 isolated dispatch failure occurred in the last hour")
     dead_letters = int(fabric_metrics.get("dead_letter_count") or statuses.get("dead-letter", 0))
     unhealthy_workers = int(fabric_metrics.get("unhealthy_worker_count") or 0)
     if dead_letters:

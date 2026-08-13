@@ -686,9 +686,16 @@ def handle_runtime_tracking(args: argparse.Namespace) -> int:
         if args.apply:
             result = apply_runtime_tracking(args.root, verified_workspace=args.workspace)
         else:
-            result = {**build_runtime_tracking_plan(args.root), "applied": False, "live": False}
+            from ..runtime_ops import _live_notion_config, _load_notion_tracking_config
+            from ..notion_api import resolve_token
+            config = _load_notion_tracking_config(Path(args.root))
+            parent_page_id, token_env, _title, _workspace = _live_notion_config(config)
+            result = {**build_runtime_tracking_plan(args.root), "applied": False,
+                      "live": bool(parent_page_id and resolve_token(token_env) is not None),
+                      "would_go_live": bool(parent_page_id and resolve_token(token_env) is not None),
+                      "token_configured": resolve_token(token_env) is not None}
     except Exception as exc:
-        result = {"applied": False, "ok": False, "error_type": type(exc).__name__}
+        result = {"applied": False, "ok": False, "error_type": type(exc).__name__, "error": str(exc), "manifest_path": str(Path(args.root) / ".notion-runtime-tracking" / "manifest.yml")}
         _print_structured(result, json_output=args.json)
         return 1
     _print_structured(result, json_output=args.json)

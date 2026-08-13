@@ -4030,7 +4030,7 @@ def _runtime_tracking_queue_items(queue: dict[str, Any]) -> list[dict[str, Any]]
     active = [item for item in items if item.get("status") in ACTIVE_RUN_QUEUE_STATES]
     terminal = [item for item in items if item.get("status") not in ACTIVE_RUN_QUEUE_STATES]
 
-    active.sort(key=_queue_item_time, reverse=True)
+    active.sort(key=_queue_item_time)
     terminal.sort(key=_queue_item_time, reverse=True)
 
     selected = active[:RUNTIME_TRACKING_RUN_QUEUE_LIMIT]
