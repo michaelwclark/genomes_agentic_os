@@ -4225,16 +4225,35 @@ def _apply_runtime_tracking_live(
     KIND_TO_DATABASE = RUNTIME_TRACKING_KIND_TO_DATABASE
 
     def persist_manifest(records: list[dict[str, Any]], *, status: str, error_type: str | None = None) -> None:
+        merged_database_ids = {
+            **(existing_manifest.get("database_ids") or {}),
+            **database_ids,
+        }
+        merged_databases = list(dict.fromkeys([
+            *(existing_manifest.get("databases") or []),
+            *plan["databases"],
+            *merged_database_ids,
+        ]))
+        records_by_key = {
+            str(item.get("record_key")): item
+            for item in (existing_manifest.get("records") or [])
+            if isinstance(item, dict) and item.get("record_key")
+        }
+        records_by_key.update({
+            str(item.get("record_key")): item
+            for item in records
+            if isinstance(item, dict) and item.get("record_key")
+        })
         checkpoint = {
             "live": True,
             "sync_status": status,
             "workspace": workspace,
             "cockpit_page_id": cockpit_id,
             "updated_at": now,
-            "databases": plan["databases"],
-            "database_ids": database_ids,
+            "databases": merged_databases,
+            "database_ids": merged_database_ids,
             "record_scope": plan.get("record_scope", {}),
-            "records": records,
+            "records": list(records_by_key.values()),
         }
         if error_type:
             checkpoint["error_type"] = error_type

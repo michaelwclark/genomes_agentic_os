@@ -18,6 +18,7 @@ import yaml
 from .runtime_backend import queue_mode_status, runtime_queue_items
 
 RUNTIME_REGISTRY = "harness/shared_factory/00-control-plane/runtime-registry.yml"
+RECENT_FAILURE_DEGRADED_THRESHOLD = 2
 REPORT_ROOT = "harness/shared_factory/06-runs-and-logs/runtime-health"
 SUPERVISOR_LOG = "harness/shared_factory/06-runs-and-logs/supervisor.out.log"
 SUPERVISOR_LABEL = "com.genome.agentic-os.supervisor"
@@ -227,12 +228,11 @@ def build_runtime_health(
     if recent_failed_count > recent_statuses.get("done", 0):
         severity = "degraded" if severity == "healthy" else severity
         findings.append("dispatch failures exceeded successful dispatches in the last hour")
-    elif recent_failed_count >= 2:
+    elif recent_failed_count >= RECENT_FAILURE_DEGRADED_THRESHOLD:
         severity = "degraded" if severity == "healthy" else severity
         findings.append(f"{recent_failed_count} dispatch failures occurred in the last hour")
     elif recent_failed_count:
-        severity = "degraded" if severity == "healthy" else severity
-        findings.append("1 dispatch failures occurred in the last hour")
+        findings.append("1 dispatch failure occurred in the last hour")
     dead_letters = int(fabric_metrics.get("dead_letter_count") or statuses.get("dead-letter", 0))
     unhealthy_workers = int(fabric_metrics.get("unhealthy_worker_count") or 0)
     if dead_letters:

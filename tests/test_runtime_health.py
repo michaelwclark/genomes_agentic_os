@@ -120,7 +120,14 @@ def test_recent_failure_degrades_health_and_renders_actionable_details(tmp_path:
             "ref": "los_engineering_morning_standup_report_0700",
             "finished_at": "2026-07-21T13:55:00Z",
             "error": "zsh: read-only variable: status\nstack detail",
-        }
+        },
+        {
+            "id": "failed-standup-retry",
+            "status": "failed",
+            "ref": "los_engineering_morning_standup_report_0700",
+            "finished_at": "2026-07-21T13:56:00Z",
+            "error": "zsh: read-only variable: status\nstack detail",
+        },
     ]
     queue_path.write_text(yaml.safe_dump(queue, sort_keys=False), encoding="utf-8")
 
@@ -129,16 +136,16 @@ def test_recent_failure_degrades_health_and_renders_actionable_details(tmp_path:
 
     assert report["status"] == "degraded"
     assert report["workers"]["completed_last_hour"] == 3
-    assert report["workers"]["failed_last_hour"] == 1
+    assert report["workers"]["failed_last_hour"] == 2
     assert report["recent_failures"] == [
         {
             "ref": "los_engineering_morning_standup_report_0700",
-            "count": 1,
-            "latest_at": "2026-07-21T13:55:00Z",
+            "count": 2,
+            "latest_at": "2026-07-21T13:56:00Z",
             "reason": "zsh: read-only variable: status stack detail",
         }
     ]
-    assert "1 dispatch failures occurred in the last hour" in report["findings"]
+    assert "2 dispatch failures occurred in the last hour" in report["findings"]
     assert "## Recent Failures (last hour)" in rendered
     assert "`los_engineering_morning_standup_report_0700`" in rendered
     assert "zsh: read-only variable: status stack detail" in rendered
