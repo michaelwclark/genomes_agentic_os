@@ -41,6 +41,7 @@ from .self_improvement import (
     self_improvement_queue_health,
 )
 from .thread_closeout import stale_finalize_threads
+from .notion_sync import target_workspace, verify_workspace
 from .state import db as state_db
 from .state import execution_fabric
 from .state import queue as state_queue
@@ -65,6 +66,7 @@ RUNTIME_REQUIRED_TARGETS = {
     "agentmail_api",
     "granola_local",
 }
+NOTION_RUNTIME_MANIFEST = ".notion-runtime-tracking/manifest.yml"
 REQUIRED_INTEGRATIONS = {"orgo", "composio", "agentmail", "granola", "notion"}
 RUN_QUEUE_STATES = (
     "dry-run",
@@ -98,6 +100,7 @@ SCRIPT_DISPATCH_OUTPUT_LIMIT = 20000
 DEFAULT_RUN_QUEUE_ACTIVE_MAX_AGE_HOURS = 24
 DEFAULT_RUN_QUEUE_TERMINAL_MAX_AGE_DAYS = 2
 DEFAULT_RUN_QUEUE_FAILED_MAX_AGE_DAYS = 7
+RUNTIME_TRACKING_RUN_QUEUE_LIMIT = 50
 DEFAULT_RUN_QUEUE_SKIPPED_MAX_AGE_DAYS = 1
 DEFAULT_RUN_QUEUE_BACKUP_MAX_AGE_DAYS = 7
 DEFAULT_RETRY_BACKOFF_SECONDS = 60
@@ -4135,7 +4138,9 @@ def _apply_runtime_tracking_live(
     )
 
     # --- live workspace verification ---
-    bot_workspace = get_bot_workspace(token_env, fetcher=fetcher)
+    bot_workspace = get_bot_workspace(
+        token_env, parent_page_id=parent_page_id, fetcher=fetcher
+    )
     if bot_workspace != workspace:
         raise ValueError(
             f"live API workspace mismatch: bot reports {bot_workspace!r} "
@@ -4159,7 +4164,13 @@ def _apply_runtime_tracking_live(
                 break
 
     if cockpit_id is None:
-        cockpit_id = create_page(parent_page_id, cockpit_title, token_env, fetcher=fetcher)
+        cockpit_id = create_page(
+            parent_page_id,
+            cockpit_title,
+            token_env,
+            approved_parent_page_id=parent_page_id,
+            fetcher=fetcher,
+        )
         cockpit_created = True
 
     # --- runtime databases ---
@@ -4182,7 +4193,14 @@ def _apply_runtime_tracking_live(
             databases_reused += 1
         else:
             schema = DATABASE_PROPERTY_SCHEMAS.get(db_name) or _base_db_properties()
-            new_id = create_database(cockpit_id, db_name, schema, token_env, fetcher=fetcher)
+            new_id = create_database(
+                cockpit_id,
+                db_name,
+                schema,
+                token_env,
+                approved_parent_page_id=parent_page_id,
+                fetcher=fetcher,
+            )
             database_ids[db_name] = new_id
             databases_created += 1
 
@@ -4215,11 +4233,23 @@ def _apply_runtime_tracking_live(
         props = build_record_properties(record_with_key, now)
         existing_page_id = query_database_by_key(db_id, record_key, token_env, fetcher=fetcher)
         if existing_page_id:
-            update_database_page(existing_page_id, props, token_env, fetcher=fetcher)
+            update_database_page(
+                existing_page_id,
+                props,
+                token_env,
+                approved_parent_page_id=parent_page_id,
+                fetcher=fetcher,
+            )
             notion_id = existing_page_id
             records_updated += 1
         else:
-            notion_id = create_database_page(db_id, props, token_env, fetcher=fetcher)
+            notion_id = create_database_page(
+                db_id,
+                props,
+                token_env,
+                approved_parent_page_id=parent_page_id,
+                fetcher=fetcher,
+            )
             records_created += 1
         records.append({**record_with_key, "notion_id": notion_id})
 

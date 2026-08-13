@@ -1,0 +1,5 @@
+# Notion Runtime Tracking Configuration
+workspace: "Genome's Notion"
+parent_page_id: ""
+token_env: GENOMES_NOTION_PAT
+cockpit_page_title: "Runtime Control Plane"

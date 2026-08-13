@@ -379,6 +379,39 @@ def test_live_path_creates_cockpit_and_7_databases(tmp_path: Path) -> None:
     manifest_text = manifest_path.read_text()
     assert SENTINEL_TOKEN not in manifest_text, "Sentinel token leaked into manifest file"
 
+
+def test_live_path_propagates_approved_notion_parent_to_bridge_calls(tmp_path: Path) -> None:
+    """Configured parent authorizes the workspace check and all live mutations."""
+    from genomes_agentic_os.runtime_ops import apply_runtime_tracking, build_runtime_tracking_plan
+    from genomes_agentic_os import notion_api
+
+    root = _installed_root(tmp_path)
+    _set_notion_tracking_config(root, parent_page_id=PARENT_PAGE_ID)
+    plan = build_runtime_tracking_plan(str(root))
+    responses = [_users_me_response(), _children_response([]),
+                 _page_response(COCKPIT_PAGE_ID, "Runtime Control Plane"),
+                 _children_response([])]
+    for db_name in DB_NAMES:
+        responses.append(_database_response(DB_IDS[db_name], db_name))
+    for i in range(len(plan["records"])):
+        responses.extend([_query_response([]), _db_page_response(f"newpage{i:024d}"[:32])])
+    transport = FakeTransport(responses)
+
+    with patch.dict(os.environ, {"GENOMES_NOTION_PAT": SENTINEL_TOKEN}), \
+         patch.object(notion_api, "get_bot_workspace", wraps=notion_api.get_bot_workspace) as workspace, \
+         patch.object(notion_api, "create_page", wraps=notion_api.create_page) as create_page, \
+         patch.object(notion_api, "create_database", wraps=notion_api.create_database) as create_database, \
+         patch.object(notion_api, "create_database_page", wraps=notion_api.create_database_page) as create_database_page:
+        result = apply_runtime_tracking(str(root), verified_workspace="Genome's Notion", fetcher=transport)
+
+    assert result["live"] is True
+    assert workspace.call_args.kwargs["parent_page_id"] == PARENT_PAGE_ID
+    assert create_page.call_args.kwargs["approved_parent_page_id"] == PARENT_PAGE_ID
+    assert all(call.kwargs["approved_parent_page_id"] == PARENT_PAGE_ID
+               for call in create_database.call_args_list)
+    assert all(call.kwargs["approved_parent_page_id"] == PARENT_PAGE_ID
+               for call in create_database_page.call_args_list)
+
     # Token must not appear in result dict (serialized)
     result_text = yaml.safe_dump(result)
     assert SENTINEL_TOKEN not in result_text, "Sentinel token leaked into result dict"
