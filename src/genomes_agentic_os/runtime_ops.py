@@ -2738,8 +2738,8 @@ def runtime_run_batch(
                 WHERE status = 'queued' AND (due_at IS NULL OR due_at <= ?)
                 ORDER BY
                   CASE WHEN COALESCE(due_at, created_at) <= ? THEN 0 ELSE 1 END,
+                  CASE WHEN COALESCE(due_at, created_at) <= ? THEN substr(COALESCE(due_at, created_at), 1, 13) END ASC,
                   priority DESC,
-                  CASE WHEN COALESCE(due_at, created_at) <= ? THEN COALESCE(due_at, created_at) END ASC,
                   (due_at IS NULL) ASC, due_at, created_at, id
                 """,
                 (
@@ -3131,8 +3131,8 @@ def _prepare_execution_fabric_dispatch(
                             "WHERE " + " AND ".join(candidate_clauses),
                             "ORDER BY",
                             "  CASE WHEN COALESCE(due_at, created_at) <= ? THEN 0 ELSE 1 END,",
+                            "  CASE WHEN COALESCE(due_at, created_at) <= ? THEN substr(COALESCE(due_at, created_at), 1, 13) END ASC,",
                             "  priority DESC,",
-                            "  CASE WHEN COALESCE(due_at, created_at) <= ? THEN COALESCE(due_at, created_at) END ASC,",
                             "  (due_at IS NULL) ASC, due_at, created_at, id",
                             "LIMIT 1",
                         )
@@ -4219,54 +4219,70 @@ def _apply_runtime_tracking_live(
         "run": "Runs",
     }
 
+    def persist_manifest(records: list[dict[str, Any]], *, status: str, error_type: str | None = None) -> None:
+        checkpoint = {
+            "live": True,
+            "sync_status": status,
+            "workspace": workspace,
+            "cockpit_page_id": cockpit_id,
+            "updated_at": now,
+            "databases": plan["databases"],
+            "database_ids": database_ids,
+            "record_scope": plan.get("record_scope", {}),
+            "records": records,
+        }
+        if error_type:
+            checkpoint["error_type"] = error_type
+        _write_yaml(manifest_path, checkpoint)
+
+    # Persist remote container IDs before any record loop so an interrupted
+    # apply can resume without losing the cockpit/database identity.
+    persist_manifest([], status="in_progress")
+
     # --- upsert records ---
     records_created = 0
     records_updated = 0
     records: list[dict[str, Any]] = []
 
-    for record in plan["records"]:
-        record_key = f"{record['kind']}:{record['key']}"
-        record_with_key = {**record, "record_key": record_key}
-        db_name = KIND_TO_DATABASE.get(record["kind"])
-        if db_name is None or db_name not in database_ids:
-            records.append({**record_with_key, "notion_id": _local_id(record_key)})
-            continue
+    try:
+        for record in plan["records"]:
+            record_key = f"{record['kind']}:{record['key']}"
+            record_with_key = {**record, "record_key": record_key}
+            db_name = KIND_TO_DATABASE.get(record["kind"])
+            if db_name is None or db_name not in database_ids:
+                records.append({**record_with_key, "notion_id": None, "skipped": "no database mapping"})
+                persist_manifest(records, status="in_progress")
+                continue
 
-        db_id = database_ids[db_name]
-        props = build_record_properties(record_with_key, now)
-        existing_page_id = query_database_by_key(db_id, record_key, token_env, fetcher=fetcher)
-        if existing_page_id:
-            update_database_page(
-                existing_page_id,
-                props,
-                token_env,
-                approved_parent_page_id=parent_page_id,
-                fetcher=fetcher,
-            )
-            notion_id = existing_page_id
-            records_updated += 1
-        else:
-            notion_id = create_database_page(
-                db_id,
-                props,
-                token_env,
-                approved_parent_page_id=parent_page_id,
-                fetcher=fetcher,
-            )
-            records_created += 1
-        records.append({**record_with_key, "notion_id": notion_id})
+            db_id = database_ids[db_name]
+            props = build_record_properties(record_with_key, now)
+            existing_page_id = query_database_by_key(db_id, record_key, token_env, fetcher=fetcher)
+            if existing_page_id:
+                update_database_page(
+                    existing_page_id,
+                    props,
+                    token_env,
+                    approved_parent_page_id=parent_page_id,
+                    fetcher=fetcher,
+                )
+                notion_id = existing_page_id
+                records_updated += 1
+            else:
+                notion_id = create_database_page(
+                    db_id,
+                    props,
+                    token_env,
+                    approved_parent_page_id=parent_page_id,
+                    fetcher=fetcher,
+                )
+                records_created += 1
+            records.append({**record_with_key, "notion_id": notion_id})
+            persist_manifest(records, status="in_progress")
+    except Exception as exc:
+        persist_manifest(records, status="partial", error_type=type(exc).__name__)
+        raise RuntimeError("live runtime tracking apply incomplete; resume from manifest") from exc
 
-    manifest = {
-        "live": True,
-        "workspace": workspace,
-        "cockpit_page_id": cockpit_id,
-        "updated_at": now,
-        "databases": plan["databases"],
-        "database_ids": database_ids,
-        "record_scope": plan.get("record_scope", {}),
-        "records": records,
-    }
-    _write_yaml(manifest_path, manifest)
+    persist_manifest(records, status="complete")
 
     return {
         **plan,

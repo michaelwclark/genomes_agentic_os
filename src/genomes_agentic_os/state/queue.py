@@ -212,8 +212,8 @@ def claim_next(
               AND (lease_until IS NULL OR lease_until < ?)
             ORDER BY
               CASE WHEN COALESCE(due_at, created_at) <= ? THEN 0 ELSE 1 END,
+              CASE WHEN COALESCE(due_at, created_at) <= ? THEN substr(COALESCE(due_at, created_at), 1, 13) END ASC,
               priority DESC,
-              CASE WHEN COALESCE(due_at, created_at) <= ? THEN COALESCE(due_at, created_at) END ASC,
               (due_at IS NULL) ASC, due_at ASC, created_at ASC
             LIMIT 1
             """,

@@ -112,14 +112,14 @@ def test_claim_next_preserves_priority_inside_starvation_class(conn: sqlite3.Con
         kind="schedule",
         id="newer-high",
         priority=100,
-        created_at="2001-01-01T00:00:00Z",
+        created_at="2000-01-01T00:20:00Z",
     )
     oldest_low = queue.enqueue(
         conn,
         kind="schedule",
         id="oldest-low",
         priority=0,
-        created_at="2000-01-01T00:00:00Z",
+        created_at="2000-01-01T00:10:00Z",
     )
 
     claimed = queue.claim_next(conn, worker_id="worker-a")

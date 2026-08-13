@@ -682,10 +682,15 @@ def handle_execution_fabric_config_validate(args: argparse.Namespace) -> int:
 
 
 def handle_runtime_tracking(args: argparse.Namespace) -> int:
-    if args.apply:
-        result = apply_runtime_tracking(args.root, verified_workspace=args.workspace)
-    else:
-        result = {**build_runtime_tracking_plan(args.root), "applied": False, "live": False}
+    try:
+        if args.apply:
+            result = apply_runtime_tracking(args.root, verified_workspace=args.workspace)
+        else:
+            result = {**build_runtime_tracking_plan(args.root), "applied": False, "live": False}
+    except Exception as exc:
+        result = {"applied": False, "ok": False, "error_type": type(exc).__name__}
+        _print_structured(result, json_output=args.json)
+        return 1
     _print_structured(result, json_output=args.json)
     return 0
 
