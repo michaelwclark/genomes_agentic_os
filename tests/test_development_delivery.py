@@ -530,6 +530,7 @@ def _active_worktree_ready_recovery_fixture(
     *,
     post_review_self_admission: bool = False,
     single_stage_pr_create: bool = False,
+    normal_groom_readiness: bool = False,
     family_source_head: str | None = None,
 ) -> tuple[TaskState, Path, Path, Path]:
     """Build either supported worktree-ready recovery shape without provider mutation."""
@@ -552,7 +553,9 @@ def _active_worktree_ready_recovery_fixture(
             "resumed": False,
         },
     )
-    if post_review_self_admission and single_stage_pr_create:
+    if (post_review_self_admission and single_stage_pr_create) or (
+        normal_groom_readiness and (post_review_self_admission or single_stage_pr_create)
+    ):
         raise AssertionError("recovery fixture shapes are mutually exclusive")
     if post_review_self_admission:
         run = delivery.start_development_run(
@@ -616,10 +619,11 @@ def _active_worktree_ready_recovery_fixture(
         )
     else:
         portfolio = json.loads(portfolio_path.read_text(encoding="utf-8"))
-        # This models the exact historical portfolio selector discrepancy: its
-        # task and projection are readiness-bound while the portfolio says
-        # detective.
-        portfolio["auto_dev"]["requested_stage"] = "detective"
+        # The task and projection remain readiness-bound.  Historical
+        # portfolios selected either detective or the normal groom start.
+        portfolio["auto_dev"]["requested_stage"] = (
+            "groom" if normal_groom_readiness else "detective"
+        )
         portfolio["auto_dev"]["provision_worktree"] = False
         portfolio_path.write_text(
             json.dumps(portfolio, indent=2, sort_keys=True) + "\n", encoding="utf-8"
@@ -7230,6 +7234,67 @@ def test_recover_active_worktree_ready_delivery_preserves_pr_evidence_and_requir
     assert work_item.is_dir()
 
 
+def test_recover_active_worktree_ready_delivery_accepts_normal_groom_readiness_replay(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    task, portfolio_path, family_path, provider_path = _active_worktree_ready_recovery_fixture(
+        tmp_path, monkeypatch, normal_groom_readiness=True
+    )
+    projection_path = Path(task.read()["autodev_path"])
+    original_task = task.path.read_bytes()
+    original_portfolio = portfolio_path.read_bytes()
+    original_family = family_path.read_bytes()
+    original_provider = provider_path.read_bytes()
+
+    planned = delivery.recover_active_worktree_ready_delivery(
+        task.path,
+        reason="recover the exact normal groom/readiness portfolio selector",
+        idempotency_key="cc-420:groom-readiness",
+    )
+    assert planned["result"] == "planned"
+    assert task.path.read_bytes() == original_task
+    assert portfolio_path.read_bytes() == original_portfolio
+
+    recovered = delivery.recover_active_worktree_ready_delivery(
+        task.path,
+        reason="recover the exact normal groom/readiness portfolio selector",
+        idempotency_key="cc-420:groom-readiness",
+        apply=True,
+    )
+    assert recovered["result"] == "recovered"
+    receipt_payload = json.loads(Path(recovered["receipt"]).read_text(encoding="utf-8"))
+    assert receipt_payload["original"]["recovery_shape"] == "single_stage_groom_readiness"
+    assert family_path.read_bytes() == original_family
+    assert provider_path.read_bytes() == original_provider
+
+    current = task.read()
+    assert current["state"] == "local_validation"
+    assert current["auto_dev_mode"] == "everything"
+    assert current["auto_dev_start_stage"] == "review_self"
+    assert current["auto_dev_completion_stage"] == "merge"
+    projection = read_auto_dev_state(projection_path)
+    assert projection["current_stage"] == "review_self"
+    assert all(
+        projection["stages"][stage]["status"] == "not_started"
+        and projection["stages"][stage]["receipt_refs"] == []
+        for stage in ("review_self", "review_others", "qa", "finalize", "merge")
+    )
+
+    replayed = delivery.recover_active_worktree_ready_delivery(
+        task.path,
+        reason="recover the exact normal groom/readiness portfolio selector",
+        idempotency_key="cc-420:groom-readiness",
+        apply=True,
+    )
+    assert replayed["result"] == "replayed"
+    assert len(task.read()["active_worktree_ready_delivery_recoveries"]) == 1
+    assert len(
+        json.loads(portfolio_path.read_text(encoding="utf-8"))[
+            "active_worktree_ready_delivery_recoveries"
+        ]
+    ) == 1
+
+
 def test_recover_active_worktree_ready_delivery_accepts_only_the_post_review_self_executor_admission(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -7304,6 +7369,10 @@ def test_recover_active_worktree_ready_delivery_accepts_only_the_post_review_sel
         "post_review_subject_revision",
         "post_review_terminal_revision",
         "post_review_projection_authority",
+        "portfolio_requested_readiness",
+        "groom_portfolio_goal",
+        "groom_portfolio_completion",
+        "groom_portfolio_provision",
     ),
 )
 def test_recover_active_worktree_ready_delivery_refuses_unsupported_or_tampered_shapes_without_mutation(
@@ -7314,6 +7383,7 @@ def test_recover_active_worktree_ready_delivery_refuses_unsupported_or_tampered_
         monkeypatch,
         post_review_self_admission=mutation.startswith("post_review")
         or mutation == "generic_everything",
+        normal_groom_readiness=mutation.startswith("groom_portfolio"),
     )
     projection_path = Path(task.read()["autodev_path"])
     work_item = Path(task.read()["work_item"])
@@ -7337,6 +7407,25 @@ def test_recover_active_worktree_ready_delivery_refuses_unsupported_or_tampered_
             "subject_revision" if mutation == "post_review_subject_revision" else "terminal_revision"
         ] = "b" * 40
         task.path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    elif mutation in {
+        "portfolio_requested_readiness",
+        "groom_portfolio_goal",
+        "groom_portfolio_completion",
+        "groom_portfolio_provision",
+    }:
+        portfolio = json.loads(portfolio_path.read_text(encoding="utf-8"))
+        auto_dev = portfolio["auto_dev"]
+        if mutation == "portfolio_requested_readiness":
+            auto_dev["requested_stage"] = "readiness"
+        elif mutation == "groom_portfolio_goal":
+            auto_dev["goal"] = "detective"
+        elif mutation == "groom_portfolio_completion":
+            auto_dev["completion_stage"] = "detective"
+        else:
+            auto_dev["provision_worktree"] = True
+        portfolio_path.write_text(
+            json.dumps(portfolio, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
     elif mutation == "provider_tamper":
         provider_path.write_text("{\"tampered\":true}", encoding="utf-8")
     else:

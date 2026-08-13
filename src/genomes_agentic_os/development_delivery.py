@@ -3167,7 +3167,7 @@ def _worktree_ready_recovery_portfolio(
     post_review_self_admission: bool,
     pr_create_worktree_ready: bool = False,
 ) -> dict[str, Any]:
-    """Recognize only one explicitly supported historical portfolio shape."""
+    """Recognize only explicitly supported historical portfolio shapes."""
 
     auto_dev = portfolio.get("auto_dev") if isinstance(portfolio.get("auto_dev"), Mapping) else {}
     rows = portfolio.get("tasks") if isinstance(portfolio.get("tasks"), list) else []
@@ -3185,13 +3185,24 @@ def _worktree_ready_recovery_portfolio(
         and Path(str(rows[0].get("state_ref") or "")).expanduser().resolve() == state_path
         and rows[0].get("canonical_work_id") == task.get("canonical_work_id")
     )
-    legacy_readiness = (
+    legacy_detective_readiness = (
         portfolio.get("state") == "dispatching"
         and auto_dev.get("mode") == "single_stage"
         # This legacy shape was emitted with detective as the portfolio selector
         # while its task and completion boundary remained readiness.  Accepting
         # either selector would turn this narrow migration into a generic widen.
         and auto_dev.get("requested_stage") == "detective"
+        and auto_dev.get("goal") == "readiness"
+        and auto_dev.get("start_stage") == "groom"
+        and auto_dev.get("completion_stage") == "readiness"
+        and auto_dev.get("provision_worktree") is False
+    )
+    normal_groom_readiness = (
+        portfolio.get("state") == "dispatching"
+        and auto_dev.get("mode") == "single_stage"
+        # This separately named historical selector is the normal groom
+        # start, but it remains bound to the same readiness-only boundary.
+        and auto_dev.get("requested_stage") == "groom"
         and auto_dev.get("goal") == "readiness"
         and auto_dev.get("start_stage") == "groom"
         and auto_dev.get("completion_stage") == "readiness"
@@ -3223,7 +3234,7 @@ def _worktree_ready_recovery_portfolio(
         if pr_create_worktree_ready
         else post_review_self
         if post_review_self_admission
-        else legacy_readiness
+        else legacy_detective_readiness or normal_groom_readiness
     ):
         raise DevelopmentDeliveryError(
             "worktree_ready delivery recovery requires the exact active one-task portfolio boundary"
@@ -3474,6 +3485,12 @@ def _active_worktree_ready_delivery_recovery_context(
         post_review_self_admission=post_review_self_admission,
         pr_create_worktree_ready=pr_create_worktree_ready,
     )
+    if not pr_create_worktree_ready and not post_review_self_admission:
+        recovery_shape = (
+            "single_stage_groom_readiness"
+            if portfolio_auto_dev.get("requested_stage") == "groom"
+            else "single_stage_readiness"
+        )
     canonical = _read_canonical_development_work(
         root,
         canonical_work_id=str(task["canonical_work_id"]),
