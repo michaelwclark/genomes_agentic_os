@@ -7,6 +7,16 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-08-13
+
+### Fixed
+- Recover legacy PR-create and worktree-ready delivery packets through the
+  governed Auto-Dev workflow.
+- Preserve queue isolation, canonical source-branch refresh, policy routing,
+  and exact legacy PR identity during delivery validation.
+- Make policy migration and admission contention handling fail closed and
+  idempotent.
+
 ### Fixed
 - Persist full-identity Team PR review intent before helper launch, recover a
   completed helper receipt after worker interruption, fence overlapping
