@@ -12,6 +12,10 @@ All notable changes to this project are documented here. The format follows
 ### Changed
 - Align all twelve canonical release/version sources and document the
   ordered route/object-library rollout and Team PR queue quiesce requirement.
+- Release operators must acknowledge the Team PR queue quiesce before rollout:
+  pause review workers, admit no new review jobs while the route and paired
+  producer are upgraded, and resume only after legacy queued intents are
+  drained or reconciled.
 
 ### Fixed
 - Recover legacy PR-create and worktree-ready delivery packets through the
@@ -21,7 +25,6 @@ All notable changes to this project are documented here. The format follows
 - Make policy migration and admission contention handling fail closed and
   idempotent.
 
-### Fixed
 - Persist full-identity Team PR review intent before helper launch, recover a
   completed helper receipt after worker interruption, fence overlapping
   attempts per review identity, and bind the helper to the exact review mode,
