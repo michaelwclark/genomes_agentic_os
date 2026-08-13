@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import sqlite3
 import subprocess
 
 import pytest
@@ -276,6 +277,216 @@ def test_canonical_work_state_tracks_delivery_and_never_regresses_or_clears_bloc
         assert preserved["blocked_reason"] == "QA environment hold"
         assert preserved["source_system"] == "linear"
         assert preserved["source_key"] == "CC-56"
+    finally:
+        connection.close()
+
+
+def test_canonical_admission_contention_is_bounded_and_preserves_all_receipts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A supervisor-owned SQLite write lock yields one actionable retry receipt.
+
+    The retry must not create an additional canonical item while the lock is
+    held. Once the writer releases it, resuming the same packet upserts the
+    original source identity and leaves the database readable.
+    """
+
+    repo, _base_sha = _repository(tmp_path)
+    root = tmp_path / "os"
+    project = _project(root, repo)
+    created = create_project_work_item(
+        root,
+        "acme",
+        "app",
+        title="SQLite contention admission",
+        summary="Exercise bounded Auto-Dev canonical admission retry.",
+        status="building",
+        work_id="sqlite_contention",
+        item_format="packet",
+    )
+    packet = next(path for path in created.created if path.is_dir() and (path / "work.yml").is_file())
+    db_path = default_db_path(root)
+    holder = connect_state(db_path)
+    holder.execute("BEGIN IMMEDIATE")
+    monkeypatch.setattr(delivery, "CANONICAL_ADMISSION_BUSY_TIMEOUT_MS", 1)
+    monkeypatch.setattr(delivery, "CANONICAL_ADMISSION_BACKOFF_SECONDS", 0.001)
+
+    try:
+        with pytest.raises(delivery.DevelopmentDeliveryError, match="bounded attempts"):
+            delivery._sync_canonical_development_work(
+                root,
+                domain="acme",
+                project="app",
+                ticket="CC-CONTENTION",
+                title="SQLite contention admission",
+                run_id="contention-run",
+                tracker="linear",
+                packet=packet,
+                worktree=None,
+                delivery_state="planned",
+                canonical_work_id="acme:app:cc-contention",
+            )
+    finally:
+        holder.execute("ROLLBACK")
+        holder.close()
+
+    receipt_dir = packet / "artifacts" / "development-delivery"
+    receipts = sorted(
+        path
+        for path in receipt_dir.glob("canonical-admission-contention-*.json")
+        if path.name != "canonical-admission-contention-latest.json"
+    )
+    assert len(receipts) == 1
+    receipt = receipts[0]
+    receipt_bytes = receipt.read_bytes()
+    receipt_data = json.loads(receipt_bytes)
+    assert receipt_data["outcome"] == "exhausted"
+    assert receipt_data["attempts"] == delivery.CANONICAL_ADMISSION_MAX_ATTEMPTS
+    assert receipt_data["next_action"].startswith("Resume the existing Auto-Dev packet")
+
+    original_sync = delivery._sync_canonical_development_work_once
+    calls = 0
+
+    def fail_once(*args: object, **kwargs: object) -> dict[str, object]:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise sqlite3.OperationalError("database is locked")
+        return original_sync(*args, **kwargs)
+
+    monkeypatch.setattr(delivery, "_sync_canonical_development_work_once", fail_once)
+    row = delivery._sync_canonical_development_work(
+        root,
+        domain="acme",
+        project="app",
+        ticket="CC-CONTENTION",
+        title="SQLite contention admission",
+        run_id="contention-run",
+        tracker="linear",
+        packet=packet,
+        worktree=None,
+        delivery_state="planned",
+        canonical_work_id="acme:app:cc-contention",
+    )
+    assert row["id"] == "acme:app:cc-contention"
+    receipts = sorted(
+        path
+        for path in receipt_dir.glob("canonical-admission-contention-*.json")
+        if path.name != "canonical-admission-contention-latest.json"
+    )
+    assert len(receipts) == 2
+    assert receipt.read_bytes() == receipt_bytes
+    assert {json.loads(path.read_text(encoding="utf-8"))["outcome"] for path in receipts} == {
+        "exhausted",
+        "retried",
+    }
+    latest = json.loads(
+        (receipt_dir / "canonical-admission-contention-latest.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert Path(str(latest["latest_receipt"])).is_file()
+
+    connection = connect_state(db_path)
+    try:
+        rows = [
+            item
+            for item in canonical_work_items.query(connection, domain="acme", project="app", limit=100)
+            if item["source_key"] == "CC-CONTENTION"
+        ]
+        assert [item["id"] for item in rows] == ["acme:app:cc-contention"]
+        assert connection.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+    finally:
+        connection.close()
+
+
+def test_start_development_run_recovers_same_run_after_preflight_canonical_admission_contention(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Preflight contention preserves its receipt without poisoning same-run recovery."""
+
+    repo, base_sha = _repository(tmp_path)
+    root = tmp_path / "os"
+    project = _project(root, repo)
+    db_path = default_db_path(root)
+    holder = connect_state(db_path)
+    holder.execute("BEGIN IMMEDIATE")
+    original_source_match = delivery._canonical_source_match
+
+    def require_write_admission(
+        connection: sqlite3.Connection, *args: object, **kwargs: object
+    ) -> dict[str, object] | None:
+        """Make preflight take the same write-admission boundary as production."""
+
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            return original_source_match(connection, *args, **kwargs)
+        finally:
+            connection.execute("ROLLBACK")
+
+    monkeypatch.setattr(delivery, "_canonical_source_match", require_write_admission)
+    monkeypatch.setattr(delivery, "CANONICAL_ADMISSION_BUSY_TIMEOUT_MS", 1)
+    monkeypatch.setattr(delivery, "CANONICAL_ADMISSION_BACKOFF_SECONDS", 0.001)
+
+    try:
+        with pytest.raises(delivery.DevelopmentDeliveryError, match="bounded attempts"):
+            delivery.start_development_run(
+                root,
+                "acme",
+                "app",
+                ["CC-START-CONTENTION"],
+                run_id="start-contention",
+                apply=True,
+            )
+    finally:
+        holder.execute("ROLLBACK")
+        holder.close()
+
+    run_id = "start-contention"
+    receipt_dir = (
+        project
+        / "artifacts"
+        / "development-delivery"
+        / "admission-preflight"
+        / run_id
+        / "admission-receipts"
+    )
+    receipts = sorted(
+        path
+        for path in receipt_dir.glob("canonical-admission-contention-*.json")
+        if path.name != "canonical-admission-contention-latest.json"
+    )
+    assert len(receipts) == 1
+    receipt_bytes = receipts[0].read_bytes()
+    receipt = json.loads(receipt_bytes)
+    assert receipt["operation"] == "resolve_canonical_development_work_id"
+    assert receipt["outcome"] == "exhausted"
+    assert receipt["attempts"] == delivery.CANONICAL_ADMISSION_MAX_ATTEMPTS
+    assert receipt["next_action"].startswith("Re-run this exact Auto-Dev run")
+    assert not (project / "state" / "development-runs" / run_id).exists()
+
+    _fake_worktree(monkeypatch, "CC-START-CONTENTION", base_sha)
+    resumed = delivery.start_development_run(
+        root,
+        "acme",
+        "app",
+        ["CC-START-CONTENTION"],
+        run_id=run_id,
+        apply=True,
+    )
+    assert Path(resumed["run_dir"]) == project / "state" / "development-runs" / run_id
+    assert (Path(resumed["run_dir"]) / "portfolio.json").is_file()
+    assert receipts[0].read_bytes() == receipt_bytes
+    task = TaskState(Path(resumed["tasks"][0]["state_ref"])).read()
+    connection = connect_state(db_path)
+    try:
+        rows = [
+            row
+            for row in canonical_work_items.query(connection, domain="acme", project="app", limit=100)
+            if row["source_key"] == "CC-START-CONTENTION"
+        ]
+        assert [row["id"] for row in rows] == [task["canonical_work_id"]]
+        assert connection.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
     finally:
         connection.close()
 

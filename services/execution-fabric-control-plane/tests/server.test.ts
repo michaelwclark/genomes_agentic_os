@@ -1,10 +1,12 @@
 import { randomUUID } from "node:crypto";
+import { writeFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
+import { stringify } from "yaml";
 import type { Config } from "../src/config.js";
 import type { TaskRecord } from "../src/contracts.js";
 import type { DeliveryPort } from "../src/delivery.js";
 import { ExecutionFabric } from "../src/fabric.js";
-import type { LedgerPort } from "../src/ledger.js";
+import { ConflictError, FencedError, type LedgerPort } from "../src/ledger.js";
 import type { LeadershipGuard } from "../src/leadership.js";
 import { buildServer } from "../src/server.js";
 import { createTestPolicy } from "./policy-fixture.js";
@@ -146,6 +148,7 @@ function fixture() {
       hostId: "test-host",
       appliedAt: new Date().toISOString(),
     })),
+    findPolicyReloadReceipt: vi.fn().mockResolvedValue(null),
     activateLeadership: vi.fn().mockResolvedValue(undefined),
     ping: vi.fn().mockResolvedValue(undefined),
   } satisfies LedgerPort;
@@ -156,13 +159,14 @@ function fixture() {
     ping: vi.fn().mockResolvedValue(undefined),
     close: vi.fn(),
   } satisfies DeliveryPort;
-  const { policy } = createTestPolicy();
+  const { policy, source: policySource, value: policyValue } = createTestPolicy();
   const leadership = {
     assertMutation: vi.fn(),
     assertTaskMutation: vi.fn(),
     assertEffectMutation: vi.fn(),
     assertSchedulerMutation: vi.fn(),
     authorizePolicyRotation: vi.fn().mockReturnValue({
+      issuedAt: new Date().toISOString(),
       expiresAt: new Date(Date.now() + 60_000).toISOString(),
       expectedEpoch: 1,
     }),
@@ -296,6 +300,8 @@ function fixture() {
     task,
     fabric,
     leadership,
+    policySource,
+    policyValue,
   };
 }
 
@@ -306,6 +312,11 @@ describe("HTTP contract", () => {
     expect(health.statusCode).toBe(200);
     const openapi = await server.inject({ method: "GET", url: "/openapi.json" });
     expect(openapi.json().openapi).toBe("3.1.0");
+    expect(
+      openapi.json().paths["/admin/config/reload"].post.requestBody.content[
+        "application/json"
+      ].schema.properties,
+    ).toHaveProperty("operatorOverride");
     await server.close();
   });
 
@@ -907,6 +918,7 @@ describe("HTTP contract", () => {
       rotationId,
       preparationTokenHash:
         "0d1b4f4f14b47a69d41311d57c0ec31583804d173d4a930ed16adf63a1ead8b1",
+      authorizationIssuedAt: expect.any(String),
       authorizationExpiresAt: expect.any(String),
       expectedEpoch: 1,
       expectedCurrentFingerprint: fingerprint,
@@ -932,6 +944,279 @@ describe("HTTP contract", () => {
     });
     expect(stale.statusCode).toBe(409);
     expect(ledger.activatePolicyReload).toHaveBeenCalledOnce();
+    await server.close();
+  });
+
+  it("emits durable critical invocation and outcome alerts for a signed standalone override", async () => {
+    const { server, ledger, reliability, fabric, leadership } = fixture();
+    const fingerprint = fabric.policy.snapshot().appliedFingerprint;
+    const operatorOverride = {
+      actor: "operator-1",
+      reason: "restore fenced standalone policy reload",
+      approvalReference: "AGE-161",
+      maintenanceWindow: {
+        startsAt: new Date(Date.now() - 30_000).toISOString(),
+        endsAt: new Date(Date.now() + 60_000).toISOString(),
+      },
+    };
+    (leadership.authorizePolicyRotation as ReturnType<typeof vi.fn>).mockReturnValue({
+      issuedAt: new Date().toISOString(),
+      expiresAt: operatorOverride.maintenanceWindow.endsAt,
+      expectedEpoch: 1,
+      operatorOverride,
+    });
+    const response = await server.inject({
+      method: "POST",
+      url: "/api/v1/admin/config/reload",
+      headers: { authorization: `Bearer ${config.adminToken}` },
+      payload: {
+        rotationId: randomUUID(),
+        preparationToken: "cpr1.payload.signature",
+        expectedCurrentFingerprint: fingerprint,
+        expectedCandidateFingerprint: fingerprint,
+        operatorOverride,
+      },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json().alerts).toMatchObject({
+      invocation: { alarmDerived: true },
+      outcome: { alarmDerived: true },
+    });
+    expect(reliability.ingestExternalObservation).toHaveBeenCalledTimes(2);
+    expect(reliability.ingestExternalObservation).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        source: "control-plane-policy-override",
+        code: "standalone_policy_override_invoked",
+        severity: "critical",
+      }),
+      1,
+    );
+    expect(reliability.ingestExternalObservation).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        code: "standalone_policy_override_succeeded",
+        severity: "critical",
+      }),
+      1,
+    );
+    expect(ledger.activatePolicyReload).toHaveBeenCalledWith(
+      expect.objectContaining({ operatorOverride }),
+    );
+    await server.close();
+  });
+
+  it("replays a same-rotation override after a pre-commit failure but fences a changed envelope", async () => {
+    const { server, ledger, reliability, fabric, leadership } = fixture();
+    const fingerprint = fabric.policy.snapshot().appliedFingerprint;
+    const rotationId = randomUUID();
+    const operatorOverride = {
+      actor: "operator:primary",
+      reason: "retry a fenced standalone policy reload",
+      approvalReference: "AGE-161",
+      maintenanceWindow: {
+        startsAt: new Date(Date.now() - 30_000).toISOString(),
+        endsAt: new Date(Date.now() + 60_000).toISOString(),
+      },
+    };
+    (leadership.authorizePolicyRotation as ReturnType<typeof vi.fn>).mockReturnValue({
+      issuedAt: new Date().toISOString(),
+      expiresAt: operatorOverride.maintenanceWindow.endsAt,
+      expectedEpoch: 1,
+      operatorOverride,
+    });
+    const seenObservations = new Map<string, string>();
+    (reliability.ingestExternalObservation as ReturnType<typeof vi.fn>).mockImplementation(
+      async (observation: {
+        source: string;
+        incidentKey: string;
+        revision: number;
+        active: boolean;
+        severity: string;
+      }) => {
+        const key = `${observation.source}:${observation.incidentKey}:${observation.revision}`;
+        const canonical = JSON.stringify(observation);
+        const previous = seenObservations.get(key);
+        if (previous && previous !== canonical) {
+          throw new ConflictError(
+            "reliability observation revision was already used with different content",
+          );
+        }
+        seenObservations.set(key, canonical);
+        return {
+          schemaVersion: "execution-fabric-reliability-observation-receipt/v1",
+          admitted: !previous,
+          idempotent: Boolean(previous),
+          source: observation.source,
+          incidentKey: observation.incidentKey,
+          revision: observation.revision,
+          alarmDerived: observation.active && observation.severity !== "info",
+          recoveryRecorded: !observation.active,
+          alarmStatus: observation.active ? null : "resolved_awaiting_ack",
+          finding: { id: randomUUID() },
+        };
+      },
+    );
+    (ledger.activatePolicyReload as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      new FencedError("injected pre-commit failure"),
+    );
+    const payload = {
+      rotationId,
+      preparationToken: "cpr1.payload.signature",
+      expectedCurrentFingerprint: fingerprint,
+      expectedCandidateFingerprint: fingerprint,
+      operatorOverride,
+    };
+
+    const first = await server.inject({
+      method: "POST",
+      url: "/api/v1/admin/config/reload",
+      headers: { authorization: `Bearer ${config.adminToken}` },
+      payload,
+    });
+    expect(first.statusCode).toBe(409);
+
+    const retry = await server.inject({
+      method: "POST",
+      url: "/api/v1/admin/config/reload",
+      headers: { authorization: `Bearer ${config.adminToken}` },
+      payload,
+    });
+    expect(retry.statusCode).toBe(200);
+    expect(retry.json().alerts.invocation).toMatchObject({ idempotent: true });
+    expect(ledger.activatePolicyReload).toHaveBeenCalledTimes(2);
+
+    const changedEnvelope = await server.inject({
+      method: "POST",
+      url: "/api/v1/admin/config/reload",
+      headers: { authorization: `Bearer ${config.adminToken}` },
+      payload: {
+        ...payload,
+        operatorOverride: { ...operatorOverride, reason: "different signed reason" },
+      },
+    });
+    expect(changedEnvelope.statusCode).toBe(409);
+    expect(ledger.activatePolicyReload).toHaveBeenCalledTimes(2);
+    await server.close();
+  });
+
+  it("replays a committed override when its outcome alert fails", async () => {
+    const {
+      server,
+      ledger,
+      reliability,
+      fabric,
+      leadership,
+      policySource,
+      policyValue,
+    } = fixture();
+    const fingerprint = fabric.policy.snapshot().appliedFingerprint;
+    policyValue.execution_fabric.degraded_primary.allow_scheduler = true;
+    writeFileSync(policySource, stringify(policyValue));
+    const candidateFingerprint = fabric.policy.prepareReload().candidateFingerprint;
+    const rotationId = randomUUID();
+    const operatorOverride = {
+      actor: "operator-1",
+      reason: "confirm applied outcome handling",
+      approvalReference: "AGE-161",
+      maintenanceWindow: {
+        startsAt: new Date(Date.now() - 30_000).toISOString(),
+        endsAt: new Date(Date.now() + 60_000).toISOString(),
+      },
+    };
+    (leadership.authorizePolicyRotation as ReturnType<typeof vi.fn>).mockReturnValue({
+      issuedAt: new Date().toISOString(),
+      expiresAt: operatorOverride.maintenanceWindow.endsAt,
+      expectedEpoch: 1,
+      operatorOverride,
+    });
+    const committedReceipt = {
+      schemaVersion: "execution-fabric-config-reload-receipt/v1" as const,
+      receiptId: randomUUID(),
+      rotationId,
+      preparationTokenHash:
+        "0d1b4f4f14b47a69d41311d57c0ec31583804d173d4a930ed16adf63a1ead8b1",
+      expectedCurrentFingerprint: fingerprint,
+      expectedCandidateFingerprint: candidateFingerprint,
+      appliedFingerprint: candidateFingerprint,
+      fabricEpoch: 1,
+      hostId: "test-host",
+      appliedAt: new Date().toISOString(),
+      decision: "standalone_policy_override_applied" as const,
+      recoveryAction: "verify witness commit or run rotate-policy.sh --resume",
+      operatorOverride,
+    };
+    (ledger.activatePolicyReload as ReturnType<typeof vi.fn>).mockResolvedValue(
+      committedReceipt,
+    );
+    (ledger.findPolicyReloadReceipt as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(committedReceipt);
+    (reliability.ingestExternalObservation as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({
+        admitted: true,
+        idempotent: false,
+        alarmDerived: true,
+      })
+      .mockRejectedValueOnce(new Error("outcome alert unavailable"))
+      .mockResolvedValueOnce({ admitted: false, idempotent: true, alarmDerived: true })
+      .mockResolvedValueOnce({ admitted: true, idempotent: false, alarmDerived: true });
+
+    const payload = {
+      rotationId,
+      preparationToken: "cpr1.payload.signature",
+      expectedCurrentFingerprint: fingerprint,
+      expectedCandidateFingerprint: candidateFingerprint,
+      operatorOverride,
+    };
+    const first = await server.inject({
+      method: "POST",
+      url: "/api/v1/admin/config/reload",
+      headers: { authorization: `Bearer ${config.adminToken}` },
+      payload,
+    });
+    expect(first.statusCode).toBe(500);
+    expect(ledger.activatePolicyReload).toHaveBeenCalledOnce();
+    expect(reliability.ingestExternalObservation).toHaveBeenCalledTimes(2);
+    expect(reliability.ingestExternalObservation).toHaveBeenLastCalledWith(
+      expect.objectContaining({ code: "standalone_policy_override_succeeded" }),
+      1,
+    );
+
+    const replay = await server.inject({
+      method: "POST",
+      url: "/api/v1/admin/config/reload",
+      headers: { authorization: `Bearer ${config.adminToken}` },
+      payload,
+    });
+    expect(replay.statusCode).toBe(200);
+    expect(replay.json()).toMatchObject({
+      appliedFingerprint: candidateFingerprint,
+      receipt: committedReceipt,
+      alerts: {
+        invocation: { idempotent: true },
+        outcome: { admitted: true },
+      },
+    });
+    expect(ledger.activatePolicyReload).toHaveBeenCalledOnce();
+    expect(ledger.findPolicyReloadReceipt).toHaveBeenCalledTimes(2);
+    expect(reliability.ingestExternalObservation).toHaveBeenCalledTimes(4);
+
+    const changedEnvelope = await server.inject({
+      method: "POST",
+      url: "/api/v1/admin/config/reload",
+      headers: { authorization: `Bearer ${config.adminToken}` },
+      payload: {
+        ...payload,
+        operatorOverride: {
+          ...operatorOverride,
+          reason: "different signed reason",
+        },
+      },
+    });
+    expect(changedEnvelope.statusCode).toBe(409);
+    expect(ledger.activatePolicyReload).toHaveBeenCalledOnce();
+    expect(ledger.findPolicyReloadReceipt).toHaveBeenCalledTimes(3);
     await server.close();
   });
 

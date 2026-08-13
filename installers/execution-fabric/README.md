@@ -46,10 +46,19 @@ restore; it never silently creates replacement authority state.
 
 Policy changes use `bin/rotate-policy.sh` on genomesbox. Standalone mode runs a
 fail-closed local maintenance transaction: prepare, database reload, candidate
-readback, witness commit, and active-state readback. `--resume` resolves an
-interrupted transaction. Promotion and failback remain unavailable. Activation
-also leaves the HA-only artifact-replication timer disabled while retaining the
-primary, scheduler, observer, backup, and candidate-reporter health units.
+readback, witness commit, and active-state readback. A standalone invocation
+also requires the operator identity, reason, approval/reference, and a current
+explicit maintenance window through `FABRIC_POLICY_OVERRIDE_ACTOR`,
+`FABRIC_POLICY_OVERRIDE_REASON`, `FABRIC_POLICY_OVERRIDE_APPROVAL_REFERENCE`,
+`FABRIC_POLICY_OVERRIDE_WINDOW_START`, and
+`FABRIC_POLICY_OVERRIDE_WINDOW_END`. The witness signs those exact values into
+the single-use expiring preparation; the control plane rejects a missing,
+mismatched, expired, or out-of-window envelope and durably alerts both
+invocation and outcome. `--resume` resolves an interrupted transaction only
+from that signed preparation. Promotion and failback remain unavailable.
+Activation also leaves the HA-only artifact-replication timer disabled while
+retaining the primary, scheduler, observer, backup, and candidate-reporter
+health units.
 
 On bigmac, `activate-macos.sh --apply --personal-fallback` is the complete
 personal client-plane activation, not a standby activation. Its dedicated
