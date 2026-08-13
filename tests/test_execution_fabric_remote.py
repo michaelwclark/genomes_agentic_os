@@ -1186,7 +1186,7 @@ def test_registered_team_pr_domain_worker_invokes_installed_safe_helper(
 
     assert captured["calls"] == 1
     assert retried["effects"] == expected_effects
-    assert retried["result"]["helperStatus"] == "succeeded"
+    assert retried["result"]["helperStatus"] == "findings"
     assert json.loads(intent_path.read_text(encoding="utf-8")) == intent
 
     transition_assignment = json.loads(json.dumps(assignment))
@@ -1520,7 +1520,7 @@ def test_team_pr_helper_receipt_wrapper_accepts_only_current_or_legacy_shape(
             receipt_hash,
             receipt_path=tmp_path / "receipt.json",
         )
-        == "succeeded"
+        == "findings"
     )
     assert (
         execution_fabric_remote._validate_team_pr_helper_receipt_wrapper(
