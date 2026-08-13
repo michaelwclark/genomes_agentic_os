@@ -1,0 +1,15 @@
+api_version: agentic-os-library-object/v1
+kind: skill
+id: auto-dev-validate-production-release
+title: Auto-Dev Validate Production Release
+description: Validate the exact release-family, revision, QA, and policy evidence after Finalize and before Merge without mutating provider state.
+status: active
+scope: {level: root, domain: null, project: null}
+owner: {type: package, id: genomes_agentic_os}
+entrypoint: SKILL.md
+tags: [skill, validation, release, merge, sdlc]
+dependencies: [skill:root:auto-dev-finalize]
+aliases: [harness/skills/auto-dev-validate-production-release/SKILL.md]
+runtime: {root: runtime/objects/skills/skill/root/auto-dev-validate-production-release}
+validation: {commands: []}
+policy: {allow_implicit_invocation: true}

@@ -1084,7 +1084,8 @@ def test_registered_team_pr_domain_worker_invokes_installed_safe_helper(
         captured["calls"] += 1
         helper_command = shlex.split(command)
         helper_result = {
-            "status": "findings",
+            "status": "succeeded",
+            "outcome": "findings",
             "run_id": helper_command[helper_command.index("--run-id") + 1],
             "source_key": "github-pr-42",
             "canonical_review_receipt": canonical,
@@ -1185,7 +1186,7 @@ def test_registered_team_pr_domain_worker_invokes_installed_safe_helper(
 
     assert captured["calls"] == 1
     assert retried["effects"] == expected_effects
-    assert retried["result"]["helperStatus"] == "findings"
+    assert retried["result"]["helperStatus"] == "succeeded"
     assert json.loads(intent_path.read_text(encoding="utf-8")) == intent
 
     transition_assignment = json.loads(json.dumps(assignment))

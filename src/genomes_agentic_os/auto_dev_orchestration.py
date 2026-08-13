@@ -21,12 +21,7 @@ import uuid
 import yaml
 from jsonschema import Draft202012Validator
 
-from .program_run_packets import (
-    begin_program_workflow,
-    read_program_run_packet,
-    record_program_workflow,
-    start_program_run_packet,
-)
+from .program_run_packets import read_program_run_packet, record_program_workflow, start_program_run_packet
 
 
 AUTO_DEV_SCHEMA = "auto-dev-work-item/v1"
@@ -47,6 +42,7 @@ AUTO_DEV_STAGE_ORDER = (
     "review_others",
     "qa",
     "finalize",
+    "validate_production_release",
     "merge",
     "release",
     "deploy",
@@ -66,6 +62,7 @@ AUTO_DEV_STAGE_COMMANDS = {
     "review_others": "/auto-dev-review-others",
     "qa": "/auto-dev-qa",
     "finalize": "/auto-dev-finalize",
+    "validate_production_release": "/auto-dev-validate-production-release",
     "release": "/auto-dev-release",
     "merge": "/auto-dev-merge",
     "deploy": "/auto-dev-deploy",
@@ -100,6 +97,7 @@ REVISION_SENSITIVE_STAGES = REVIEW_REVISION_STAGES | TERMINAL_REVISION_STAGES | 
 STAGE_MINIMUM_DELIVERY_STATE = {
     "qa": "worktree_ready",
     "finalize": "ready_for_merge",
+    "validate_production_release": "ready_for_merge",
     "release": "merged",
     "health": "delivery_complete",
 }
@@ -178,6 +176,8 @@ REQUIRED_STAGE_PRECEDENCE = (
     ("review_self", "review_others"),
     ("review_others", "qa"),
     ("qa", "finalize"),
+    ("finalize", "validate_production_release"),
+    ("validate_production_release", "merge"),
     ("finalize", "merge"),
     ("pr_create", "merge"),
     ("merge", "release"),
@@ -539,6 +539,12 @@ def _complete_from_delivery(stages: dict[str, dict[str, Any]], task: Mapping[str
     }
     receipts = [receipt for receipt in task.get("receipts") or [] if isinstance(receipt, Mapping)]
     for name, milestone in milestones.items():
+        # A PR-head refresh from ready_for_merge deliberately demotes the task
+        # until a *new* Review Self receipt accepts the refreshed head.  The
+        # historical receipt remains auditable, but it must not project as
+        # active workflow authority while that supersession is unresolved.
+        if name == "review_self" and task.get("_subject_supersession_pending"):
+            continue
         if index >= _state_index(milestone):
             receipt = next(
                 (item for item in reversed(receipts) if item.get("state") == milestone),
@@ -580,6 +586,8 @@ def _load_stage_receipts(
     *,
     subject_revision: str | None,
     terminal_revision: str | None,
+    invalidated_subject_revision: str | None = None,
+    suppress_revision_sensitive_stages: bool = False,
 ) -> None:
     stage_dir = work_item / "artifacts" / "auto-dev-orchestration" / "stages"
     if stage_dir.is_dir():
@@ -593,6 +601,25 @@ def _load_stage_receipts(
             if status not in TERMINAL_STAGE_STATUSES:
                 continue
             receipt_revision = payload.get("subject_revision")
+            if (
+                status == "completed"
+                and name in REVISION_SENSITIVE_STAGES
+                and suppress_revision_sensitive_stages
+            ):
+                # A pending PR-head supersession has no accepted subject yet.
+                # Historical receipts remain on disk, but none can project as
+                # active QA/review/finalize authority until fresh Review Self
+                # binds the newest provider-read head.
+                continue
+            if (
+                status == "completed"
+                and name in REVISION_SENSITIVE_STAGES
+                and invalidated_subject_revision
+                and receipt_revision == invalidated_subject_revision
+            ):
+                # Keep old receipts immutable, but never let the obsolete
+                # review/QA/finalize authority satisfy a refreshed PR head.
+                continue
             expected_revision = (
                 terminal_revision if name in TERMINAL_REVISION_STAGES else subject_revision
             )
@@ -646,8 +673,30 @@ def _load_stage_receipts(
         task_ref = link.get("task_state")
         if task_ref:
             task_path = Path(str(task_ref)).expanduser()
-            release_receipt = task_path.parent / "stages" / "release-propagation.json"
-            if release_receipt.is_file():
+            task = _read_json(task_path) if task_path.is_file() else {}
+            descriptor = (
+                task.get("stage_receipts", {}).get("release_propagation")
+                if isinstance(task.get("stage_receipts"), Mapping)
+                else None
+            )
+            release_receipt: Path | None = None
+            if isinstance(descriptor, Mapping):
+                resolved = _resolve_health_receipt(
+                    descriptor.get("ref"), work_item, task_path=task_path
+                )
+                expected_sha = str(descriptor.get("sha256") or "").strip().lower()
+                if (
+                    resolved is not None
+                    and resolved.is_file()
+                    and expected_sha
+                    and hashlib.sha256(resolved.read_bytes()).hexdigest() == expected_sha
+                ):
+                    release_receipt = resolved
+            else:
+                legacy_receipt = task_path.parent / "stages" / "release-propagation.json"
+                if legacy_receipt.is_file():
+                    release_receipt = legacy_receipt
+            if release_receipt is not None:
                 wrapper = _read_json(release_receipt)
                 evidence_ref = _resolve_health_receipt(
                     wrapper.get("receipt"), work_item, task_path=task_path
@@ -914,7 +963,15 @@ def _sync_auto_dev_program_run_packet(
         )
     current_stage = str(value.get("current_stage") or "").strip()
     failure = task.get("failure") if isinstance(task.get("failure"), Mapping) else None
-    if failure and current_stage and current_stage not in sealed_workflows:
+    # An executor handoff happens before a workflow starts. It is a durable
+    # task-level pending/blocked boundary, not an immutable workflow result.
+    # Recording it as execution_failed would permanently misstate a stage that
+    # has not run and would prevent the later accepted execution from closing
+    # the packet correctly.
+    pre_execution_handoff = (
+        isinstance(failure, Mapping) and failure.get("kind") == "executor_unavailable"
+    )
+    if failure and not pre_execution_handoff and current_stage and current_stage not in sealed_workflows:
         record_program_workflow(
             os_root,
             packet_id=packet_id,
@@ -933,17 +990,36 @@ def _sync_auto_dev_program_run_packet(
             finished_at=str(value.get("updated_at") or _utc_now()),
             receipt_refs=[str(failure.get("receipt") or "").strip()] if failure.get("receipt") else [],
         )
-    elif current_stage and current_stage not in sealed_workflows:
-        begin_program_workflow(
-            os_root,
-            packet_id=packet_id,
-            workflow_id=current_stage,
-            transport=transport,
-            config_refs=_auto_dev_packet_config_refs(task),
-            idempotency_key=f"{run_id}:{ticket}:{current_stage}:started",
-            started_at=str(value.get("updated_at") or _utc_now()),
-        )
+    # Creating or resuming a packet does not execute its current stage. A
+    # workflow result is written only after terminal stage evidence exists or
+    # an actual non-handoff task failure is recorded above.
     return descriptor
+
+
+def _pending_subject_supersession(task: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    """Return the latest PR-head refresh that lacks fresh review acceptance."""
+
+    resolutions = task.get("subject_supersession_resolutions")
+    resolved = {
+        str(item.get("supersession_id") or item.get("release_propagation_wrapper") or "")
+        for item in resolutions or []
+        if isinstance(item, Mapping)
+    }
+    supersessions = task.get("subject_supersessions")
+    for item in reversed(supersessions or []):
+        if not isinstance(item, Mapping):
+            continue
+        identifier = str(
+            item.get("supersession_id") or item.get("release_propagation_wrapper") or ""
+        )
+        if not identifier or identifier in resolved:
+            continue
+        if all(
+            str(item.get(field) or "").strip()
+            for field in ("from_subject_revision", "to_source_head_sha")
+        ):
+            return item
+    return None
 
 
 def sync_delivery_projection(task_state_path: str | Path) -> dict[str, Any] | None:
@@ -1000,10 +1076,19 @@ def sync_delivery_projection(task_state_path: str | Path) -> dict[str, Any] | No
         active_stages = set(
             auto_dev_workflow_window(stage_order, start_stage, completion_stage)
         )
+        pending_supersession = _pending_subject_supersession(task)
         stages = {name: _stage_row(name) for name in AUTO_DEV_STAGE_ORDER}
-        task_view = {**task, "task_state_ref": str(task_path)}
+        task_view = {
+            **task,
+            "task_state_ref": str(task_path),
+            "_subject_supersession_pending": pending_supersession is not None,
+        }
         _complete_from_delivery(stages, task_view)
-        subject_revision = str(task.get("subject_revision") or existing.get("subject_revision") or "") or None
+        subject_revision = (
+            str(task.get("subject_revision") or "") or None
+            if pending_supersession is not None
+            else str(task.get("subject_revision") or existing.get("subject_revision") or "") or None
+        )
         terminal_revision = str(
             task.get("terminal_revision") or existing.get("terminal_revision") or ""
         ) or None
@@ -1012,6 +1097,12 @@ def sync_delivery_projection(task_state_path: str | Path) -> dict[str, Any] | No
             stages,
             subject_revision=subject_revision,
             terminal_revision=terminal_revision,
+            invalidated_subject_revision=(
+                str(pending_supersession.get("from_subject_revision") or "")
+                if pending_supersession is not None
+                else None
+            ),
+            suppress_revision_sensitive_stages=pending_supersession is not None,
         )
         for name, row in stages.items():
             policy = stage_policies.get(name, {"applicability": "required"})
@@ -3843,6 +3934,13 @@ def record_auto_dev_stage(
     structured = evidence.get("evidence")
     if not isinstance(structured, Mapping) or not structured:
         raise AutoDevStateError("stage evidence requires a structured evidence object")
+    task_ref = str(current.get("delivery", {}).get("task_state_ref") or "").strip()
+    if name in {"qa", "review_others", "finalize"} and task_ref:
+        task_path = Path(task_ref).expanduser().resolve()
+        if task_path.is_file() and _pending_subject_supersession(_read_json(task_path)):
+            raise AutoDevStateError(
+                f"{name} is blocked until fresh Review Self accepts the refreshed PR head"
+            )
     policy_source: Path | None = None
     proof_sources: list[Path] = []
     if status == "not_required":
@@ -3898,9 +3996,16 @@ def record_auto_dev_stage(
     )
     if status == "completed" and name in REVISION_SENSITIVE_STAGES and not subject_revision:
         raise AutoDevStateError(f"{name} evidence requires subject_revision")
+    if name == "qa" and status == "completed" and task_ref:
+        task_path = Path(task_ref).expanduser().resolve()
+        task = _read_json(task_path) if task_path.is_file() else {}
+        canonical_subject = str(task.get("subject_revision") or "").strip()
+        if canonical_subject and subject_revision != canonical_subject:
+            raise AutoDevStateError(
+                "qa evidence subject_revision must match the canonical reviewed pull-request head"
+            )
     if status == "completed" and name in READINESS_AUTHORITY_STAGES:
         stage_authority = _readiness_stage_authority(name, evidence, subject_revision)
-        task_ref = str(current.get("delivery", {}).get("task_state_ref") or "").strip()
         if not task_ref:
             raise AutoDevStateError(f"{name} requires a linked Development Delivery task")
         task_path = Path(task_ref).expanduser().resolve()

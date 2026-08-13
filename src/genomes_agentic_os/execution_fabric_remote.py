@@ -2522,6 +2522,12 @@ def _team_pr_ai_review_worker_locked(
                 durable=True,
             )
     helper_status = str(helper_result.get("status") or "")
+    # The helper's terminal status and the review outcome describe different
+    # things.  A completed helper reports ``succeeded`` even when its canonical
+    # review outcome is ``findings``; older helpers encoded that outcome in
+    # ``status`` and omitted ``outcome``.  Preserve the latter during the
+    # rollout, but bind either shape to the signed canonical receipt.
+    helper_outcome = str(helper_result.get("outcome") or helper_status)
     effects: list[dict[str, Any]] = []
     if helper_status != "superseded":
         canonical = helper_result.get("canonical_review_receipt")
@@ -2558,9 +2564,11 @@ def _team_pr_ai_review_worker_locked(
                 ensure_ascii=False,
             ).encode("utf-8")
         ).hexdigest()
+        canonical_outcome = str(canonical.get("outcome") or "")
         if (
             helper_result.get("receipt_sha256") != receipt_hash
-            or helper_status != canonical.get("outcome")
+            or helper_outcome != canonical_outcome
+            or helper_status not in {"succeeded", canonical_outcome}
         ):
             raise TaskExecutionError(
                 "invalid_team_pr_helper_receipt",

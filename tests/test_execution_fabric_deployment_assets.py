@@ -696,6 +696,9 @@ def test_policy_rotation_is_fenced_resumable_and_receipted() -> None:
     assert '.controlPlane.leadership.state=="active"' in script
     assert "policy-rotation-$rotation_id.receipt.json" in script
     assert "FABRIC_LEADERSHIP_ADMIN_TOKEN_FILE" in script
+    assert "FABRIC_POLICY_OVERRIDE_ACTOR" in script
+    assert "FABRIC_POLICY_OVERRIDE_REASON" in script
+    assert "operatorOverride" in script
     assert "converge-policy-roles.sh" in script
     convergence = (INSTALLERS / "bin" / "converge-policy-roles.sh").read_text(
         encoding="utf-8"
@@ -1676,6 +1679,7 @@ def test_alarm_dispatch_is_separate_filtered_and_receipt_backed() -> None:
     assert "/api/v1/alarms/${alarm_id}/fail" in dispatcher
     assert "--source runtime.execution_fabric.health" in dispatcher
     assert "FABRIC_ALARM_DISPATCHER_TOKEN_FILE" in dispatcher
+    assert '"$FABRIC_WORKER_PYTHON" "$notifier"' in dispatcher
     assert 'fabric_api_post_bearer_value' in dispatcher
     assert '"$claim_token"' in dispatcher
     assert "FABRIC_ADMIN_TOKEN_FILE" not in dispatcher
@@ -2567,3 +2571,5 @@ def test_standalone_primary_is_explicit_non_ha_and_uses_installed_canonical_moun
     assert 'FABRIC_WITNESS_MODE:-independent}" = standalone_primary' in rotation
     assert '.authorityMode=="standalone_primary"' in rotation
     assert "standalone-primary policy maintenance must run on its exact primary host" in rotation
+    assert "FABRIC_POLICY_OVERRIDE_WINDOW_START" in rotation
+    assert "FABRIC_POLICY_OVERRIDE_WINDOW_END" in rotation

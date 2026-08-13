@@ -14,7 +14,7 @@
   "terminal_revision": null,
   "status": "ready",
   "current_stage": "groom",
-  "stage_order": ["groom", "detective", "create_artifacts", "readiness", "develop", "document", "pr_create", "review_self", "review_others", "qa", "finalize", "merge", "release", "deploy", "closeout", "health"],
+  "stage_order": ["groom", "detective", "create_artifacts", "readiness", "develop", "document", "pr_create", "review_self", "review_others", "qa", "finalize", "validate_production_release", "merge", "release", "deploy", "closeout", "health"],
   "stages": {
     "groom": {"status": "not_started", "owner": "agent", "command": "/auto-dev-grooming", "run_ref": null, "receipt_refs": [], "last_verified_at": null, "next_action": "Run /auto-dev-grooming"},
     "detective": {"status": "not_started", "owner": "agent", "command": "/auto-dev-detective", "run_ref": null, "receipt_refs": [], "last_verified_at": null, "next_action": "Run /auto-dev-detective"},
@@ -27,6 +27,7 @@
     "review_others": {"status": "not_started", "owner": "agent", "command": "/auto-dev-review-others", "run_ref": null, "receipt_refs": [], "last_verified_at": null, "next_action": "Run /auto-dev-review-others"},
     "qa": {"status": "not_started", "owner": "agent", "command": "/auto-dev-qa", "run_ref": null, "receipt_refs": [], "last_verified_at": null, "next_action": "Run /auto-dev-qa"},
     "finalize": {"status": "not_started", "owner": "agent", "command": "/auto-dev-finalize", "run_ref": null, "receipt_refs": [], "last_verified_at": null, "next_action": "Run /auto-dev-finalize"},
+    "validate_production_release": {"status": "not_started", "owner": "agent", "command": "/auto-dev-validate-production-release", "run_ref": null, "receipt_refs": [], "last_verified_at": null, "next_action": "Run /auto-dev-validate-production-release"},
     "merge": {"status": "not_started", "owner": "agent", "command": "/auto-dev-merge", "run_ref": null, "receipt_refs": [], "last_verified_at": null, "next_action": "Run /auto-dev-merge"},
     "release": {"status": "not_started", "owner": "agent", "command": "/auto-dev-release", "run_ref": null, "receipt_refs": [], "last_verified_at": null, "next_action": "Run /auto-dev-release"},
     "deploy": {"status": "not_started", "owner": "agent", "command": "/auto-dev-deploy", "run_ref": null, "receipt_refs": [], "last_verified_at": null, "next_action": "Run /auto-dev-deploy"},

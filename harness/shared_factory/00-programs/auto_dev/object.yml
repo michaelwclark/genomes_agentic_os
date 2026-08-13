@@ -36,6 +36,7 @@ dependencies:
   - skill:root:auto-dev-review-self-opposing-model
   - skill:root:auto-dev-review-others
   - skill:root:auto-dev-finalize
+  - skill:root:auto-dev-validate-production-release
   - skill:root:auto-dev-merge
   - skill:root:auto-dev-release-propagation
   - skill:root:auto-dev-release

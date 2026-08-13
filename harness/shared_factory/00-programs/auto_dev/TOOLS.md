@@ -20,6 +20,7 @@
 | Standalone QA | `/auto-dev-qa` | exact revision/acceptance evidence |
 | Legacy release propagation invocation | `/auto-dev-release-propagation` | compatibility alias to PR Create family mode |
 | Our PR-family endgame | `/auto-dev-finalize` | independently reviewed, converged PR family and readiness-only receipt |
+| Read-only pre-merge release proof | `/auto-dev-validate-production-release` | exact revision, QA, release-family, and policy evidence or typed hold |
 | Governed merge router | `/auto-dev-merge` then `develop stage --stage merge` | merge SHA, reviewed-head/provider/PR readback, or explicit hold |
 | Version/tag/package release | `/auto-dev-release` | verified release receipt |
 | Deployment | `/auto-dev-deploy` then `develop stage --stage deploy` | exact deployed-version proof or policy skip |

@@ -45,6 +45,23 @@ Missing configuration means `filesystem`, preserving existing installs. The
 and queue/pool capacity. It does not add a network dependency. See
 [18 - Execution Fabric](13-feature-guides/18-execution-fabric.md).
 
+### Canonical development admission contention
+
+Auto-Dev records and resolves the canonical work-item projection in the same
+SQLite state plane. If a concurrent supervisor briefly owns its write lock,
+every admission access makes four bounded attempts (a short per-attempt timeout
+with increasing waits). A successful retry continues with the original packet;
+it never creates a second canonical work item.
+
+If all attempts are exhausted, Auto-Dev leaves the packet in place and writes a
+packet-local contention receipt. Receipts are append-only; the adjacent
+`canonical-admission-contention-latest.json` only points to the newest event.
+Resume that exact packet after the competing writer releases the lock. Do not
+create a replacement packet or stop a managed supervisor just to clear the
+contention.
+
+Last updated: 2026-08-12.
+
 ### How it ticks: local supervisor or remote persistent scheduler
 
 In local/degraded mode, every command below is **invoked manually or previewed
