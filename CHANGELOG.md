@@ -17,18 +17,13 @@ All notable changes to this project are documented here. The format follows
   producer are upgraded. Keep the queue quiesced until queued intents have been
   drained or reconciled.
 - The reviewed `0.6.1` route retains the persisted first-format guard in
-  `execution_fabric_remote.py::_team_pr_review_effect_key`, first shipped in
-  `0.6.0`. Legacy admitted tasks without `review_mode` retain the legacy
+  `execution_fabric_remote.py::_team_pr_review_effect_key`. Legacy admitted tasks without `review_mode` retain the legacy
   projection key while explicit current tasks use the full-intent key, so the
   same review identity cannot project under two effect-key formats.
 
 ### Documentation
 - Document the persisted first-format guard and the conservative queue
   quiescence rule for upgrades.
-- Document that the first effect-key format is persisted per immutable review
-  identity so legacy and current task shapes cannot project the same helper
-  result under two keys; classify PID-less governor exceptions as retryable
-  dispatch failures.
 
 ### Fixed
 - Recover legacy PR-create and worktree-ready delivery packets through the
@@ -37,6 +32,15 @@ All notable changes to this project are documented here. The format follows
   and exact legacy PR identity during delivery validation.
 - Make policy migration and admission contention handling fail closed and
   idempotent.
+- Persist full-identity Team PR review intent before helper launch, recover a
+  completed helper receipt after worker interruption, fence overlapping
+  attempts per review identity, and bind the helper to the exact review mode,
+  run ID, and summary path. Full-digest receipt paths, fsync-backed
+  persistence, and a durable helper-launch marker prevent cross-ticket recovery
+  collisions, torn intent writes, and relaunch while the PID still belongs to
+  the exact helper run. A shared marker lock prevents dispatch-failure writes
+  from clobbering a concurrently registered helper PID. Fresh and recovered
+  successes terminalize the marker.
 - Normalize case-insensitive repository, head, and source-key fields before
   deriving the cross-repository review identity and helper run ID.
 - Keep enough bounded review attempts for error-driven retries to outlive the
@@ -55,7 +59,8 @@ All notable changes to this project are documented here. The format follows
 - Preserve invalid-receipt classification and receipt paths for byte-corrupt
   JSON, and classify a dispatch exception with a dead registered helper PID
   immediately instead of spending an extra retry as in progress.
-- Document the route-before-producer ordering: the producer emits explicit
+- The route-before-producer constraint is active when the paired producer
+  emits explicit
   `review_mode`, which an older closed route rejects. Quiesce the review queue
   throughout the transition so an unacknowledged legacy effect key cannot be
   replayed under a different format.
