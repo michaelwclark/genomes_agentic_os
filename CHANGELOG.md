@@ -37,15 +37,17 @@ All notable changes to this project are documented here. The format follows
   successes terminalize the marker.
 - Normalize case-insensitive repository, head, and source-key fields before
   deriving the cross-repository review identity and helper run ID.
-- Keep the legacy projection key for already-admitted tasks that omitted
-  `review_mode`, while explicit current tasks use the full-intent key; this
-  preserves effect dedup across the upgrade boundary.
+- Document the persisted first-format guard introduced in `v0.6.0`: already-
+  admitted tasks that omitted `review_mode` keep the legacy projection key,
+  while explicit current tasks use the full-intent key, preserving effect
+  dedup across the upgrade boundary.
 - Keep enough bounded review attempts for error-driven retries to outlive the
   helper fence, and classify transient durable-write, lock, and host-identity
   failures as retryable.
-- Persist the first effect-key format per immutable review identity so legacy
-  and current task shapes cannot project the same helper result under two keys;
-  classify PID-less governor exceptions as retryable dispatch failures.
+- Document that the first effect-key format is persisted per immutable review
+  identity so legacy and current task shapes cannot project the same helper
+  result under two keys; classify PID-less governor exceptions as retryable
+  dispatch failures.
 - Validate each recorded effect key against its declared format, durably
   materialize a valid stdout fallback summary, and remove host-ineligible
   pinned queues before worker registration and claim.
@@ -59,10 +61,11 @@ All notable changes to this project are documented here. The format follows
 - Preserve invalid-receipt classification and receipt paths for byte-corrupt
   JSON, and classify a dispatch exception with a dead registered helper PID
   immediately instead of spending an extra retry as in progress.
-- Ship the Agentic OS route before the paired object-library producer; the new
-  producer emits explicit `review_mode`, which an older closed route rejects.
-  Quiesce the review queue during this upgrade so an unacknowledged legacy
-  effect key cannot be replayed once under the full-intent key format.
+- Document the route-before-producer ordering: the producer emits explicit
+  `review_mode`, which an older closed route rejects. Quiesce the review queue
+  only when upgrading from before `v0.6.0`, whose queued intents lack the
+  persisted first-format field; upgrades from `v0.6.0` or later need only the
+  recommended precaution described above.
 
 ## [0.6.0] - 2026-08-01
 
