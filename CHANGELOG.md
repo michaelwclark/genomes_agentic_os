@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Keep the Team PR Fabric receipt contract distinct between successful helper
+  execution and its canonical review outcome, so a completed review with
+  findings reaches projection instead of being dead-lettered.
 - Run the BigMac Execution Fabric alarm dispatcher through its immutable worker
   Python runtime, so governed notification delivery does not silently fail when
   launchd resolves a system interpreter without PyYAML.
