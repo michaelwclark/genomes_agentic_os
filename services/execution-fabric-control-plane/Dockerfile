@@ -1,4 +1,4 @@
-FROM node:22.14.0-alpine3.21 AS build
+FROM node:22.21.1-alpine3.21 AS build
 WORKDIR /app
 COPY package.json package-lock.json tsconfig.json tsconfig.build.json ./
 RUN npm ci
@@ -6,7 +6,7 @@ COPY migrations ./migrations
 COPY src ./src
 RUN npm run build
 
-FROM node:22.14.0-alpine3.21 AS runtime
+FROM node:22.21.1-alpine3.21 AS runtime
 ENV NODE_ENV=production
 WORKDIR /app
 RUN addgroup -S fabric && adduser -S -G fabric fabric
