@@ -17,6 +17,7 @@
 | Document code/issues/architecture/operations | Document | `/auto-dev-document` |
 | Resolve and create/reuse the complete PR family | PR Create | `/auto-dev-pr-create` |
 | Converge our ticket PR family | Finalize | `/auto-dev-finalize` |
+| Validate the finalized release family without mutation | Production Release Validation | `/auto-dev-validate-production-release` |
 | Make the governed merge decision | Merge | `/auto-dev-merge` |
 | Legacy branch-family propagation invocation | PR Create compatibility mode | `/auto-dev-release-propagation` |
 | Create a version/tag/package/provider release | Release | `/auto-dev-release` |

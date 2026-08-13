@@ -479,6 +479,12 @@ def _complete_pre_merge_auto_dev(
         revision=subject_revision,
         pull_request=pull_request,
     )
+    _record_standalone_stage(
+        task,
+        "validate_production_release",
+        revision=subject_revision,
+        pull_request=pull_request,
+    )
     return _readiness_authority(
         task,
         subject_revision=subject_revision,
@@ -900,6 +906,18 @@ def test_configured_stage_order_allows_safe_friendly_stage_reordering() -> None:
     order.remove("document")
     order.insert(order.index("qa") + 1, "document")
     assert validate_auto_dev_stage_order(order) == order
+
+
+def test_production_release_validation_is_a_canonical_pre_merge_stage() -> None:
+    assert auto_dev.AUTO_DEV_STAGE_COMMANDS["validate_production_release"] == (
+        "/auto-dev-validate-production-release"
+    )
+    assert auto_dev.validate_auto_dev_stage_policies(
+        {"validate_production_release": {"applicability": "required"}}
+    )["validate_production_release"]["applicability"] == "required"
+    assert AUTO_DEV_STAGE_ORDER.index("finalize") < AUTO_DEV_STAGE_ORDER.index(
+        "validate_production_release"
+    ) < AUTO_DEV_STAGE_ORDER.index("merge")
 
 
 def test_legacy_profile_stage_subset_upgrades_to_complete_auto_dev_order(
@@ -5109,6 +5127,7 @@ def test_shipped_auto_dev_knowledge_matches_canonical_stage_order() -> None:
         "review_others": "Review Others",
         "qa": "QA",
         "finalize": "Finalize",
+        "validate_production_release": "Production Release Validation",
         "merge": "Merge",
         "release": "Release",
         "deploy": "Deploy",
@@ -5154,6 +5173,7 @@ def test_shipped_auto_dev_knowledge_matches_canonical_stage_order() -> None:
         ).read_text(encoding="utf-8")
         normalized_command = " ".join(command.split())
         assert "Document, PR Create, Review Self, Review Others, QA" in normalized_command
+        assert "Finalize, Production Release Validation, Merge" in normalized_command
         assert "compatibility recorder/alias for PR Create" in normalized_command
 
     readme = (policy_root / "README.md").read_text(encoding="utf-8")
@@ -5173,7 +5193,7 @@ def test_shipped_auto_dev_knowledge_matches_canonical_stage_order() -> None:
     ).read_text(encoding="utf-8")
     normalized_skill = " ".join(everything_skill.split())
     assert (
-        "Develop, Document, PR Create, Review Self, Review Others, QA, Finalize"
+        "Develop, Document, PR Create, Review Self, Review Others, QA, Finalize, Production Release Validation"
         in normalized_skill
     )
     assert "does not add another Auto-Dev stage" in normalized_skill
@@ -5186,11 +5206,12 @@ def test_shipped_auto_dev_knowledge_matches_canonical_stage_order() -> None:
         for line in auto_dev_skill.splitlines()
         if re.match(r"^\d+\. ", line)
     ]
-    assert len(numbered_skill_stages) == 16
+    assert len(numbered_skill_stages) == 17
     assert numbered_skill_stages[6] == "7. `$auto-dev-pr-create`"
     assert "$auto-dev-review-self" in numbered_skill_stages[7]
     assert numbered_skill_stages[9] == "10. `$auto-dev-qa`"
     assert numbered_skill_stages[10] == "11. `$auto-dev-finalize`"
+    assert numbered_skill_stages[11] == "12. `$auto-dev-validate-production-release`"
     assert not any(
         "$auto-dev-release-propagation" in line
         for line in numbered_skill_stages
