@@ -313,6 +313,7 @@ DB_NAMES = [
     "Execution Targets",
     "Heartbeats",
     "Schedules",
+    "Self Improvement",
 ]
 DB_IDS = {name: f"db{''.join(c for c in name if c.isalpha())[:8].lower()}1111111111111111111111" for name in DB_NAMES}
 

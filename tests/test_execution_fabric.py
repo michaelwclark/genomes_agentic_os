@@ -1725,9 +1725,12 @@ def test_inline_root_scan_extends_execution_fabric_lease_budget(tmp_path: Path) 
         },
     )["queue_item"]
 
+    baseline_lease = runtime_ops.SCRIPT_DISPATCH_TIMEOUT_SECONDS + runtime_ops.LEASE_SAFETY_MARGIN_SECONDS
     assert validation["lease_seconds"] == runtime_ops.INLINE_SCRIPT_LEASE_SECONDS
+    assert validation["lease_seconds"] > baseline_lease
     assert validation.get("timeout_seconds") in (None, runtime_ops.SCRIPT_DISPATCH_TIMEOUT_SECONDS)
     assert morning_report["lease_seconds"] == runtime_ops.INLINE_SCRIPT_LEASE_SECONDS
+    assert morning_report["lease_seconds"] > baseline_lease
 
 
 def test_registered_watcher_timeout_extends_execution_fabric_lease_budget(tmp_path: Path) -> None:

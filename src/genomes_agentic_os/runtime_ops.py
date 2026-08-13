@@ -96,8 +96,12 @@ RUN_QUEUE_STALE_GRACE = timedelta(hours=24)
 SAFE_DISPATCH_TARGETS = {"script", "codex_harness", "claude_harness"}
 SCRIPT_DISPATCH_TIMEOUT_SECONDS = 900
 LEASE_SAFETY_MARGIN_SECONDS = 60
-# Default dispatch timeout (900s) plus the normal reclaim safety margin.
-INLINE_SCRIPT_LEASE_SECONDS = SCRIPT_DISPATCH_TIMEOUT_SECONDS + LEASE_SAFETY_MARGIN_SECONDS
+# Root-scanning inline commands keep their bounded 900s subprocess timeout, but
+# reserve an additional five minutes in the queue lease so a healthy worker is
+# not reclaimed while the dispatcher records the result and closes the run.
+INLINE_SCRIPT_LEASE_SECONDS = (
+    SCRIPT_DISPATCH_TIMEOUT_SECONDS + LEASE_SAFETY_MARGIN_SECONDS + 300
+)
 MAX_LEASE_SECONDS = 24 * 3600
 LONG_RUNNING_THRESHOLD_SECONDS = 120
 SCRIPT_DISPATCH_OUTPUT_LIMIT = 20000
@@ -4116,8 +4120,38 @@ def build_runtime_tracking_plan(root: str | Path) -> dict[str, Any]:
                 "action": "create-or-update",
             }
         )
+        if item.get("approval_state") == "required" or item.get("status") == "approval-needed":
+            records.append(
+                {
+                    "kind": "approval",
+                    "key": item["id"],
+                    "title": item.get("ref") or item.get("work_type") or item["id"],
+                    "action": "create-or-update",
+                }
+            )
     for log_path in sorted(_runtime_path(os_root, HEARTBEAT_LOG_DIR).glob("*.yml"))[-20:]:
         records.append({"kind": "heartbeat_run", "key": log_path.stem, "title": log_path.stem, "path": str(log_path), "action": "create-or-update"})
+    # Keep the self-improvement cockpit schema live even when its queue is
+    # currently clear. This is a bounded health projection, not a history dump.
+    try:
+        queue_health = self_improvement_queue_health(os_root)
+        records.append(
+            {
+                "kind": "self_improvement",
+                "key": "queue-health",
+                "title": "Self-improvement queue health",
+                "status": queue_health.get("status"),
+                "stale_count": queue_health.get("stale_count", 0),
+                "action": "create-or-update",
+            }
+        )
+    except Exception as exc:
+        skipped.append(
+            {
+                "kind": "self_improvement",
+                "reason": f"queue health unavailable: {type(exc).__name__}",
+            }
+        )
     database_order = [
         "Integrations", "Execution Targets", "Heartbeats", "Schedules",
         "Run Queue", "Approvals", "Runs", "Self Improvement",
