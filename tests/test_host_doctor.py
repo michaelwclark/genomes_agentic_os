@@ -19,9 +19,29 @@ from genomes_agentic_os.host_doctor import (
     project_report_drop,
     write_host_report,
     _docker_inventory,
+    _provider_readback,
     _worktree_inventory,
     notion_blocks,
 )
+
+
+def test_compose_provider_readback_fails_closed_and_requires_live_merge() -> None:
+    def merged(args, **kwargs):
+        return subprocess.CompletedProcess(
+            args, 0, '{"state":"MERGED","mergedAt":"2026-08-14T10:00:00Z"}', ""
+        )
+
+    assert _provider_readback("https://github.test/pull/1", runner=merged) == {
+        "fresh": True,
+        "state": "MERGED",
+        "merged": True,
+    }
+    unavailable = lambda args, **kwargs: subprocess.CompletedProcess(args, 1, "", "offline")
+    assert _provider_readback("https://github.test/pull/1", runner=unavailable) == {
+        "fresh": False,
+        "state": None,
+        "merged": False,
+    }
 
 
 class _Response:

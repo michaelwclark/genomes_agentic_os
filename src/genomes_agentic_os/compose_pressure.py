@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -49,6 +50,8 @@ class ComposeContainer:
     memory_bytes: int = 0
     bind_mounts: tuple[str, ...] = ()
     named_volumes: tuple[str, ...] = ()
+    working_directory: str = ""
+    config_files: tuple[str, ...] = ()
 
     @classmethod
     def from_inventory(cls, item: Mapping[str, Any]) -> ComposeContainer | None:
@@ -64,6 +67,12 @@ class ComposeContainer:
             memory_bytes=int(item.get("memory_bytes") or 0),
             bind_mounts=tuple(sorted({str(value) for value in item.get("bind_mounts") or [] if value})),
             named_volumes=tuple(sorted({str(value) for value in item.get("named_volumes") or [] if value})),
+            working_directory=str(item.get("compose_working_dir") or "").strip(),
+            config_files=tuple(
+                value.strip()
+                for value in str(item.get("compose_config_files") or "").split(",")
+                if value.strip()
+            ),
         )
 
     @classmethod
@@ -75,6 +84,8 @@ class ComposeContainer:
             memory_bytes=int(item.get("memory_bytes") or 0),
             bind_mounts=tuple(str(value) for value in item.get("bind_mounts") or []),
             named_volumes=tuple(str(value) for value in item.get("named_volumes") or []),
+            working_directory=str(item.get("working_directory") or ""),
+            config_files=tuple(str(value) for value in item.get("config_files") or []),
         )
 
     def as_dict(self) -> dict[str, Any]:
@@ -82,6 +93,8 @@ class ComposeContainer:
             "name": self.name, "project": self.project, "state": self.state,
             "cpu_percent": self.cpu_percent, "memory_bytes": self.memory_bytes,
             "bind_mounts": list(self.bind_mounts), "named_volumes": list(self.named_volumes),
+            "working_directory": self.working_directory,
+            "config_files": list(self.config_files),
         }
 
 
@@ -98,6 +111,9 @@ class WorktreeLifecycleEvidence:
     reopen_marker: bool = False
     runtime_owner: str | None = None
     runtime_identity: str | None = None
+    lifecycle_verified_at: str | None = None
+    provider_fresh: bool = False
+    provider_state: str | None = None
 
     @classmethod
     def from_dict(cls, item: Mapping[str, Any]) -> WorktreeLifecycleEvidence:
@@ -111,6 +127,9 @@ class WorktreeLifecycleEvidence:
             reopen_marker=bool(item.get("reopen_marker")),
             runtime_owner=str(item["runtime_owner"]) if item.get("runtime_owner") else None,
             runtime_identity=str(item["runtime_identity"]) if item.get("runtime_identity") else None,
+            lifecycle_verified_at=str(item["lifecycle_verified_at"]) if item.get("lifecycle_verified_at") else None,
+            provider_fresh=bool(item.get("provider_fresh")),
+            provider_state=str(item["provider_state"]) if item.get("provider_state") else None,
         )
 
     def as_dict(self) -> dict[str, Any]:
@@ -122,6 +141,9 @@ class WorktreeLifecycleEvidence:
             "provider_merged": self.provider_merged, "dirty": self.dirty,
             "reopen_marker": self.reopen_marker, "runtime_owner": self.runtime_owner,
             "runtime_identity": self.runtime_identity,
+            "lifecycle_verified_at": self.lifecycle_verified_at,
+            "provider_fresh": self.provider_fresh,
+            "provider_state": self.provider_state,
         }
 
 
@@ -146,6 +168,9 @@ class ComposePressureThresholds:
             except (TypeError, ValueError):
                 errors.append(f"threshold is not numeric: {key}")
                 continue
+            if not math.isfinite(value):
+                errors.append(f"threshold must be finite: {key}")
+                continue
             if value <= 0:
                 errors.append(f"threshold must be positive: {key}")
                 continue
@@ -155,7 +180,7 @@ class ComposePressureThresholds:
     @classmethod
     def from_dict(cls, item: Mapping[str, Any]) -> ComposePressureThresholds:
         values = item.get("values") or {}
-        return cls(tuple(sorted((str(key), float(value)) for key, value in values.items())), tuple(item.get("errors") or ()))
+        return cls.from_config(values)
 
     def as_dict(self) -> dict[str, Any]:
         return {"configured": self.configured, "values": dict(self.values), "errors": list(self.errors)}
@@ -173,6 +198,28 @@ class ComposeTeardownProposal:
     before_metrics: tuple[tuple[str, float], ...]
     named_volumes: tuple[str, ...]
 
+    def _evidence_payload(self) -> dict[str, Any]:
+        """Return safety-critical identity only; pressure samples are volatile."""
+        containers = [
+            {
+                "name": item.name,
+                "project": item.project,
+                "bind_mounts": list(item.bind_mounts),
+                "named_volumes": list(item.named_volumes),
+                "working_directory": item.working_directory,
+                "config_files": list(item.config_files),
+            }
+            for item in self.containers
+        ]
+        return {
+            "schema": "compose-teardown-evidence/v1",
+            "project": self.project,
+            "containers": containers,
+            "ownership": [item.as_dict() for item in self.owners],
+            "thresholds": self.thresholds.as_dict(),
+            "named_volumes": list(self.named_volumes),
+        }
+
     def _payload(self) -> dict[str, Any]:
         return {
             "schema": "compose-teardown-proposal/v1", "project": self.project,
@@ -186,9 +233,16 @@ class ComposeTeardownProposal:
         }
 
     @property
-    def fingerprint(self) -> str:
-        data = json.dumps(self._payload(), sort_keys=True, separators=(",", ":")).encode()
+    def evidence_fingerprint(self) -> str:
+        data = json.dumps(
+            self._evidence_payload(), sort_keys=True, separators=(",", ":")
+        ).encode()
         return hashlib.sha256(data).hexdigest()
+
+    @property
+    def fingerprint(self) -> str:
+        """Backward-compatible alias for the safety evidence fingerprint."""
+        return self.evidence_fingerprint
 
     @classmethod
     def from_dict(cls, item: Mapping[str, Any]) -> ComposeTeardownProposal:
@@ -202,12 +256,17 @@ class ComposeTeardownProposal:
             before_metrics=tuple(sorted((str(key), float(value)) for key, value in (item.get("metrics") or {}).get("before", {}).items())),
             named_volumes=tuple((item.get("named_volume_disposition") or {}).get("volumes") or ()),
         )
-        if item.get("proposal_fingerprint") != proposal.fingerprint:
+        supplied = item.get("evidence_fingerprint") or item.get("proposal_fingerprint")
+        if supplied != proposal.evidence_fingerprint:
             raise ValueError("proposal fingerprint is invalid")
         return proposal
 
     def as_dict(self) -> dict[str, Any]:
-        return {**self._payload(), "proposal_fingerprint": self.fingerprint}
+        return {
+            **self._payload(),
+            "evidence_fingerprint": self.evidence_fingerprint,
+            "proposal_fingerprint": self.evidence_fingerprint,
+        }
 
 
 @dataclass(frozen=True)
@@ -229,16 +288,32 @@ class ComposePressureReport:
         }
 
 
-def _owners(project: str, containers: Sequence[ComposeContainer], worktrees: Sequence[WorktreeLifecycleEvidence]) -> tuple[WorktreeLifecycleEvidence, ...]:
+def _owners(
+    project: str,
+    containers: Sequence[ComposeContainer],
+    worktrees: Sequence[WorktreeLifecycleEvidence],
+) -> tuple[tuple[WorktreeLifecycleEvidence, ...], str]:
     mounts = {Path(value).expanduser().resolve() for container in containers for value in container.bind_mounts}
     exact = [w for w in worktrees if any(mount == Path(w.path).expanduser().resolve() or Path(w.path).expanduser().resolve() in mount.parents for mount in mounts)]
-    selected = exact or [w for w in worktrees if compose_project_matches_worktree(project, w.path)]
-    return tuple(sorted(selected, key=lambda item: (item.worktree_id, item.path)))
+    if exact:
+        return tuple(sorted(exact, key=lambda item: (item.worktree_id, item.path))), "exact_bind_mount"
+    fuzzy = [w for w in worktrees if compose_project_matches_worktree(project, w.path)]
+    return tuple(sorted(fuzzy, key=lambda item: (item.worktree_id, item.path))), "fuzzy_only"
 
 
-def _refusals(owners: Sequence[WorktreeLifecycleEvidence]) -> tuple[str, ...]:
+def _refusals(
+    owners: Sequence[WorktreeLifecycleEvidence],
+    match_kind: str,
+    containers: Sequence[ComposeContainer],
+) -> tuple[str, ...]:
     if not owners:
         return ("registered_worktree_missing",)
+    if match_kind != "exact_bind_mount":
+        return (
+            "registered_worktree_ambiguous"
+            if len(owners) > 1
+            else "ownership_fuzzy_without_bind_mount",
+        )
     if len(owners) != 1:
         return ("registered_worktree_ambiguous",)
     owner = owners[0]
@@ -247,6 +322,12 @@ def _refusals(owners: Sequence[WorktreeLifecycleEvidence]) -> tuple[str, ...]:
         reasons.append("lifecycle_evidence_stale")
     if owner.lifecycle not in TERMINAL_LIFECYCLES:
         reasons.append("lifecycle_not_terminal")
+    if not owner.lifecycle_verified_at:
+        reasons.append("lifecycle_freshness_unverified")
+    if not owner.provider_fresh:
+        reasons.append("provider_evidence_stale")
+    if owner.provider_state == "OPEN":
+        reasons.append("provider_pr_reopened")
     if not owner.provider_pull_request or not owner.provider_merged:
         reasons.append("provider_merge_unverified")
     if owner.dirty is None:
@@ -257,6 +338,14 @@ def _refusals(owners: Sequence[WorktreeLifecycleEvidence]) -> tuple[str, ...]:
         reasons.append("reopen_marker_present")
     if not owner.runtime_owner or not owner.runtime_identity or owner.runtime_identity == "not-managed":
         reasons.append("runtime_identity_missing")
+    working_dirs = {item.working_directory for item in containers if item.working_directory}
+    configs = {item.config_files for item in containers if item.config_files}
+    if len(working_dirs) != 1 or any(not item.working_directory for item in containers):
+        reasons.append("compose_working_directory_inconsistent")
+    elif Path(next(iter(working_dirs))).expanduser().resolve() != Path(owner.path).expanduser().resolve():
+        reasons.append("compose_working_directory_owner_mismatch")
+    if len(configs) != 1 or any(not item.config_files for item in containers):
+        reasons.append("compose_config_files_inconsistent")
     return tuple(reasons)
 
 
@@ -272,8 +361,8 @@ def build_compose_pressure_report(containers: Sequence[ComposeContainer], worktr
         observations = {key: float(host_metrics.get(key) or 0) for key in ("orbstack_vmgr_rss_bytes", "orbstack_vmgr_cpu_percent", "fseventsd_rss_bytes", "fseventsd_cpu_percent", "load1", "load5", "load15", "load1_per_cpu")}
         observations["container_memory_bytes"] = float(sum(item.memory_bytes for item in ordered))
         observations["container_cpu_percent"] = float(sum(item.cpu_percent for item in ordered))
-        ownership = _owners(project, ordered, worktrees)
-        refusals = _refusals(ownership)
+        ownership, match_kind = _owners(project, ordered, worktrees)
+        refusals = _refusals(ownership, match_kind, ordered)
         breaches = tuple(key for key, boundary in thresholds.values if observations.get(key, 0) >= boundary)
         if not thresholds.configured:
             recommendation, reasons = "unconfigured", thresholds.errors + refusals
@@ -292,19 +381,27 @@ Runner = Callable[..., subprocess.CompletedProcess[str]]
 
 def execute_compose_teardown(proposal: ComposeTeardownProposal, current_proposal: ComposeTeardownProposal, *, runner: Runner, metric_reader: Callable[[], Mapping[str, Any]], volume_reader: Callable[[Sequence[str]], Sequence[str]]) -> dict[str, Any]:
     """Apply an explicitly authorized teardown after exact revalidation."""
-    if proposal.fingerprint != current_proposal.fingerprint:
+    if proposal.evidence_fingerprint != current_proposal.evidence_fingerprint:
         raise ValueError("proposal fingerprint no longer matches current evidence")
     if current_proposal.recommendation != "eligible_for_explicit_teardown" or len(current_proposal.owners) != 1:
         raise ValueError("proposal is not eligible for explicit teardown")
     owner = current_proposal.owners[0]
     if not owner.runtime_owner or not owner.runtime_identity or owner.runtime_identity == "not-managed":
         raise ValueError("proposal has no exact runtime identity")
-    command = ["docker", "compose", "--project-name", proposal.project, "--project-directory", owner.path, "down"]
+    working_directory = current_proposal.containers[0].working_directory
+    config_files = current_proposal.containers[0].config_files
+    command = [
+        "docker", "compose", "--project-name", proposal.project,
+        "--project-directory", working_directory,
+    ]
+    for config_file in config_files:
+        command.extend(["-f", config_file])
+    command.append("down")
     result = runner(command, check=False, capture_output=True, text=True, timeout=120)
     retained = tuple(sorted(volume_reader(proposal.named_volumes)))
     expected = tuple(sorted(proposal.named_volumes))
     return {
-        "api_version": "host-health-compose-teardown/v1", "proposal_fingerprint": proposal.fingerprint,
+        "api_version": "host-health-compose-teardown/v1", "proposal_fingerprint": proposal.evidence_fingerprint,
         "runtime_identity": owner.runtime_identity, "runtime_owner": owner.runtime_owner,
         "command": command, "exit_code": result.returncode,
         "applied": result.returncode == 0 and retained == expected,

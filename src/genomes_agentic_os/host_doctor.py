@@ -38,6 +38,7 @@ from .state.db import StateDbError, connect_readonly, default_db_path
 REPORT_ROOT = "harness/shared_factory/06-runs-and-logs/auto-doctor"
 PROGRAM_CONFIG = "lib/programs/root/host_agentic_os_health/config"
 DEFAULT_SCHEDULE = ("06:00", "14:00", "22:00")
+LIFECYCLE_EVIDENCE_MAX_AGE = timedelta(minutes=15)
 SAFE_ACTIONS = {
     "restart_user_service",
     "start_user_service",
@@ -573,6 +574,28 @@ def _load_mapping(path: Path) -> dict[str, Any]:
     return loaded if isinstance(loaded, dict) else {}
 
 
+def _provider_readback(url: str | None, *, runner: Runner) -> dict[str, Any]:
+    if not url:
+        return {"fresh": False, "state": None, "merged": False}
+    result = _run(
+        ["gh", "pr", "view", url, "--json", "state,mergedAt"],
+        timeout=20,
+        runner=runner,
+    )
+    if result.returncode != 0:
+        return {"fresh": False, "state": None, "merged": False}
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return {"fresh": False, "state": None, "merged": False}
+    state = str(payload.get("state") or "").upper() or None
+    return {
+        "fresh": True,
+        "state": state,
+        "merged": state == "MERGED" and bool(payload.get("mergedAt")),
+    }
+
+
 def _compose_worktree_evidence(
     os_root: Path,
     containers: list[dict[str, Any]],
@@ -652,7 +675,17 @@ def _compose_worktree_evidence(
                 or "unknown"
             )
             lifecycle_source = str(state_path if active else closed_path if closed else config_path)
-            lifecycle_stale = not bool(active or closed)
+            verified_at = str((active or {}).get("last_verified_at") or "") or None
+            lifecycle_stale = True
+            if active and verified_at:
+                try:
+                    verified = datetime.fromisoformat(
+                        verified_at.replace("Z", "+00:00")
+                    ).astimezone(UTC)
+                    age = datetime.now(UTC) - verified
+                    lifecycle_stale = age < timedelta(0) or age > LIFECYCLE_EVIDENCE_MAX_AGE
+                except ValueError:
+                    lifecycle_stale = True
             packet_path = Path(str((active or {}).get("packet_path") or ""))
             reopen_marker = bool(packet_path and (packet_path / "REOPEN.md").is_file())
             runtime: dict[str, Any] = {}
@@ -672,6 +705,13 @@ def _compose_worktree_evidence(
                 )
                 if status.returncode == 0:
                     dirty = bool(status.stdout.strip())
+            provider_url = str(
+                closed.get("pull_request")
+                or metadata.get("pull_request")
+                or metadata.get("provider_pull_request")
+                or ""
+            ) or None
+            provider = _provider_readback(provider_url, runner=runner)
             evidence.append(
                 WorktreeLifecycleEvidence(
                     worktree_id=str(item.get("id") or path.name),
@@ -679,15 +719,15 @@ def _compose_worktree_evidence(
                     lifecycle=lifecycle,
                     lifecycle_source=lifecycle_source,
                     lifecycle_stale=lifecycle_stale,
-                    provider_pull_request=str(closed.get("pull_request") or metadata.get("pull_request") or metadata.get("provider_pull_request") or "") or None,
-                    provider_merged=bool(
-                        (closed.get("merge_commit") and closed.get("merged_at"))
-                        or metadata.get("provider_merged") is True
-                    ),
+                    provider_pull_request=provider_url,
+                    provider_merged=bool(provider["merged"]),
                     dirty=dirty,
                     reopen_marker=reopen_marker,
                     runtime_owner=str(runtime.get("ownership") or runtime.get("provider") or "") or None,
                     runtime_identity=str(runtime.get("identity") or "") or None,
+                    lifecycle_verified_at=verified_at,
+                    provider_fresh=bool(provider["fresh"]),
+                    provider_state=provider["state"],
                 )
             )
     return evidence

@@ -45,11 +45,14 @@ operation:
 agentic-os host compose-teardown --proposal proposal.json --apply
 ```
 
-The executor rebuilds the current host report and refuses a changed
-fingerprint. Its only runtime action is `docker compose ... down`: it never
-adds `-v`, prunes resources, restarts OrbStack, or deletes worktrees. The
-receipt records before/after metrics and verifies that every named volume from
-the proposal remains present.
+The executor rebuilds the current host report and refuses a changed safety
+evidence fingerprint. Pressure metrics are sampled again and may drift, but
+the current sample must still exceed policy before execution. Exact bind-mount
+ownership, fresh lifecycle and live provider evidence, runtime identity,
+Compose working directory, and every `-f` config file must still match. Its
+only runtime action is `docker compose ... down`: it never adds `-v`, prunes
+resources, restarts OrbStack, or deletes worktrees. The receipt records
+before/after metrics and verifies that every named volume remains present.
 
 **Gaps C and D have since closed** (verified against the source 2026-07-13):
 `doctor --all` (F-003) aggregates the core, runtime, event-graph, and config
