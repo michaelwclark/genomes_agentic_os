@@ -65,6 +65,7 @@ from genomes_agentic_os.review_coordination import (
     shared_review_coordination_root,
     stable_review_key,
 )
+from genomes_agentic_os.review_verdicts import reconcile_markdown_verdict
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -97,16 +98,6 @@ SCOPE_ALIASES = {
     "full_pr": DEFAULT_REVIEW_SCOPE,
     "pr": DEFAULT_REVIEW_SCOPE,
 }
-VERDICT_PATTERN = re.compile(
-    r"^AGENTIC_OS_REVIEW_VERDICT:\s*(CLEAN|FINDINGS)\s*$",
-    re.IGNORECASE | re.MULTILINE,
-)
-FINDING_HEADING_PATTERN = re.compile(
-    r"^\s*(?:(?:#{1,6}|[-*+]|>)\s+)?"
-    r"(?:\*\*|__)?(?:BLOCKER|WARNING)(?:\*\*|__)?"
-    r"\s*(?::|[-\u2013\u2014])\s*\S",
-    re.IGNORECASE | re.MULTILINE,
-)
 
 # Patterns that will fail the scrub gate (regex, applied to review text).
 # This list protects team-visible PR comments from leaking internal details.
@@ -321,21 +312,8 @@ def post_terminal_review(
 
 
 def parse_review_verdict(review_text: str) -> tuple[str, bool]:
-    """Parse the final verdict and reject structured finding contradictions."""
-    lines = [line.strip() for line in review_text.splitlines() if line.strip()]
-    if not lines:
-        return "findings", False
-    match = VERDICT_PATTERN.fullmatch(lines[-1])
-    if match is None:
-        return "findings", False
-    if match.group(1).upper() == "CLEAN":
-        body = "\n".join(lines[:-1])
-        if FINDING_HEADING_PATTERN.search(body):
-            return "findings", True
-        return "clean", True
-    if match.group(1).upper() == "FINDINGS":
-        return "findings", True
-    return "findings", False
+    """Apply the shared CLEAN=no-active-blocking-findings contract."""
+    return reconcile_markdown_verdict(review_text)
 
 
 def classify_review_outcome(exit_code: int, review_text: str, scrub_passed: bool) -> str:
@@ -519,7 +497,8 @@ def build_review_prompt(repo: str, pr: int, meta: dict, diff: str) -> str:
         Review the following pull request and output GitHub-ready markdown comment(s).
         Each finding should state: severity (BLOCKER | WARNING | FYI), the file and
         line range (if known), a concise description of the problem, and a concrete
-        suggestion for fixing it.
+        suggestion for fixing it. BLOCKER means the finding must be fixed before
+        merge. WARNING and FYI are non-blocking observations.
 
         IMPORTANT: Your output will be posted as a public PR comment visible to the
         whole engineering team. Do NOT mention local filesystem paths, internal tool
@@ -546,8 +525,9 @@ def build_review_prompt(repo: str, pr: int, meta: dict, diff: str) -> str:
         AGENTIC_OS_REVIEW_VERDICT: CLEAN
         AGENTIC_OS_REVIEW_VERDICT: FINDINGS
 
-        Use CLEAN only when there are no BLOCKER or WARNING findings. Missing,
-        contradictory, or malformed verdict output will fail closed as findings.
+        Use CLEAN when there are no active BLOCKER findings and every acceptance
+        criterion is met; WARNING and FYI observations may coexist with CLEAN.
+        Missing, contradictory, or malformed verdict output fails closed as findings.
     """)
 
 

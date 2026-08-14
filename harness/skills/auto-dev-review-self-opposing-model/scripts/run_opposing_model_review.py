@@ -14,7 +14,6 @@ import datetime as dt
 import hashlib
 import json
 import os
-import re
 import shutil
 import subprocess
 import sys
@@ -39,6 +38,7 @@ from genomes_agentic_os.review_coordination import (  # noqa: E402
     shared_review_coordination_root,
     stable_review_key,
 )
+from genomes_agentic_os.review_verdicts import reconcile_json_verdict  # noqa: E402
 
 HELPER = ROOT / "harness/skills/finishing-touches-review/scripts/finishing_touches_review_helper.py"
 TEMPLATE = ROOT / "harness/skills/auto-dev/templates/reviewer-prompt.md"
@@ -56,10 +56,6 @@ PURPOSE_ALIASES = {
     "review_self",
 }
 SCOPE_ALIASES = {"full-pr": "full-pr", "full_pr": "full-pr", "pr": "full-pr"}
-VERDICT_PATTERN = re.compile(
-    r"AGENTIC_OS_REVIEW_VERDICT:\s*(CLEAN|FINDINGS)", re.IGNORECASE
-)
-JSON_ARRAY_PATTERN = re.compile(r"```json\s*(\[.*?\])\s*```", re.IGNORECASE | re.DOTALL)
 INSTALLED_OS_ROOT = Path.home() / "agentic_os"
 
 
@@ -99,28 +95,8 @@ def normalize_review_purpose(purpose: str, scope: str) -> tuple[str, str]:
 
 
 def parse_review_verdict(response: str) -> tuple[str, bool]:
-    """Read the final verdict and reject a clean/non-empty findings array."""
-    lines = [line.strip() for line in response.splitlines() if line.strip()]
-    if not lines:
-        return "findings", False
-    match = VERDICT_PATTERN.fullmatch(lines[-1])
-    if match is None:
-        return "findings", False
-    declared = match.group(1).upper()
-    if declared == "CLEAN":
-        blocks = JSON_ARRAY_PATTERN.findall("\n".join(lines[:-1]))
-        if not blocks:
-            return "findings", False
-        try:
-            findings = json.loads(blocks[-1])
-        except json.JSONDecodeError:
-            return "findings", False
-        if not isinstance(findings, list):
-            return "findings", False
-        if findings:
-            return "findings", True
-        return "clean", True
-    return "findings", True
+    """Apply the shared CLEAN=no-active-blocking-findings contract."""
+    return reconcile_json_verdict(response)
 
 
 def resolve_os_root(explicit: Path | None) -> Path:

@@ -56,7 +56,7 @@ def _review_rollout_receipt(
     path: Path,
     receipt_root: Path,
     *,
-    release_revision: str = "abcdef0123456789",
+    release_revision: str = "abcdef0123456789abcdef0123456789abcdef01",
     source_roots: list[Path] | None = None,
     strategy: str = "shared-existing",
 ) -> Path:
@@ -136,6 +136,11 @@ def test_install_builds_versioned_runtime_and_retains_rollback(
         return subprocess.CompletedProcess(command, 0, "", "")
 
     monkeypatch.setattr(INSTALLER, "_run", fake_run)
+    monkeypatch.setattr(
+        INSTALLER,
+        "target_marker_environment",
+        lambda python: INSTALLER.default_environment(),
+    )
     receipt_path = tmp_path / "receipts/install.json"
     arguments = _arguments(wheel, runtime_root, receipt_path)
     arguments.review_rollout_receipt = _review_rollout_receipt(
@@ -163,14 +168,13 @@ def test_install_builds_versioned_runtime_and_retains_rollback(
     assert str(wheel.resolve()) == pip_command[-1]
     assert any(command[-2:] == ["pip", "check"] for command in commands)
     assert receipt["review_coordination_rollout"]["proof"]["quiesced"] is True
-    assert receipt["review_coordination_rollout"]["verified_evidence"] == {
-        "observed_active_reviews": 0,
-        "held_family_locks": 0,
-        "source_receipt_counts": {str((tmp_path / "review-receipts").resolve()): 0},
-        "required_receipt_count": 0,
-        "target_receipt_count": 0,
-        "receipt_digests_matched": 0,
-    }
+    rollout_evidence = receipt["review_coordination_rollout"]["verified_evidence"]
+    assert rollout_evidence["active_review_measurement"] == (
+        "nonblocking-family-lock-probe"
+    )
+    assert rollout_evidence["observed_active_reviews"] == 0
+    assert rollout_evidence["held_family_locks"] == 0
+    assert rollout_evidence["required_receipt_count"] == 0
 
 
 def test_checksum_mismatch_fails_before_runtime_mutation(
@@ -237,6 +241,11 @@ def test_dependency_closure_is_offline_hash_pinned_and_resolution_free(
         return subprocess.CompletedProcess(command, 0, "", "")
 
     monkeypatch.setattr(INSTALLER, "_run", fake_run)
+    monkeypatch.setattr(
+        INSTALLER,
+        "target_marker_environment",
+        lambda python: INSTALLER.default_environment(),
+    )
     receipt = INSTALLER.install(arguments)
 
     dependency_command = next(command for command in commands if "-r" in command)
@@ -264,6 +273,11 @@ def test_runtime_dependencies_require_hash_pinned_offline_closure(
         INSTALLER,
         "_run",
         lambda command: pytest.fail(f"unexpected external command: {command}"),
+    )
+    monkeypatch.setattr(
+        INSTALLER,
+        "target_marker_environment",
+        lambda python: INSTALLER.default_environment(),
     )
 
     with pytest.raises(ValueError, match="wheel declares runtime dependencies"):
@@ -300,6 +314,16 @@ def test_rollout_revision_accepts_case_normalized_full_and_short_sha(
     proof = INSTALLER.review_rollout_proof(receipt, release_revision="abcdef0")
 
     assert proof["release_revision"].startswith("ABCDEF0")
+
+
+def test_rollout_receipt_requires_full_revision_authority(tmp_path: Path) -> None:
+    root = tmp_path / "review-root"
+    receipt = _review_rollout_receipt(
+        tmp_path, root, release_revision="abcdef0"
+    )
+
+    with pytest.raises(ValueError, match="full 40-character Git revision"):
+        INSTALLER.review_rollout_proof(receipt, release_revision="abcdef0")
 
 
 @pytest.mark.parametrize(
@@ -357,6 +381,10 @@ def test_rollout_guard_verifies_receipt_budget_history_and_holds_family_locks(
         assert guard.evidence["required_receipt_count"] == 1
         assert guard.evidence["receipt_digests_matched"] == 1
         assert guard.evidence["held_family_locks"] == 1
+        assert guard.evidence["observed_active_reviews"] == 0
+        assert guard.evidence["probed_family_locks"] == [
+            f"{target.resolve()}:{lock.name}"
+        ]
     finally:
         INSTALLER.release_review_rollout_guard(guard)
 
@@ -399,6 +427,51 @@ def test_rollout_guard_rejects_self_attested_zero_with_live_family_lock(
     finally:
         fcntl.flock(owner.fileno(), fcntl.LOCK_UN)
         owner.close()
+
+
+def test_rollout_guard_accepts_existing_empty_coordination_roots(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "old-root"
+    target = tmp_path / "new-root"
+    receipt = _review_rollout_receipt(
+        tmp_path,
+        target,
+        source_roots=[source],
+        strategy="migrated",
+    )
+    for root in (source, target):
+        (root / "receipts").rmdir()
+        (root / ".locks").rmdir()
+    proof = INSTALLER.review_rollout_proof(
+        receipt, release_revision="abcdef0123456789"
+    )
+
+    guard = INSTALLER.acquire_review_rollout_guard(proof)
+    try:
+        assert guard.evidence["required_receipt_count"] == 0
+        assert guard.evidence["target_receipt_count"] == 0
+        assert guard.evidence["held_family_locks"] == 0
+    finally:
+        INSTALLER.release_review_rollout_guard(guard)
+
+
+def test_install_evaluates_requires_dist_against_target_interpreter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    wheel = _wheel(
+        tmp_path, requirements=['backport-package; python_version<"3.11"']
+    )
+    arguments = _arguments(wheel, tmp_path / "runtime", tmp_path / "receipt.json")
+    target_environment = INSTALLER.default_environment()
+    target_environment["python_version"] = "3.10"
+    target_environment["python_full_version"] = "3.10.14"
+    monkeypatch.setattr(
+        INSTALLER, "target_marker_environment", lambda python: target_environment
+    )
+
+    with pytest.raises(ValueError, match="backport-package"):
+        INSTALLER.install(arguments)
 
 
 def test_existing_runtime_requires_short_lived_review_drain_and_migration_proof(
@@ -478,6 +551,11 @@ def test_receipt_failure_restores_active_and_previous_alias_pairs(
         return subprocess.CompletedProcess(command, 0, "", "")
 
     monkeypatch.setattr(INSTALLER, "_run", fake_run)
+    monkeypatch.setattr(
+        INSTALLER,
+        "target_marker_environment",
+        lambda python: INSTALLER.default_environment(),
+    )
     monkeypatch.setattr(
         INSTALLER,
         "_write_json_atomic",

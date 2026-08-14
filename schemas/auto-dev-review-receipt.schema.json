@@ -26,7 +26,7 @@
     "chain_key": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "family_key": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "status": {"const": "completed"},
-    "mode": {"enum": ["full", "delta"]},
+    "mode": {"enum": ["full", "delta", "operator_resolution"]},
     "outcome": {"enum": ["clean", "findings", "unavailable"]},
     "subject": {
       "type": "object",
@@ -144,10 +144,71 @@
       },
       "additionalProperties": false
     },
+    "operator_override": {"type": "boolean"},
+    "operator_evidence": {
+      "type": "object",
+      "required": ["approval_ref", "tests", "ci", "resolutions"],
+      "properties": {
+        "approval_ref": {"type": "string", "minLength": 1},
+        "tests": {"$ref": "#/$defs/exactHeadEvidence"},
+        "ci": {"$ref": "#/$defs/exactHeadEvidence"},
+        "resolutions": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {"$ref": "#/$defs/resolution"}
+        }
+      },
+      "additionalProperties": false
+    },
     "created_at": {"type": "string", "format": "date-time"},
     "completed_at": {"type": "string", "format": "date-time"}
   },
+  "allOf": [
+    {
+      "if": {"properties": {"mode": {"const": "operator_resolution"}}},
+      "then": {
+        "required": ["operator_override", "operator_evidence"],
+        "properties": {"operator_override": {"const": true}}
+      }
+    },
+    {
+      "if": {
+        "required": ["operator_override"],
+        "properties": {"operator_override": {"const": true}}
+      },
+      "then": {"properties": {"mode": {"const": "operator_resolution"}}}
+    }
+  ],
   "$defs": {
+    "exactHeadEvidence": {
+      "type": "object",
+      "required": ["head_sha", "verified", "refs"],
+      "properties": {
+        "head_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "verified": {"const": true},
+        "refs": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1},
+          "minItems": 1,
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "resolution": {
+      "type": "object",
+      "required": ["refs", "summary"],
+      "properties": {
+        "refs": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1},
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "summary": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
     "finding": {
       "type": "object",
       "required": ["id", "status", "severity", "summary", "evidence", "resolution"],

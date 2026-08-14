@@ -84,7 +84,37 @@ def test_runner_verdict_uses_final_line_and_template_uses_shared_vocabulary() ->
     ) == ("findings", False)
     assert runner.parse_review_verdict(
         "```json\n[{\"id\": \"F1\"}]\n```\nAGENTIC_OS_REVIEW_VERDICT: CLEAN"
+    ) == ("clean", True)
+    assert runner.parse_review_verdict(
+        "```json\n[{\"id\": \"F1\", \"severity\": \"low\", "
+        "\"blocking\": false}]\n```\nAGENTIC_OS_REVIEW_VERDICT: CLEAN"
+    ) == ("clean", True)
+    assert runner.parse_review_verdict(
+        "```json\n[{\"id\": \"F1\", \"severity\": \"high\", "
+        "\"blocking\": false}]\n```\nAGENTIC_OS_REVIEW_VERDICT: CLEAN"
+    ) == ("clean", True)
+    assert runner.parse_review_verdict(
+        "```json\n[{\"id\": \"F1\", \"severity\": \"high\"}]\n```\n"
+        "AGENTIC_OS_REVIEW_VERDICT: CLEAN"
     ) == ("findings", True)
+    assert runner.parse_review_verdict(
+        "```json\n[{\"id\": \"F1\", \"severity\": \"low\", "
+        "\"blocking\": true}]\n```\nAGENTIC_OS_REVIEW_VERDICT: CLEAN"
+    ) == ("findings", True)
+    assert runner.parse_review_verdict(
+        "```json\n[{\"id\": \"F1\", \"blocking\": true, "
+        "\"status\": \"resolved\"}]\n```\nAGENTIC_OS_REVIEW_VERDICT: CLEAN"
+    ) == ("clean", True)
+    assert runner.parse_review_verdict(
+        "```json\n[{\"id\": \"F1\", \"blocking\": true}]\n```\n"
+        "```json\n[]\n```\nAGENTIC_OS_REVIEW_VERDICT: CLEAN"
+    ) == ("findings", True)
+    assert runner.parse_review_verdict(
+        "```json\n[{\"id\": \"F1\", "
+        "\"severity\": \"critical | high | medium | low\", "
+        "\"category\": \"correctness | tests\", \"blocking\": true}]\n```\n"
+        "```json\n[]\n```\nAGENTIC_OS_REVIEW_VERDICT: CLEAN"
+    ) == ("clean", True)
     template = runner.TEMPLATE.read_text(encoding="utf-8")
     assert "AGENTIC_OS_REVIEW_VERDICT: CLEAN" in template
     assert "AGENTIC_OS_REVIEW_VERDICT: FINDINGS" in template

@@ -250,6 +250,21 @@ def _finding_id(*, summary: str, severity: str, evidence: list[str]) -> str:
     return f"finding-{digest[:16]}"
 
 
+def _redact_scrub_hits(value: Any, hits: list[str]) -> Any:
+    if isinstance(value, str):
+        redacted = value
+        for hit in hits:
+            redacted = redacted.replace(hit, "[REDACTED]")
+        return redacted
+    if isinstance(value, list):
+        return [_redact_scrub_hits(item, hits) for item in value]
+    if isinstance(value, Mapping):
+        return {
+            str(key): _redact_scrub_hits(item, hits) for key, item in value.items()
+        }
+    return value
+
+
 def normalize_findings_ledger(
     review: Mapping[str, Any],
     *,
@@ -396,6 +411,16 @@ def normalize_findings_ledger(
                 "resolution": None,
             }
         ]
+    if outcome == "findings" and normalized_review.get("scrub_passed") is False:
+        hits = _string_list(normalized_review.get("scrub_hits"))
+        ledger = _redact_scrub_hits(ledger, hits)
+        normalized_review = _redact_scrub_hits(normalized_review, hits)
+        normalized_review["text"] = (
+            "[redacted: review findings failed the provider scrub; use artifact_file locally]"
+        )
+        normalized_review["scrub_hit_count"] = len(hits)
+        normalized_review["scrub_hits"] = []
+        normalized_review["consumer_safe"] = True
     normalized_review["outcome"] = outcome
     normalized_review["findings_ledger"] = ledger
     return outcome, ledger, normalized_review
@@ -489,10 +514,21 @@ def load_review_receipt(path: str | Path) -> dict[str, Any]:
             ),
         }
     mode = payload.get("mode")
-    if mode not in {"full", "delta"}:
+    if mode not in {"full", "delta", "operator_resolution"}:
         raise ReviewCoordinationError("review coordination receipt mode is invalid")
-    if mode == "delta" and not re.fullmatch(r"[0-9a-f]{64}", str(payload.get("parent_key") or "")):
-        raise ReviewCoordinationError("delta review coordination receipt requires parent_key")
+    if mode in {"delta", "operator_resolution"} and not re.fullmatch(
+        r"[0-9a-f]{64}", str(payload.get("parent_key") or "")
+    ):
+        raise ReviewCoordinationError(
+            f"{mode} review coordination receipt requires parent_key"
+        )
+    if mode == "operator_resolution" and not (
+        payload.get("operator_override") is True
+        and isinstance(payload.get("operator_evidence"), Mapping)
+    ):
+        raise ReviewCoordinationError(
+            "operator_resolution receipt requires operator override evidence"
+        )
     ledger = payload.get("findings_ledger")
     # v1 unavailable receipts written before CC-422's repair did not contain a
     # ledger.  They are accepted only so the successful artifact can be safely
@@ -590,17 +626,42 @@ class ReviewCoordinator:
     def __init__(self, receipt_root: str | Path, *, budget: ReviewBudget | None = None) -> None:
         self.root = Path(receipt_root).expanduser().resolve()
         self.receipts = self.root / "receipts"
+        self.index = self.root / "index"
         self.attempts = self.root / "attempts"
         self.quarantine = self.root / "quarantine"
         self.locks = self.root / ".locks"
         self.budget = budget or ReviewBudget()
+        self._quarantine_cache: list[dict[str, Any]] | None = None
+        self._quarantine_cache_token: int | None = None
 
     def _path(self, key: str) -> Path:
         return self.receipts / f"{key}.json"
 
-    def _raise_if_quarantined(
-        self, *, family_key: str, exact_key: str | None = None
-    ) -> None:
+    def _write_receipt(self, path: Path, receipt: Mapping[str, Any]) -> None:
+        index_payload = {
+            "schema": "auto-dev-review-index/v1",
+            "key": receipt.get("key"),
+            "family_key": receipt.get("family_key"),
+            "chain_key": receipt.get("chain_key"),
+            "mode": receipt.get("mode"),
+            "outcome": receipt.get("outcome"),
+            "budget_consumed": receipt.get("outcome") in SUCCESSFUL_REVIEW_OUTCOMES,
+            "subject": receipt.get("subject"),
+            "receipt_ref": str(path),
+        }
+        # The identity sidecar lands first. A crash between these writes is
+        # conservative (reserved budget without a receipt), never a free retry.
+        _atomic_json(self.index / f"{receipt.get('key')}.json", index_payload)
+        _atomic_json(path, receipt)
+
+    def _quarantine_entries(self) -> list[dict[str, Any]]:
+        token = self.quarantine.stat().st_mtime_ns if self.quarantine.is_dir() else 0
+        if (
+            self._quarantine_cache is not None
+            and self._quarantine_cache_token == token
+        ):
+            return list(self._quarantine_cache)
+        entries: list[dict[str, Any]] = []
         for metadata_path in sorted(self.quarantine.glob("*.meta.json")):
             try:
                 metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
@@ -612,9 +673,19 @@ class ReviewCoordinator:
                 raise ReviewCoordinationError(
                     f"quarantine metadata is invalid: {metadata_path}"
                 )
+            entries.append(dict(metadata))
+        self._quarantine_cache = entries
+        self._quarantine_cache_token = token
+        return list(entries)
+
+    def _raise_if_quarantined(
+        self, *, family_key: str, exact_key: str | None = None
+    ) -> None:
+        for metadata in self._quarantine_entries():
             blocked_key = str(metadata.get("key") or "")
             blocked_family = str(metadata.get("family_key") or "")
-            if (exact_key and blocked_key == exact_key) or blocked_family == family_key:
+            unidentified = not blocked_family
+            if (exact_key and blocked_key == exact_key) or unidentified:
                 raise ReviewCoordinationError(
                     "review budget failed closed for quarantined "
                     f"key={blocked_key or 'unknown'} family={blocked_family or 'unknown'}; "
@@ -623,7 +694,7 @@ class ReviewCoordinator:
 
     def _quarantine_receipt(
         self, path: Path, error: ReviewCoordinationError
-    ) -> dict[str, str]:
+    ) -> dict[str, Any]:
         raw = path.read_bytes()
         digest = hashlib.sha256(raw).hexdigest()
         quarantine_path = self.quarantine / f"{path.stem}-{digest}.json"
@@ -633,22 +704,53 @@ class ReviewCoordinator:
             candidate = json.loads(raw)
         except json.JSONDecodeError:
             candidate = None
-        if isinstance(candidate, Mapping):
-            candidate_key = str(candidate.get("key") or "")
+        index_path = self.index / f"{path.stem}.json"
+        index_candidate: Mapping[str, Any] | None = None
+        if index_path.is_file():
+            try:
+                parsed_index = json.loads(index_path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                parsed_index = None
+            if isinstance(parsed_index, Mapping):
+                index_candidate = parsed_index
+        identity_source = candidate if isinstance(candidate, Mapping) else index_candidate
+        normalized_subject: ReviewSubject | None = None
+        if isinstance(identity_source, Mapping):
+            candidate_key = str(identity_source.get("key") or "")
             if not key and re.fullmatch(r"[0-9a-f]{64}", candidate_key):
                 key = candidate_key
-            candidate_family = str(candidate.get("family_key") or "")
+            candidate_family = str(identity_source.get("family_key") or "")
             if re.fullmatch(r"[0-9a-f]{64}", candidate_family):
                 family_key = candidate_family
-            subject_raw = candidate.get("subject")
+            subject_raw = identity_source.get("subject")
             if isinstance(subject_raw, Mapping):
                 try:
-                    family_key = review_family_key(
-                        ReviewSubject.from_mapping(subject_raw)
-                    )
+                    normalized_subject = ReviewSubject.from_mapping(subject_raw)
+                    family_key = review_family_key(normalized_subject)
                 except ReviewCoordinationError:
                     pass
         metadata_path = self.quarantine / f"{path.stem}-{digest}.meta.json"
+        budget_consumed = False
+        chain_key = ""
+        mode = ""
+        outcome = ""
+        subject: dict[str, Any] | None = None
+        if isinstance(identity_source, Mapping):
+            chain_candidate = str(identity_source.get("chain_key") or "")
+            if re.fullmatch(r"[0-9a-f]{64}", chain_candidate):
+                chain_key = chain_candidate
+            mode_candidate = str(identity_source.get("mode") or "")
+            if mode_candidate in {"full", "delta", "operator_resolution"}:
+                mode = mode_candidate
+            outcome_candidate = str(identity_source.get("outcome") or "")
+            if outcome_candidate in TERMINAL_REVIEW_OUTCOMES:
+                outcome = outcome_candidate
+                budget_consumed = outcome_candidate in SUCCESSFUL_REVIEW_OUTCOMES
+            if isinstance(identity_source.get("subject"), Mapping):
+                subject = dict(identity_source["subject"])
+        if normalized_subject is not None:
+            chain_key = review_chain_key(normalized_subject)
+            subject = asdict(normalized_subject)
         metadata = {
             "schema": "auto-dev-review-quarantine/v1",
             "key": key,
@@ -656,11 +758,18 @@ class ReviewCoordinator:
             "source_ref": str(path),
             "quarantine_ref": str(quarantine_path),
             "sha256": digest,
+            "chain_key": chain_key,
+            "mode": mode,
+            "outcome": outcome,
+            "budget_consumed": budget_consumed,
+            "subject": subject,
             "error": str(error),
             "quarantined_at": _utc_now(),
         }
         if not metadata_path.is_file():
             _atomic_json(metadata_path, metadata)
+        self._quarantine_cache = None
+        self._quarantine_cache_token = None
         quarantine_path.parent.mkdir(parents=True, exist_ok=True)
         if quarantine_path.is_file():
             if quarantine_path.read_bytes() != raw:
@@ -670,19 +779,67 @@ class ReviewCoordinator:
             path.unlink(missing_ok=True)
         else:
             path.replace(quarantine_path)
-        return {"key": key, "family_key": family_key, "ref": str(quarantine_path)}
+        return {**metadata, "ref": str(quarantine_path)}
 
     def _family_receipts(self, family_key: str) -> list[dict[str, Any]]:
         self._raise_if_quarantined(family_key=family_key)
         rows: list[dict[str, Any]] = []
+        for metadata in self._quarantine_entries():
+            if (
+                metadata.get("family_key") == family_key
+                and metadata.get("budget_consumed") is True
+                and metadata.get("mode") in {"full", "delta"}
+                and metadata.get("outcome") in SUCCESSFUL_REVIEW_OUTCOMES
+                and re.fullmatch(r"[0-9a-f]{64}", str(metadata.get("chain_key") or ""))
+            ):
+                rows.append(
+                    {
+                        "key": metadata.get("key"),
+                        "family_key": family_key,
+                        "chain_key": metadata.get("chain_key"),
+                        "mode": metadata.get("mode"),
+                        "outcome": metadata.get("outcome"),
+                        "subject": metadata.get("subject"),
+                        "provider_post": {"status": "not_requested"},
+                        "quarantined": True,
+                    }
+                )
         for path in sorted(self.receipts.glob("*.json")):
             try:
                 payload = load_review_receipt(path)
             except ReviewCoordinationError as exc:
                 quarantined = self._quarantine_receipt(path, exc)
-                if quarantined["family_key"] == family_key:
+                if not quarantined["family_key"]:
                     raise ReviewCoordinationError(
-                        "corrupt same-family review receipt was quarantined; "
+                        "unidentified corrupt review receipt was quarantined; "
+                        "all review budgets fail closed until operator recovery: "
+                        f"{quarantined['ref']}"
+                    ) from exc
+                if quarantined["family_key"] == family_key:
+                    if (
+                        quarantined.get("budget_consumed") is True
+                        and quarantined.get("mode") in {"full", "delta"}
+                        and quarantined.get("outcome") in SUCCESSFUL_REVIEW_OUTCOMES
+                        and re.fullmatch(
+                            r"[0-9a-f]{64}",
+                            str(quarantined.get("chain_key") or ""),
+                        )
+                    ):
+                        rows.append(
+                            {
+                                "key": quarantined.get("key"),
+                                "family_key": family_key,
+                                "chain_key": quarantined.get("chain_key"),
+                                "mode": quarantined.get("mode"),
+                                "outcome": quarantined.get("outcome"),
+                                "subject": quarantined.get("subject"),
+                                "provider_post": {"status": "not_requested"},
+                                "quarantined": True,
+                            }
+                        )
+                        continue
+                    raise ReviewCoordinationError(
+                        "same-family quarantine lacks enough terminal budget identity; "
                         f"budget accounting failed closed at {quarantined['ref']}"
                     ) from exc
                 # An unrelated or unidentifiable receipt cannot contribute to
@@ -701,6 +858,64 @@ class ReviewCoordinator:
         if not attempt.is_file():
             _atomic_bytes(attempt, raw)
         return attempt
+
+    def classify_quarantine_tombstone(
+        self,
+        key: str,
+        *,
+        family_key: str,
+        chain_key: str,
+        mode: str,
+        outcome: str,
+        approval_ref: str,
+    ) -> Path:
+        """Classify an unknown tombstone without erasing its budget history."""
+
+        for label, value in (
+            ("key", key),
+            ("family_key", family_key),
+            ("chain_key", chain_key),
+        ):
+            if not re.fullmatch(r"[0-9a-f]{64}", str(value)):
+                raise ReviewCoordinationError(
+                    f"quarantine classification requires canonical {label}"
+                )
+        if mode not in {"full", "delta"} or outcome not in SUCCESSFUL_REVIEW_OUTCOMES:
+            raise ReviewCoordinationError(
+                "quarantine classification requires a budget-consuming full/delta outcome"
+            )
+        if not str(approval_ref).strip():
+            raise ReviewCoordinationError(
+                "quarantine classification requires approval_ref"
+            )
+        matches = [
+            path
+            for path in sorted(self.quarantine.glob("*.meta.json"))
+            if path.name.startswith(f"{key}-")
+        ]
+        if len(matches) != 1:
+            raise ReviewCoordinationError(
+                "quarantine classification requires exactly one matching tombstone"
+            )
+        metadata_path = matches[0]
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        if not isinstance(metadata, dict):
+            raise ReviewCoordinationError("quarantine tombstone metadata is invalid")
+        metadata.update(
+            {
+                "family_key": family_key,
+                "chain_key": chain_key,
+                "mode": mode,
+                "outcome": outcome,
+                "budget_consumed": True,
+                "classification_approval_ref": str(approval_ref),
+                "classified_at": _utc_now(),
+            }
+        )
+        _atomic_json(metadata_path, metadata)
+        self._quarantine_cache = None
+        self._quarantine_cache_token = None
+        return metadata_path
 
     def _result(self, path: Path, receipt: dict[str, Any], *, reused: bool) -> ReviewRunResult:
         return ReviewRunResult(
@@ -793,6 +1008,16 @@ class ReviewCoordinator:
                 path.unlink()
 
             family = self._family_receipts(family_key)
+            for row in family:
+                if row.get("quarantined") or not isinstance(row.get("subject"), Mapping):
+                    continue
+                try:
+                    prior_subject = ReviewSubject.from_mapping(row["subject"])
+                except ReviewCoordinationError:
+                    continue
+                if prior_subject == subject and row.get("outcome") in SUCCESSFUL_REVIEW_OUTCOMES:
+                    legacy_path = self._path(str(row["key"]))
+                    return self._result(legacy_path, row, reused=True)
             successful_family = [
                 row for row in family if row.get("outcome") in SUCCESSFUL_REVIEW_OUTCOMES
             ]
@@ -823,10 +1048,16 @@ class ReviewCoordinator:
                 raise ReviewBudgetExceeded("delta-review budget exhausted for this review chain")
             parent: dict[str, Any] | None = None
             if mode == "delta":
-                candidates = chain
+                candidates = [row for row in chain if not row.get("quarantined")]
                 if parent_key:
-                    candidates = [row for row in chain if row.get("key") == parent_key]
+                    candidates = [
+                        row for row in candidates if row.get("key") == parent_key
+                    ]
                 if not candidates:
+                    if any(row.get("quarantined") for row in chain):
+                        raise ReviewCoordinationError(
+                            "delta review parent is quarantined; explicit recovery is required"
+                        )
                     raise ReviewCoordinationError(
                         "delta review requires a successful parent in the same base/policy chain"
                     )
@@ -885,7 +1116,7 @@ class ReviewCoordinator:
                 attempt_path = self.attempts / f"{key}-{uuid.uuid4().hex}.json"
                 _atomic_json(attempt_path, receipt)
                 return self._result(attempt_path, receipt, reused=False)
-            _atomic_json(path, receipt)
+            self._write_receipt(path, receipt)
             return self._result(path, receipt, reused=False)
 
     def post_terminal(
@@ -914,6 +1145,10 @@ class ReviewCoordinator:
                 raise ReviewCoordinationError(
                     "provider post requires a clean review and scrub_passed=true"
                 )
+            if receipt.get("operator_override") is True:
+                raise ReviewCoordinationError(
+                    "operator resolution receipts cannot be posted as reviewer approval"
+                )
             family = self._family_receipts(family_key)
             posted_count = sum(
                 isinstance(row.get("provider_post"), Mapping)
@@ -924,6 +1159,194 @@ class ReviewCoordinator:
                 raise ReviewBudgetExceeded("provider-post budget exhausted for this PR")
             posted = self._post_terminal(path, receipt, provider_post)
             return self._result(path, posted, reused=False)
+
+    def resolve_capped_findings(
+        self,
+        subject: ReviewSubject,
+        *,
+        parent_key: str,
+        approval_ref: str,
+        test_evidence: Mapping[str, Any],
+        ci_evidence: Mapping[str, Any],
+        resolutions: Mapping[str, Any],
+    ) -> ReviewRunResult:
+        """Resolve a capped findings chain from explicit operator evidence only."""
+
+        if not re.fullmatch(r"[0-9a-f]{64}", str(parent_key)):
+            raise ReviewCoordinationError(
+                "operator resolution requires a canonical parent_key"
+            )
+        if not str(approval_ref).strip():
+            raise ReviewCoordinationError(
+                "operator resolution requires an explicit approval_ref"
+            )
+
+        def exact_head_evidence(
+            label: str, evidence: Mapping[str, Any]
+        ) -> dict[str, Any]:
+            if not isinstance(evidence, Mapping):
+                raise ReviewCoordinationError(
+                    f"operator resolution requires typed {label} evidence"
+                )
+            refs = _string_list(evidence.get("refs"))
+            if (
+                str(evidence.get("head_sha") or "").strip().lower()
+                != subject.head_sha
+                or evidence.get("verified") is not True
+                or not refs
+            ):
+                raise ReviewCoordinationError(
+                    f"operator resolution {label} evidence must be verified, "
+                    "exact-head, and contain refs"
+                )
+            return {"head_sha": subject.head_sha, "verified": True, "refs": refs}
+
+        tests = exact_head_evidence("test", test_evidence)
+        ci = exact_head_evidence("CI", ci_evidence)
+        key = stable_review_key(subject)
+        chain_key = review_chain_key(subject)
+        family_key = review_family_key(subject)
+        path = self._path(key)
+        with _exclusive_lock(self.locks / f"{family_key}.lock"):
+            self._raise_if_quarantined(family_key=family_key, exact_key=key)
+            if path.is_file():
+                existing = load_review_receipt(path)
+                if existing.get("operator_override") is True:
+                    return self._result(path, existing, reused=True)
+                raise ReviewCoordinationError(
+                    "operator resolution exact head already has review authority"
+                )
+            family = self._family_receipts(family_key)
+            chain = [row for row in family if row.get("chain_key") == chain_key]
+            full_count = sum(row.get("mode") == "full" for row in chain)
+            delta_count = sum(row.get("mode") == "delta" for row in chain)
+            absolute_full_count = sum(row.get("mode") == "full" for row in family)
+            if (
+                full_count < self.budget.full_reviews_per_chain
+                or delta_count < self.budget.delta_reviews_per_chain
+            ):
+                raise ReviewCoordinationError(
+                    "operator resolution requires a capped findings chain "
+                    f"({self.budget.full_reviews_per_chain} full and "
+                    f"{self.budget.delta_reviews_per_chain} delta reviews)"
+                )
+            parent_candidates = [
+                row
+                for row in chain
+                if row.get("key") == parent_key and not row.get("quarantined")
+            ]
+            if not parent_candidates:
+                raise ReviewCoordinationError(
+                    "operator resolution requires an active capped-chain parent"
+                )
+            parent = parent_candidates[-1]
+            if parent.get("outcome") != "findings":
+                raise ReviewCoordinationError(
+                    "operator resolution parent must contain canonical findings"
+                )
+            active_chain = [
+                row
+                for row in chain
+                if not row.get("quarantined")
+                and row.get("mode") in {"full", "delta"}
+            ]
+            latest = sorted(
+                active_chain, key=lambda row: str(row.get("completed_at") or "")
+            )[-1]
+            if latest.get("key") != parent_key or parent.get("mode") != "delta":
+                raise ReviewCoordinationError(
+                    "operator resolution requires the latest capped delta parent"
+                )
+            parent_subject = ReviewSubject.from_mapping(parent["subject"])
+            if parent_subject.head_sha == subject.head_sha:
+                raise ReviewCoordinationError(
+                    "operator resolution requires an exact new head"
+                )
+            ledger = parent.get("findings_ledger")
+            if not isinstance(ledger, list):
+                raise ReviewCoordinationError(
+                    "operator resolution parent lacks a findings ledger"
+                )
+            open_ids = {
+                str(row.get("id"))
+                for row in ledger
+                if isinstance(row, Mapping) and row.get("status") == "open"
+            }
+            if not open_ids or set(map(str, resolutions)) != open_ids:
+                raise ReviewCoordinationError(
+                    "operator resolution must resolve every and only open finding ID"
+                )
+            resolved_ledger: list[dict[str, Any]] = []
+            normalized_resolutions: dict[str, dict[str, Any]] = {}
+            for row in ledger:
+                current = dict(row)
+                finding_id = str(current.get("id"))
+                if finding_id not in open_ids:
+                    resolved_ledger.append(current)
+                    continue
+                value = resolutions[finding_id]
+                if isinstance(value, Mapping):
+                    refs = _string_list(value.get("refs"))
+                    summary = str(value.get("summary") or "").strip()
+                else:
+                    refs = _string_list(value)
+                    summary = ""
+                if not refs:
+                    raise ReviewCoordinationError(
+                        f"operator resolution for {finding_id} requires refs"
+                    )
+                resolution = {"refs": refs, "summary": summary}
+                current["status"] = "resolved"
+                current["resolution"] = resolution
+                resolved_ledger.append(current)
+                normalized_resolutions[finding_id] = resolution
+            now = _utc_now()
+            receipt: dict[str, Any] = {
+                "schema": REVIEW_RECEIPT_SCHEMA,
+                "key": key,
+                "chain_key": chain_key,
+                "family_key": family_key,
+                "status": "completed",
+                "mode": "operator_resolution",
+                "outcome": "clean",
+                "subject": asdict(subject),
+                "parent_key": parent_key,
+                "review": {
+                    "outcome": "clean",
+                    "summary": "Capped findings resolved by explicit operator evidence.",
+                    "scrub_passed": True,
+                },
+                "findings_ledger": resolved_ledger,
+                "budget": {
+                    "full_reviews_per_chain": self.budget.full_reviews_per_chain,
+                    "delta_reviews_per_chain": self.budget.delta_reviews_per_chain,
+                    "absolute_full_reviews_per_family": self.budget.absolute_full_reviews_per_family,
+                    "provider_posts_per_family": self.budget.provider_posts_per_family,
+                    "full_reviews_used": full_count,
+                    "delta_reviews_used": delta_count,
+                    "absolute_full_reviews_used": absolute_full_count,
+                    "provider_posts_used": sum(
+                        isinstance(row.get("provider_post"), Mapping)
+                        and row["provider_post"].get("status") == "posted"
+                        for row in family
+                    ),
+                },
+                "provider_post": {
+                    "status": "not_requested",
+                    "marker": provider_review_marker(key),
+                },
+                "operator_override": True,
+                "operator_evidence": {
+                    "approval_ref": str(approval_ref),
+                    "tests": tests,
+                    "ci": ci,
+                    "resolutions": normalized_resolutions,
+                },
+                "created_at": now,
+                "completed_at": now,
+            }
+            self._write_receipt(path, receipt)
+            return self._result(path, receipt, reused=False)
 
     def recover_successful_unavailable(
         self,
@@ -1036,7 +1459,7 @@ class ReviewCoordinator:
                 },
                 "completed_at": now,
             }
-            _atomic_json(canonical_path, canonical)
+            self._write_receipt(canonical_path, canonical)
             return self._result(canonical_path, canonical, reused=True)
 
     def finalize(self, subject: ReviewSubject) -> ReviewRunResult:

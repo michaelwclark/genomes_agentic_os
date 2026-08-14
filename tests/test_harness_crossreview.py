@@ -175,7 +175,7 @@ def test_review_outcome_is_terminal_and_findings_are_not_reclassified_clean() ->
         ),
         (
             "WARNING: problem\nAGENTIC_OS_REVIEW_VERDICT: CLEAN",
-            "findings",
+            "clean",
             True,
         ),
         (
@@ -185,7 +185,37 @@ def test_review_outcome_is_terminal_and_findings_are_not_reclassified_clean() ->
         ),
         (
             "- **WARNING**: stale state\nAGENTIC_OS_REVIEW_VERDICT: CLEAN",
+            "clean",
+            True,
+        ),
+        (
+            "## BLOCKER 1 — unsafe write\nAGENTIC_OS_REVIEW_VERDICT: CLEAN",
             "findings",
+            True,
+        ),
+        (
+            "## Previously reported findings\n"
+            "### BLOCKER: fixed in abc1234\n"
+            "AGENTIC_OS_REVIEW_VERDICT: CLEAN",
+            "clean",
+            True,
+        ),
+        (
+            "## Resolved findings\n"
+            "### BLOCKER — verified by regression test\n"
+            "AGENTIC_OS_REVIEW_VERDICT: CLEAN",
+            "clean",
+            True,
+        ),
+        (
+            "> BLOCKER: prior review text\nAGENTIC_OS_REVIEW_VERDICT: CLEAN",
+            "clean",
+            True,
+        ),
+        (
+            "```markdown\n## BLOCKER — prompt example\n```\n"
+            "AGENTIC_OS_REVIEW_VERDICT: CLEAN",
+            "clean",
             True,
         ),
         (

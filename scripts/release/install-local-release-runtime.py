@@ -35,7 +35,7 @@ PACKAGE = "genomes-agentic-os"
 MODULE = "genomes_agentic_os"
 ALIASES = ("development-delivery-runtime", "layout-v2-runtime")
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
-REVISION = re.compile(r"^[0-9a-fA-F]{7,64}$")
+REVISION = re.compile(r"^[0-9a-fA-F]{7,40}$")
 
 
 class AliasActivation(NamedTuple):
@@ -57,7 +57,7 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def wheel_identity(path: Path) -> tuple[str, str, list[str]]:
+def wheel_metadata(path: Path) -> tuple[str, str, list[str]]:
     if not path.is_file() or path.suffix != ".whl":
         raise ValueError(f"release wheel is missing or not a .whl file: {path}")
     with zipfile.ZipFile(path) as archive:
@@ -77,10 +77,16 @@ def wheel_identity(path: Path) -> tuple[str, str, list[str]]:
         raise ValueError(
             f"expected {PACKAGE} wheel metadata, found name={name!r} version={version!r}"
         )
-    environment = default_environment()
+    return name, version, metadata.get_all("Requires-Dist", [])
+
+
+def applicable_runtime_requirements(
+    raw_requirements: list[str], marker_environment: dict[str, str]
+) -> list[str]:
+    environment = dict(marker_environment)
     environment["extra"] = ""
     requirements: list[str] = []
-    for raw_requirement in metadata.get_all("Requires-Dist", []):
+    for raw_requirement in raw_requirements:
         try:
             requirement = Requirement(raw_requirement)
         except InvalidRequirement as error:
@@ -89,12 +95,70 @@ def wheel_identity(path: Path) -> tuple[str, str, list[str]]:
             ) from error
         if requirement.marker is None or requirement.marker.evaluate(environment):
             requirements.append(str(requirement))
-    return name, version, requirements
+    return requirements
 
 
-def _normalized_revision(value: object, *, label: str) -> str:
+def wheel_identity(
+    path: Path, marker_environment: dict[str, str] | None = None
+) -> tuple[str, str, list[str]]:
+    name, version, raw_requirements = wheel_metadata(path)
+    environment = marker_environment or default_environment()
+    return (
+        name,
+        version,
+        applicable_runtime_requirements(raw_requirements, environment),
+    )
+
+
+def target_marker_environment(python: str) -> dict[str, str]:
+    code = """
+import json
+import os
+import platform
+import sys
+
+version = sys.implementation.version
+implementation_version = f"{version.major}.{version.minor}.{version.micro}"
+if version.releaselevel != "final":
+    implementation_version += version.releaselevel[0] + str(version.serial)
+print(json.dumps({
+    "implementation_name": sys.implementation.name,
+    "implementation_version": implementation_version,
+    "os_name": os.name,
+    "platform_machine": platform.machine(),
+    "platform_release": platform.release(),
+    "platform_system": platform.system(),
+    "platform_version": platform.version(),
+    "python_full_version": platform.python_version(),
+    "platform_python_implementation": platform.python_implementation(),
+    "python_version": f"{sys.version_info.major}.{sys.version_info.minor}",
+    "sys_platform": sys.platform,
+}))
+"""
+    result = _run([python, "-c", code])
+    try:
+        value = json.loads(result.stdout)
+    except json.JSONDecodeError as error:
+        raise ValueError("target interpreter returned invalid marker environment") from error
+    if not isinstance(value, dict) or any(
+        not isinstance(key, str) or not isinstance(item, str)
+        for key, item in value.items()
+    ):
+        raise ValueError("target interpreter marker environment must contain strings")
+    required = set(default_environment())
+    if not required.issubset(value):
+        missing = ", ".join(sorted(required - set(value)))
+        raise ValueError(f"target interpreter marker environment is missing: {missing}")
+    return value
+
+
+def _normalized_revision(
+    value: object, *, label: str, require_full: bool = False
+) -> str:
     if not isinstance(value, str) or not REVISION.fullmatch(value):
-        raise ValueError(f"{label} must be a 7-64 character hexadecimal Git revision")
+        raise ValueError(f"{label} must be a 7-40 character hexadecimal Git revision")
+    if require_full and len(value) != 40:
+        raise ValueError(f"{label} must record the full 40-character Git revision")
     return value.lower()
 
 
@@ -120,7 +184,9 @@ def review_rollout_proof(path: Path, *, release_revision: str) -> dict[str, obje
         release_revision, label="--release-revision"
     )
     receipt_revision = _normalized_revision(
-        value.get("release_revision"), label="review rollout release_revision"
+        value.get("release_revision"),
+        label="review rollout release_revision",
+        require_full=True,
     )
     if not _same_revision(expected_revision, receipt_revision):
         raise ValueError(
@@ -173,8 +239,14 @@ def review_rollout_proof(path: Path, *, release_revision: str) -> dict[str, obje
 
 def _receipt_inventory(root: Path) -> dict[str, str]:
     receipt_dir = root / "receipts"
-    if not root.is_dir() or not receipt_dir.is_dir():
-        raise ValueError(f"review coordination receipt root is unreadable: {root}")
+    if not root.exists():
+        raise ValueError(f"review coordination root does not exist: {root}")
+    if not root.is_dir():
+        raise ValueError(f"review coordination root is not a directory: {root}")
+    if not receipt_dir.exists():
+        return {}
+    if not receipt_dir.is_dir():
+        raise ValueError(f"review coordination receipts path is not a directory: {receipt_dir}")
     inventory: dict[str, str] = {}
     for receipt_path in sorted(receipt_dir.glob("*.json")):
         try:
@@ -205,16 +277,30 @@ def acquire_review_rollout_guard(proof: dict[str, object]) -> ReviewRolloutGuard
     roots = sorted({*sources, target}, key=str)
     handles: list[IO[str]] = []
     lock_count = 0
+    probed_lock_names: list[str] = []
+    busy_lock_names: list[str] = []
+    scanned_at = datetime.now(timezone.utc).isoformat()
     try:
         for root in roots:
             lock_dir = root / ".locks"
+            if not root.exists():
+                raise ValueError(f"review coordination root does not exist: {root}")
+            if not root.is_dir():
+                raise ValueError(f"review coordination root is not a directory: {root}")
+            if not lock_dir.exists():
+                continue
             if not lock_dir.is_dir():
-                raise ValueError(f"review coordination lock directory is unreadable: {lock_dir}")
+                raise ValueError(
+                    f"review coordination locks path is not a directory: {lock_dir}"
+                )
             for lock_path in sorted(lock_dir.glob("*.lock")):
+                qualified_name = f"{root}:{lock_path.name}"
+                probed_lock_names.append(qualified_name)
                 handle = lock_path.open("a+", encoding="utf-8")
                 try:
                     fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
                 except BlockingIOError as error:
+                    busy_lock_names.append(qualified_name)
                     handle.close()
                     raise ValueError(
                         f"review coordination is not drained; live family lock: {lock_path}"
@@ -238,7 +324,10 @@ def acquire_review_rollout_guard(proof: dict[str, object]) -> ReviewRolloutGuard
                         f"review receipt budget history is missing or changed at target: {name}"
                     )
         evidence: dict[str, object] = {
-            "observed_active_reviews": 0,
+            "lock_probe_started_at": scanned_at,
+            "active_review_measurement": "nonblocking-family-lock-probe",
+            "observed_active_reviews": len(busy_lock_names),
+            "probed_family_locks": probed_lock_names,
             "held_family_locks": lock_count,
             "source_receipt_counts": {
                 root: len(inventory) for root, inventory in source_inventories.items()
@@ -465,9 +554,9 @@ def install(arguments: argparse.Namespace) -> dict[str, object]:
     wheel = arguments.wheel.expanduser().resolve(strict=False)
     runtime_root = arguments.runtime_root.expanduser().resolve(strict=False)
     receipt_path = arguments.receipt.expanduser().resolve(strict=False)
-    package_name, version, runtime_requirements = wheel_identity(wheel)
+    package_name, version, raw_requirements = wheel_metadata(wheel)
     if not REVISION.fullmatch(arguments.release_revision):
-        raise ValueError("--release-revision must be a 7-64 character Git SHA")
+        raise ValueError("--release-revision must be a 7-40 character Git SHA")
     expected = expected_sha256(
         wheel,
         value=arguments.sha256,
@@ -500,18 +589,10 @@ def install(arguments: argparse.Namespace) -> dict[str, object]:
         raise ValueError(f"dependency lock does not exist: {dependency_lock}")
     if wheelhouse is not None and not wheelhouse.is_dir():
         raise ValueError(f"dependency wheelhouse does not exist: {wheelhouse}")
-    if runtime_requirements and dependency_lock is None:
-        raise ValueError(
-            "wheel declares runtime dependencies; --dependency-lock and --wheelhouse "
-            "are required: " + ", ".join(runtime_requirements)
-        )
-
     release_dir = runtime_root / "releases" / f"{version}-{arguments.release_revision[:7].lower()}"
     target = release_dir / "runtime"
     if os.path.lexists(target):
         raise ValueError(f"versioned runtime already exists; refusing to overwrite: {target}")
-    runtime_root.mkdir(parents=True, exist_ok=True)
-    receipt_path.parent.mkdir(parents=True, exist_ok=True)
     initial_aliases = {
         runtime_root / alias_name: _link_snapshot(runtime_root / alias_name)
         for alias_name in ALIASES
@@ -538,7 +619,20 @@ def install(arguments: argparse.Namespace) -> dict[str, object]:
 
     created = False
     activation: AliasActivation | None = None
+    marker_environment: dict[str, str] | None = None
+    runtime_requirements: list[str] = []
     try:
+        marker_environment = target_marker_environment(arguments.python)
+        runtime_requirements = applicable_runtime_requirements(
+            raw_requirements, marker_environment
+        )
+        if runtime_requirements and dependency_lock is None:
+            raise ValueError(
+                "wheel declares runtime dependencies; --dependency-lock and "
+                "--wheelhouse are required: " + ", ".join(runtime_requirements)
+            )
+        runtime_root.mkdir(parents=True, exist_ok=True)
+        receipt_path.parent.mkdir(parents=True, exist_ok=True)
         release_dir.mkdir(parents=True, exist_ok=False)
         created = True
         _run([arguments.python, "-m", "venv", str(target)])
@@ -605,6 +699,7 @@ def install(arguments: argparse.Namespace) -> dict[str, object]:
                 "wheelhouse": str(wheelhouse) if wheelhouse else None,
                 "network_disabled": True,
                 "dependency_resolution_disabled": True,
+                "marker_environment": marker_environment,
                 "pip_check": {
                     "command": [str(target / "bin" / "python"), "-m", "pip", "check"],
                     "exit_code": dependency_check.returncode,

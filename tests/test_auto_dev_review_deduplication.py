@@ -281,6 +281,10 @@ def test_scrub_failing_findings_remain_canonical_and_budget_counted(
     assert first.receipt["outcome"] == "findings"
     assert first.receipt["budget"]["full_reviews_used"] == 1
     assert first.receipt_path.parent == coordinator.receipts
+    serialized = first.receipt_path.read_text(encoding="utf-8")
+    assert "internal-path" not in serialized
+    assert first.receipt["review"]["consumer_safe"] is True
+    assert first.receipt["review"]["scrub_hit_count"] == 1
     assert replay.reused
     with pytest.raises(ReviewCoordinationError, match="clean review"):
         coordinator.post_terminal(
@@ -457,6 +461,71 @@ def test_unidentifiable_corrupt_receipt_isolated_without_blocking_other_family(
     assert not called
 
 
+def test_unparseable_receipt_tombstone_preserves_same_chain_budget(tmp_path: Path) -> None:
+    coordinator = ReviewCoordinator(tmp_path / "auto-dev-review")
+    completed = coordinator.execute(_subject(), _clean)
+    completed.receipt_path.write_text("{broken", encoding="utf-8")
+    called = False
+
+    def forbidden() -> dict[str, str]:
+        nonlocal called
+        called = True
+        return _clean()
+
+    with pytest.raises(ReviewBudgetExceeded, match="full-review budget"):
+        coordinator.execute(_subject("2" * 40), forbidden)
+    assert not called
+    metadata = [
+        json.loads(path.read_text(encoding="utf-8"))
+        for path in coordinator.quarantine.glob("*.meta.json")
+    ]
+    assert metadata[0]["budget_consumed"] is True
+    assert metadata[0]["mode"] == "full"
+    assert metadata[0]["chain_key"] == completed.receipt["chain_key"]
+
+
+def test_unindexed_unparseable_receipt_fails_all_budgets_closed(tmp_path: Path) -> None:
+    coordinator = ReviewCoordinator(tmp_path / "auto-dev-review")
+    unknown_key = "e" * 64
+    coordinator.receipts.mkdir(parents=True)
+    (coordinator.receipts / f"{unknown_key}.json").write_text(
+        "{broken", encoding="utf-8"
+    )
+    called = False
+
+    def forbidden() -> dict[str, str]:
+        nonlocal called
+        called = True
+        return _clean()
+
+    with pytest.raises(ReviewCoordinationError, match="all review budgets fail closed"):
+        coordinator.execute(_subject(), forbidden)
+    assert not called
+    with pytest.raises(ReviewCoordinationError, match="failed closed"):
+        coordinator.execute(_subject("2" * 40), forbidden)
+    assert not called
+    subject = _subject()
+    coordinator.classify_quarantine_tombstone(
+        unknown_key,
+        family_key=review_family_key(subject),
+        chain_key=review_chain_key(subject),
+        mode="full",
+        outcome="clean",
+        approval_ref="approval:quarantine-classification",
+    )
+    with pytest.raises(ReviewBudgetExceeded, match="full-review budget"):
+        coordinator.execute(_subject("2" * 40), forbidden)
+    unrelated = ReviewSubject(
+        repository="acme/unrelated",
+        pull_request="100",
+        base_branch="main",
+        base_sha="a" * 40,
+        head_sha="7" * 40,
+        policy_fingerprint=POLICY,
+    )
+    assert coordinator.execute(unrelated, _clean).receipt["outcome"] == "clean"
+
+
 def test_review_subject_requires_full_commit_shas() -> None:
     with pytest.raises(ReviewCoordinationError, match="full 40-hex"):
         _subject("1234567")
@@ -506,6 +575,17 @@ def test_precanonicalization_uppercase_receipt_remains_loadable(tmp_path: Path) 
     assert loaded["chain_key"] == review_chain_key(
         ReviewSubject.from_mapping(legacy_subject)
     )
+    called = False
+
+    def forbidden() -> dict[str, str]:
+        nonlocal called
+        called = True
+        return _clean()
+
+    reused = coordinator.execute(_subject(), forbidden)
+    assert reused.reused
+    assert reused.key == legacy_key
+    assert not called
 
 
 def test_entrypoint_purpose_aliases_produce_the_same_stable_key() -> None:
@@ -643,6 +723,114 @@ def test_pr19_replay_caps_paid_reviews_at_four(tmp_path: Path) -> None:
     assert len(fixture["attempts"]) == 20
     assert len({row["head_sha"] for row in fixture["attempts"]}) == 19
     assert review_calls == 4
+
+
+def _capped_findings_chain(coordinator: ReviewCoordinator) -> object:
+    def findings() -> dict[str, object]:
+        return {
+            "outcome": "findings",
+            "findings": [
+                {
+                    "id": "finding-capped-chain",
+                    "severity": "blocking",
+                    "summary": "Capped finding needs operator evidence",
+                    "evidence": ["src/gate.py:42"],
+                }
+            ],
+        }
+
+    result = coordinator.execute(_subject("1" * 40), findings)
+    for digit in ("2", "3", "4"):
+        result = coordinator.execute(
+            _subject(digit * 40), findings, mode="delta", parent_key=result.key
+        )
+    return result
+
+
+def test_operator_resolution_cannot_bypass_uncapped_chain(tmp_path: Path) -> None:
+    coordinator = ReviewCoordinator(tmp_path / "auto-dev-review")
+    parent = coordinator.execute(
+        _subject(),
+        lambda: {"outcome": "findings", "findings": ["Needs repair"]},
+    )
+    new_head = "2" * 40
+    with pytest.raises(ReviewCoordinationError, match="capped findings chain"):
+        coordinator.resolve_capped_findings(
+            _subject(new_head),
+            parent_key=parent.key,
+            approval_ref="approval:CC-422",
+            test_evidence={"head_sha": new_head, "verified": True, "refs": ["test:1"]},
+            ci_evidence={"head_sha": new_head, "verified": True, "refs": ["ci:1"]},
+            resolutions={
+                parent.receipt["findings_ledger"][0]["id"]: ["commit:repair"]
+            },
+        )
+
+
+def test_operator_resolution_requires_exact_evidence_and_resolves_capped_chain(
+    tmp_path: Path,
+) -> None:
+    coordinator = ReviewCoordinator(tmp_path / "auto-dev-review")
+    parent = _capped_findings_chain(coordinator)
+    new_head = "5" * 40
+    with pytest.raises(ReviewCoordinationError, match="exact-head"):
+        coordinator.resolve_capped_findings(
+            _subject(new_head),
+            parent_key=parent.key,
+            approval_ref="approval:CC-422",
+            test_evidence={"head_sha": "6" * 40, "verified": True, "refs": ["test:1"]},
+            ci_evidence={"head_sha": new_head, "verified": True, "refs": ["ci:1"]},
+            resolutions={"finding-capped-chain": ["commit:repair"]},
+        )
+    with pytest.raises(ReviewCoordinationError, match="every and only"):
+        coordinator.resolve_capped_findings(
+            _subject(new_head),
+            parent_key=parent.key,
+            approval_ref="approval:CC-422",
+            test_evidence={"head_sha": new_head, "verified": True, "refs": ["test:1"]},
+            ci_evidence={"head_sha": new_head, "verified": True, "refs": ["ci:1"]},
+            resolutions={"wrong-finding": ["commit:repair"]},
+        )
+
+    resolved = coordinator.resolve_capped_findings(
+        _subject(new_head),
+        parent_key=parent.key,
+        approval_ref="approval:CC-422",
+        test_evidence={"head_sha": new_head, "verified": True, "refs": ["test:1"]},
+        ci_evidence={"head_sha": new_head, "verified": True, "refs": ["ci:1"]},
+        resolutions={
+            "finding-capped-chain": {
+                "refs": ["commit:repair", "test:1", "ci:1"],
+                "summary": "Repair verified at the exact new head.",
+            }
+        },
+    )
+    assert resolved.receipt["operator_override"] is True
+    assert resolved.receipt["mode"] == "operator_resolution"
+    assert resolved.receipt["outcome"] == "clean"
+    assert resolved.receipt["budget"]["full_reviews_used"] == 1
+    assert resolved.receipt["budget"]["delta_reviews_used"] == 3
+    assert all(
+        row["status"] == "resolved" for row in resolved.receipt["findings_ledger"]
+    )
+    schema = json.loads(
+        (Path(__file__).parents[1] / "schemas/auto-dev-review-receipt.schema.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    jsonschema.validate(resolved.receipt, schema)
+    provider_called = False
+
+    def forbidden_post(_marker: str, _receipt: dict[str, object]) -> dict[str, object]:
+        nonlocal provider_called
+        provider_called = True
+        return {"readback_verified": True}
+
+    with pytest.raises(ReviewCoordinationError, match="cannot be posted"):
+        coordinator.post_terminal(
+            _subject(new_head), forbidden_post, scrub_passed=True
+        )
+    assert not provider_called
 
 
 def test_receipt_schema_is_registered_strict_and_accepts_generated_receipt(

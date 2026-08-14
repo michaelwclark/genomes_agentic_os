@@ -101,8 +101,29 @@ receipt path before invoking a reviewer. A completed receipt is reused. An
 absent receipt resumes the original key under the acquired lock. Lock files are
 durable coordination names and are not deleted as a recovery technique. If a
 receipt is malformed or its subject does not match, quarantine it and block; do
-not accept it as clean. Emergency budget overrides are narrow, expiring policy
-changes, not command-line force flags.
+not accept it as clean. Every canonical receipt has a small identity sidecar
+written before the receipt, so an unreadable receipt becomes a budget-counting
+tombstone for its original family and chain. An older unindexed receipt whose
+family cannot be recovered blocks all review budgets until an operator calls
+`classify_quarantine_tombstone` with the key, family, chain, terminal mode and
+outcome, plus an approval reference. Classification never deletes the evidence
+or refunds its paid-review budget. Quarantine metadata is cached per coordinator
+process instead of reparsed for every family read.
+
+After the normal `1 full + 3 delta` chain is exhausted, do not invoke another
+reviewer. `resolve_capped_findings` is the only receipt-level exit: it requires
+the latest capped findings parent, an exact new head, an explicit approval
+reference, verified exact-head test and CI references, and resolution references
+for every open finding ID. The resulting receipt records
+`operator_override: true`, preserves the `1/3` counters, cannot be posted as a
+reviewer approval, and remains subject to exact-head Finalize validation.
+Emergency budget overrides remain narrow, expiring policy changes, not
+command-line force flags.
+
+Scrub-failing clean output remains retryable. Scrub-failing findings remain
+canonical and budget-counted, but the coordinator redacts scrub hits and the raw
+review text before persisting the consumer-facing receipt; only the local
+artifact reference retains the full evidence. Such receipts cannot be posted.
 
 Before any provider post, read the head again. If it changed during review,
 write no provider comment and route the new head through delta coordination.
@@ -154,12 +175,15 @@ same gate. Before projecting the new harness or switching runtime aliases:
    and select `migrated`. A filename collision is acceptable only when both
    receipt bytes are identical.
 4. Verify that family and chain counts at the target preserve the old full,
-   delta, and provider-post budgets. Abandoning old receipts or starting with an
-   empty root is prohibited because it silently resets those budgets.
+   delta, and provider-post budgets. An empty target is valid only when the
+   union of all source ledgers is also empty. Abandoning any existing receipt
+   or replacing a non-empty source union with an empty target is prohibited
+   because it silently resets those budgets.
 5. Capture a short-lived `review-coordination-rollout/v1` JSON receipt bound to
-   the release revision. It records `quiesced: true`, `active_reviews: 0`, the
-   source and target roots, `receipt_strategy`, `migration_verified: true`,
-   `budget_history_preserved: true`, and an `expires_at` timestamp.
+   the full 40-character release revision. It records `quiesced: true`,
+   `active_reviews: 0`, the source and target roots, `receipt_strategy`,
+   `migration_verified: true`, `budget_history_preserved: true`, and an
+   `expires_at` timestamp.
 
 The installer requires that proof whenever an existing runtime alias pair is
 present. It does not merely trust the boolean claims: it validates every source
@@ -169,15 +193,23 @@ for the union of source ledgers; and non-blockingly acquires every existing
 family lock across those roots. It holds those locks through installation and
 alias/receipt write. A busy lock, missing or changed receipt, divergent source
 collision, expired proof, or unrelated release revision fails the upgrade.
+Coordination roots themselves must exist, but their lazily-created `receipts/`
+and `.locks/` directories may be absent and are then measured as an empty
+ledger and zero known families.
 
 This verifies the observable active families and budget ledger. It cannot stop
 a producer from inventing a brand-new family lock after the scan because v1 has
 no global rollout lock, so stopping producers remains a real prerequisite, not
 a field to type optimistically. Keep them quiesced until package, alias, harness
 projection, and receipt-root readback all succeed. On failure, retain the old
-receipt roots and resume only the old runtime pair. Full and abbreviated Git
-revisions are accepted when their case-normalized values identify the same
-commit; boolean and integer proof fields are type-checked strictly.
+receipt roots and resume only the old runtime pair. The proof always carries
+the full revision; `--release-revision` may be an abbreviation only when its
+case-normalized value prefixes that authoritative full revision. Boolean and
+integer proof fields are type-checked strictly. Verified evidence records the
+lock-scan timestamp and names, non-blocking probe method, busy-lock-derived
+active count, acquired-lock count, source and target receipt counts, and digest
+matches; `observed_active_reviews` is derived from the probe, not copied from
+the operator claim.
 
 ```bash
 python scripts/release/install-local-release-runtime.py \
@@ -193,9 +225,12 @@ python scripts/release/install-local-release-runtime.py \
 
 The release wheel is always installed with `--no-deps`. The installer parses
 each `Requires-Dist` entry as PEP 508 and evaluates its marker for the target
-host with no extras selected; this correctly excludes extras-only requirements
-regardless of marker whitespace while retaining applicable platform and Python
-requirements. It refuses a wheel with applicable runtime requirements unless
+interpreter selected by `--python`, queried before the environment is built,
+with no extras selected. This correctly excludes extras-only requirements
+regardless of marker whitespace while retaining requirements applicable to
+that interpreter's platform and Python version. The marker environment is
+recorded in the install receipt. The installer refuses a wheel with applicable
+runtime requirements unless
 `--dependency-lock` and `--wheelhouse` are both supplied. The lock must
 enumerate the complete closure, pin every distribution, and include a hash for
 every accepted wheel. The dependency step uses

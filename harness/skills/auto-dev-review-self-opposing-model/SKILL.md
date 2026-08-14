@@ -64,9 +64,12 @@ that fail the scrub. A clean verdict that fails the scrub is stored as a
 retryable `unavailable` attempt for the same key instead of consuming the one
 canonical full-review receipt. Both transports parse only the final non-empty
 `AGENTIC_OS_REVIEW_VERDICT: CLEAN|FINDINGS` line, so an echoed prompt cannot
-manufacture or invalidate the reviewer verdict. A `CLEAN` line that contradicts
-structured `BLOCKER`/`WARNING` headings or a non-empty JSON findings array is
-canonical findings, never an approval or provider post.
+manufacture or invalidate the reviewer verdict. Both transports define CLEAN
+as no unresolved blocking findings. An active top-level `BLOCKER` section or a
+JSON finding with `blocking: true` contradicts CLEAN and becomes canonical
+findings. Resolved/prior sections and non-blocking WARNING/FYI or low findings
+may coexist with CLEAN. Every fenced JSON findings array is inspected, so a
+later empty example cannot erase an earlier blocker.
 
 Do not hand-craft a Claude/Codex prompt, create a second PR, force-push, bypass
 required checks, treat unavailable review as approval, or post intermediate
