@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 import fcntl
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 from typing import Any, Callable, Iterator, Mapping
@@ -58,6 +59,16 @@ class ReviewSubject:
     purpose: str = "review_self"
 
     def __post_init__(self) -> None:
+        # Git/provider SHAs and sha256 fingerprints are case-insensitive hex.
+        # Canonicalize them before any key is computed so uppercase provider
+        # output cannot purchase a second review for the same revisions.
+        object.__setattr__(self, "base_sha", str(self.base_sha).strip().lower())
+        object.__setattr__(self, "head_sha", str(self.head_sha).strip().lower())
+        object.__setattr__(
+            self,
+            "policy_fingerprint",
+            str(self.policy_fingerprint).strip().lower(),
+        )
         required = {
             "repository": self.repository,
             "pull_request": self.pull_request,
@@ -73,11 +84,11 @@ class ReviewSubject:
                 "review subject requires non-empty " + ", ".join(sorted(missing))
             )
         for name, value in (("base_sha", self.base_sha), ("head_sha", self.head_sha)):
-            if not re.fullmatch(r"[0-9a-fA-F]{40}", str(value)):
+            if not re.fullmatch(r"[0-9a-f]{40}", str(value)):
                 raise ReviewCoordinationError(
                     f"review subject {name} must be a full 40-hex commit SHA"
                 )
-        if not re.fullmatch(r"[0-9a-fA-F]{64}", self.policy_fingerprint):
+        if not re.fullmatch(r"[0-9a-f]{64}", self.policy_fingerprint):
             raise ReviewCoordinationError(
                 "review subject policy_fingerprint must be a sha256 digest"
             )
@@ -167,7 +178,17 @@ def canonical_review_purpose(_value: str | None = None) -> str:
 def shared_review_coordination_root(os_root: str | Path) -> Path:
     """Return the OS-wide receipt store shared by every review entrypoint."""
 
-    return Path(os_root).expanduser().resolve() / "state" / "review-coordination"
+    requested = Path(os_root).expanduser().resolve()
+    configured_raw = str(os.environ.get("AGENTIC_OS_ROOT") or "").strip()
+    if configured_raw:
+        configured = Path(configured_raw).expanduser().resolve()
+        if requested != configured:
+            raise ReviewCoordinationError(
+                "review coordination root disagrees with canonical AGENTIC_OS_ROOT: "
+                f"requested={requested} canonical={configured}"
+            )
+        requested = configured
+    return requested / "state" / "review-coordination"
 
 
 def _utc_now() -> str:
@@ -219,6 +240,12 @@ def normalize_findings_ledger(
 
     normalized_review = dict(review)
     outcome = str(normalized_review.get("outcome") or "")
+    if normalized_review.get("scrub_passed") is False:
+        outcome = "unavailable"
+        normalized_review["outcome"] = outcome
+        normalized_review["coordination_warning"] = (
+            "review output failed the provider scrub and remains retryable"
+        )
     if outcome not in TERMINAL_REVIEW_OUTCOMES:
         raise ReviewCoordinationError(
             "review_call must return terminal outcome clean, findings, or unavailable"
@@ -385,13 +412,21 @@ def load_review_receipt(path: str | Path) -> dict[str, Any]:
     subject_raw = payload.get("subject")
     if not isinstance(subject_raw, Mapping):
         raise ReviewCoordinationError("review coordination receipt requires subject")
+    raw_review = payload.get("review")
+    legacy_scrub_failure = (
+        payload.get("outcome") == "clean"
+        and isinstance(raw_review, Mapping)
+        and raw_review.get("scrub_passed") is False
+    )
     subject = ReviewSubject.from_mapping(subject_raw)
     expected_key = stable_review_key(subject)
     if payload.get("key") != expected_key:
         raise ReviewCoordinationError("review coordination receipt key does not match subject")
     expected_chain = review_chain_key(subject)
     expected_family = review_family_key(subject)
-    legacy_unavailable = payload.get("outcome") == "unavailable"
+    legacy_unavailable = (
+        payload.get("outcome") == "unavailable" or legacy_scrub_failure
+    )
     if payload.get("chain_key") != expected_chain:
         if legacy_unavailable and payload.get("chain_key") == _legacy_review_chain_key(subject):
             payload["chain_key"] = expected_chain
@@ -408,6 +443,26 @@ def load_review_receipt(path: str | Path) -> dict[str, Any]:
             )
     if payload.get("status") != "completed" or payload.get("outcome") not in TERMINAL_REVIEW_OUTCOMES:
         raise ReviewCoordinationError("review coordination receipt is not terminal")
+    review_payload = payload.get("review")
+    if not isinstance(review_payload, Mapping):
+        raise ReviewCoordinationError("review coordination receipt requires review evidence")
+    if legacy_scrub_failure:
+        existing_post = payload.get("provider_post")
+        if isinstance(existing_post, Mapping) and existing_post.get("status") == "posted":
+            raise ReviewCoordinationError(
+                "scrub-failed legacy receipt claims an already-posted provider result"
+            )
+        # Receipts produced before scrub failures became retryable may claim
+        # clean at the top level.  Downgrade only the in-memory authority; the
+        # original bytes are archived by execute before the same key retries.
+        payload["outcome"] = "unavailable"
+        payload["review"] = {
+            **dict(review_payload),
+            "outcome": "unavailable",
+            "coordination_warning": (
+                "legacy clean receipt failed scrub and was downgraded for retry"
+            ),
+        }
     mode = payload.get("mode")
     if mode not in {"full", "delta"}:
         raise ReviewCoordinationError("review coordination receipt mode is invalid")

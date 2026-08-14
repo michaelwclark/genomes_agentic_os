@@ -136,6 +136,37 @@ two symlinks in one atomic operation; the installer restores both aliases and
 their prior rollback pointers if any switch, pair-readback, or receipt write
 fails.
 
+### Drain and preserve the review ledger first
+
+An upgrade that changes review code or its receipt-root derivation is a drained
+rollout, not a live rolling update. Before projecting the new harness or
+switching runtime aliases:
+
+1. Stop or pause every Auto-Dev review producer that can reach this OS root,
+   including old and new harness processes. Keep them stopped through runtime
+   and harness readback.
+2. Wait for every in-flight family lock to drain and verify the active review
+   count is zero.
+3. Resolve every old receipt root and the new canonical root. If all producers
+   already use one root, select `shared-existing`. Otherwise, copy immutable
+   terminal receipts into the new root while drained, validate every receipt,
+   and select `migrated`. A filename collision is acceptable only when both
+   receipt bytes are identical.
+4. Verify that family and chain counts at the target preserve the old full,
+   delta, and provider-post budgets. Abandoning old receipts or starting with an
+   empty root is prohibited because it silently resets those budgets.
+5. Capture a short-lived `review-coordination-rollout/v1` JSON receipt bound to
+   the release revision. It records `quiesced: true`, `active_reviews: 0`, the
+   source and target roots, `receipt_strategy`, `migration_verified: true`,
+   `budget_history_preserved: true`, and an `expires_at` timestamp.
+
+The installer requires that proof whenever an existing runtime alias pair is
+present. An expired, revision-mismatched, unverified, or budget-reset receipt
+fails before the new environment is built. The receipt proves the drain
+precondition; operators must keep producers quiesced until package, alias,
+harness projection, and receipt-root readback all succeed. On failure, retain
+the old receipt roots and resume only the old runtime pair.
+
 ```bash
 python scripts/release/install-local-release-runtime.py \
   --wheel /path/to/genomes_agentic_os-X.Y.Z-py3-none-any.whl \
@@ -143,23 +174,27 @@ python scripts/release/install-local-release-runtime.py \
   --release-revision <merged-release-sha> \
   --dependency-lock /path/to/runtime-requirements.lock \
   --wheelhouse /path/to/offline-wheelhouse \
+  --review-rollout-receipt /path/to/review-rollout.json \
   --receipt /path/to/deployment-readback.json \
   --apply
 ```
 
-The release wheel is always installed with `--no-deps`. For a package with
-runtime dependencies, `--dependency-lock` must enumerate the complete closure,
-pin every distribution, and include a hash for every accepted wheel;
-`--wheelhouse` must contain those wheels. The dependency step uses
+The release wheel is always installed with `--no-deps`. The installer reads its
+`Requires-Dist` metadata and refuses a wheel with runtime requirements unless
+`--dependency-lock` and `--wheelhouse` are both supplied. The lock must
+enumerate the complete closure, pin every distribution, and include a hash for
+every accepted wheel. The dependency step uses
 `--no-index --require-hashes --no-deps`, so it cannot contact an index or
-resolve an undeclared transitive dependency. Omitting both options is valid
-only when the wheel has no external runtime dependencies already required by
-its import and CLI smoke checks; those checks fail closed before alias
-activation otherwise.
+resolve an undeclared transitive dependency. After installing the release
+wheel, `pip check` must prove that all declared requirements are installed and
+compatible before import, CLI smoke, or alias activation. Optional-extra-only
+requirements do not force installation because the released runtime does not
+request those extras.
 
 The receipt records prior and new alias targets, wheel checksum, dependency-lock
 hash and offline mode, installed package/version/module path, smoke result,
-exact release revision, rollback pointers, pair readback, and
+`pip check` result, exact release revision, review-rollout receipt and digest,
+rollback pointers, pair readback, and
 `readback_verified`. The installer refuses to overwrite an existing versioned
 runtime, replace a non-symlink alias, or activate an inconsistent alias pair.
 Roll back by switching each active alias to its recorded `.previous` target as

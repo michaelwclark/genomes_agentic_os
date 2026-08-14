@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 import subprocess
 import sys
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -153,6 +155,7 @@ def test_review_outcome_is_terminal_and_findings_are_not_reclassified_clean() ->
     assert crossreview.classify_review_outcome(0, findings, True) == "findings"
     assert crossreview.classify_review_outcome(1, "review failed", True) == "unavailable"
     assert crossreview.classify_review_outcome(0, findings, False) == "findings"
+    assert crossreview.classify_review_outcome(0, clean, False) == "unavailable"
 
 
 @pytest.mark.parametrize(
@@ -162,22 +165,27 @@ def test_review_outcome_is_terminal_and_findings_are_not_reclassified_clean() ->
         ("AGENTIC_OS_REVIEW_VERDICT: MAYBE", "findings", False),
         (
             "AGENTIC_OS_REVIEW_VERDICT: CLEAN\nAGENTIC_OS_REVIEW_VERDICT: CLEAN",
-            "findings",
-            False,
+            "clean",
+            True,
         ),
         (
             "AGENTIC_OS_REVIEW_VERDICT: CLEAN\nAGENTIC_OS_REVIEW_VERDICT: FINDINGS",
             "findings",
-            False,
+            True,
         ),
         (
             "WARNING: problem\nAGENTIC_OS_REVIEW_VERDICT: CLEAN",
+            "clean",
+            True,
+        ),
+        (
+            "AGENTIC_OS_REVIEW_VERDICT: CLEAN\ntrailing prose",
             "findings",
             False,
         ),
     ],
 )
-def test_review_verdict_parser_fails_unstructured_or_contradictory_output_closed(
+def test_review_verdict_parser_uses_only_the_final_non_empty_line(
     text: str, expected: str, structured: bool
 ) -> None:
     crossreview = _load_crossreview()
@@ -208,11 +216,47 @@ def test_provider_marker_requires_the_exact_hidden_marker_line(
         "list_provider_comments",
         lambda _repo, _pr: [
             {"id": 1, "body": f"quoted {marker} suffix"},
-            {"id": 2, "body": f"review body\n{marker}\n"},
+            {"id": 2, "body": f"review body\n  {marker}  \n"},
         ],
     )
 
     assert crossreview.existing_provider_marker("acme/widgets", 42, marker)["id"] == 2
+
+
+def test_post_result_is_recorded_without_replacing_review_result(tmp_path: Path) -> None:
+    crossreview = _load_crossreview()
+    review_receipt = {
+        "outcome": "clean",
+        "review": {"text": "canonical review", "scrub_passed": True},
+        "provider_post": {"status": "not_requested"},
+    }
+    posted_receipt = {
+        **review_receipt,
+        "provider_post": {"status": "posted", "result": {"comment_id": 92}},
+    }
+    review_result = SimpleNamespace(
+        key="stable-key",
+        receipt_path=tmp_path / "canonical.json",
+        receipt=review_receipt,
+        reused=False,
+    )
+    post_result = SimpleNamespace(receipt=posted_receipt)
+    output = tmp_path / "compat.json"
+
+    payload = crossreview.write_legacy_receipt(
+        output,
+        review_result=review_result,
+        post_result=post_result,
+        repo="acme/widgets",
+        pr_number=42,
+        meta={"title": "Repair", "head_sha": "a" * 40},
+        base_sha="b" * 40,
+        review_mode="full",
+    )
+
+    assert payload["text"] == "canonical review"
+    assert payload["provider_post"]["status"] == "posted"
+    assert json.loads(output.read_text(encoding="utf-8")) == payload
 
 
 def test_delta_diff_requires_ancestry_and_defers_size_bound_to_prompt(

@@ -54,7 +54,12 @@ raised before a model/provider call. Provider output is terminal-only, carries
 `<!-- agentic-os-review:<key> -->`, re-reads the head after the model returns,
 and reuses provider readback only when that exact hidden marker line exists.
 Only a structured clean verdict that passes the provider scrub is posted;
-findings and scrub failures remain canonical local receipts without a post.
+findings remain canonical local receipts without a post, including findings
+that fail the scrub. A clean verdict that fails the scrub is stored as a
+retryable `unavailable` attempt for the same key instead of consuming the one
+canonical full-review receipt. Both transports parse only the final non-empty
+`AGENTIC_OS_REVIEW_VERDICT: CLEAN|FINDINGS` line, so an echoed prompt cannot
+manufacture or invalidate the reviewer verdict.
 
 Do not hand-craft a Claude/Codex prompt, create a second PR, force-push, bypass
 required checks, treat unavailable review as approval, or post intermediate

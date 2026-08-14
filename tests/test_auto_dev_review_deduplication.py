@@ -90,6 +90,34 @@ def test_concurrent_same_key_is_single_flight(tmp_path: Path) -> None:
     assert results[0].key == results[1].key
 
 
+def test_concurrent_terminal_posts_share_the_family_single_flight(tmp_path: Path) -> None:
+    coordinator = ReviewCoordinator(tmp_path / "auto-dev-review")
+    coordinator.execute(_subject(), _clean)
+    calls = 0
+    guard = threading.Lock()
+
+    def post(_marker: str, _receipt: dict[str, object]) -> dict[str, object]:
+        nonlocal calls
+        with guard:
+            calls += 1
+        time.sleep(0.05)
+        return {"readback_verified": True, "comment_id": 99}
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(
+            pool.map(
+                lambda _: coordinator.post_terminal(
+                    _subject(), post, scrub_passed=True
+                ),
+                range(2),
+            )
+        )
+
+    assert calls == 1
+    assert sorted(result.reused for result in results) == [False, True]
+    assert all(result.receipt["provider_post"]["status"] == "posted" for result in results)
+
+
 def test_changed_heads_use_one_full_then_three_delta_reviews(tmp_path: Path) -> None:
     coordinator = ReviewCoordinator(tmp_path / "auto-dev-review")
     first = coordinator.execute(_subject("1" * 40), _clean)
@@ -197,6 +225,61 @@ def test_unavailable_attempt_is_retryable_free_and_not_a_delta_parent(
         )
 
 
+def test_failed_scrub_is_retryable_unavailable_and_does_not_burn_budget(
+    tmp_path: Path,
+) -> None:
+    coordinator = ReviewCoordinator(tmp_path / "auto-dev-review")
+    calls = 0
+
+    def scrub_failure() -> dict[str, object]:
+        nonlocal calls
+        calls += 1
+        return {
+            "outcome": "clean",
+            "scrub_passed": False,
+            "scrub_hits": ["internal-path"],
+            "exit_code": 0,
+        }
+
+    first = coordinator.execute(_subject(), scrub_failure)
+    second = coordinator.execute(_subject(), scrub_failure)
+    assert calls == 2
+    assert first.receipt["outcome"] == second.receipt["outcome"] == "unavailable"
+    assert first.receipt["budget"]["full_reviews_used"] == 0
+    assert second.receipt["budget"]["absolute_full_reviews_used"] == 0
+
+
+def test_legacy_clean_scrub_failure_is_archived_and_retried_not_reused(
+    tmp_path: Path,
+) -> None:
+    coordinator = ReviewCoordinator(tmp_path / "auto-dev-review")
+    original = coordinator.execute(_subject(), _clean)
+    legacy = json.loads(original.receipt_path.read_text(encoding="utf-8"))
+    legacy["review"]["scrub_passed"] = False
+    legacy["review"]["scrub_hits"] = ["internal-path"]
+    legacy["provider_post"]["status"] = "pending"
+    original.receipt_path.write_text(
+        json.dumps(legacy, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    calls = 0
+
+    def clean_retry() -> dict[str, object]:
+        nonlocal calls
+        calls += 1
+        return {"outcome": "clean", "scrub_passed": True}
+
+    retried = coordinator.execute(_subject(), clean_retry)
+    assert calls == 1
+    assert not retried.reused
+    assert retried.receipt["outcome"] == "clean"
+    assert retried.receipt["budget"]["full_reviews_used"] == 1
+    archived = list(coordinator.attempts.glob(f"{original.key}-*.json"))
+    assert len(archived) == 1
+    preserved = json.loads(archived[0].read_text(encoding="utf-8"))
+    assert preserved["outcome"] == "clean"
+    assert preserved["review"]["scrub_passed"] is False
+
+
 def test_clean_delta_preserves_unresolved_parent_without_explicit_refs(
     tmp_path: Path,
 ) -> None:
@@ -302,6 +385,44 @@ def test_corrupt_family_receipt_is_quarantined_and_budget_fails_closed(
 def test_review_subject_requires_full_commit_shas() -> None:
     with pytest.raises(ReviewCoordinationError, match="full 40-hex"):
         _subject("1234567")
+
+
+def test_mixed_case_revision_hex_canonicalizes_before_stable_key() -> None:
+    lower = _subject(head="abcdef1234" * 4, policy="ab" * 32, base="cd" * 20)
+    upper = _subject(
+        head=("abcdef1234" * 4).upper(),
+        policy=("ab" * 32).upper(),
+        base=("cd" * 20).upper(),
+    )
+    assert stable_review_key(lower) == stable_review_key(upper)
+    assert upper.head_sha == lower.head_sha
+    assert upper.base_sha == lower.base_sha
+    assert upper.policy_fingerprint == lower.policy_fingerprint
+
+
+def test_entrypoint_purpose_aliases_produce_the_same_stable_key() -> None:
+    crossreview = ReviewSubject(
+        **{**_subject().__dict__, "purpose": canonical_review_purpose("finalize")}
+    )
+    opposing = ReviewSubject(
+        **{
+            **_subject().__dict__,
+            "purpose": canonical_review_purpose("review_self:full_pr"),
+        }
+    )
+    assert stable_review_key(crossreview) == stable_review_key(opposing)
+
+
+def test_shared_root_rejects_disagreement_with_canonical_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    canonical = tmp_path / "canonical-os"
+    monkeypatch.setenv("AGENTIC_OS_ROOT", str(canonical))
+    assert shared_review_coordination_root(canonical) == (
+        canonical / "state/review-coordination"
+    )
+    with pytest.raises(ReviewCoordinationError, match="disagrees with canonical"):
+        shared_review_coordination_root(tmp_path / "second-os")
 
 
 def test_purpose_cannot_bypass_chain_or_family_budgets(tmp_path: Path) -> None:

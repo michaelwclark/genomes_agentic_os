@@ -44,7 +44,7 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def wheel_identity(path: Path) -> tuple[str, str]:
+def wheel_identity(path: Path) -> tuple[str, str, list[str]]:
     if not path.is_file() or path.suffix != ".whl":
         raise ValueError(f"release wheel is missing or not a .whl file: {path}")
     with zipfile.ZipFile(path) as archive:
@@ -64,7 +64,62 @@ def wheel_identity(path: Path) -> tuple[str, str]:
         raise ValueError(
             f"expected {PACKAGE} wheel metadata, found name={name!r} version={version!r}"
         )
-    return name, version
+    requirements = [
+        value.strip()
+        for value in metadata.get_all("Requires-Dist", [])
+        if value.strip() and "extra ==" not in value.lower()
+    ]
+    return name, version, requirements
+
+
+def review_rollout_proof(path: Path, *, release_revision: str) -> dict[str, object]:
+    if not path.is_file():
+        raise ValueError(f"review rollout receipt does not exist: {path}")
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as error:
+        raise ValueError(f"review rollout receipt is not valid JSON: {path}") from error
+    if not isinstance(value, dict):
+        raise ValueError("review rollout receipt must be a JSON object")
+    required = {
+        "schema_version": "review-coordination-rollout/v1",
+        "release_revision": release_revision.lower(),
+        "quiesced": True,
+        "active_reviews": 0,
+        "migration_verified": True,
+        "budget_history_preserved": True,
+    }
+    for field, expected in required.items():
+        if value.get(field) != expected:
+            raise ValueError(
+                f"review rollout receipt requires {field}={expected!r}"
+            )
+    strategy = value.get("receipt_strategy")
+    if strategy not in {"migrated", "shared-existing"}:
+        raise ValueError(
+            "review rollout receipt strategy must be migrated or shared-existing"
+        )
+    target = Path(str(value.get("target_receipt_root", ""))).expanduser()
+    sources = value.get("source_receipt_roots")
+    if not target.is_absolute() or not isinstance(sources, list) or not sources:
+        raise ValueError(
+            "review rollout receipt requires one absolute target and source roots"
+        )
+    source_paths = [Path(str(item)).expanduser() for item in sources]
+    if any(not item.is_absolute() for item in source_paths):
+        raise ValueError("review rollout source roots must be absolute")
+    if strategy == "shared-existing" and any(item != target for item in source_paths):
+        raise ValueError(
+            "shared-existing rollout requires every source root to equal target root"
+        )
+    expires_at = value.get("expires_at")
+    try:
+        expiry = datetime.fromisoformat(str(expires_at).replace("Z", "+00:00"))
+    except ValueError as error:
+        raise ValueError("review rollout receipt requires an ISO-8601 expires_at") from error
+    if expiry.tzinfo is None or expiry <= datetime.now(timezone.utc):
+        raise ValueError("review rollout receipt is expired")
+    return value
 
 
 def expected_sha256(
@@ -271,7 +326,7 @@ def install(arguments: argparse.Namespace) -> dict[str, object]:
     wheel = arguments.wheel.expanduser().resolve(strict=False)
     runtime_root = arguments.runtime_root.expanduser().resolve(strict=False)
     receipt_path = arguments.receipt.expanduser().resolve(strict=False)
-    package_name, version = wheel_identity(wheel)
+    package_name, version, runtime_requirements = wheel_identity(wheel)
     if not REVISION.fullmatch(arguments.release_revision):
         raise ValueError("--release-revision must be a 7-64 character Git SHA")
     expected = expected_sha256(
@@ -306,6 +361,11 @@ def install(arguments: argparse.Namespace) -> dict[str, object]:
         raise ValueError(f"dependency lock does not exist: {dependency_lock}")
     if wheelhouse is not None and not wheelhouse.is_dir():
         raise ValueError(f"dependency wheelhouse does not exist: {wheelhouse}")
+    if runtime_requirements and dependency_lock is None:
+        raise ValueError(
+            "wheel declares runtime dependencies; --dependency-lock and --wheelhouse "
+            "are required: " + ", ".join(runtime_requirements)
+        )
 
     release_dir = runtime_root / "releases" / f"{version}-{arguments.release_revision[:7].lower()}"
     target = release_dir / "runtime"
@@ -317,7 +377,23 @@ def install(arguments: argparse.Namespace) -> dict[str, object]:
         runtime_root / alias_name: _link_snapshot(runtime_root / alias_name)
         for alias_name in ALIASES
     }
-    _require_consistent_pair(initial_aliases, label="active runtime")
+    prior_runtime = _require_consistent_pair(initial_aliases, label="active runtime")
+    rollout_path_arg = getattr(arguments, "review_rollout_receipt", None)
+    rollout_path = (
+        rollout_path_arg.expanduser().resolve(strict=False)
+        if rollout_path_arg is not None
+        else None
+    )
+    rollout: dict[str, object] | None = None
+    if prior_runtime is not None:
+        if rollout_path is None:
+            raise ValueError(
+                "runtime upgrade requires --review-rollout-receipt proving drain, "
+                "receipt migration/shared root, and preserved budgets"
+            )
+        rollout = review_rollout_proof(
+            rollout_path, release_revision=arguments.release_revision
+        )
 
     created = False
     activation: AliasActivation | None = None
@@ -353,6 +429,9 @@ def install(arguments: argparse.Namespace) -> dict[str, object]:
                 str(wheel),
             ]
         )
+        dependency_check = _run(
+            [str(target / "bin" / "python"), "-m", "pip", "check"]
+        )
         validation = _readback(target, version)
         activation = activate_aliases(runtime_root, target)
         aliases = activation.aliases
@@ -371,6 +450,7 @@ def install(arguments: argparse.Namespace) -> dict[str, object]:
                 "sha256": actual,
                 "expected_sha256": expected,
                 "checksum_verified": expected is not None,
+                "requires_dist": runtime_requirements,
             },
             "runtime": {
                 "root": str(runtime_root),
@@ -384,6 +464,17 @@ def install(arguments: argparse.Namespace) -> dict[str, object]:
                 "wheelhouse": str(wheelhouse) if wheelhouse else None,
                 "network_disabled": True,
                 "dependency_resolution_disabled": True,
+                "pip_check": {
+                    "command": [str(target / "bin" / "python"), "-m", "pip", "check"],
+                    "exit_code": dependency_check.returncode,
+                    "stdout": dependency_check.stdout.strip(),
+                },
+            },
+            "review_coordination_rollout": {
+                "required": prior_runtime is not None,
+                "receipt": str(rollout_path) if rollout_path else None,
+                "receipt_sha256": sha256(rollout_path) if rollout_path else None,
+                "proof": rollout,
             },
             "aliases": aliases,
             "smoke": validation["smoke"],
@@ -430,6 +521,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--wheelhouse",
         type=Path,
         help="offline wheel directory used with --dependency-lock",
+    )
+    parser.add_argument(
+        "--review-rollout-receipt",
+        type=Path,
+        help=(
+            "short-lived drain and receipt-migration proof required when replacing "
+            "an existing runtime"
+        ),
     )
     parser.add_argument("--apply", action="store_true")
     arguments = parser.parse_args(argv)

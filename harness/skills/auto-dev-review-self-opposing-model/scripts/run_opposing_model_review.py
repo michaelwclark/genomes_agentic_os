@@ -14,6 +14,7 @@ import datetime as dt
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -44,6 +45,20 @@ TEMPLATE = ROOT / "harness/skills/auto-dev/templates/reviewer-prompt.md"
 CLAUDE_ENV_REMOVED = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
 CLAUDE_TOOLS = "Read,Grep,Glob,Bash(git diff),Bash(git diff *),Bash(git show),Bash(git show *),Bash(git status),Bash(git status *)"
 MAX_DIFF_CHARS = 40_000
+PURPOSE_ALIASES = {
+    "finalize",
+    "merge-readiness",
+    "review-others",
+    "review-repair",
+    "review-self",
+    "review_others",
+    "review_repair",
+    "review_self",
+}
+SCOPE_ALIASES = {"full-pr": "full-pr", "full_pr": "full-pr", "pr": "full-pr"}
+VERDICT_PATTERN = re.compile(
+    r"AGENTIC_OS_REVIEW_VERDICT:\s*(CLEAN|FINDINGS)", re.IGNORECASE
+)
 
 
 class ReviewError(RuntimeError):
@@ -65,6 +80,31 @@ def run(command: list[str], *, cwd: Path | None = None, timeout: int = 30, env: 
 
 def normalized(ticket: str) -> str:
     return "".join(ch.lower() for ch in ticket if ch.isalnum())
+
+
+def normalize_review_purpose(purpose: str, scope: str) -> tuple[str, str]:
+    """Normalize every accepted entrypoint alias onto the shared subject key."""
+    requested_purpose = str(purpose).strip().lower()
+    normalized_scope = SCOPE_ALIASES.get(str(scope).strip().lower())
+    if requested_purpose not in PURPOSE_ALIASES:
+        raise ReviewError("review purpose must be a documented merge-readiness stage alias")
+    if normalized_scope is None:
+        raise ReviewError("review scope must resolve to full-pr")
+    return (
+        canonical_review_purpose(f"{requested_purpose}:{normalized_scope}"),
+        normalized_scope,
+    )
+
+
+def parse_review_verdict(response: str) -> tuple[str, bool]:
+    """Read the final non-empty line using the shared terminal vocabulary."""
+    lines = [line.strip() for line in response.splitlines() if line.strip()]
+    if not lines:
+        return "findings", False
+    match = VERDICT_PATTERN.fullmatch(lines[-1])
+    if match is None:
+        return "findings", False
+    return ("clean" if match.group(1).upper() == "CLEAN" else "findings", True)
 
 
 def one(paths: list[Path], description: str) -> Path:
@@ -215,8 +255,7 @@ def main() -> int:
             raise ReviewError(f"exact-head mismatch: provider={provider['headRefOid']} worktree={head}")
         base = str(source["base_sha"])
         repository = git_repository(worktree)
-        if args.scope.replace("_", "-").lower() not in {"full-pr", "pr"}:
-            raise ReviewError("review scope must resolve to full-pr")
+        purpose, _scope = normalize_review_purpose(args.purpose, args.scope)
         subject = ReviewSubject(
             repository=repository,
             pull_request=f"github:{repository}#{pr_number}",
@@ -224,7 +263,7 @@ def main() -> int:
             base_sha=base,
             head_sha=head,
             policy_fingerprint=policy_fingerprint(source),
-            purpose=canonical_review_purpose(f"{args.purpose}:{args.scope}"),
+            purpose=purpose,
         )
         coordinator = ReviewCoordinator(shared_review_coordination_root(os_root))
         review_key = stable_review_key(subject)
@@ -289,6 +328,8 @@ def main() -> int:
             (run_dir / "reviewer-prompt.md").write_text(prompt, encoding="utf-8")
             claude = shutil.which("claude")
             response = ""
+            parsed_outcome = "findings"
+            verdict_structured = False
             if not claude:
                 failure = "cli_not_found"
                 plan["reviewer_status"] = "unavailable"
@@ -323,6 +364,9 @@ def main() -> int:
                         failure = "cli_output_invalid"
                     else:
                         response = completed.stdout.strip()
+                        parsed_outcome, verdict_structured = parse_review_verdict(response)
+                        if not verdict_structured:
+                            failure = "cli_output_invalid"
                         (run_dir / "reviewer-response.md").write_text(
                             response + "\n", encoding="utf-8"
                         )
@@ -346,7 +390,7 @@ def main() -> int:
             decision = decide(run_dir)
             if plan["reviewer_status"] in {"unavailable", "runtime_failure"}:
                 outcome = "unavailable"
-            elif decision["decision"].startswith("ready_"):
+            elif parsed_outcome == "clean" and decision["decision"].startswith("ready_"):
                 outcome = "clean"
             else:
                 outcome = "findings"
@@ -361,6 +405,8 @@ def main() -> int:
                 "failure_code": failure,
                 "decision": decision["decision"],
                 "response": response,
+                "parsed_outcome": parsed_outcome,
+                "verdict_structured": verdict_structured,
                 "readback_verified": failure != "head_changed_after_review",
             }
 

@@ -56,11 +56,11 @@ Return only a fenced JSON array followed by one verdict line:
 `blocking` may be true only for critical or high findings that must be fixed
 before merge. Return `[]` when there are no findings.
 
-VERDICT: ready
+AGENTIC_OS_REVIEW_VERDICT: CLEAN
 
 or
 
-VERDICT: changes_required
+AGENTIC_OS_REVIEW_VERDICT: FINDINGS
 
-Use `ready` only when there are no blocking findings and every acceptance
+Use `CLEAN` only when there are no blocking findings and every acceptance
 criterion is met.

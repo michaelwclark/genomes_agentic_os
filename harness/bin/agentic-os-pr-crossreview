@@ -68,9 +68,7 @@ from genomes_agentic_os.review_coordination import (
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
-INSTANCE_ROOT = Path("/Users/genome/agentic_os")
-ARTIFACT_DIR = INSTANCE_ROOT / "harness/shared_factory/06-runs-and-logs/harness-runs"
-COORDINATION_ROOT = shared_review_coordination_root(INSTANCE_ROOT)
+INSTANCE_ROOT = Path.home() / "agentic_os"
 
 _BIN_DIR = Path(__file__).resolve().parent
 ROUTING_CONFIG = _BIN_DIR.parent / "registries" / "harness-routing.yml"
@@ -236,7 +234,7 @@ def list_provider_comments(repo: str, pr: int) -> list[dict]:
 def existing_provider_marker(repo: str, pr: int, marker: str) -> dict | None:
     """Return the existing provider comment carrying the stable review marker."""
     for row in list_provider_comments(repo, pr):
-        if marker in str(row.get("body") or "").splitlines():
+        if any(line.strip() == marker for line in str(row.get("body") or "").splitlines()):
             return row
     return None
 
@@ -317,23 +315,28 @@ def post_terminal_review(
 
 
 def parse_review_verdict(review_text: str) -> tuple[str, bool]:
-    """Parse the explicit reviewer verdict, failing ambiguous output closed."""
-    verdicts = [match.upper() for match in VERDICT_PATTERN.findall(review_text)]
-    if verdicts == ["CLEAN"]:
-        if re.search(r"\b(?:BLOCKER|WARNING)\b", review_text, re.IGNORECASE):
-            return "findings", False
+    """Parse only the final non-empty line so prompt echo cannot forge a verdict."""
+    lines = [line.strip() for line in review_text.splitlines() if line.strip()]
+    if not lines:
+        return "findings", False
+    match = VERDICT_PATTERN.fullmatch(lines[-1])
+    if match is None:
+        return "findings", False
+    if match.group(1).upper() == "CLEAN":
         return "clean", True
-    if verdicts == ["FINDINGS"]:
+    if match.group(1).upper() == "FINDINGS":
         return "findings", True
     return "findings", False
 
 
 def classify_review_outcome(exit_code: int, review_text: str, scrub_passed: bool) -> str:
-    """Map one reviewer result to canonical availability, independent of scrub."""
-    del scrub_passed  # Provider safety is recorded separately from reviewer availability.
+    """Keep findings canonical; make an unpublishable clean output retryable."""
     if exit_code != 0 or not review_text.strip():
         return "unavailable"
-    return parse_review_verdict(review_text)[0]
+    parsed, _structured = parse_review_verdict(review_text)
+    if parsed == "clean" and not scrub_passed:
+        return "unavailable"
+    return parsed
 
 
 def get_pr_meta(repo: str, pr: int) -> dict:
@@ -624,11 +627,11 @@ _EPILOG = textwrap.dedent("""\
           default_author, post_mode, scrub rules.
 
     ARTIFACT FILES (written after every run)
-      /Users/genome/agentic_os/harness/shared_factory/06-runs-and-logs/harness-runs/<ts>-crossreview-<id>.txt
+      <agentic-os-root>/harness/shared_factory/06-runs-and-logs/harness-runs/crossreview-artifacts/<review-key>.txt
           The full review output (stdout+stderr from the reviewing harness).
-      /Users/genome/agentic_os/harness/shared_factory/06-runs-and-logs/harness-runs/<ts>-crossreview-<id>.meta.json
+      <agentic-os-root>/harness/shared_factory/06-runs-and-logs/harness-runs/crossreview-artifacts/<review-key>.meta.json
           Receipt: PR, repo, author_harness, reviewer_harness, scrub_passed, artifact path.
-      /Users/genome/agentic_os/state/review-coordination/
+      <agentic-os-root>/state/review-coordination/
           The single shared coordination root for receipts, locks, budgets, and
           provider-post deduplication. --output-dir never changes this root.
 
@@ -730,9 +733,56 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--output-dir",
         metavar="DIR",
-        help=f"Directory for artifact and receipt files (default: {ARTIFACT_DIR}).",
+        help=(
+            "Directory for reviewer artifacts and the compatibility receipt "
+            "(default: <agentic-os-root>/harness/shared_factory/06-runs-and-logs/harness-runs)."
+        ),
+    )
+    parser.add_argument(
+        "--os-root",
+        type=Path,
+        default=Path(os.environ.get("AGENTIC_OS_ROOT", str(INSTANCE_ROOT))),
+        metavar="DIR",
+        help=(
+            "Installed Agentic OS root used to resolve the shared coordination "
+            "store (default: AGENTIC_OS_ROOT or the installed instance root)."
+        ),
     )
     return parser
+
+
+def write_legacy_receipt(
+    path: Path,
+    *,
+    review_result: object,
+    post_result: object | None,
+    repo: str,
+    pr_number: int,
+    meta: dict,
+    base_sha: str,
+    review_mode: str,
+) -> dict:
+    """Write the compatibility receipt without replacing the review result."""
+    review_receipt = getattr(review_result, "receipt")
+    post_receipt = getattr(post_result, "receipt") if post_result is not None else review_receipt
+    review = dict(review_receipt.get("review") or {})
+    payload = {
+        "ts": now_iso(),
+        "repo": repo,
+        "pr": pr_number,
+        "pr_title": meta["title"],
+        "head_sha": meta["head_sha"],
+        "base_sha": base_sha,
+        "review_key": getattr(review_result, "key"),
+        "review_mode": review_mode,
+        "reused": bool(getattr(review_result, "reused")),
+        "coordination_receipt": str(getattr(review_result, "receipt_path")),
+        "provider_marker": provider_review_marker(getattr(review_result, "key")),
+        "provider_post": post_receipt.get("provider_post"),
+        **review,
+    }
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return payload
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -746,7 +796,12 @@ def main(argv: list[str] | None = None) -> int:
     repo, pr_number = parse_pr_ref(args.pr, args.repo)
 
     # Determine artifact directory.
-    artifact_dir = Path(args.output_dir).expanduser().resolve() if args.output_dir else ARTIFACT_DIR
+    artifact_dir = (
+        Path(args.output_dir).expanduser().resolve()
+        if args.output_dir
+        else args.os_root.expanduser().resolve()
+        / "harness/shared_factory/06-runs-and-logs/harness-runs"
+    )
     artifact_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"[crossreview] Fetching PR #{pr_number} from {repo} ...", file=sys.stderr)
@@ -777,7 +832,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
-    coordinator = ReviewCoordinator(COORDINATION_ROOT)
+    coordinator = ReviewCoordinator(shared_review_coordination_root(args.os_root))
     review_key = stable_review_key(subject)
     artifact_stem = artifact_dir / "crossreview-artifacts" / review_key
     artifact_stem.parent.mkdir(parents=True, exist_ok=True)
@@ -847,8 +902,9 @@ def main(argv: list[str] | None = None) -> int:
         scrub_hits = scrub_check(review_text)
         scrub_passed = not scrub_hits
         parsed_outcome, verdict_structured = parse_review_verdict(review_text)
+        outcome = classify_review_outcome(exit_code, review_text, scrub_passed)
         return {
-            "outcome": classify_review_outcome(exit_code, review_text, scrub_passed),
+            "outcome": outcome,
             "text": review_text,
             "exit_code": exit_code,
             "duration_sec": duration,
@@ -856,6 +912,20 @@ def main(argv: list[str] | None = None) -> int:
             "scrub_hits": scrub_hits,
             "parsed_outcome": parsed_outcome,
             "verdict_structured": verdict_structured,
+            "availability_failure": (
+                "provider_scrub_failed"
+                if outcome == "unavailable"
+                and parsed_outcome == "clean"
+                and not scrub_passed
+                else None
+            ),
+            "provider_post_eligibility": (
+                "eligible"
+                if outcome == "clean" and scrub_passed
+                else "blocked_scrub"
+                if not scrub_passed
+                else "not_clean"
+            ),
             "artifact_file": str(output_file),
             "author_harness": author_harness,
             "author_detected_by": author_detected_by,
@@ -878,19 +948,20 @@ def main(argv: list[str] | None = None) -> int:
             )
 
     try:
-        result = coordinator.execute(
+        review_result = coordinator.execute(
             subject,
             execute_review,
             mode=args.mode,
             parent_key=args.parent_key,
         )
-        review_for_post = dict(result.receipt.get("review") or {})
+        review_for_post = dict(review_result.receipt.get("review") or {})
+        post_result = None
         if (
             provider_post_call is not None
-            and result.receipt.get("outcome") == "clean"
+            and review_result.receipt.get("outcome") == "clean"
             and review_for_post.get("scrub_passed") is True
         ):
-            result = coordinator.post_terminal(
+            post_result = coordinator.post_terminal(
                 subject,
                 provider_post_call,
                 scrub_passed=True,
@@ -902,32 +973,24 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
-    review = dict(result.receipt.get("review") or {})
-    legacy_receipt = {
-        "ts": now_iso(),
-        "repo": repo,
-        "pr": pr_number,
-        "pr_title": meta["title"],
-        "head_sha": meta["head_sha"],
-        "base_sha": base_sha,
-        "review_key": result.key,
-        "review_mode": args.mode,
-        "reused": result.reused,
-        "coordination_receipt": str(result.receipt_path),
-        "provider_marker": provider_review_marker(result.key),
-        "provider_post": result.receipt.get("provider_post"),
-        **review,
-    }
-    meta_file.write_text(
-        json.dumps(legacy_receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    review = dict(review_result.receipt.get("review") or {})
+    write_legacy_receipt(
+        meta_file,
+        review_result=review_result,
+        post_result=post_result,
+        repo=repo,
+        pr_number=pr_number,
+        meta=meta,
+        base_sha=base_sha,
+        review_mode=args.mode,
     )
     print(
-        f"[crossreview] {'Reused' if result.reused else 'Created'} review receipt: "
-        f"{result.receipt_path}",
+        f"[crossreview] {'Reused' if review_result.reused else 'Created'} review receipt: "
+        f"{review_result.receipt_path}",
         file=sys.stderr,
     )
     print(str(review.get("text") or ""))
-    return 0 if result.receipt.get("outcome") in {"clean", "findings"} else 1
+    return 0 if review_result.receipt.get("outcome") in {"clean", "findings"} else 1
 
 
 # Expose DEFAULT_TIMEOUT_SEC in module scope for argparse default.
