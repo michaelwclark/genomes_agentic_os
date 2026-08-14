@@ -4111,6 +4111,78 @@ def test_everything_apply_marks_four_unmanaged_tasks_pending_without_stage_recei
         assert projection["stages"]["groom"]["status"] == "not_started"
 
 
+def test_mixed_executor_handoffs_preserve_exhausted_task_in_portfolio_rollup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, base_sha = _repository(tmp_path)
+    root = tmp_path / "os"
+    _project(root, repo)
+    monkeypatch.setattr(
+        delivery,
+        "create_isolated_worktree",
+        lambda **kwargs: {
+            "name": kwargs["ticket"].lower(),
+            "path": f"/tmp/{kwargs['ticket'].lower()}",
+            "branch": f"feature/{kwargs['ticket'].lower()}",
+            "base_sha": base_sha,
+        },
+    )
+
+    run_id = "mixed-executor-handoffs"
+    tickets = ["CC-EXHAUSTED", "CC-PENDING"]
+    first = delivery.start_development_run(
+        root,
+        "acme",
+        "app",
+        tickets,
+        run_id=run_id,
+        auto_dev_mode="everything",
+        require_executor_handoff=True,
+        apply=True,
+    )
+    assert first["state"] == "pending"
+    rows = {row["ticket"]: row for row in first["tasks"]}
+    exhausted = TaskState(Path(rows["CC-EXHAUSTED"]["state_ref"]))
+    selected_packet = Path(exhausted.read()["work_item"])
+
+    for attempt in (2, 3):
+        exhausted.recover(
+            receipt=f"operator-recovery-{attempt}",
+            idempotency_key=f"cc-exhausted:recover:{attempt}",
+        )
+        result = delivery.start_development_run(
+            root,
+            "acme",
+            "app",
+            ["CC-EXHAUSTED"],
+            run_id=run_id,
+            auto_dev_mode="everything",
+            selected_work_item=selected_packet,
+            require_executor_handoff=True,
+            apply=True,
+        )
+
+    assert result["state"] == "partial"
+    result_rows = {row["ticket"]: row for row in result["tasks"]}
+    assert result_rows["CC-EXHAUSTED"]["handoff"]["status"] == "blocked"
+    assert result_rows["CC-EXHAUSTED"]["handoff"]["recoverable"] is False
+    assert result_rows["CC-PENDING"]["handoff"]["status"] == "pending"
+    assert result_rows["CC-PENDING"]["handoff"]["recoverable"] is True
+    assert exhausted.read()["state"] == "blocked"
+    pending = TaskState(Path(result_rows["CC-PENDING"]["state_ref"]))
+    assert pending.read()["state"] == "worktree_ready"
+
+    portfolio_path = Path(result_rows["CC-EXHAUSTED"]["state_ref"]).parents[2] / "portfolio.json"
+    before_replay = portfolio_path.read_bytes()
+    terminal_receipt = result_rows["CC-EXHAUSTED"]["handoff"]["receipt"]
+    replay = exhausted.record_executor_unavailable(stage="groom")
+
+    assert replay["replayed"] is True
+    assert replay["handoff"]["attempt"] == 3
+    assert replay["task"]["failure"]["receipt"] == terminal_receipt
+    assert portfolio_path.read_bytes() == before_replay
+
+
 def test_everything_executor_handoff_blocks_after_bounded_retries(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
