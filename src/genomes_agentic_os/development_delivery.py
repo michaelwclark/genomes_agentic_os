@@ -5004,6 +5004,52 @@ def _validate_active_pr_create_escalation_portfolio(
     return dict(auto_dev)
 
 
+def _active_pr_create_escalation_stage_contract(
+    task: Mapping[str, Any],
+) -> tuple[tuple[str, ...], list[str], dict[str, dict[str, Any]]]:
+    """Accept only AGE-190's current or exact pre-validation stage contract.
+
+    The historical AGE-190 packet was recorded before
+    ``validate_production_release`` became a canonical stage.  Treating that
+    exact ordered omission as a general stage-order migration would let a
+    different legacy packet enter this one-ticket escalation.  Admit only the
+    historical order here, then return the full current order so the derived
+    Review-through-Merge contract has an explicit fresh production-validation
+    stage.
+    """
+
+    raw_order = task.get("auto_dev_stage_order")
+    raw_policies = task.get("auto_dev_stage_policies")
+    if not isinstance(raw_order, list) or not isinstance(raw_policies, Mapping):
+        raise DevelopmentDeliveryError(
+            "active pr_create escalation requires one exact current or legacy stage contract"
+        )
+    recorded_order = tuple(str(stage) for stage in raw_order)
+    current_order = tuple(AUTO_DEV_STAGE_ORDER)
+    legacy_order = tuple(
+        stage for stage in AUTO_DEV_STAGE_ORDER if stage != "validate_production_release"
+    )
+    if recorded_order not in {current_order, legacy_order}:
+        raise DevelopmentDeliveryError(
+            "active pr_create escalation requires the exact canonical stage order or "
+            "the one legacy order that omits validate_production_release"
+        )
+    if not (
+        set(raw_policies) == set(recorded_order)
+        and all(isinstance(policy, Mapping) for policy in raw_policies.values())
+    ):
+        raise DevelopmentDeliveryError(
+            "active pr_create escalation requires a stage policy map matching its exact stage order"
+        )
+    try:
+        stage_policies = validate_auto_dev_stage_policies(raw_policies)
+    except AutoDevStateError as exc:
+        raise DevelopmentDeliveryError(
+            "active pr_create escalation has an invalid exact stage policy map"
+        ) from exc
+    return recorded_order, list(current_order), stage_policies
+
+
 def _active_pr_create_delivery_escalation_context(state_path: Path) -> dict[str, Any]:
     """Prove the sole legacy local-validation PR Create boundary is recoverable."""
 
@@ -5045,12 +5091,10 @@ def _active_pr_create_delivery_escalation_context(state_path: Path) -> dict[str,
         raise DevelopmentDeliveryError(
             "active pr_create escalation requires a fully linked canonical task"
         )
-    stage_order = validate_auto_dev_stage_order(list(task.get("auto_dev_stage_order") or []))
-    stage_policies = validate_auto_dev_stage_policies(
-        task.get("auto_dev_stage_policies")
-        if isinstance(task.get("auto_dev_stage_policies"), Mapping)
-        else {}
+    recorded_stage_order, stage_order, stage_policies = (
+        _active_pr_create_escalation_stage_contract(task)
     )
+    legacy_stage_contract = recorded_stage_order != tuple(AUTO_DEV_STAGE_ORDER)
     root = expand_path(str(task["os_root"]))
     domain = normalize_domain(str(task["domain"]))
     project = validate_name(str(task["project"]), "project")
@@ -5085,6 +5129,8 @@ def _active_pr_create_delivery_escalation_context(state_path: Path) -> dict[str,
         and projection.get("requested_stage") == "pr_create"
         and projection.get("start_stage") == "groom"
         and projection.get("completion_stage") == "pr_create"
+        and projection.get("stage_order") == list(recorded_stage_order)
+        and projection.get("stage_policies") == task.get("auto_dev_stage_policies")
         and projection_delivery.get("state") == "local_validation"
         and projection_delivery.get("goal") == "pr_create"
         and projection_delivery.get("run_id") == task["run_id"]
@@ -5114,6 +5160,15 @@ def _active_pr_create_delivery_escalation_context(state_path: Path) -> dict[str,
             )
     for stage in _ACTIVE_PR_CREATE_ESCALATION_POST_PR_STAGES:
         row = stages.get(stage)
+        if (
+            legacy_stage_contract
+            and stage == "validate_production_release"
+            and row is None
+        ):
+            # The only admitted legacy contract predates this stage entirely.
+            # A missing row is therefore not authority; synchronization below
+            # derives its current, receipt-free boundary before fresh review.
+            continue
         if not (
             isinstance(row, Mapping)
             and row.get("status") == "out_of_scope"

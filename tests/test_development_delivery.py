@@ -639,6 +639,46 @@ def _canonical_delivery_row(root: Path, task: TaskState) -> dict[str, object] | 
     return dict(row) if row else None
 
 
+def _set_exact_age190_legacy_stage_contract(
+    task: TaskState, portfolio_path: Path
+) -> list[str]:
+    """Recreate the one AGE-190 contract recorded before production validation."""
+
+    legacy_order = [
+        stage for stage in AUTO_DEV_STAGE_ORDER if stage != "validate_production_release"
+    ]
+    legacy_stages = set(legacy_order)
+    current = task.read()
+    current["auto_dev_stage_order"] = legacy_order
+    current["auto_dev_stage_policies"] = {
+        stage: policy
+        for stage, policy in current["auto_dev_stage_policies"].items()
+        if stage in legacy_stages
+    }
+    delivery._atomic_json(task.path, current)
+
+    portfolio = json.loads(portfolio_path.read_text(encoding="utf-8"))
+    portfolio["auto_dev"]["stage_order"] = legacy_order
+    portfolio["auto_dev"]["stage_policies"] = {
+        stage: policy
+        for stage, policy in portfolio["auto_dev"]["stage_policies"].items()
+        if stage in legacy_stages
+    }
+    delivery._atomic_json(portfolio_path, portfolio)
+
+    projection_path = Path(current["autodev_path"])
+    projection = json.loads(projection_path.read_text(encoding="utf-8"))
+    projection["stage_order"] = legacy_order
+    projection["stage_policies"] = {
+        stage: policy
+        for stage, policy in projection["stage_policies"].items()
+        if stage in legacy_stages
+    }
+    projection["stages"].pop("validate_production_release")
+    delivery._atomic_json(projection_path, projection)
+    return legacy_order
+
+
 def _active_pr_create_escalation_surfaces(
     root: Path, task: TaskState, portfolio_path: Path
 ) -> dict[str, object]:
@@ -751,6 +791,81 @@ def test_escalate_active_nonblocked_pr_create_delivery_accepts_only_age190_shape
         )["result"]
         == "replayed"
     )
+
+
+def test_escalate_active_nonblocked_pr_create_delivery_upgrades_exact_legacy_age190_contract(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root, task, portfolio_path, _release_wrapper, _release_evidence = (
+        _active_nonblocked_pr_create_escalation_fixture(tmp_path)
+    )
+    legacy_order = _set_exact_age190_legacy_stage_contract(task, portfolio_path)
+
+    assert main(
+        [
+            "auto-dev",
+            "escalate-pr-create-delivery",
+            "--state",
+            str(task.path),
+            "--reason",
+            "Upgrade the exact immutable AGE-190 pre-validation stage contract.",
+            "--idempotency-key",
+            "cc-190:legacy-stage-contract",
+            "--apply",
+            "--json",
+        ]
+    ) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["result"] == "escalated"
+    receipt = json.loads(Path(result["receipt"]).read_text(encoding="utf-8"))
+    assert receipt["original"]["task_state_sha256"]
+    assert receipt["escalated"]["stage_order"] == list(AUTO_DEV_STAGE_ORDER)
+
+    current = task.read()
+    assert current["auto_dev_stage_order"] == list(AUTO_DEV_STAGE_ORDER)
+    assert set(current["auto_dev_stage_policies"]) == set(AUTO_DEV_STAGE_ORDER)
+    portfolio = json.loads(portfolio_path.read_text(encoding="utf-8"))
+    assert portfolio["auto_dev"]["stage_order"] == list(AUTO_DEV_STAGE_ORDER)
+    projection = read_auto_dev_state(current["autodev_path"])
+    assert projection["stage_order"] == list(AUTO_DEV_STAGE_ORDER)
+    assert projection["stages"]["validate_production_release"]["status"] in {
+        "out_of_scope",
+        "not_started",
+    }
+    assert projection["stages"]["validate_production_release"]["receipt_refs"] == []
+    assert legacy_order != current["auto_dev_stage_order"]
+    assert _canonical_delivery_row(root, task)
+
+
+@pytest.mark.parametrize("variant", ["reordered", "duplicate", "other_omission"])
+def test_escalate_active_nonblocked_pr_create_delivery_refuses_nonexact_legacy_stage_contract(
+    tmp_path: Path, variant: str
+) -> None:
+    root, task, portfolio_path, _release_wrapper, _release_evidence = (
+        _active_nonblocked_pr_create_escalation_fixture(tmp_path)
+    )
+    legacy_order = _set_exact_age190_legacy_stage_contract(task, portfolio_path)
+    invalid_order = list(legacy_order)
+    if variant == "reordered":
+        invalid_order[1], invalid_order[2] = invalid_order[2], invalid_order[1]
+    elif variant == "duplicate":
+        invalid_order[-1] = invalid_order[-2]
+    else:
+        invalid_order.remove("health")
+    current = task.read()
+    current["auto_dev_stage_order"] = invalid_order
+    delivery._atomic_json(task.path, current)
+    before = _active_pr_create_escalation_surfaces(root, task, portfolio_path)
+
+    with pytest.raises(DevelopmentDeliveryError, match="exact canonical stage order"):
+        delivery.escalate_active_nonblocked_pr_create_delivery(
+            task.path,
+            reason="Reject every legacy stage contract except AGE-190's exact one.",
+            idempotency_key=f"cc-190:nonexact-legacy-stage-contract:{variant}",
+            apply=True,
+        )
+
+    assert _active_pr_create_escalation_surfaces(root, task, portfolio_path) == before
 
 
 def test_escalate_active_nonblocked_pr_create_delivery_reuses_receipt_before_task_history(
