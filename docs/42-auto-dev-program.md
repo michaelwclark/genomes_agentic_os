@@ -429,3 +429,7 @@ Both harnesses use the same CLI, program/workflow files, policy folders,
 receipts, commands, and skills. Only the harness invocation/installation layer
 differs. Reinstall/sync shared skills after source changes and validate both
 registries before release.
+
+Review Self, Review Repair, opposing-model review, and Finalize share the
+[Auto-Dev Review Coordination](45-auto-dev-review-coordination.md) stable-key,
+receipt, finding-ledger, budget, and terminal-provider-post contract.
