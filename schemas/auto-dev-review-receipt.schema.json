@@ -1,0 +1,114 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://genomes-agentic-os.local/schemas/auto-dev-review-receipt.schema.json",
+  "title": "Auto-Dev coordinated review receipt",
+  "type": "object",
+  "required": [
+    "schema",
+    "key",
+    "chain_key",
+    "family_key",
+    "status",
+    "mode",
+    "outcome",
+    "subject",
+    "parent_key",
+    "review",
+    "budget",
+    "provider_post",
+    "created_at",
+    "completed_at"
+  ],
+  "properties": {
+    "schema": {"const": "auto-dev-review-receipt/v1"},
+    "key": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "chain_key": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "family_key": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "status": {"const": "completed"},
+    "mode": {"enum": ["full", "delta"]},
+    "outcome": {"enum": ["clean", "findings", "unavailable"]},
+    "subject": {
+      "type": "object",
+      "required": [
+        "repository",
+        "pull_request",
+        "base_branch",
+        "base_sha",
+        "head_sha",
+        "policy_fingerprint",
+        "purpose"
+      ],
+      "properties": {
+        "repository": {"type": "string", "minLength": 1},
+        "pull_request": {"type": "string", "minLength": 1},
+        "base_branch": {"type": "string", "minLength": 1},
+        "base_sha": {"type": "string", "pattern": "^[0-9a-fA-F]{7,64}$"},
+        "head_sha": {"type": "string", "pattern": "^[0-9a-fA-F]{7,64}$"},
+        "policy_fingerprint": {"type": "string", "pattern": "^[0-9a-fA-F]{64}$"},
+        "purpose": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "parent_key": {
+      "anyOf": [
+        {"type": "null"},
+        {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      ]
+    },
+    "review": {
+      "type": "object",
+      "required": ["outcome"],
+      "properties": {
+        "outcome": {"enum": ["clean", "findings", "unavailable"]}
+      },
+      "additionalProperties": true
+    },
+    "budget": {
+      "type": "object",
+      "required": [
+        "full_reviews_per_chain",
+        "delta_reviews_per_chain",
+        "absolute_full_reviews_per_family",
+        "provider_posts_per_family",
+        "full_reviews_used",
+        "delta_reviews_used",
+        "absolute_full_reviews_used",
+        "provider_posts_used"
+      ],
+      "properties": {
+        "full_reviews_per_chain": {"type": "integer", "minimum": 1},
+        "delta_reviews_per_chain": {"type": "integer", "minimum": 0},
+        "absolute_full_reviews_per_family": {"type": "integer", "minimum": 1},
+        "provider_posts_per_family": {"type": "integer", "minimum": 0},
+        "full_reviews_used": {"type": "integer", "minimum": 0},
+        "delta_reviews_used": {"type": "integer", "minimum": 0},
+        "absolute_full_reviews_used": {"type": "integer", "minimum": 0},
+        "provider_posts_used": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": false
+    },
+    "provider_post": {
+      "type": "object",
+      "required": ["status", "marker"],
+      "properties": {
+        "status": {"enum": ["not_requested", "pending", "posted"]},
+        "marker": {
+          "type": "string",
+          "pattern": "^<!-- agentic-os-review:[0-9a-f]{64} -->$"
+        },
+        "result": {"type": "object"},
+        "posted_at": {"type": "string", "format": "date-time"}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"status": {"const": "posted"}}},
+          "then": {"required": ["result", "posted_at"]}
+        }
+      ],
+      "additionalProperties": false
+    },
+    "created_at": {"type": "string", "format": "date-time"},
+    "completed_at": {"type": "string", "format": "date-time"}
+  },
+  "additionalProperties": false
+}

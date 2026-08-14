@@ -35,6 +35,8 @@ def test_metadata_read_uses_the_shared_bridge_shape(monkeypatch: pytest.MonkeyPa
             "body": "Read only",
             "headBranch": "feature/read",
             "headSha": "exact-head",
+            "baseBranch": "main",
+            "baseSha": "exact-base",
             "author": "octocat",
         },
     )
@@ -44,6 +46,8 @@ def test_metadata_read_uses_the_shared_bridge_shape(monkeypatch: pytest.MonkeyPa
         "body": "Read only",
         "head_branch": "feature/read",
         "head_sha": "exact-head",
+        "base_branch": "main",
+        "base_sha": "exact-base",
         "author_login": "octocat",
     }
 
@@ -138,3 +142,120 @@ def test_direct_script_help_bootstraps_the_source_package(tmp_path: Path) -> Non
 
     assert result.returncode == 0
     assert "Run a senior-engineer PR review" in result.stdout
+
+
+def test_review_outcome_is_terminal_and_findings_are_not_reclassified_clean() -> None:
+    crossreview = _load_crossreview()
+
+    assert crossreview.classify_review_outcome(0, "No blockers found.", True) == "clean"
+    assert crossreview.classify_review_outcome(0, "WARNING: stale state", True) == "findings"
+    assert crossreview.classify_review_outcome(1, "review failed", True) == "unavailable"
+    assert crossreview.classify_review_outcome(0, "private path", False) == "unavailable"
+
+
+def test_terminal_provider_post_reuses_existing_marker_without_writing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    crossreview = _load_crossreview()
+    marker = "<!-- agentic-os-review:stable-key -->"
+    monkeypatch.setattr(
+        crossreview,
+        "get_pr_meta",
+        lambda _repo, _pr: {"head_sha": "a" * 40},
+    )
+    monkeypatch.setattr(
+        crossreview,
+        "existing_provider_marker",
+        lambda _repo, _pr, _marker: {
+            "id": 91,
+            "html_url": "https://github.test/comment/91",
+            "body": marker,
+        },
+    )
+    monkeypatch.setattr(
+        crossreview,
+        "gh",
+        lambda *_args, **_kwargs: pytest.fail("provider write must be reused"),
+    )
+
+    result = crossreview.post_terminal_review(
+        "acme/widgets",
+        42,
+        "a" * 40,
+        marker,
+        {"status": "completed", "outcome": "clean", "review": {"text": "clean"}},
+        post_mode="comment",
+    )
+
+    assert result == {
+        "action": "reused",
+        "comment_id": 91,
+        "url": "https://github.test/comment/91",
+        "head_sha": "a" * 40,
+        "readback_verified": True,
+    }
+
+
+def test_terminal_provider_post_rereads_head_before_any_provider_mutation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    crossreview = _load_crossreview()
+    monkeypatch.setattr(
+        crossreview,
+        "get_pr_meta",
+        lambda _repo, _pr: {"head_sha": "b" * 40},
+    )
+    monkeypatch.setattr(
+        crossreview,
+        "existing_provider_marker",
+        lambda *_args: pytest.fail("marker read must wait for exact-head proof"),
+    )
+
+    with pytest.raises(crossreview.ReviewCoordinationError, match="head changed"):
+        crossreview.post_terminal_review(
+            "acme/widgets",
+            42,
+            "a" * 40,
+            "<!-- agentic-os-review:stable-key -->",
+            {"status": "completed", "outcome": "clean", "review": {"text": "clean"}},
+            post_mode="comment",
+        )
+
+
+def test_terminal_provider_post_writes_one_marked_comment_and_reads_it_back(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    crossreview = _load_crossreview()
+    marker = "<!-- agentic-os-review:stable-key -->"
+    writes: list[tuple[str, ...]] = []
+    comments = iter([None, {"id": 92, "html_url": "https://github.test/comment/92"}])
+    monkeypatch.setattr(
+        crossreview,
+        "get_pr_meta",
+        lambda _repo, _pr: {"head_sha": "a" * 40},
+    )
+    monkeypatch.setattr(
+        crossreview,
+        "existing_provider_marker",
+        lambda _repo, _pr, _marker: next(comments),
+    )
+    monkeypatch.setattr(
+        crossreview,
+        "gh",
+        lambda *args, **_kwargs: writes.append(args) or "",
+    )
+
+    result = crossreview.post_terminal_review(
+        "acme/widgets",
+        42,
+        "a" * 40,
+        marker,
+        {"status": "completed", "outcome": "findings", "review": {"text": "WARNING: fix me"}},
+        post_mode="comment",
+    )
+
+    assert result["action"] == "posted"
+    assert result["readback_verified"] is True
+    assert len(writes) == 1
+    assert writes[0][:4] == ("pr", "comment", "42", "--repo")
+    assert marker in writes[0][-1]

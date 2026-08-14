@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import hashlib
 import json
 import os
 import re
@@ -52,6 +53,14 @@ from genomes_agentic_os.github_bridge import (
     get_pull_request_diff as bridge_get_pull_request_diff,
     list_pull_request_commits as bridge_list_pull_request_commits,
 )
+from genomes_agentic_os.review_coordination import (
+    ReviewCoordinationError,
+    ReviewCoordinator,
+    ReviewSubject,
+    load_review_receipt,
+    provider_review_marker,
+    stable_review_key,
+)
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -68,6 +77,7 @@ MAX_DIFF_CHARS = 40_000
 # ambiguous (the PR might have more commits), so author detection fails closed
 # instead of silently selecting the wrong reviewer.
 MAX_COMMIT_SCAN = 1_000
+DEFAULT_REVIEW_SCOPE = "full-pr"
 
 # Patterns that will fail the scrub gate (regex, applied to review text).
 # This list protects team-visible PR comments from leaking internal details.
@@ -152,6 +162,110 @@ def gh(*args: str, check: bool = True) -> str:
     return result.stdout.strip()
 
 
+def _sha256(value: object) -> str:
+    payload = json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def get_base_sha(repo: str, pr: int, meta: dict, override: str | None = None) -> str:
+    """Resolve the provider-read exact base SHA used by the stable review key."""
+    candidate = override or meta.get("base_sha")
+    if not candidate:
+        candidate = gh("api", f"repos/{repo}/pulls/{pr}", "--jq", ".base.sha")
+    candidate = str(candidate).strip()
+    if not re.fullmatch(r"[0-9a-fA-F]{7,64}", candidate):
+        raise ReviewCoordinationError("provider base SHA is unavailable or invalid")
+    return candidate
+
+
+def list_provider_comments(repo: str, pr: int) -> list[dict]:
+    """Read provider issue comments for terminal marker reuse."""
+    raw = gh("api", f"repos/{repo}/issues/{pr}/comments", "--paginate")
+    try:
+        value = json.loads(raw or "[]")
+    except json.JSONDecodeError as exc:
+        raise ReviewCoordinationError("provider comment readback was not valid JSON") from exc
+    if not isinstance(value, list):
+        raise ReviewCoordinationError("provider comment readback was not a list")
+    return [dict(row) for row in value if isinstance(row, dict)]
+
+
+def existing_provider_marker(repo: str, pr: int, marker: str) -> dict | None:
+    """Return the existing provider comment carrying the stable review marker."""
+    for row in list_provider_comments(repo, pr):
+        if marker in str(row.get("body") or ""):
+            return row
+    return None
+
+
+def get_revision_diff(repo: str, base_sha: str, head_sha: str) -> str:
+    """Read only the changed delta between two provider revisions."""
+    return gh(
+        "api",
+        f"repos/{repo}/compare/{base_sha}...{head_sha}",
+        "--header",
+        "Accept: application/vnd.github.v3.diff",
+    )
+
+
+def post_terminal_review(
+    repo: str,
+    pr: int,
+    expected_head: str,
+    marker: str,
+    receipt: dict,
+    *,
+    post_mode: str,
+) -> dict:
+    """Post one terminal review after head reread, or reuse provider readback."""
+    verified = get_pr_meta(repo, pr)
+    if verified["head_sha"] != expected_head:
+        raise ReviewCoordinationError(
+            "pull request head changed after review; terminal provider post blocked"
+        )
+    existing = existing_provider_marker(repo, pr, marker)
+    if existing is not None:
+        return {
+            "action": "reused",
+            "comment_id": existing.get("id"),
+            "url": existing.get("html_url") or existing.get("url"),
+            "head_sha": expected_head,
+            "readback_verified": True,
+        }
+    review = receipt.get("review") or {}
+    if receipt.get("status") != "completed" or receipt.get("outcome") == "unavailable":
+        raise ReviewCoordinationError("only a completed available review may be posted")
+    body = str(review.get("text") or "").strip()
+    if not body:
+        raise ReviewCoordinationError("terminal review has no provider-safe body")
+    consolidated = f"{body}\n\n{marker}"
+    if post_mode == "comment":
+        gh("pr", "comment", str(pr), "--repo", repo, "--body", consolidated)
+    elif post_mode == "draft":
+        gh("pr", "review", str(pr), "--repo", repo, "--comment", "--body", consolidated)
+    else:
+        raise ReviewCoordinationError(f"unsupported provider post mode: {post_mode}")
+    readback = existing_provider_marker(repo, pr, marker)
+    if readback is None:
+        raise ReviewCoordinationError("provider post marker was not visible on readback")
+    return {
+        "action": "posted",
+        "comment_id": readback.get("id"),
+        "url": readback.get("html_url") or readback.get("url"),
+        "head_sha": expected_head,
+        "readback_verified": True,
+    }
+
+
+def classify_review_outcome(exit_code: int, review_text: str, scrub_passed: bool) -> str:
+    """Map one reviewer result to the terminal coordination vocabulary."""
+    if exit_code != 0 or not review_text.strip() or not scrub_passed:
+        return "unavailable"
+    if re.search(r"\b(?:BLOCKER|WARNING)\b", review_text, re.IGNORECASE):
+        return "findings"
+    return "clean"
+
+
 def get_pr_meta(repo: str, pr: int) -> dict:
     """Fetch PR metadata through the versioned shared GitHub read port."""
     data = _bridge_pull_request(repo, pr)
@@ -164,6 +278,8 @@ def get_pr_meta(repo: str, pr: int) -> dict:
         "body": data.get("body", "") or "",
         "head_branch": data.get("headBranch", ""),
         "head_sha": head_sha,
+        "base_branch": data.get("baseBranch", ""),
+        "base_sha": data.get("baseSha", ""),
         "author_login": data.get("author", ""),
     }
 
@@ -499,6 +615,36 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--base-sha",
+        metavar="SHA",
+        help="Exact provider base SHA. When omitted it is read from GitHub.",
+    )
+    parser.add_argument(
+        "--policy-fingerprint",
+        metavar="SHA256",
+        help="Frozen review-policy SHA-256. Defaults to the effective cross-review config hash.",
+    )
+    parser.add_argument(
+        "--purpose",
+        default="review_self",
+        help="Review purpose used in the stable key (default: %(default)s).",
+    )
+    parser.add_argument(
+        "--scope",
+        default=DEFAULT_REVIEW_SCOPE,
+        help="Review scope included in the stable purpose (default: %(default)s).",
+    )
+    parser.add_argument(
+        "--mode",
+        choices=["full", "delta"],
+        default="full",
+        help="Review mode. Repair may request delta with --parent-key.",
+    )
+    parser.add_argument(
+        "--parent-key",
+        help="Canonical parent receipt key required for delta review.",
+    )
+    parser.add_argument(
         "--output-dir",
         metavar="DIR",
         help=f"Directory for artifact and receipt files (default: {ARTIFACT_DIR}).",
@@ -520,12 +666,6 @@ def main(argv: list[str] | None = None) -> int:
     artifact_dir = Path(args.output_dir).expanduser().resolve() if args.output_dir else ARTIFACT_DIR
     artifact_dir.mkdir(parents=True, exist_ok=True)
 
-    ts = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    run_id = uuid.uuid4().hex[:8]
-    artifact_stem = artifact_dir / f"{ts}-crossreview-{run_id}"
-    output_file = Path(str(artifact_stem) + ".txt")
-    meta_file = Path(str(artifact_stem) + ".meta.json")
-
     print(f"[crossreview] Fetching PR #{pr_number} from {repo} ...", file=sys.stderr)
 
     # Read all review inputs first. When author detection is automatic, commit
@@ -536,6 +676,42 @@ def main(argv: list[str] | None = None) -> int:
     if inputs is None:
         return 1
     meta, commits, diff = inputs
+
+    try:
+        base_sha = get_base_sha(repo, pr_number, meta, args.base_sha)
+        policy_fingerprint = args.policy_fingerprint or _sha256(pr_config)
+        subject = ReviewSubject(
+            repository=repo,
+            pull_request=f"github:{repo}#{pr_number}",
+            base_branch=str(meta.get("base_branch") or "unknown-base"),
+            base_sha=base_sha,
+            head_sha=str(meta["head_sha"]),
+            policy_fingerprint=policy_fingerprint,
+            purpose=f"{args.purpose}:{args.scope}",
+        )
+    except ReviewCoordinationError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    coordination_root = artifact_dir / "review-coordination"
+    coordinator = ReviewCoordinator(coordination_root)
+    review_key = stable_review_key(subject)
+    artifact_stem = coordination_root / "artifacts" / review_key
+    artifact_stem.parent.mkdir(parents=True, exist_ok=True)
+    output_file = Path(str(artifact_stem) + ".txt")
+    meta_file = Path(str(artifact_stem) + ".meta.json")
+
+    if args.mode == "delta":
+        if not args.parent_key:
+            print("error: --parent-key is required for delta review", file=sys.stderr)
+            return 1
+        try:
+            parent = load_review_receipt(coordinator.receipts / f"{args.parent_key}.json")
+            parent_head = str(parent["subject"]["head_sha"])
+            diff = get_revision_diff(repo, parent_head, subject.head_sha)
+        except (KeyError, ReviewCoordinationError) as exc:
+            print(f"error: delta parent is invalid ({exc})", file=sys.stderr)
+            return 1
 
     # Detect author harness.
     if args.reviewer:
@@ -563,82 +739,91 @@ def main(argv: list[str] | None = None) -> int:
     # Build review prompt.
     prompt = build_review_prompt(repo, pr_number, meta, diff)
 
-    # Run review.
     timeout_sec = getattr(args, "timeout_sec", 900)
-    print(f"[crossreview] Running {reviewer_harness} review (timeout: {timeout_sec}s) ...", file=sys.stderr)
-    started = time.monotonic()
-    exit_code, review_text = run_harness_review(
-        reviewer_harness=reviewer_harness,
-        prompt=prompt,
-        model=args.model,
-        timeout_sec=timeout_sec,
-        output_file=output_file,
-    )
-    duration = round(time.monotonic() - started, 2)
 
-    print(f"[crossreview] Review completed in {duration}s (exit: {exit_code})", file=sys.stderr)
-    print(f"[crossreview] Artifact: {output_file}", file=sys.stderr)
-
-    # Scrub check.
-    scrub_hits = scrub_check(review_text)
-    scrub_passed = len(scrub_hits) == 0
-
-    if scrub_hits:
+    def execute_review() -> dict:
         print(
-            f"[crossreview] SCRUB FAILED — {len(scrub_hits)} pattern(s) matched: {scrub_hits}",
+            f"[crossreview] Running {reviewer_harness} {args.mode} review "
+            f"(timeout: {timeout_sec}s) ...",
             file=sys.stderr,
         )
-    else:
-        print("[crossreview] Scrub passed.", file=sys.stderr)
+        started = time.monotonic()
+        exit_code, review_text = run_harness_review(
+            reviewer_harness=reviewer_harness,
+            prompt=prompt,
+            model=args.model,
+            timeout_sec=timeout_sec,
+            output_file=output_file,
+        )
+        duration = round(time.monotonic() - started, 2)
+        scrub_hits = scrub_check(review_text)
+        scrub_passed = not scrub_hits
+        return {
+            "outcome": classify_review_outcome(exit_code, review_text, scrub_passed),
+            "text": review_text,
+            "exit_code": exit_code,
+            "duration_sec": duration,
+            "scrub_passed": scrub_passed,
+            "scrub_hits": scrub_hits,
+            "artifact_file": str(output_file),
+            "author_harness": author_harness,
+            "author_detected_by": author_detected_by,
+            "reviewer_harness": reviewer_harness,
+            "model": args.model or "(default)",
+        }
 
-    # Write receipt.
-    receipt = {
+    provider_post = None
+    if args.post:
+        post_mode = str(pr_config.get("post_mode", "comment"))
+
+        def provider_post(marker: str, receipt: dict) -> dict:
+            return post_terminal_review(
+                repo,
+                pr_number,
+                subject.head_sha,
+                marker,
+                receipt,
+                post_mode=post_mode,
+            )
+
+    try:
+        result = coordinator.execute(
+            subject,
+            execute_review,
+            mode=args.mode,
+            parent_key=args.parent_key,
+            provider_post=provider_post,
+        )
+    except ReviewCoordinationError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    review = dict(result.receipt.get("review") or {})
+    legacy_receipt = {
         "ts": now_iso(),
         "repo": repo,
         "pr": pr_number,
         "pr_title": meta["title"],
         "head_sha": meta["head_sha"],
-        "author_harness": author_harness,
-        "author_detected_by": author_detected_by,
-        "reviewer_harness": reviewer_harness,
-        "model": args.model or "(default)",
-        "exit_code": exit_code,
-        "duration_sec": duration,
-        "scrub_passed": scrub_passed,
-        "scrub_hits": scrub_hits,
-        "artifact_file": str(output_file),
-        "posted": False,
+        "base_sha": base_sha,
+        "review_key": result.key,
+        "review_mode": args.mode,
+        "reused": result.reused,
+        "coordination_receipt": str(result.receipt_path),
+        "provider_marker": provider_review_marker(result.key),
+        "provider_post": result.receipt.get("provider_post"),
+        **review,
     }
-    meta_file.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    print(f"[crossreview] Receipt: {meta_file}", file=sys.stderr)
-
-    # Print review to stdout.
-    print(review_text)
-
-    # Post to GitHub if requested.
-    if args.post:
-        if not scrub_passed:
-            print(
-                f"\n[crossreview] POST BLOCKED — scrub failed. Fix the review text before posting.",
-                file=sys.stderr,
-            )
-            return 1
-
-        post_mode = pr_config.get("post_mode", "comment")
-        print(f"[crossreview] Posting as '{post_mode}' to PR #{pr_number} ...", file=sys.stderr)
-
-        if post_mode == "comment":
-            gh("pr", "comment", str(pr_number), "--repo", repo, "--body", review_text)
-        elif post_mode == "draft":
-            gh("pr", "review", str(pr_number), "--repo", repo, "--comment", "--body", review_text)
-        else:
-            print(f"[crossreview] post_mode '{post_mode}' → no post action.", file=sys.stderr)
-
-        receipt["posted"] = True
-        meta_file.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        print(f"[crossreview] Posted successfully.", file=sys.stderr)
-
-    return 0 if (exit_code == 0 and scrub_passed) else (exit_code or 1)
+    meta_file.write_text(
+        json.dumps(legacy_receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    print(
+        f"[crossreview] {'Reused' if result.reused else 'Created'} review receipt: "
+        f"{result.receipt_path}",
+        file=sys.stderr,
+    )
+    print(str(review.get("text") or ""))
+    return 0 if result.receipt.get("outcome") in {"clean", "findings"} else 1
 
 
 # Expose DEFAULT_TIMEOUT_SEC in module scope for argparse default.

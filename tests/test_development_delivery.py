@@ -6578,7 +6578,7 @@ def test_review_repair_consumes_pr_create_family_without_creating_prs() -> None:
     contract = yaml.safe_load(
         (workflow_root / "workflow.yml").read_text(encoding="utf-8")
     )
-    assert contract["version"] == 2
+    assert contract["version"] == 3
     assert contract["inputs"][0] == "pr_create_family_receipt"
     assert "open_pr" not in contract["steps"]
     assert "verify_pr_create_family" in contract["steps"]
@@ -6589,7 +6589,7 @@ def test_review_repair_consumes_pr_create_family_without_creating_prs() -> None:
     )
     assert "does not open, retarget, or add pull requests" in workflow
     assert "A missing or wrong target returns to PR Create" in workflow
-    assert "pr_open stores the provider readback already created by PR Create" in (
+    assert "pr_open stores the PR Create provider readback" in (
         workflow.replace("`", "")
     )
 
@@ -9872,3 +9872,32 @@ def test_recover_active_worktree_ready_pr_create_delivery_replay_refuses_backfil
     assert family_path.read_bytes() == before["family"]
     assert provider_path.read_bytes() == before["provider"]
     assert Path(recovered["receipt"]).read_bytes() == before["receipt"]
+
+
+def test_review_workflow_has_one_full_owner_and_receipt_only_finalize() -> None:
+    repository = Path(__file__).parents[1]
+    workflow = (
+        repository
+        / "harness/shared_factory/04-workflows/development_delivery/"
+        "testing_review_and_pr_repair/workflow.yml"
+    ).read_text(encoding="utf-8")
+    review_self = (
+        repository / "harness/skills/auto-dev-review-self/SKILL.md"
+    ).read_text(encoding="utf-8")
+    repair = (
+        repository / "harness/skills/auto-dev-review-repair/SKILL.md"
+    ).read_text(encoding="utf-8")
+    finalize = (
+        repository / "harness/skills/auto-dev-finalize/SKILL.md"
+    ).read_text(encoding="utf-8")
+
+    assert "version: 3" in workflow
+    assert "claim_or_reuse_canonical_review" in workflow
+    assert "post_pr_opposing_review" not in workflow
+    assert "normal_full_reviews_per_chain: 1" in workflow
+    assert "delta_reviews_per_chain: 3" in workflow
+    assert "absolute_full_reviews_per_family: 2" in workflow
+    assert "provider_posts_per_family: 1" in workflow
+    assert "sole owner of the canonical full review" in " ".join(review_self.split())
+    assert "Never invoke another full review from Repair" in " ".join(repair.split())
+    assert "Finalize must not invoke a reviewer" in " ".join(finalize.split())

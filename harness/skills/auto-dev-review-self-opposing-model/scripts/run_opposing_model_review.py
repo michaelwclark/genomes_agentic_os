@@ -24,6 +24,18 @@ from typing import Any
 SCRIPT_DIR = Path(__file__).resolve().parent
 # scripts/ -> skill -> skills -> harness -> checkout root
 ROOT = SCRIPT_DIR.parents[3]
+SRC_DIR = ROOT / "src"
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
+
+from genomes_agentic_os.review_coordination import (  # noqa: E402
+    ReviewCoordinationError,
+    ReviewCoordinator,
+    ReviewSubject,
+    load_review_receipt,
+    stable_review_key,
+)
+
 HELPER = ROOT / "harness/skills/finishing-touches-review/scripts/finishing_touches_review_helper.py"
 TEMPLATE = ROOT / "harness/skills/auto-dev/templates/reviewer-prompt.md"
 CLAUDE_ENV_REMOVED = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
@@ -95,6 +107,28 @@ def git_head(worktree: Path) -> str:
     return completed.stdout.strip()
 
 
+def git_repository(worktree: Path) -> str:
+    completed = run(
+        ["gh", "repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"],
+        cwd=worktree,
+    )
+    if completed.returncode or "/" not in completed.stdout.strip():
+        raise ReviewError("provider repository is not verifiable")
+    return completed.stdout.strip()
+
+
+def policy_fingerprint(source: dict[str, Any]) -> str:
+    supplied = str(source.get("policy_fingerprint") or "")
+    if len(supplied) == 64 and all(ch in "0123456789abcdefABCDEF" for ch in supplied):
+        return supplied.lower()
+    policy = source.get("review_policy") or source.get("effective_policy") or {
+        "review_unavailable_policy": "block",
+        "reviewer_transport": "claude_cli",
+    }
+    encoded = json.dumps(policy, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
 def diff_hash(worktree: Path, base: str, head: str) -> str:
     completed = run(["git", "diff", "--binary", f"{base}..{head}"], cwd=worktree)
     if completed.returncode:
@@ -112,7 +146,12 @@ def render_prompt(request: dict[str, Any], provider: dict[str, Any]) -> str:
         "ACCEPTANCE_CRITERIA": str(request.get("spec_source", "provider ticket")),
         "VALIDATION_SUMMARY": "provider and local validation are recorded in the work item",
         "CI_STATUS": "passed" if all(row.get("conclusion") in {"SUCCESS", "SKIPPED"} for row in provider.get("statusCheckRollup", [])) else "pending",
-        "COPILOT_STATUS": "not_applicable", "DIFF_OR_FILE_LIST": "Read the exact local diff.",
+        "COPILOT_STATUS": "not_applicable",
+        "DIFF_OR_FILE_LIST": (
+            f"Review only git diff {request['delta_base_sha']}..{request['head_sha']}."
+            if request.get("review_mode") == "delta"
+            else "Read the exact local PR diff."
+        ),
         "TOKENS": "Do not expose secrets, local paths, private links, or internal operational detail.",
     }
     prompt = TEMPLATE.read_text(encoding="utf-8")
@@ -142,6 +181,10 @@ def main() -> int:
     parser.add_argument("--work-item", type=Path)
     parser.add_argument("--worktree", type=Path)
     parser.add_argument("--timeout-seconds", type=int, default=180)
+    parser.add_argument("--mode", choices=["full", "delta"], default="full")
+    parser.add_argument("--parent-key")
+    parser.add_argument("--purpose", default="review_self")
+    parser.add_argument("--scope", default="full-pr")
     args = parser.parse_args()
     try:
         os_root = args.os_root.resolve()
@@ -154,45 +197,175 @@ def main() -> int:
         if provider["headRefOid"] != head:
             raise ReviewError(f"exact-head mismatch: provider={provider['headRefOid']} worktree={head}")
         base = str(source["base_sha"])
-        run_id = f"{args.ticket.lower()}-pr{pr_number}-{source.get('mode', 'post_pr')}-opposing-model-{now()[0:19].replace(':', '').replace('-', '')}"
-        run_dir = work_item / "artifacts/finishing-touches" / run_id
-        request = {**source, "run_id": run_id, "artifact_dir": str(run_dir.relative_to(work_item)), "head_sha": head, "base_sha": base, "diff_hash": diff_hash(worktree, base, head), "reviewer_transport": "claude_cli", "reviewer_auth": "cli_native", "reviewer_environment_removed": list(CLAUDE_ENV_REMOVED), "provider_pr_url": provider["url"], "provider_read_at": now()}
-        plan = {"model_identity_status": "proven", "reviewer_status": "available", "review_unavailable_policy": "block", "validation_status": "passed", "pr_check_status": "passed" if all(row.get("conclusion") in {"SUCCESS", "SKIPPED"} for row in provider.get("statusCheckRollup", [])) else "pending", "copilot_status": "not_applicable", "external_output_status": "clean", "external_output_paths": [], "loop_count": 1, "loop_limit": 3, "user_decision_blocker": False}
-        write_json(run_dir / "review-request.json", request)
-        write_json(run_dir / "validation-plan.json", plan)
-        (run_dir / "review-ledger.jsonl").write_text("", encoding="utf-8")
-        prompt = render_prompt(request, provider)
-        (run_dir / "reviewer-prompt.md").write_text(prompt, encoding="utf-8")
-        claude = shutil.which("claude")
-        if not claude:
-            failure = "cli_not_found"
-            plan["reviewer_status"] = "unavailable"
-        else:
-            env = os.environ.copy()
-            for key in CLAUDE_ENV_REMOVED:
-                env.pop(key, None)
-            try:
-                completed = run([claude, "-p", "--model", "opus", "--safe-mode", "--permission-mode", "dontAsk", "--tools", "Read,Grep,Glob,Bash", "--allowedTools", CLAUDE_TOOLS, "--no-session-persistence", prompt], cwd=worktree, timeout=args.timeout_seconds, env=env)
-                if completed.returncode:
-                    failure = "cli_runtime_failed"
-                elif not completed.stdout.strip():
-                    failure = "cli_output_invalid"
-                else:
-                    (run_dir / "reviewer-response.md").write_text(completed.stdout, encoding="utf-8")
-                    failure = "cli_output_invalid"
+        repository = git_repository(worktree)
+        subject = ReviewSubject(
+            repository=repository,
+            pull_request=f"github:{repository}#{pr_number}",
+            base_branch=str(provider["baseRefName"]),
+            base_sha=base,
+            head_sha=head,
+            policy_fingerprint=policy_fingerprint(source),
+            purpose=f"{args.purpose}:{args.scope}",
+        )
+        coordinator = ReviewCoordinator(
+            work_item / "artifacts/finishing-touches/review-coordination"
+        )
+        review_key = stable_review_key(subject)
+        run_id = f"{args.ticket.lower()}-pr{pr_number}-{args.mode}-{review_key[:12]}"
+        run_dir = coordinator.root / "artifacts" / review_key
+        review_diff_base = base
+        if args.mode == "delta":
+            if not args.parent_key:
+                raise ReviewError("delta review requires --parent-key")
+            parent = load_review_receipt(coordinator.receipts / f"{args.parent_key}.json")
+            review_diff_base = str(parent["subject"]["head_sha"])
+
+        def execute_review() -> dict[str, Any]:
+            failure: str | None = None
+            request = {
+                **source,
+                "run_id": run_id,
+                "artifact_dir": str(run_dir.relative_to(work_item)),
+                "review_key": review_key,
+                "review_mode": args.mode,
+                "parent_key": args.parent_key,
+                "delta_base_sha": review_diff_base,
+                "head_sha": head,
+                "base_sha": base,
+                "diff_hash": diff_hash(worktree, review_diff_base, head),
+                "reviewer_transport": "claude_cli",
+                "reviewer_auth": "cli_native",
+                "reviewer_environment_removed": list(CLAUDE_ENV_REMOVED),
+                "provider_pr_url": provider["url"],
+                "provider_read_at": now(),
+            }
+            plan = {
+                "model_identity_status": "proven",
+                "reviewer_status": "available",
+                "review_unavailable_policy": "block",
+                "validation_status": "passed",
+                "pr_check_status": "passed"
+                if all(
+                    row.get("conclusion") in {"SUCCESS", "SKIPPED"}
+                    for row in provider.get("statusCheckRollup", [])
+                )
+                else "pending",
+                "copilot_status": "not_applicable",
+                "external_output_status": "clean",
+                "external_output_paths": [],
+                "loop_count": 1,
+                "loop_limit": 3,
+                "user_decision_blocker": False,
+            }
+            write_json(run_dir / "review-request.json", request)
+            write_json(run_dir / "validation-plan.json", plan)
+            (run_dir / "review-ledger.jsonl").write_text("", encoding="utf-8")
+            prompt = render_prompt(request, provider)
+            (run_dir / "reviewer-prompt.md").write_text(prompt, encoding="utf-8")
+            claude = shutil.which("claude")
+            response = ""
+            if not claude:
+                failure = "cli_not_found"
+                plan["reviewer_status"] = "unavailable"
+            else:
+                env = os.environ.copy()
+                for key in CLAUDE_ENV_REMOVED:
+                    env.pop(key, None)
+                try:
+                    completed = run(
+                        [
+                            claude,
+                            "-p",
+                            "--model",
+                            "opus",
+                            "--safe-mode",
+                            "--permission-mode",
+                            "dontAsk",
+                            "--tools",
+                            "Read,Grep,Glob,Bash",
+                            "--allowedTools",
+                            CLAUDE_TOOLS,
+                            "--no-session-persistence",
+                            prompt,
+                        ],
+                        cwd=worktree,
+                        timeout=args.timeout_seconds,
+                        env=env,
+                    )
+                    if completed.returncode:
+                        failure = "cli_runtime_failed"
+                    elif not completed.stdout.strip():
+                        failure = "cli_output_invalid"
+                    else:
+                        response = completed.stdout.strip()
+                        (run_dir / "reviewer-response.md").write_text(
+                            response + "\n", encoding="utf-8"
+                        )
+                except subprocess.TimeoutExpired:
+                    failure = "cli_timeout"
+                if failure:
                     plan["reviewer_status"] = "runtime_failure"
-            except subprocess.TimeoutExpired:
-                failure = "cli_timeout"
-            if failure:
+
+            # The paid review is not terminal until provider and worktree still
+            # prove the same exact head after the model returns.
+            post_provider = provider_pr(pr_number, worktree)
+            post_head = git_head(worktree)
+            if post_provider["headRefOid"] != head or post_head != head:
+                failure = "head_changed_after_review"
                 plan["reviewer_status"] = "runtime_failure"
-        write_json(run_dir / "validation-plan.json", plan)
-        (run_dir / "model-receipt.md").write_text(receipt_markdown(run_id, plan["reviewer_status"], failure), encoding="utf-8")
-        decision = decide(run_dir)
-        receipt = {"schema": "opposing-model-review-receipt/v1", "ticket": args.ticket, "pr_number": pr_number, "pr_url": provider["url"], "head_sha": head, "review_run_dir": str(run_dir), "reviewer_status": plan["reviewer_status"], "failure_code": failure, "decision": decision["decision"], "readback_verified": True, "next_action": "repair findings" if decision["decision"] == "blocked_review_findings" else "resolve reviewer runtime or obtain governed review"}
+            write_json(run_dir / "validation-plan.json", plan)
+            (run_dir / "model-receipt.md").write_text(
+                receipt_markdown(run_id, plan["reviewer_status"], failure),
+                encoding="utf-8",
+            )
+            decision = decide(run_dir)
+            if plan["reviewer_status"] in {"unavailable", "runtime_failure"}:
+                outcome = "unavailable"
+            elif decision["decision"].startswith("ready_"):
+                outcome = "clean"
+            else:
+                outcome = "findings"
+            return {
+                "outcome": outcome,
+                "ticket": args.ticket,
+                "pr_number": pr_number,
+                "pr_url": provider["url"],
+                "head_sha": head,
+                "review_run_dir": str(run_dir),
+                "reviewer_status": plan["reviewer_status"],
+                "failure_code": failure,
+                "decision": decision["decision"],
+                "response": response,
+                "readback_verified": failure != "head_changed_after_review",
+            }
+
+        result = coordinator.execute(
+            subject,
+            execute_review,
+            mode=args.mode,
+            parent_key=args.parent_key,
+        )
+        review = dict(result.receipt["review"])
+        receipt = {
+            "schema": "opposing-model-review-receipt/v2",
+            **review,
+            "review_key": result.key,
+            "review_mode": args.mode,
+            "parent_key": args.parent_key,
+            "coordination_receipt": str(result.receipt_path),
+            "reused": result.reused,
+            "next_action": (
+                "repair findings"
+                if result.receipt["outcome"] == "findings"
+                else "resolve reviewer runtime or obtain governed review"
+                if result.receipt["outcome"] == "unavailable"
+                else "consume exact-head receipt"
+            ),
+        }
         write_json(run_dir / "opposing-model-review-receipt.json", receipt)
         print(json.dumps(receipt, indent=2))
-        return 0 if decision["decision"].startswith("ready_") else 2
-    except ReviewError as exc:
+        return 0 if result.receipt["outcome"] == "clean" else 2
+    except (ReviewError, ReviewCoordinationError, KeyError) as exc:
         print(json.dumps({"ok": False, "error": str(exc)}, indent=2))
         return 2
 

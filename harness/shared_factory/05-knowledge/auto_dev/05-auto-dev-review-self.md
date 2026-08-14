@@ -1,7 +1,7 @@
 # Auto-Dev: review and repair our work
 
-Use `/auto-dev-review-self`; it delegates to the canonical
-`/auto-dev-review-repair` owner. This stage challenges, tests, and repairs an
+Use `/auto-dev-review-self`; it owns the canonical full review and delegates
+findings repair to `/auto-dev-review-repair`. This stage challenges, tests, and repairs an
 agent-authored change until the exact pull-request revision is ready for
 Finalize or an explicit blocker remains. It consumes the family created by PR
 Create and never creates or retargets a pull request.
@@ -16,7 +16,8 @@ Create and never creates or retargets a pull request.
 
 ## Review and repair loop
 
-1. Review the complete diff as if it came from another author. Check behavior,
+1. Claim the stable exact-subject review key and run or reuse the one canonical
+   full review. Review the complete diff as if it came from another author. Check behavior,
    edge cases, security, data/migrations, compatibility, failure handling,
    observability, tests, docs, and accidental changes.
 2. Run the configured local tests and quality gates and record exact outcomes.
@@ -29,12 +30,15 @@ Create and never creates or retargets a pull request.
 5. Read live CI checks, required reviews, automated-review threads, and human
    discussion from the provider.
 6. Classify each failure or finding before editing. Repair the smallest
-   responsible code and add regression evidence.
+   responsible code and add regression evidence. Repair consumes the findings
+   ledger and never restarts the full review.
 7. Rerun affected local checks, push the new revision, and re-read provider
    state. Do not dismiss or mark a thread resolved until the code and evidence
    actually address it.
-8. Bound repeated loops. If the same failure returns without new evidence,
-   capture one blocker with the root cause and next discriminating action.
+8. Delta-verify only changed commits/files and chain the receipt to the full
+   review. Allow at most three deltas, two absolute full reviews per family, and
+   one terminal provider post. Enforce every bound before an external call.
+   Reuse exact-key receipts and marked provider comments.
 9. For any serializer, request payload, canonicalization, persisted
    configuration, rule, or template input change, run the runtime-consumer
    contract gate. Review the complete consumer inventory and tenant impact

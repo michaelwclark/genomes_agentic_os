@@ -1,14 +1,14 @@
 ---
 name: auto-dev-review-self-opposing-model
-description: Run the canonical full Auto-Dev review flow for one existing work item, using the configured independent opposing model and receipt-backed readiness evidence.
+description: Execute or reuse the single canonical full Auto-Dev review, or a bounded delta verification explicitly requested by Review Repair, using the configured independent opposing model and stable keyed receipts.
 ---
 
 # Auto-Dev Review Self Opposing Model
 
 Use this skill for `$auto-dev-review-self-opposing-model <TICKET>` from either
 Claude or Codex. It is the only manual or agent-invoked path for the
-opposing-model checkpoints within `$auto-dev-review-self` and
-`$auto-dev-review-repair`.
+opposing-model transport. Review Self alone may request `full`; Review Repair
+may request only `delta` with a canonical parent key.
 
 1. Resolve the existing Auto-Dev work item by ticket and read its tracker,
    PR Create family receipt, project review policy, source worktree, and current
@@ -19,12 +19,14 @@ opposing-model checkpoints within `$auto-dev-review-self` and
    CLI-native authentication; remove `ANTHROPIC_API_KEY` and
    `ANTHROPIC_AUTH_TOKEN`. Never substitute API/SDK transport or an unreviewed
    model family.
-3. Run the complete `$auto-dev-review-repair` flow around the selected review
-   checkpoint: required local validation, exact PR-family/provider readback,
-   quiet CI and thread repair where applicable, then pre-PR or post-PR review.
-   This skill may repair only through that owner and must return to the original
-   builder for actionable findings.
-4. Run the canonical executable; it resolves the ticket, exact worktree, PR
+3. Build the stable review subject from repository, PR, exact base/head,
+   effective policy fingerprint, scope, and purpose. Claim or join that key
+   before invoking a model. Reuse a terminal exact-key receipt. Never use model
+   identity as part of the key and never use another reviewer to bypass reuse.
+4. Execute only the requested mode. `full` produces the canonical findings
+   ledger. `delta` reviews only changes since its canonical parent and appends
+   findings without rereading the full original diff.
+5. Run the canonical executable; it resolves the ticket, exact worktree, PR
    provider readback, selected native reviewer, and receipt directory:
 
 ```bash
@@ -32,15 +34,22 @@ python3 harness/skills/auto-dev-review-self-opposing-model/scripts/run_opposing_
   <TICKET> --os-root <agentic-os-root>
 ```
 
-5. Require the resulting `review-request.json`, `reviewer-response.md` when
+6. Require the resulting `review-request.json`, `reviewer-response.md` when
    available, `model-receipt.md`, `review-ledger.jsonl`, and
    `readiness-decision.json`. A timeout, auth failure, empty output, or malformed
    output is a sanitized receipt-backed unavailable/runtime result, never a
    clean review. Honor the project's block policy.
-6. Record the typed review-stage evidence only after the deterministic decision
+7. Record the typed review-stage evidence only after the deterministic decision
    is clean and all exact-head CI/thread gates are satisfied. A post-PR clean
    review alone does not grant merge authority; `$auto-dev-merge` remains the
    sole merge owner.
 
+Budgets are one normal full review, at most three deltas, two absolute full
+reviews per family, and one provider post. Exhaustion is a receipt-backed block
+raised before a model/provider call. Provider output is terminal-only, carries
+`<!-- agentic-os-review:<key> -->`, re-reads the head after the model returns,
+and reuses provider readback when that marker already exists.
+
 Do not hand-craft a Claude/Codex prompt, create a second PR, force-push, bypass
-required checks, or treat unavailable review as approval.
+required checks, treat unavailable review as approval, or post intermediate
+findings to the provider.
