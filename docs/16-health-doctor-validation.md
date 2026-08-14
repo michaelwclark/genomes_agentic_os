@@ -104,7 +104,15 @@ Concretely it:
 - Warns about legacy root folders (`domains/`, `workflows/`, etc.) left over from
   older installs.
 
-Exits 1 if any errors are found; exits 0 with warnings printed to stderr.
+Validation runs in a supervised worker. The default hard wall-clock bound is
+300 seconds, and a worker that emits no progress for 60 seconds is terminated.
+Progress observations are printed every 5 seconds. A timeout exits 124, safe
+operator cancellation exits 130, and an unexpected worker failure exits 2.
+Use `--scope registries`, `--scope domains`, `--scope work-items`, or
+`--scope structured-files` for a bounded fallback that skips unrelated root
+surfaces and reports the selected scope in progress and terminal output.
+
+Exits 1 if any validation errors are found; exits 0 with warnings printed to stderr.
 
 > **Gap D — closed by `--strict` (F-011).** `schemas/` holds the JSON/YAML
 > schemas (workflow, automation, domain, run, registries, update-grant, …), and
@@ -118,6 +126,10 @@ Exits 1 if any errors are found; exits 0 with warnings printed to stderr.
 | Arg / Flag | Required | Default | Description |
 | --- | --- | --- | --- |
 | `--root` | No | `~/agentic_os` | Installed OS root path |
+| `--scope` | No | `root` | Named root surface to validate |
+| `--timeout-seconds` | No | `300` | Hard wall-clock bound |
+| `--no-progress-seconds` | No | `60` | Worker no-progress bound |
+| `--progress-interval-seconds` | No | `5` | Running observation interval |
 
 ---
 

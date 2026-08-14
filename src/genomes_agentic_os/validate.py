@@ -120,6 +120,15 @@ REQUIRED_CORE_HOOKS = (
 )
 
 
+VALIDATION_SCOPES = (
+    "root",
+    "registries",
+    "domains",
+    "work-items",
+    "structured-files",
+)
+
+
 SHARED_KNOWLEDGE_FILES = (
     "templates/domain/context.md",
     "templates/workflow/workflow.md",
@@ -1881,6 +1890,74 @@ def validate_root(root: str | Path) -> ValidationResult:
     for finding in lifecycle_staleness_findings(os_root):
         result.warnings.append(finding["message"])
 
+    return result
+
+
+def validate_scope(root: str | Path, scope: str) -> ValidationResult:
+    """Validate one supported root surface without traversing unrelated surfaces."""
+    if scope not in VALIDATION_SCOPES:
+        choices = ", ".join(VALIDATION_SCOPES)
+        raise ValueError(f"unknown validation scope {scope!r}; choose one of: {choices}")
+    if scope == "root":
+        return validate_root(root)
+
+    os_root = expand_path(root)
+    result = ValidationResult(root=os_root)
+    if not os_root.exists():
+        result.errors.append(f"missing root: {os_root}")
+        return result
+    if not os_root.is_dir():
+        result.errors.append(f"root is not a directory: {os_root}")
+        return result
+
+    if scope == "registries":
+        for relative_path in REGISTRY_FILES.values():
+            require_file(os_root / relative_path, result)
+        require_file(harness_path(os_root, "registries", "updates.yml"), result)
+        require_file(harness_path(os_root, "registries", "customer-identity.json"), result)
+        require_file(harness_path(os_root, "registries", "backup-policy.yml"), result)
+        validate_capability_registries(os_root, result)
+        validate_command_skill_registry_coverage(os_root, result)
+        validate_workflow_automation_invocations(os_root, result)
+        validate_automation_projection_registry(os_root, result)
+        validate_registered_hooks(os_root, result)
+        validate_watch_registries(os_root, result)
+        return result
+
+    profile_domains = profile_domain_names(os_root)
+    domain_names = profile_domains or installed_domain_names(os_root) or list(DEFAULT_DOMAINS)
+    if scope == "domains":
+        layout_v2 = (os_root / "lib").is_dir()
+        for domain in domain_names:
+            validate_domain(domain_path(os_root, domain), result, layout_v2=layout_v2)
+        if not profile_domains:
+            validate_domain(shared_factory_path(os_root), result)
+        return result
+
+    if scope == "work-items":
+        domain_roots = [domain_path(os_root, domain) for domain in domain_names]
+        if not profile_domains:
+            domain_roots.append(shared_factory_path(os_root))
+        for domain_root in domain_roots:
+            for project_config in sorted((domain_root / "02-projects").glob("*/project.yml")):
+                validate_project_work_items(project_config.parent, result)
+        return result
+
+    json_paths, yaml_paths = _iter_structured_control_files(os_root)
+    for path in sorted(json_paths):
+        if not path.is_file():
+            continue
+        try:
+            json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            result.errors.append(f"invalid JSON: {path}: {exc}")
+    for path in sorted(yaml_paths):
+        if not path.is_file():
+            continue
+        try:
+            yaml.safe_load(path.read_text(encoding="utf-8"))
+        except yaml.YAMLError as exc:
+            result.errors.append(f"invalid YAML: {path}: {exc}")
     return result
 
 
