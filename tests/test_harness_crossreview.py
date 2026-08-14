@@ -175,6 +175,28 @@ def test_review_outcome_is_terminal_and_findings_are_not_reclassified_clean() ->
         ),
         (
             "WARNING: problem\nAGENTIC_OS_REVIEW_VERDICT: CLEAN",
+            "findings",
+            True,
+        ),
+        (
+            "### BLOCKER — unsafe write\nAGENTIC_OS_REVIEW_VERDICT: CLEAN",
+            "findings",
+            True,
+        ),
+        (
+            "- **WARNING**: stale state\nAGENTIC_OS_REVIEW_VERDICT: CLEAN",
+            "findings",
+            True,
+        ),
+        (
+            "No BLOCKER or WARNING findings were found.\n"
+            "AGENTIC_OS_REVIEW_VERDICT: CLEAN",
+            "clean",
+            True,
+        ),
+        (
+            "The prompt mentioned BLOCKER: as a label.\n"
+            "AGENTIC_OS_REVIEW_VERDICT: CLEAN",
             "clean",
             True,
         ),

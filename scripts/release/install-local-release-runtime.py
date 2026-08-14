@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 from datetime import datetime, timezone
 from email.parser import Parser
+import fcntl
 import hashlib
 import json
 import os
@@ -18,9 +19,16 @@ import re
 import shutil
 import subprocess
 import sys
-from typing import NamedTuple
+from typing import IO, NamedTuple
 import uuid
 import zipfile
+
+try:
+    from packaging.markers import default_environment
+    from packaging.requirements import InvalidRequirement, Requirement
+except ModuleNotFoundError:  # pragma: no cover - release hosts may expose only pip's vendor
+    from pip._vendor.packaging.markers import default_environment
+    from pip._vendor.packaging.requirements import InvalidRequirement, Requirement
 
 
 PACKAGE = "genomes-agentic-os"
@@ -34,6 +42,11 @@ class AliasActivation(NamedTuple):
     aliases: list[dict[str, object]]
     active_snapshots: dict[Path, dict[str, str | None]]
     previous_snapshots: dict[Path, dict[str, str | None]]
+
+
+class ReviewRolloutGuard(NamedTuple):
+    handles: list[IO[str]]
+    evidence: dict[str, object]
 
 
 def sha256(path: Path) -> str:
@@ -64,12 +77,29 @@ def wheel_identity(path: Path) -> tuple[str, str, list[str]]:
         raise ValueError(
             f"expected {PACKAGE} wheel metadata, found name={name!r} version={version!r}"
         )
-    requirements = [
-        value.strip()
-        for value in metadata.get_all("Requires-Dist", [])
-        if value.strip() and "extra ==" not in value.lower()
-    ]
+    environment = default_environment()
+    environment["extra"] = ""
+    requirements: list[str] = []
+    for raw_requirement in metadata.get_all("Requires-Dist", []):
+        try:
+            requirement = Requirement(raw_requirement)
+        except InvalidRequirement as error:
+            raise ValueError(
+                f"wheel contains invalid Requires-Dist metadata: {raw_requirement!r}"
+            ) from error
+        if requirement.marker is None or requirement.marker.evaluate(environment):
+            requirements.append(str(requirement))
     return name, version, requirements
+
+
+def _normalized_revision(value: object, *, label: str) -> str:
+    if not isinstance(value, str) or not REVISION.fullmatch(value):
+        raise ValueError(f"{label} must be a 7-64 character hexadecimal Git revision")
+    return value.lower()
+
+
+def _same_revision(left: str, right: str) -> bool:
+    return left.startswith(right) or right.startswith(left)
 
 
 def review_rollout_proof(path: Path, *, release_revision: str) -> dict[str, object]:
@@ -81,38 +111,57 @@ def review_rollout_proof(path: Path, *, release_revision: str) -> dict[str, obje
         raise ValueError(f"review rollout receipt is not valid JSON: {path}") from error
     if not isinstance(value, dict):
         raise ValueError("review rollout receipt must be a JSON object")
-    required = {
-        "schema_version": "review-coordination-rollout/v1",
-        "release_revision": release_revision.lower(),
-        "quiesced": True,
-        "active_reviews": 0,
-        "migration_verified": True,
-        "budget_history_preserved": True,
-    }
-    for field, expected in required.items():
-        if value.get(field) != expected:
-            raise ValueError(
-                f"review rollout receipt requires {field}={expected!r}"
-            )
+    if value.get("schema_version") != "review-coordination-rollout/v1":
+        raise ValueError(
+            "review rollout receipt requires "
+            "schema_version='review-coordination-rollout/v1'"
+        )
+    expected_revision = _normalized_revision(
+        release_revision, label="--release-revision"
+    )
+    receipt_revision = _normalized_revision(
+        value.get("release_revision"), label="review rollout release_revision"
+    )
+    if not _same_revision(expected_revision, receipt_revision):
+        raise ValueError(
+            "review rollout release_revision does not identify the requested revision"
+        )
+    if value.get("quiesced") is not True:
+        raise ValueError("review rollout receipt requires quiesced=true")
+    active_reviews = value.get("active_reviews")
+    if type(active_reviews) is not int or active_reviews != 0:
+        raise ValueError("review rollout receipt requires integer active_reviews=0")
+    if value.get("migration_verified") is not True:
+        raise ValueError("review rollout receipt requires migration_verified=true")
+    if value.get("budget_history_preserved") is not True:
+        raise ValueError("review rollout receipt requires budget_history_preserved=true")
     strategy = value.get("receipt_strategy")
     if strategy not in {"migrated", "shared-existing"}:
         raise ValueError(
             "review rollout receipt strategy must be migrated or shared-existing"
         )
-    target = Path(str(value.get("target_receipt_root", ""))).expanduser()
+    target_value = value.get("target_receipt_root")
     sources = value.get("source_receipt_roots")
-    if not target.is_absolute() or not isinstance(sources, list) or not sources:
+    if (
+        not isinstance(target_value, str)
+        or not isinstance(sources, list)
+        or not sources
+        or any(not isinstance(item, str) for item in sources)
+    ):
         raise ValueError(
             "review rollout receipt requires one absolute target and source roots"
         )
-    source_paths = [Path(str(item)).expanduser() for item in sources]
-    if any(not item.is_absolute() for item in source_paths):
+    target = Path(target_value).expanduser()
+    source_paths = [Path(item).expanduser() for item in sources]
+    if not target.is_absolute() or any(not item.is_absolute() for item in source_paths):
         raise ValueError("review rollout source roots must be absolute")
     if strategy == "shared-existing" and any(item != target for item in source_paths):
         raise ValueError(
             "shared-existing rollout requires every source root to equal target root"
         )
     expires_at = value.get("expires_at")
+    if not isinstance(expires_at, str):
+        raise ValueError("review rollout receipt requires an ISO-8601 expires_at")
     try:
         expiry = datetime.fromisoformat(str(expires_at).replace("Z", "+00:00"))
     except ValueError as error:
@@ -120,6 +169,96 @@ def review_rollout_proof(path: Path, *, release_revision: str) -> dict[str, obje
     if expiry.tzinfo is None or expiry <= datetime.now(timezone.utc):
         raise ValueError("review rollout receipt is expired")
     return value
+
+
+def _receipt_inventory(root: Path) -> dict[str, str]:
+    receipt_dir = root / "receipts"
+    if not root.is_dir() or not receipt_dir.is_dir():
+        raise ValueError(f"review coordination receipt root is unreadable: {root}")
+    inventory: dict[str, str] = {}
+    for receipt_path in sorted(receipt_dir.glob("*.json")):
+        try:
+            payload = json.loads(receipt_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as error:
+            raise ValueError(f"invalid review receipt JSON: {receipt_path}") from error
+        if not isinstance(payload, dict):
+            raise ValueError(f"review receipt must be an object: {receipt_path}")
+        if payload.get("schema") != "auto-dev-review-receipt/v1":
+            raise ValueError(f"review receipt schema is invalid: {receipt_path}")
+        if payload.get("status") != "completed" or payload.get("outcome") not in {
+            "clean",
+            "findings",
+        }:
+            raise ValueError(f"review receipt is not budget-consuming terminal evidence: {receipt_path}")
+        if payload.get("key") != receipt_path.stem:
+            raise ValueError(f"review receipt filename does not match its key: {receipt_path}")
+        inventory[receipt_path.name] = sha256(receipt_path)
+    return inventory
+
+
+def acquire_review_rollout_guard(proof: dict[str, object]) -> ReviewRolloutGuard:
+    target = Path(str(proof["target_receipt_root"])).expanduser().resolve()
+    sources = [
+        Path(str(item)).expanduser().resolve()
+        for item in proof["source_receipt_roots"]  # type: ignore[union-attr]
+    ]
+    roots = sorted({*sources, target}, key=str)
+    handles: list[IO[str]] = []
+    lock_count = 0
+    try:
+        for root in roots:
+            lock_dir = root / ".locks"
+            if not lock_dir.is_dir():
+                raise ValueError(f"review coordination lock directory is unreadable: {lock_dir}")
+            for lock_path in sorted(lock_dir.glob("*.lock")):
+                handle = lock_path.open("a+", encoding="utf-8")
+                try:
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError as error:
+                    handle.close()
+                    raise ValueError(
+                        f"review coordination is not drained; live family lock: {lock_path}"
+                    ) from error
+                handles.append(handle)
+                lock_count += 1
+
+        target_inventory = _receipt_inventory(target)
+        source_inventories = {str(root): _receipt_inventory(root) for root in sources}
+        required_inventory: dict[str, str] = {}
+        for root, inventory in source_inventories.items():
+            for name, digest in inventory.items():
+                prior = required_inventory.get(name)
+                if prior is not None and prior != digest:
+                    raise ValueError(
+                        f"review receipt collision differs across source roots: {name}"
+                    )
+                required_inventory[name] = digest
+                if target_inventory.get(name) != digest:
+                    raise ValueError(
+                        f"review receipt budget history is missing or changed at target: {name}"
+                    )
+        evidence: dict[str, object] = {
+            "observed_active_reviews": 0,
+            "held_family_locks": lock_count,
+            "source_receipt_counts": {
+                root: len(inventory) for root, inventory in source_inventories.items()
+            },
+            "required_receipt_count": len(required_inventory),
+            "target_receipt_count": len(target_inventory),
+            "receipt_digests_matched": len(required_inventory),
+        }
+        return ReviewRolloutGuard(handles, evidence)
+    except Exception:
+        for handle in reversed(handles):
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            handle.close()
+        raise
+
+
+def release_review_rollout_guard(guard: ReviewRolloutGuard) -> None:
+    for handle in reversed(guard.handles):
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        handle.close()
 
 
 def expected_sha256(
@@ -385,6 +524,7 @@ def install(arguments: argparse.Namespace) -> dict[str, object]:
         else None
     )
     rollout: dict[str, object] | None = None
+    rollout_guard: ReviewRolloutGuard | None = None
     if prior_runtime is not None:
         if rollout_path is None:
             raise ValueError(
@@ -394,6 +534,7 @@ def install(arguments: argparse.Namespace) -> dict[str, object]:
         rollout = review_rollout_proof(
             rollout_path, release_revision=arguments.release_revision
         )
+        rollout_guard = acquire_review_rollout_guard(rollout)
 
     created = False
     activation: AliasActivation | None = None
@@ -475,6 +616,7 @@ def install(arguments: argparse.Namespace) -> dict[str, object]:
                 "receipt": str(rollout_path) if rollout_path else None,
                 "receipt_sha256": sha256(rollout_path) if rollout_path else None,
                 "proof": rollout,
+                "verified_evidence": rollout_guard.evidence if rollout_guard else None,
             },
             "aliases": aliases,
             "smoke": validation["smoke"],
@@ -495,6 +637,9 @@ def install(arguments: argparse.Namespace) -> dict[str, object]:
         if created and release_dir.exists():
             shutil.rmtree(release_dir)
         raise
+    finally:
+        if rollout_guard is not None:
+            release_review_rollout_guard(rollout_guard)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:

@@ -59,6 +59,8 @@ SCOPE_ALIASES = {"full-pr": "full-pr", "full_pr": "full-pr", "pr": "full-pr"}
 VERDICT_PATTERN = re.compile(
     r"AGENTIC_OS_REVIEW_VERDICT:\s*(CLEAN|FINDINGS)", re.IGNORECASE
 )
+JSON_ARRAY_PATTERN = re.compile(r"```json\s*(\[.*?\])\s*```", re.IGNORECASE | re.DOTALL)
+INSTALLED_OS_ROOT = Path.home() / "agentic_os"
 
 
 class ReviewError(RuntimeError):
@@ -97,14 +99,44 @@ def normalize_review_purpose(purpose: str, scope: str) -> tuple[str, str]:
 
 
 def parse_review_verdict(response: str) -> tuple[str, bool]:
-    """Read the final non-empty line using the shared terminal vocabulary."""
+    """Read the final verdict and reject a clean/non-empty findings array."""
     lines = [line.strip() for line in response.splitlines() if line.strip()]
     if not lines:
         return "findings", False
     match = VERDICT_PATTERN.fullmatch(lines[-1])
     if match is None:
         return "findings", False
-    return ("clean" if match.group(1).upper() == "CLEAN" else "findings", True)
+    declared = match.group(1).upper()
+    if declared == "CLEAN":
+        blocks = JSON_ARRAY_PATTERN.findall("\n".join(lines[:-1]))
+        if not blocks:
+            return "findings", False
+        try:
+            findings = json.loads(blocks[-1])
+        except json.JSONDecodeError:
+            return "findings", False
+        if not isinstance(findings, list):
+            return "findings", False
+        if findings:
+            return "findings", True
+        return "clean", True
+    return "findings", True
+
+
+def resolve_os_root(explicit: Path | None) -> Path:
+    """Resolve only the configured or installed canonical OS root, never cwd."""
+    configured = str(os.environ.get("AGENTIC_OS_ROOT") or "").strip()
+    candidate = explicit or (Path(configured) if configured else INSTALLED_OS_ROOT)
+    candidate = candidate.expanduser().resolve()
+    # This also fails closed when an explicit root disagrees with AGENTIC_OS_ROOT.
+    shared_review_coordination_root(candidate)
+    required = [candidate / ".agentic_root", candidate / "harness", candidate / "domains"]
+    if not all(path.exists() for path in required):
+        raise ReviewError(
+            "installed Agentic OS root is unavailable; pass --os-root or set "
+            "AGENTIC_OS_ROOT to the canonical installed root"
+        )
+    return candidate
 
 
 def one(paths: list[Path], description: str) -> Path:
@@ -234,7 +266,14 @@ def decide(run_dir: Path) -> dict[str, Any]:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("ticket")
-    parser.add_argument("--os-root", type=Path, default=Path.cwd())
+    parser.add_argument(
+        "--os-root",
+        type=Path,
+        help=(
+            "Canonical installed Agentic OS root (default: AGENTIC_OS_ROOT or "
+            "~/agentic_os; the current directory is never used)."
+        ),
+    )
     parser.add_argument("--work-item", type=Path)
     parser.add_argument("--worktree", type=Path)
     parser.add_argument("--timeout-seconds", type=int, default=180)
@@ -244,7 +283,7 @@ def main() -> int:
     parser.add_argument("--scope", default="full-pr")
     args = parser.parse_args()
     try:
-        os_root = args.os_root.resolve()
+        os_root = resolve_os_root(args.os_root)
         work_item = (args.work_item or locate_work_item(os_root, args.ticket)).resolve()
         worktree = (args.worktree or locate_worktree(os_root, args.ticket)).resolve()
         source = prior_request(work_item, args.ticket)

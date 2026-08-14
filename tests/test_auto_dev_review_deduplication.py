@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+import hashlib
 import json
 from pathlib import Path
 import threading
@@ -18,7 +19,9 @@ from genomes_agentic_os.review_coordination import (
     ReviewSubject,
     assert_exact_head_review_receipt,
     canonical_review_purpose,
+    load_review_receipt,
     provider_review_marker,
+    review_chain_key,
     review_family_key,
     shared_review_coordination_root,
     stable_review_key,
@@ -249,6 +252,44 @@ def test_failed_scrub_is_retryable_unavailable_and_does_not_burn_budget(
     assert second.receipt["budget"]["absolute_full_reviews_used"] == 0
 
 
+def test_scrub_failing_findings_remain_canonical_and_budget_counted(
+    tmp_path: Path,
+) -> None:
+    coordinator = ReviewCoordinator(tmp_path / "auto-dev-review")
+    calls = 0
+
+    def findings() -> dict[str, object]:
+        nonlocal calls
+        calls += 1
+        return {
+            "outcome": "findings",
+            "scrub_passed": False,
+            "scrub_hits": ["internal-path"],
+            "findings": [
+                {
+                    "id": "finding-scrubbed-evidence",
+                    "severity": "high",
+                    "summary": "Real finding cites scrubbed evidence",
+                    "evidence": ["internal-path:42"],
+                }
+            ],
+        }
+
+    first = coordinator.execute(_subject(), findings)
+    replay = coordinator.execute(_subject(), findings)
+    assert calls == 1
+    assert first.receipt["outcome"] == "findings"
+    assert first.receipt["budget"]["full_reviews_used"] == 1
+    assert first.receipt_path.parent == coordinator.receipts
+    assert replay.reused
+    with pytest.raises(ReviewCoordinationError, match="clean review"):
+        coordinator.post_terminal(
+            _subject(),
+            lambda _marker, _receipt: {"readback_verified": True},
+            scrub_passed=False,
+        )
+
+
 def test_legacy_clean_scrub_failure_is_archived_and_retried_not_reused(
     tmp_path: Path,
 ) -> None:
@@ -376,10 +417,44 @@ def test_corrupt_family_receipt_is_quarantined_and_budget_fails_closed(
 ) -> None:
     coordinator = ReviewCoordinator(tmp_path / "auto-dev-review")
     completed = coordinator.execute(_subject(), _clean)
-    completed.receipt_path.write_text("{broken", encoding="utf-8")
+    corrupt = json.loads(completed.receipt_path.read_text(encoding="utf-8"))
+    corrupt["key"] = "0" * 64
+    completed.receipt_path.write_text(json.dumps(corrupt), encoding="utf-8")
     with pytest.raises(ReviewCoordinationError, match="quarantined"):
         coordinator.execute(_subject("2" * 40), _clean, mode="delta")
-    assert list((coordinator.root / "quarantine").glob("*.json"))
+    assert not completed.receipt_path.exists()
+    assert list(coordinator.quarantine.glob("*.meta.json"))
+
+
+def test_unidentifiable_corrupt_receipt_isolated_without_blocking_other_family(
+    tmp_path: Path,
+) -> None:
+    coordinator = ReviewCoordinator(tmp_path / "auto-dev-review")
+    affected = coordinator.execute(_subject(), _clean)
+    affected.receipt_path.write_text("{broken", encoding="utf-8")
+    unrelated = ReviewSubject(
+        repository="acme/other",
+        pull_request="99",
+        base_branch="main",
+        base_sha="a" * 40,
+        head_sha="9" * 40,
+        policy_fingerprint=POLICY,
+    )
+    unrelated_result = coordinator.execute(unrelated, _clean)
+    assert unrelated_result.receipt["outcome"] == "clean"
+    assert not affected.receipt_path.exists()
+    assert list(coordinator.quarantine.glob("*.meta.json"))
+
+    called = False
+
+    def forbidden() -> dict[str, str]:
+        nonlocal called
+        called = True
+        return _clean()
+
+    with pytest.raises(ReviewCoordinationError, match="failed closed"):
+        coordinator.execute(_subject(), forbidden)
+    assert not called
 
 
 def test_review_subject_requires_full_commit_shas() -> None:
@@ -398,6 +473,39 @@ def test_mixed_case_revision_hex_canonicalizes_before_stable_key() -> None:
     assert upper.head_sha == lower.head_sha
     assert upper.base_sha == lower.base_sha
     assert upper.policy_fingerprint == lower.policy_fingerprint
+
+
+def test_precanonicalization_uppercase_receipt_remains_loadable(tmp_path: Path) -> None:
+    coordinator = ReviewCoordinator(tmp_path / "auto-dev-review")
+    completed = coordinator.execute(_subject(), _clean)
+    legacy = json.loads(completed.receipt_path.read_text(encoding="utf-8"))
+    legacy_subject = dict(legacy["subject"])
+    for field in ("base_sha", "head_sha", "policy_fingerprint"):
+        legacy_subject[field] = str(legacy_subject[field]).upper()
+
+    def digest(value: dict[str, object]) -> str:
+        encoded = json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+        return hashlib.sha256(encoded).hexdigest()
+
+    legacy_key = digest(legacy_subject)
+    legacy_chain = dict(legacy_subject)
+    legacy_chain.pop("head_sha")
+    legacy_chain.pop("purpose")
+    legacy["key"] = legacy_key
+    legacy["chain_key"] = digest(legacy_chain)
+    legacy["subject"] = legacy_subject
+    legacy["provider_post"]["marker"] = provider_review_marker(legacy_key)
+    legacy_path = coordinator.receipts / f"{legacy_key}.json"
+    completed.receipt_path.unlink()
+    legacy_path.write_text(
+        json.dumps(legacy, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+
+    loaded = load_review_receipt(legacy_path)
+    assert loaded["key"] == legacy_key
+    assert loaded["chain_key"] == review_chain_key(
+        ReviewSubject.from_mapping(legacy_subject)
+    )
 
 
 def test_entrypoint_purpose_aliases_produce_the_same_stable_key() -> None:

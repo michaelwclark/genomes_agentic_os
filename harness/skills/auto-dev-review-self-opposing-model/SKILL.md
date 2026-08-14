@@ -38,6 +38,11 @@ python3 harness/skills/auto-dev-review-self-opposing-model/scripts/run_opposing_
   <TICKET> --os-root <agentic-os-root>
 ```
 
+When `--os-root` is omitted, the runner accepts only `AGENTIC_OS_ROOT` or the
+installed `~/agentic_os` root after marker/directory validation. It never uses
+the current worktree as a private coordination root, and an explicit root that
+disagrees with `AGENTIC_OS_ROOT` fails closed.
+
 6. Require the resulting `review-request.json`, `reviewer-response.md` when
    available, `model-receipt.md`, `review-ledger.jsonl`, and
    `readiness-decision.json`. A timeout, auth failure, empty output, or malformed
@@ -59,7 +64,9 @@ that fail the scrub. A clean verdict that fails the scrub is stored as a
 retryable `unavailable` attempt for the same key instead of consuming the one
 canonical full-review receipt. Both transports parse only the final non-empty
 `AGENTIC_OS_REVIEW_VERDICT: CLEAN|FINDINGS` line, so an echoed prompt cannot
-manufacture or invalidate the reviewer verdict.
+manufacture or invalidate the reviewer verdict. A `CLEAN` line that contradicts
+structured `BLOCKER`/`WARNING` headings or a non-empty JSON findings array is
+canonical findings, never an approval or provider post.
 
 Do not hand-craft a Claude/Codex prompt, create a second PR, force-push, bypass
 required checks, treat unavailable review as approval, or post intermediate

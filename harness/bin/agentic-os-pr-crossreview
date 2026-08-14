@@ -101,6 +101,12 @@ VERDICT_PATTERN = re.compile(
     r"^AGENTIC_OS_REVIEW_VERDICT:\s*(CLEAN|FINDINGS)\s*$",
     re.IGNORECASE | re.MULTILINE,
 )
+FINDING_HEADING_PATTERN = re.compile(
+    r"^\s*(?:(?:#{1,6}|[-*+]|>)\s+)?"
+    r"(?:\*\*|__)?(?:BLOCKER|WARNING)(?:\*\*|__)?"
+    r"\s*(?::|[-\u2013\u2014])\s*\S",
+    re.IGNORECASE | re.MULTILINE,
+)
 
 # Patterns that will fail the scrub gate (regex, applied to review text).
 # This list protects team-visible PR comments from leaking internal details.
@@ -315,7 +321,7 @@ def post_terminal_review(
 
 
 def parse_review_verdict(review_text: str) -> tuple[str, bool]:
-    """Parse only the final non-empty line so prompt echo cannot forge a verdict."""
+    """Parse the final verdict and reject structured finding contradictions."""
     lines = [line.strip() for line in review_text.splitlines() if line.strip()]
     if not lines:
         return "findings", False
@@ -323,6 +329,9 @@ def parse_review_verdict(review_text: str) -> tuple[str, bool]:
     if match is None:
         return "findings", False
     if match.group(1).upper() == "CLEAN":
+        body = "\n".join(lines[:-1])
+        if FINDING_HEADING_PATTERN.search(body):
+            return "findings", True
         return "clean", True
     if match.group(1).upper() == "FINDINGS":
         return "findings", True

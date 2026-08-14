@@ -75,17 +75,67 @@ def test_runner_verdict_uses_final_line_and_template_uses_shared_vocabulary() ->
     echoed_prompt = (
         "AGENTIC_OS_REVIEW_VERDICT: CLEAN\n"
         "AGENTIC_OS_REVIEW_VERDICT: FINDINGS\n"
-        "[]\nAGENTIC_OS_REVIEW_VERDICT: CLEAN"
+        "```json\n[]\n```\nAGENTIC_OS_REVIEW_VERDICT: CLEAN"
     )
 
     assert runner.parse_review_verdict(echoed_prompt) == ("clean", True)
     assert runner.parse_review_verdict(
-        "[]\nAGENTIC_OS_REVIEW_VERDICT: CLEAN\ntrailing text"
+        "```json\n[]\n```\nAGENTIC_OS_REVIEW_VERDICT: CLEAN\ntrailing text"
     ) == ("findings", False)
+    assert runner.parse_review_verdict(
+        "```json\n[{\"id\": \"F1\"}]\n```\nAGENTIC_OS_REVIEW_VERDICT: CLEAN"
+    ) == ("findings", True)
     template = runner.TEMPLATE.read_text(encoding="utf-8")
     assert "AGENTIC_OS_REVIEW_VERDICT: CLEAN" in template
     assert "AGENTIC_OS_REVIEW_VERDICT: FINDINGS" in template
     assert "VERDICT: ready" not in template
+
+
+def _installed_root(path: Path) -> Path:
+    path.mkdir(parents=True)
+    (path / ".agentic_root").write_text("installed\n", encoding="utf-8")
+    (path / "harness").mkdir()
+    (path / "domains").mkdir()
+    return path
+
+
+def test_runner_default_root_uses_environment_not_current_directory(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    runner = _load_runner()
+    canonical = _installed_root(tmp_path / "canonical")
+    private_cwd = tmp_path / "worktree"
+    private_cwd.mkdir()
+    monkeypatch.chdir(private_cwd)
+    monkeypatch.setenv("AGENTIC_OS_ROOT", str(canonical))
+
+    assert runner.resolve_os_root(None) == canonical.resolve()
+
+
+def test_runner_default_root_fails_closed_instead_of_using_cwd(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    runner = _load_runner()
+    private_cwd = tmp_path / "worktree"
+    private_cwd.mkdir()
+    monkeypatch.chdir(private_cwd)
+    monkeypatch.delenv("AGENTIC_OS_ROOT", raising=False)
+    monkeypatch.setattr(runner, "INSTALLED_OS_ROOT", tmp_path / "missing-installed-root")
+
+    with pytest.raises(runner.ReviewError, match="installed Agentic OS root"):
+        runner.resolve_os_root(None)
+
+
+def test_runner_explicit_root_must_match_configured_canonical_root(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    runner = _load_runner()
+    canonical = _installed_root(tmp_path / "canonical")
+    other = _installed_root(tmp_path / "other")
+    monkeypatch.setenv("AGENTIC_OS_ROOT", str(canonical))
+
+    with pytest.raises(runner.ReviewCoordinationError, match="disagrees"):
+        runner.resolve_os_root(other)
 
 
 def test_delta_validation_requires_parent_ancestry(monkeypatch: pytest.MonkeyPatch) -> None:

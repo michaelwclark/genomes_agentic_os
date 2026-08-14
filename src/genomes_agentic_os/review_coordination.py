@@ -163,6 +163,25 @@ def _legacy_review_family_key(subject: ReviewSubject) -> str:
     )
 
 
+def _legacy_subject_hash(
+    subject: Mapping[str, Any], *, drop: tuple[str, ...] = ()
+) -> str:
+    """Hash a pre-canonicalization subject exactly as its writer saw it."""
+
+    value = {
+        "repository": str(subject.get("repository") or ""),
+        "pull_request": str(subject.get("pull_request") or ""),
+        "base_branch": str(subject.get("base_branch") or ""),
+        "base_sha": str(subject.get("base_sha") or ""),
+        "head_sha": str(subject.get("head_sha") or ""),
+        "policy_fingerprint": str(subject.get("policy_fingerprint") or ""),
+        "purpose": str(subject.get("purpose") or "review_self"),
+    }
+    for field in drop:
+        value.pop(field, None)
+    return _canonical_hash(value)
+
+
 def provider_review_marker(key: str) -> str:
     """Return the provider-visible deduplication marker for a terminal post."""
 
@@ -240,7 +259,7 @@ def normalize_findings_ledger(
 
     normalized_review = dict(review)
     outcome = str(normalized_review.get("outcome") or "")
-    if normalized_review.get("scrub_passed") is False:
+    if outcome == "clean" and normalized_review.get("scrub_passed") is False:
         outcome = "unavailable"
         normalized_review["outcome"] = outcome
         normalized_review["coordination_warning"] = (
@@ -420,7 +439,8 @@ def load_review_receipt(path: str | Path) -> dict[str, Any]:
     )
     subject = ReviewSubject.from_mapping(subject_raw)
     expected_key = stable_review_key(subject)
-    if payload.get("key") != expected_key:
+    legacy_key = _legacy_subject_hash(subject_raw)
+    if payload.get("key") not in {expected_key, legacy_key}:
         raise ReviewCoordinationError("review coordination receipt key does not match subject")
     expected_chain = review_chain_key(subject)
     expected_family = review_family_key(subject)
@@ -428,14 +448,19 @@ def load_review_receipt(path: str | Path) -> dict[str, Any]:
         payload.get("outcome") == "unavailable" or legacy_scrub_failure
     )
     if payload.get("chain_key") != expected_chain:
-        if legacy_unavailable and payload.get("chain_key") == _legacy_review_chain_key(subject):
+        legacy_chains = {
+            _legacy_review_chain_key(subject),
+            _legacy_subject_hash(subject_raw, drop=("head_sha",)),
+            _legacy_subject_hash(subject_raw, drop=("head_sha", "purpose")),
+        }
+        if payload.get("chain_key") in legacy_chains:
             payload["chain_key"] = expected_chain
         else:
             raise ReviewCoordinationError(
                 "review coordination receipt chain_key does not match subject"
             )
     if payload.get("family_key") != expected_family:
-        if legacy_unavailable and payload.get("family_key") == _legacy_review_family_key(subject):
+        if payload.get("family_key") == _legacy_review_family_key(subject):
             payload["family_key"] = expected_family
         else:
             raise ReviewCoordinationError(
@@ -573,21 +598,98 @@ class ReviewCoordinator:
     def _path(self, key: str) -> Path:
         return self.receipts / f"{key}.json"
 
+    def _raise_if_quarantined(
+        self, *, family_key: str, exact_key: str | None = None
+    ) -> None:
+        for metadata_path in sorted(self.quarantine.glob("*.meta.json")):
+            try:
+                metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError) as exc:
+                raise ReviewCoordinationError(
+                    f"quarantine metadata is unreadable: {metadata_path}"
+                ) from exc
+            if not isinstance(metadata, Mapping):
+                raise ReviewCoordinationError(
+                    f"quarantine metadata is invalid: {metadata_path}"
+                )
+            blocked_key = str(metadata.get("key") or "")
+            blocked_family = str(metadata.get("family_key") or "")
+            if (exact_key and blocked_key == exact_key) or blocked_family == family_key:
+                raise ReviewCoordinationError(
+                    "review budget failed closed for quarantined "
+                    f"key={blocked_key or 'unknown'} family={blocked_family or 'unknown'}; "
+                    f"evidence={metadata.get('quarantine_ref')}"
+                )
+
+    def _quarantine_receipt(
+        self, path: Path, error: ReviewCoordinationError
+    ) -> dict[str, str]:
+        raw = path.read_bytes()
+        digest = hashlib.sha256(raw).hexdigest()
+        quarantine_path = self.quarantine / f"{path.stem}-{digest}.json"
+        key = path.stem if re.fullmatch(r"[0-9a-f]{64}", path.stem) else ""
+        family_key = ""
+        try:
+            candidate = json.loads(raw)
+        except json.JSONDecodeError:
+            candidate = None
+        if isinstance(candidate, Mapping):
+            candidate_key = str(candidate.get("key") or "")
+            if not key and re.fullmatch(r"[0-9a-f]{64}", candidate_key):
+                key = candidate_key
+            candidate_family = str(candidate.get("family_key") or "")
+            if re.fullmatch(r"[0-9a-f]{64}", candidate_family):
+                family_key = candidate_family
+            subject_raw = candidate.get("subject")
+            if isinstance(subject_raw, Mapping):
+                try:
+                    family_key = review_family_key(
+                        ReviewSubject.from_mapping(subject_raw)
+                    )
+                except ReviewCoordinationError:
+                    pass
+        metadata_path = self.quarantine / f"{path.stem}-{digest}.meta.json"
+        metadata = {
+            "schema": "auto-dev-review-quarantine/v1",
+            "key": key,
+            "family_key": family_key,
+            "source_ref": str(path),
+            "quarantine_ref": str(quarantine_path),
+            "sha256": digest,
+            "error": str(error),
+            "quarantined_at": _utc_now(),
+        }
+        if not metadata_path.is_file():
+            _atomic_json(metadata_path, metadata)
+        quarantine_path.parent.mkdir(parents=True, exist_ok=True)
+        if quarantine_path.is_file():
+            if quarantine_path.read_bytes() != raw:
+                raise ReviewCoordinationError(
+                    f"quarantine collision for corrupt receipt: {quarantine_path}"
+                )
+            path.unlink(missing_ok=True)
+        else:
+            path.replace(quarantine_path)
+        return {"key": key, "family_key": family_key, "ref": str(quarantine_path)}
+
     def _family_receipts(self, family_key: str) -> list[dict[str, Any]]:
+        self._raise_if_quarantined(family_key=family_key)
         rows: list[dict[str, Any]] = []
         for path in sorted(self.receipts.glob("*.json")):
             try:
                 payload = load_review_receipt(path)
             except ReviewCoordinationError as exc:
-                raw = path.read_bytes()
-                digest = hashlib.sha256(raw).hexdigest()
-                quarantine_path = self.quarantine / f"{path.stem}-{digest}.json"
-                if not quarantine_path.is_file():
-                    _atomic_bytes(quarantine_path, raw)
-                raise ReviewCoordinationError(
-                    f"corrupt review receipt quarantined at {quarantine_path}; "
-                    "budget accounting failed closed"
-                ) from exc
+                quarantined = self._quarantine_receipt(path, exc)
+                if quarantined["family_key"] == family_key:
+                    raise ReviewCoordinationError(
+                        "corrupt same-family review receipt was quarantined; "
+                        f"budget accounting failed closed at {quarantined['ref']}"
+                    ) from exc
+                # An unrelated or unidentifiable receipt cannot contribute to
+                # this family's counters. It is evicted from the active store;
+                # its exact key (and known family, if recoverable) stays blocked
+                # by quarantine metadata.
+                continue
             if payload.get("family_key") == family_key:
                 rows.append(payload)
         return rows
@@ -673,8 +775,16 @@ class ReviewCoordinator:
         path = self._path(key)
         lock_path = self.locks / f"{family_key}.lock"
         with _exclusive_lock(lock_path):
+            self._raise_if_quarantined(family_key=family_key, exact_key=key)
             if path.is_file():
-                existing = load_review_receipt(path)
+                try:
+                    existing = load_review_receipt(path)
+                except ReviewCoordinationError as exc:
+                    quarantined = self._quarantine_receipt(path, exc)
+                    raise ReviewCoordinationError(
+                        "exact-key review receipt was quarantined; retry is blocked "
+                        f"until recovery: {quarantined['ref']}"
+                    ) from exc
                 if existing.get("outcome") in SUCCESSFUL_REVIEW_OUTCOMES:
                     return self._result(path, existing, reused=True)
                 # Unavailable is an attempt, not a terminal authority.  Preserve
@@ -791,6 +901,7 @@ class ReviewCoordinator:
         path = self._path(key)
         family_key = review_family_key(subject)
         with _exclusive_lock(self.locks / f"{family_key}.lock"):
+            self._raise_if_quarantined(family_key=family_key, exact_key=key)
             if not path.is_file():
                 raise ReviewCoordinationError(
                     "provider post requires an exact-head successful review receipt"

@@ -138,9 +138,10 @@ fails.
 
 ### Drain and preserve the review ledger first
 
-An upgrade that changes review code or its receipt-root derivation is a drained
-rollout, not a live rolling update. Before projecting the new harness or
-switching runtime aliases:
+Every replacement of an existing runtime alias pair is conservatively treated
+as a drained review rollout. The installer cannot safely infer that a release
+leaves review code and root derivation untouched, so routine upgrades use the
+same gate. Before projecting the new harness or switching runtime aliases:
 
 1. Stop or pause every Auto-Dev review producer that can reach this OS root,
    including old and new harness processes. Keep them stopped through runtime
@@ -161,11 +162,22 @@ switching runtime aliases:
    `budget_history_preserved: true`, and an `expires_at` timestamp.
 
 The installer requires that proof whenever an existing runtime alias pair is
-present. An expired, revision-mismatched, unverified, or budget-reset receipt
-fails before the new environment is built. The receipt proves the drain
-precondition; operators must keep producers quiesced until package, alias,
-harness projection, and receipt-root readback all succeed. On failure, retain
-the old receipt roots and resume only the old runtime pair.
+present. It does not merely trust the boolean claims: it validates every source
+and target receipt's schema, terminal status, outcome, and filename/key; hashes
+the immutable receipts; requires the target to contain byte-identical evidence
+for the union of source ledgers; and non-blockingly acquires every existing
+family lock across those roots. It holds those locks through installation and
+alias/receipt write. A busy lock, missing or changed receipt, divergent source
+collision, expired proof, or unrelated release revision fails the upgrade.
+
+This verifies the observable active families and budget ledger. It cannot stop
+a producer from inventing a brand-new family lock after the scan because v1 has
+no global rollout lock, so stopping producers remains a real prerequisite, not
+a field to type optimistically. Keep them quiesced until package, alias, harness
+projection, and receipt-root readback all succeed. On failure, retain the old
+receipt roots and resume only the old runtime pair. Full and abbreviated Git
+revisions are accepted when their case-normalized values identify the same
+commit; boolean and integer proof fields are type-checked strictly.
 
 ```bash
 python scripts/release/install-local-release-runtime.py \
@@ -179,8 +191,11 @@ python scripts/release/install-local-release-runtime.py \
   --apply
 ```
 
-The release wheel is always installed with `--no-deps`. The installer reads its
-`Requires-Dist` metadata and refuses a wheel with runtime requirements unless
+The release wheel is always installed with `--no-deps`. The installer parses
+each `Requires-Dist` entry as PEP 508 and evaluates its marker for the target
+host with no extras selected; this correctly excludes extras-only requirements
+regardless of marker whitespace while retaining applicable platform and Python
+requirements. It refuses a wheel with applicable runtime requirements unless
 `--dependency-lock` and `--wheelhouse` are both supplied. The lock must
 enumerate the complete closure, pin every distribution, and include a hash for
 every accepted wheel. The dependency step uses
