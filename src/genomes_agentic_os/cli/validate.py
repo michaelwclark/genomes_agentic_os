@@ -30,13 +30,19 @@ def _positive_seconds(value: str) -> float:
 
 def _validation_worker(queue: Any, root: str, scope: str, strict: bool) -> None:
     try:
+        def report_progress(stage: str) -> None:
+            queue.put(("progress", {"scope": scope, "stage": stage, "status": "running"}))
+
         queue.put(("progress", {"scope": scope, "stage": scope, "status": "started"}))
-        result = validate_scope(root, scope)
+        result = validate_scope(root, scope, progress=report_progress)
         queue.put(("progress", {"scope": scope, "stage": scope, "status": "completed"}))
         strict_findings: list[StrictFinding] = []
         if strict:
             queue.put(("progress", {"scope": scope, "stage": "schemas", "status": "started"}))
-            strict_findings = validate_schemas_strict(Path(root).expanduser())
+            strict_findings = validate_schemas_strict(
+                Path(root).expanduser(),
+                progress=report_progress,
+            )
             queue.put(("progress", {"scope": scope, "stage": "schemas", "status": "completed"}))
         queue.put(
             (
