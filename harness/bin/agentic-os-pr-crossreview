@@ -242,7 +242,12 @@ def existing_provider_marker(repo: str, pr: int, marker: str) -> dict | None:
 
 
 def get_revision_diff(repo: str, base_sha: str, head_sha: str) -> str:
-    """Read one bounded descendant delta between two provider revisions."""
+    """Read one descendant delta between two provider revisions.
+
+    ``build_review_prompt`` applies the hard prompt-size bound. Keeping the
+    complete delta here preserves its original length and truncation evidence
+    without blocking a legitimate repair range before the reviewer is called.
+    """
     if base_sha == head_sha:
         raise ReviewCoordinationError("delta review requires a changed head revision")
     compare_ref = f"repos/{repo}/compare/{base_sha}...{head_sha}"
@@ -257,10 +262,6 @@ def get_revision_diff(repo: str, base_sha: str, head_sha: str) -> str:
         "--header",
         "Accept: application/vnd.github.v3.diff",
     )
-    if len(delta) > MAX_DIFF_CHARS:
-        raise ReviewCoordinationError(
-            f"delta diff exceeds the {MAX_DIFF_CHARS}-character review bound"
-        )
     return delta
 
 

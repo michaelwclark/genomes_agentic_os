@@ -215,7 +215,7 @@ def test_provider_marker_requires_the_exact_hidden_marker_line(
     assert crossreview.existing_provider_marker("acme/widgets", 42, marker)["id"] == 2
 
 
-def test_delta_diff_requires_ancestry_and_enforces_prompt_bound(
+def test_delta_diff_requires_ancestry_and_defers_size_bound_to_prompt(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     crossreview = _load_crossreview()
@@ -228,10 +228,26 @@ def test_delta_diff_requires_ancestry_and_enforces_prompt_bound(
     with pytest.raises(crossreview.ReviewCoordinationError, match="ancestor"):
         crossreview.get_revision_diff("acme/widgets", "a" * 40, "c" * 40)
 
-    responses = iter(["ahead", "x" * (crossreview.MAX_DIFF_CHARS + 1)])
+    oversized = "x" * (crossreview.MAX_DIFF_CHARS + 1)
+    responses = iter(["ahead", oversized])
     monkeypatch.setattr(crossreview, "gh", lambda *_args, **_kwargs: next(responses))
-    with pytest.raises(crossreview.ReviewCoordinationError, match="exceeds"):
-        crossreview.get_revision_diff("acme/widgets", "a" * 40, "d" * 40)
+    delta = crossreview.get_revision_diff("acme/widgets", "a" * 40, "d" * 40)
+    prompt = crossreview.build_review_prompt(
+        "acme/widgets",
+        42,
+        {
+            "title": "Repair review coordination",
+            "body": "Bound duplicate review work.",
+            "base_branch": "main",
+            "head_branch": "repair",
+            "head_sha": "d" * 40,
+        },
+        delta,
+    )
+
+    assert delta == oversized
+    assert "DIFF TRUNCATED" in prompt
+    assert f"showing first {crossreview.MAX_DIFF_CHARS:,}" in prompt
 
 
 def test_terminal_provider_post_reuses_existing_marker_without_writing(

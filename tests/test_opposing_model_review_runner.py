@@ -34,7 +34,7 @@ def test_delta_validation_requires_parent_ancestry(monkeypatch: pytest.MonkeyPat
         runner.validated_delta_hash(Path("/tmp/repo"), "a" * 40, "b" * 40)
 
 
-def test_delta_validation_rejects_oversized_diff_before_review(
+def test_delta_validation_hashes_complete_oversized_descendant_diff(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     runner = _load_runner()
@@ -43,8 +43,11 @@ def test_delta_validation_rejects_oversized_diff_before_review(
     )
     monkeypatch.setattr(runner, "run", lambda *_args, **_kwargs: next(results))
 
-    with pytest.raises(runner.ReviewError, match="exceeds"):
-        runner.validated_delta_hash(Path("/tmp/repo"), "a" * 40, "b" * 40)
+    assert runner.validated_delta_hash(
+        Path("/tmp/repo"), "a" * 40, "b" * 40
+    ) == runner.hashlib.sha256(
+        ("x" * (runner.MAX_DIFF_CHARS + 1)).encode()
+    ).hexdigest()
 
 
 def test_delta_validation_returns_hash_for_one_bounded_descendant_diff(

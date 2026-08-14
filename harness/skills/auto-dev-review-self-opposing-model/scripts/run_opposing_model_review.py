@@ -141,7 +141,7 @@ def diff_hash(worktree: Path, base: str, head: str) -> str:
 
 
 def validated_delta_hash(worktree: Path, parent_head: str, head: str) -> str:
-    """Prove the delta is descendant-only and small enough for one review."""
+    """Prove the delta is descendant-only and bind the complete delta by hash."""
     ancestry = run(
         ["git", "merge-base", "--is-ancestor", parent_head, head], cwd=worktree
     )
@@ -150,10 +150,6 @@ def validated_delta_hash(worktree: Path, parent_head: str, head: str) -> str:
     completed = run(["git", "diff", "--binary", f"{parent_head}..{head}"], cwd=worktree)
     if completed.returncode:
         raise ReviewError("review delta could not be read")
-    if len(completed.stdout) > MAX_DIFF_CHARS:
-        raise ReviewError(
-            f"review delta exceeds the {MAX_DIFF_CHARS}-character review bound"
-        )
     return hashlib.sha256(completed.stdout.encode()).hexdigest()
 
 
