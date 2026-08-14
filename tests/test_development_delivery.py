@@ -837,6 +837,121 @@ def test_escalate_active_nonblocked_pr_create_delivery_upgrades_exact_legacy_age
     assert _canonical_delivery_row(root, task)
 
 
+def _active_pr_create_review_receipts(task: TaskState) -> dict[str, str]:
+    """Create only the fresh Review Self milestones after an AGE-190 escalation."""
+
+    work_item = Path(task.read()["work_item"])
+    source_head = "d" * 40
+    authority = _provider_authority(task, pull_request="github:acme/app#190")
+    return {
+        "pre_pr_review": _stage_receipt(
+            work_item / "artifacts" / "review-admission",
+            "pre_pr_review",
+        ),
+        "pr_open": _stage_receipt(
+            work_item / "artifacts" / "review-admission",
+            "pr_open",
+            evidence=authority,
+        ),
+        "ci_repair": _stage_receipt(
+            work_item / "artifacts" / "review-admission",
+            "ci_repair",
+        ),
+        "review_repair": _stage_receipt(
+            work_item / "artifacts" / "review-admission",
+            "review_repair",
+        ),
+        "post_pr_review": _stage_receipt(
+            work_item / "artifacts" / "review-admission",
+            "post_pr_review",
+        ),
+        "ready_for_merge": _stage_receipt(
+            work_item / "artifacts" / "review-admission",
+            "ready_for_merge",
+            evidence={
+                **authority,
+                "checks_verified": True,
+                "reviews_verified": True,
+                "source_head_sha": source_head,
+                "subject_revision": source_head,
+            },
+        ),
+    }
+
+
+def test_escalate_active_nonblocked_pr_create_delivery_admits_fresh_review_self(
+    tmp_path: Path,
+) -> None:
+    _root, task, _portfolio_path, _release_wrapper, _release_evidence = (
+        _active_nonblocked_pr_create_escalation_fixture(tmp_path)
+    )
+    assert (
+        delivery.escalate_active_nonblocked_pr_create_delivery(
+            task.path,
+            reason="Open only fresh review authority from AGE-190's immutable PR Create boundary.",
+            idempotency_key="cc-190:review-self-admission",
+            apply=True,
+        )["result"]
+        == "escalated"
+    )
+
+    result = run_development_stage(
+        task.path,
+        stage="review",
+        receipts=_active_pr_create_review_receipts(task),
+        idempotency_prefix="cc-190:review-self-admission",
+    )
+
+    assert result["state"] == "ready_for_merge"
+    current = task.read()
+    assert current["state"] == "ready_for_merge"
+    assert current["subject_revision"] == "d" * 40
+    projection = read_auto_dev_state(current["autodev_path"])
+    assert projection["stages"]["review_self"]["status"] == "completed"
+
+
+@pytest.mark.parametrize("tamper", ["generic_receipt", "missing_history", "receipt_bytes"])
+def test_escalate_active_nonblocked_pr_create_delivery_refuses_review_self_bypass(
+    tmp_path: Path, tamper: str
+) -> None:
+    root, task, portfolio_path, _release_wrapper, _release_evidence = (
+        _active_nonblocked_pr_create_escalation_fixture(tmp_path)
+    )
+    assert (
+        delivery.escalate_active_nonblocked_pr_create_delivery(
+            task.path,
+            reason="Exercise the exact receipt-bound Review Self admission path.",
+            idempotency_key=f"cc-190:review-self-bypass:{tamper}",
+            apply=True,
+        )["result"]
+        == "escalated"
+    )
+    current = task.read()
+    if tamper == "generic_receipt":
+        projection_path = Path(current["autodev_path"])
+        projection = json.loads(projection_path.read_text(encoding="utf-8"))
+        generic = next(
+            row["ref"]
+            for row in current["receipts"]
+            if row["state"] == "local_validation"
+            and "active-pr-create-delivery-escalation" not in row["ref"]
+        )
+        projection["stages"]["develop"]["receipt_refs"] = [generic]
+        delivery._atomic_json(projection_path, projection)
+    elif tamper == "missing_history":
+        current.pop("active_pr_create_delivery_escalations")
+        delivery._atomic_json(task.path, current)
+    else:
+        receipt_path = Path(current["active_pr_create_delivery_escalations"][0]["receipt"])
+        receipt_path.write_text("tampered\n", encoding="utf-8")
+    before = _active_pr_create_escalation_surfaces(root, task, portfolio_path)
+
+    with pytest.raises(AutoDevStateError, match="review_self cannot mutate external state"):
+        require_auto_dev_predecessors(task.read()["autodev_path"], "review_self")
+
+    assert _active_pr_create_escalation_surfaces(root, task, portfolio_path) == before
+
+
 @pytest.mark.parametrize("variant", ["reordered", "duplicate", "other_omission"])
 def test_escalate_active_nonblocked_pr_create_delivery_refuses_nonexact_legacy_stage_contract(
     tmp_path: Path, variant: str
