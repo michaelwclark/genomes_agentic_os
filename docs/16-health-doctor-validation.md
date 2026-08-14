@@ -28,6 +28,29 @@ Neither command mutates your root by default. `doctor --fix-missing` is the
 one additive exception: it creates missing managed files without overwriting
 anything.
 
+### Compose pressure remains proposal-only
+
+`agentic-os host health-report` inventories Compose projects, their container
+CPU/RSS and bind mounts, OrbStack `vmgr`/`fseventsd` pressure, and the exact
+registered worktree and lifecycle/provider/runtime evidence. The scheduled
+reporter never tears a project down. All five `docker.compose_pressure.thresholds`
+values must be explicitly present and positive; absent, partial, invalid, or
+unknown configuration is reported as `unconfigured`.
+
+A terminal, provider-merged, clean, unambiguous runtime owner can produce an
+immutable `compose-teardown-proposal/v1`. Applying it is a separate manual
+operation:
+
+```bash
+agentic-os host compose-teardown --proposal proposal.json --apply
+```
+
+The executor rebuilds the current host report and refuses a changed
+fingerprint. Its only runtime action is `docker compose ... down`: it never
+adds `-v`, prunes resources, restarts OrbStack, or deletes worktrees. The
+receipt records before/after metrics and verifies that every named volume from
+the proposal remains present.
+
 **Gaps C and D have since closed** (verified against the source 2026-07-13):
 `doctor --all` (F-003) aggregates the core, runtime, event-graph, and config
 doctors into one report, snapshots per-subsystem health, and emits an
