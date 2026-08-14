@@ -36,6 +36,23 @@ Do not recreate source-root `SPECS/`, `PLANS/`, `features/`, `BUILD_LOGS/`, or
 `spec/` for Agentic OS planning or work history; use `work-items/`, `worklogs/`,
 `logs/`, and `artifacts/` under the installed project instead.
 
+## Branch and Pull Request Discipline
+
+- A checkout on `main` is read-only for agents: do not edit, stage, commit, or
+  generate source changes there. Create a feature branch and isolated worktree
+  from current `origin/main` before any source change.
+- Every source change ends in a pull request with exact-head validation. Do not
+  leave a non-terminal feature branch or worktree without a scheduled follow-up
+  that records its PR, exact head, validation status, blocker, and post-merge
+  cleanup action.
+- For the `genomes_agentic` family, independent or cross-model review is
+  advisory only. Record its absence or unavailability, but do not hold a merge
+  for it; actual review findings, exact-head validation, provider mergeability,
+  and applicable release/install gates remain blocking.
+- Clean up only merged worktrees and safe local feature branches. Preserve
+  unmerged, dirty, conflicted, or `REOPEN.md` worktrees and report the exact
+  blocker rather than treating runtime artifacts as disposable source work.
+
 ## System Shell And Host Tools
 
 - Treat host-level shell setup as part of the OS product surface.
