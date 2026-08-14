@@ -17,7 +17,10 @@ from genomes_agentic_os.review_coordination import (
     ReviewCoordinator,
     ReviewSubject,
     assert_exact_head_review_receipt,
+    canonical_review_purpose,
     provider_review_marker,
+    review_family_key,
+    shared_review_coordination_root,
     stable_review_key,
 )
 from genomes_agentic_os.validate import SCHEMA_TARGETS
@@ -143,8 +146,9 @@ def test_provider_post_is_terminal_marked_and_reused_once(tmp_path: Path) -> Non
         assert marker == provider_review_marker(str(receipt["key"]))
         return {"readback_verified": True, "comment_id": 99}
 
-    first = coordinator.execute(_subject(), review, provider_post=post)
-    second = coordinator.execute(_subject(), review, provider_post=post)
+    coordinator.execute(_subject(), review)
+    first = coordinator.post_terminal(_subject(), post, scrub_passed=True)
+    second = coordinator.post_terminal(_subject(), post, scrub_passed=True)
 
     assert review_calls == 1
     assert post_calls == 1
@@ -154,25 +158,195 @@ def test_provider_post_is_terminal_marked_and_reused_once(tmp_path: Path) -> Non
 
 def test_provider_post_budget_fails_before_new_review_call(tmp_path: Path) -> None:
     coordinator = ReviewCoordinator(tmp_path / "auto-dev-review")
-    first = coordinator.execute(
-        _subject(), _clean, provider_post=lambda _marker, _receipt: {"readback_verified": True}
+    coordinator.execute(_subject(), _clean)
+    coordinator.post_terminal(
+        _subject(),
+        lambda _marker, _receipt: {"readback_verified": True},
+        scrub_passed=True,
     )
-    called = False
-
-    def forbidden() -> dict[str, str]:
-        nonlocal called
-        called = True
-        return _clean()
+    second = coordinator.execute(_subject("2" * 40), _clean, mode="delta")
 
     with pytest.raises(ReviewBudgetExceeded, match="provider-post budget"):
-        coordinator.execute(
+        coordinator.post_terminal(
             _subject("2" * 40),
-            forbidden,
-            mode="delta",
-            parent_key=first.key,
-            provider_post=lambda _marker, _receipt: {},
+            lambda _marker, _receipt: {"readback_verified": True},
+            scrub_passed=True,
         )
-    assert not called
+    assert second.receipt["provider_post"]["status"] == "not_requested"
+
+
+def test_unavailable_attempt_is_retryable_free_and_not_a_delta_parent(
+    tmp_path: Path,
+) -> None:
+    coordinator = ReviewCoordinator(tmp_path / "auto-dev-review")
+    calls = 0
+
+    def unavailable() -> dict[str, object]:
+        nonlocal calls
+        calls += 1
+        return {"outcome": "unavailable", "exit_code": 1}
+
+    first = coordinator.execute(_subject(), unavailable)
+    second = coordinator.execute(_subject(), unavailable)
+    assert calls == 2
+    assert first.receipt["budget"]["full_reviews_used"] == 0
+    assert second.receipt["budget"]["absolute_full_reviews_used"] == 0
+    with pytest.raises(ReviewCoordinationError, match="successful parent"):
+        coordinator.execute(
+            _subject("2" * 40), _clean, mode="delta", parent_key=first.key
+        )
+
+
+def test_clean_delta_preserves_unresolved_parent_without_explicit_refs(
+    tmp_path: Path,
+) -> None:
+    coordinator = ReviewCoordinator(tmp_path / "auto-dev-review")
+    first = coordinator.execute(
+        _subject(),
+        lambda: {
+            "outcome": "findings",
+            "findings": [
+                {
+                    "id": "finding-auth-boundary",
+                    "severity": "high",
+                    "summary": "Missing authority check",
+                    "evidence": ["src/auth.py:42"],
+                }
+            ],
+        },
+    )
+    delta = coordinator.execute(
+        _subject("2" * 40), _clean, mode="delta", parent_key=first.key
+    )
+    assert delta.receipt["outcome"] == "findings"
+    assert delta.receipt["findings_ledger"][0]["status"] == "open"
+    assert "coordination_warning" in delta.receipt["review"]
+
+
+def test_clean_delta_requires_and_records_explicit_resolution_refs(tmp_path: Path) -> None:
+    coordinator = ReviewCoordinator(tmp_path / "auto-dev-review")
+    first = coordinator.execute(
+        _subject(),
+        lambda: {
+            "outcome": "findings",
+            "findings": [
+                {
+                    "id": "finding-auth-boundary",
+                    "severity": "high",
+                    "summary": "Missing authority check",
+                    "evidence": ["src/auth.py:42"],
+                }
+            ],
+        },
+    )
+    delta = coordinator.execute(
+        _subject("2" * 40),
+        lambda: {"outcome": "clean", "resolution_refs": ["finding-auth-boundary"]},
+        mode="delta",
+        parent_key=first.key,
+    )
+    assert delta.receipt["outcome"] == "clean"
+    assert delta.receipt["findings_ledger"][0]["status"] == "resolved"
+    assert delta.receipt["findings_ledger"][0]["resolution"]["refs"]
+
+
+def test_failed_or_unverified_provider_post_does_not_consume_cap(tmp_path: Path) -> None:
+    coordinator = ReviewCoordinator(tmp_path / "auto-dev-review")
+    coordinator.execute(_subject(), _clean)
+    with pytest.raises(ReviewCoordinationError, match="verified readback"):
+        coordinator.post_terminal(
+            _subject(), lambda _marker, _receipt: {}, scrub_passed=True
+        )
+    posted = coordinator.post_terminal(
+        _subject(),
+        lambda _marker, _receipt: {"readback_verified": True, "comment_id": 7},
+        scrub_passed=True,
+    )
+    assert posted.receipt["provider_post"]["status"] == "posted"
+    assert posted.receipt["budget"]["provider_posts_used"] == 1
+
+
+def test_provider_post_refuses_findings_unavailable_or_unscrubbed(tmp_path: Path) -> None:
+    coordinator = ReviewCoordinator(tmp_path / "auto-dev-review")
+    coordinator.execute(
+        _subject(),
+        lambda: {"outcome": "findings", "findings": ["Blocking finding"]},
+    )
+    with pytest.raises(ReviewCoordinationError, match="clean review"):
+        coordinator.post_terminal(
+            _subject(),
+            lambda _marker, _receipt: {"readback_verified": True},
+            scrub_passed=True,
+        )
+    clean_subject = _subject("2" * 40, policy="c" * 64)
+    coordinator.execute(clean_subject, _clean)
+    with pytest.raises(ReviewCoordinationError, match="scrub_passed"):
+        coordinator.post_terminal(
+            clean_subject,
+            lambda _marker, _receipt: {"readback_verified": True},
+            scrub_passed=False,
+        )
+
+
+def test_corrupt_family_receipt_is_quarantined_and_budget_fails_closed(
+    tmp_path: Path,
+) -> None:
+    coordinator = ReviewCoordinator(tmp_path / "auto-dev-review")
+    completed = coordinator.execute(_subject(), _clean)
+    completed.receipt_path.write_text("{broken", encoding="utf-8")
+    with pytest.raises(ReviewCoordinationError, match="quarantined"):
+        coordinator.execute(_subject("2" * 40), _clean, mode="delta")
+    assert list((coordinator.root / "quarantine").glob("*.json"))
+
+
+def test_review_subject_requires_full_commit_shas() -> None:
+    with pytest.raises(ReviewCoordinationError, match="full 40-hex"):
+        _subject("1234567")
+
+
+def test_purpose_cannot_bypass_chain_or_family_budgets(tmp_path: Path) -> None:
+    coordinator = ReviewCoordinator(tmp_path / "auto-dev-review")
+    first = coordinator.execute(_subject(), _clean)
+    alternate = ReviewSubject(**{**first.receipt["subject"], "purpose": "finalize:wide"})
+    assert review_family_key(alternate) == review_family_key(_subject())
+    with pytest.raises(ReviewBudgetExceeded, match="full-review budget"):
+        coordinator.execute(alternate, _clean)
+    assert canonical_review_purpose("finalize:any-scope") == "review_self"
+    assert shared_review_coordination_root(tmp_path) == tmp_path / "state/review-coordination"
+
+
+def test_successful_unavailable_artifact_recovers_without_reviewer_rerun(
+    tmp_path: Path,
+) -> None:
+    coordinator = ReviewCoordinator(tmp_path / "auto-dev-review")
+    unavailable = coordinator.execute(
+        _subject(),
+        lambda: {
+            "outcome": "unavailable",
+            "exit_code": 0,
+            "text": "Full review found a missing gate.",
+            "scrub_passed": False,
+        },
+    )
+    evidence = tmp_path / "review.txt"
+    evidence.write_text("review evidence", encoding="utf-8")
+    recovered = coordinator.recover_successful_unavailable(
+        unavailable.receipt_path,
+        {
+            "findings": [
+                {
+                    "id": "finding-missing-gate",
+                    "severity": "blocking",
+                    "summary": "Missing gate",
+                    "evidence": [str(evidence)],
+                }
+            ]
+        },
+        evidence_ref=str(evidence),
+    )
+    assert recovered.receipt["outcome"] == "findings"
+    assert recovered.receipt["budget"]["full_reviews_used"] == 1
+    assert Path(recovered.receipt["recovery"]["source_attempt_ref"]).is_file()
 
 
 def test_finalize_reuses_exact_head_and_refuses_drift(tmp_path: Path) -> None:

@@ -32,7 +32,10 @@ from genomes_agentic_os.review_coordination import (  # noqa: E402
     ReviewCoordinationError,
     ReviewCoordinator,
     ReviewSubject,
+    canonical_review_purpose,
     load_review_receipt,
+    review_chain_key,
+    shared_review_coordination_root,
     stable_review_key,
 )
 
@@ -40,6 +43,7 @@ HELPER = ROOT / "harness/skills/finishing-touches-review/scripts/finishing_touch
 TEMPLATE = ROOT / "harness/skills/auto-dev/templates/reviewer-prompt.md"
 CLAUDE_ENV_REMOVED = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
 CLAUDE_TOOLS = "Read,Grep,Glob,Bash(git diff),Bash(git diff *),Bash(git show),Bash(git show *),Bash(git status),Bash(git status *)"
+MAX_DIFF_CHARS = 40_000
 
 
 class ReviewError(RuntimeError):
@@ -136,6 +140,23 @@ def diff_hash(worktree: Path, base: str, head: str) -> str:
     return hashlib.sha256(completed.stdout.encode()).hexdigest()
 
 
+def validated_delta_hash(worktree: Path, parent_head: str, head: str) -> str:
+    """Prove the delta is descendant-only and small enough for one review."""
+    ancestry = run(
+        ["git", "merge-base", "--is-ancestor", parent_head, head], cwd=worktree
+    )
+    if ancestry.returncode:
+        raise ReviewError("delta parent is not an ancestor of the current head")
+    completed = run(["git", "diff", "--binary", f"{parent_head}..{head}"], cwd=worktree)
+    if completed.returncode:
+        raise ReviewError("review delta could not be read")
+    if len(completed.stdout) > MAX_DIFF_CHARS:
+        raise ReviewError(
+            f"review delta exceeds the {MAX_DIFF_CHARS}-character review bound"
+        )
+    return hashlib.sha256(completed.stdout.encode()).hexdigest()
+
+
 def render_prompt(request: dict[str, Any], provider: dict[str, Any]) -> str:
     values = {
         "WORK_ITEM_ID": str(request["work_item_id"]), "PROJECT": "Auto-Dev",
@@ -198,6 +219,8 @@ def main() -> int:
             raise ReviewError(f"exact-head mismatch: provider={provider['headRefOid']} worktree={head}")
         base = str(source["base_sha"])
         repository = git_repository(worktree)
+        if args.scope.replace("_", "-").lower() not in {"full-pr", "pr"}:
+            raise ReviewError("review scope must resolve to full-pr")
         subject = ReviewSubject(
             repository=repository,
             pull_request=f"github:{repository}#{pr_number}",
@@ -205,20 +228,25 @@ def main() -> int:
             base_sha=base,
             head_sha=head,
             policy_fingerprint=policy_fingerprint(source),
-            purpose=f"{args.purpose}:{args.scope}",
+            purpose=canonical_review_purpose(f"{args.purpose}:{args.scope}"),
         )
-        coordinator = ReviewCoordinator(
-            work_item / "artifacts/finishing-touches/review-coordination"
-        )
+        coordinator = ReviewCoordinator(shared_review_coordination_root(os_root))
         review_key = stable_review_key(subject)
         run_id = f"{args.ticket.lower()}-pr{pr_number}-{args.mode}-{review_key[:12]}"
-        run_dir = coordinator.root / "artifacts" / review_key
+        run_dir = work_item / "artifacts/finishing-touches/review-runs" / review_key
         review_diff_base = base
+        review_diff_hash: str | None = None
         if args.mode == "delta":
             if not args.parent_key:
                 raise ReviewError("delta review requires --parent-key")
             parent = load_review_receipt(coordinator.receipts / f"{args.parent_key}.json")
+            parent_subject = ReviewSubject.from_mapping(parent["subject"])
+            if review_chain_key(parent_subject) != review_chain_key(subject):
+                raise ReviewError(
+                    "delta parent must belong to the same repository, PR, base, and policy"
+                )
             review_diff_base = str(parent["subject"]["head_sha"])
+            review_diff_hash = validated_delta_hash(worktree, review_diff_base, head)
 
         def execute_review() -> dict[str, Any]:
             failure: str | None = None
@@ -232,7 +260,8 @@ def main() -> int:
                 "delta_base_sha": review_diff_base,
                 "head_sha": head,
                 "base_sha": base,
-                "diff_hash": diff_hash(worktree, review_diff_base, head),
+                "diff_hash": review_diff_hash
+                or diff_hash(worktree, review_diff_base, head),
                 "reviewer_transport": "claude_cli",
                 "reviewer_auth": "cli_native",
                 "reviewer_environment_removed": list(CLAUDE_ENV_REMOVED),

@@ -14,6 +14,7 @@
     "subject",
     "parent_key",
     "review",
+    "findings_ledger",
     "budget",
     "provider_post",
     "created_at",
@@ -42,8 +43,8 @@
         "repository": {"type": "string", "minLength": 1},
         "pull_request": {"type": "string", "minLength": 1},
         "base_branch": {"type": "string", "minLength": 1},
-        "base_sha": {"type": "string", "pattern": "^[0-9a-fA-F]{7,64}$"},
-        "head_sha": {"type": "string", "pattern": "^[0-9a-fA-F]{7,64}$"},
+        "base_sha": {"type": "string", "pattern": "^[0-9a-fA-F]{40}$"},
+        "head_sha": {"type": "string", "pattern": "^[0-9a-fA-F]{40}$"},
         "policy_fingerprint": {"type": "string", "pattern": "^[0-9a-fA-F]{64}$"},
         "purpose": {"type": "string", "minLength": 1}
       },
@@ -62,6 +63,10 @@
         "outcome": {"enum": ["clean", "findings", "unavailable"]}
       },
       "additionalProperties": true
+    },
+    "findings_ledger": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/finding"}
     },
     "budget": {
       "type": "object",
@@ -91,24 +96,94 @@
       "type": "object",
       "required": ["status", "marker"],
       "properties": {
-        "status": {"enum": ["not_requested", "pending", "posted"]},
+        "status": {"enum": ["not_requested", "failed", "posted"]},
         "marker": {
           "type": "string",
           "pattern": "^<!-- agentic-os-review:[0-9a-f]{64} -->$"
         },
         "result": {"type": "object"},
-        "posted_at": {"type": "string", "format": "date-time"}
+        "posted_at": {"type": "string", "format": "date-time"},
+        "failed_at": {"type": "string", "format": "date-time"},
+        "error": {"type": "string", "minLength": 1}
       },
       "allOf": [
         {
           "if": {"properties": {"status": {"const": "posted"}}},
-          "then": {"required": ["result", "posted_at"]}
+          "then": {
+            "required": ["result", "posted_at"],
+            "properties": {
+              "result": {
+                "type": "object",
+                "required": ["readback_verified"],
+                "properties": {"readback_verified": {"const": true}},
+                "additionalProperties": true
+              }
+            }
+          }
+        },
+        {
+          "if": {"properties": {"status": {"const": "failed"}}},
+          "then": {"required": ["error", "failed_at"]}
         }
       ],
       "additionalProperties": false
     },
+    "recovery": {
+      "type": "object",
+      "required": [
+        "source_attempt_ref",
+        "source_attempt_sha256",
+        "evidence_ref",
+        "recovered_at"
+      ],
+      "properties": {
+        "source_attempt_ref": {"type": "string", "minLength": 1},
+        "source_attempt_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "evidence_ref": {"type": "string", "minLength": 1},
+        "recovered_at": {"type": "string", "format": "date-time"}
+      },
+      "additionalProperties": false
+    },
     "created_at": {"type": "string", "format": "date-time"},
     "completed_at": {"type": "string", "format": "date-time"}
+  },
+  "$defs": {
+    "finding": {
+      "type": "object",
+      "required": ["id", "status", "severity", "summary", "evidence", "resolution"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{2,127}$"},
+        "status": {"enum": ["open", "resolved"]},
+        "severity": {"enum": ["blocking", "high", "medium", "low", "info"]},
+        "summary": {"type": "string", "minLength": 1},
+        "evidence": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1},
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "resolution": {
+          "anyOf": [
+            {"type": "null"},
+            {
+              "type": "object",
+              "required": ["refs", "summary"],
+              "properties": {
+                "refs": {
+                  "type": "array",
+                  "items": {"type": "string", "minLength": 1},
+                  "minItems": 1,
+                  "uniqueItems": true
+                },
+                "summary": {"type": "string"}
+              },
+              "additionalProperties": false
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    }
   },
   "additionalProperties": false
 }

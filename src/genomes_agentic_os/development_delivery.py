@@ -8742,7 +8742,7 @@ def run_development_stage(
                 and evidence.get("reviews_verified") is True
                 and evidence.get("readback_verified") is True
                 and re.fullmatch(
-                    r"[a-fA-F0-9]{7,64}", str(evidence.get("subject_revision") or "")
+                    r"[a-fA-F0-9]{40}", str(evidence.get("subject_revision") or "")
                 )
             ):
                 raise DevelopmentDeliveryError(
@@ -8759,8 +8759,12 @@ def run_development_stage(
             coordination_ref = str(
                 evidence.get("review_coordination_receipt") or ""
             ).strip()
+            task_value = state.read()
+            if task_value.get("autodev_path") and not coordination_ref:
+                raise DevelopmentDeliveryError(
+                    "Auto-Dev ready_for_merge requires review_coordination_receipt"
+                )
             if coordination_ref:
-                task_value = state.read()
                 work_item_raw = str(task_value.get("work_item") or "").strip()
                 work_item = (
                     Path(work_item_raw).expanduser().resolve()

@@ -23,6 +23,10 @@ may request only `delta` with a canonical parent key.
    effective policy fingerprint, scope, and purpose. Claim or join that key
    before invoking a model. Reuse a terminal exact-key receipt. Never use model
    identity as part of the key and never use another reviewer to bypass reuse.
+   All stage aliases normalize to the single `review_self` purpose and the
+   `full-pr` scope. Every entrypoint uses `<agentic-os-root>/state/review-coordination`;
+   work-item and `--output-dir` paths hold artifacts only and cannot create a
+   fresh budget family.
 4. Execute only the requested mode. `full` produces the canonical findings
    ledger. `delta` reviews only changes since its canonical parent and appends
    findings without rereading the full original diff.
@@ -48,7 +52,9 @@ Budgets are one normal full review, at most three deltas, two absolute full
 reviews per family, and one provider post. Exhaustion is a receipt-backed block
 raised before a model/provider call. Provider output is terminal-only, carries
 `<!-- agentic-os-review:<key> -->`, re-reads the head after the model returns,
-and reuses provider readback when that marker already exists.
+and reuses provider readback only when that exact hidden marker line exists.
+Only a structured clean verdict that passes the provider scrub is posted;
+findings and scrub failures remain canonical local receipts without a post.
 
 Do not hand-craft a Claude/Codex prompt, create a second PR, force-push, bypass
 required checks, treat unavailable review as approval, or post intermediate

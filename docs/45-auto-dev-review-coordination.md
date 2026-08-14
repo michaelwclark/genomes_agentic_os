@@ -52,9 +52,18 @@ ledger as resolved; they are not rediscovered and rewritten as new prose.
 
 ## Where does it live, and where is its output?
 
-The delivery packet chooses the receipt root. Each stable key owns one immutable
-terminal JSON receipt and a lock beside it. Family and chain hashes let the
-coordinator count prior work without rereading or reposting whole reviews.
+The delivery packet chooses one canonical, absolute receipt root. Every stage,
+harness, retry, and worker participating in that delivery must receive that
+same root; a per-agent temporary directory silently creates a second budget and
+is invalid. Each stable key owns one immutable terminal JSON receipt and a lock
+beside it. Family and chain hashes let the coordinator count prior work without
+rereading or reposting whole reviews.
+
+The v1 lock is a POSIX advisory file lock, so its supported single-flight scope
+is processes on the same host and filesystem. Cross-host work must be routed
+through one coordinator host (or a future shared lock service) while retaining
+the same receipt root. Merely copying receipt files between hosts does not make
+concurrent review calls safe.
 
 Provider output is separate from the local evidence. At most one terminal
 provider post is allowed for the PR family. The post includes the hidden marker
@@ -86,11 +95,14 @@ permit one new full review, subject to the absolute family limit. Repository or
 PR identity drift is a different family and must not consume the old receipt.
 
 If a reviewer becomes unavailable, record terminal `unavailable` evidence and
-resume the same key. If a process dies while owning a lock, recover the same
-receipt path after verifying ownership and exact provider head. If a receipt is
-malformed or its subject does not match, quarantine it and block; do not accept
-it as clean. Emergency budget overrides are narrow, expiring policy changes,
-not command-line force flags.
+resume the same key. If a process dies, the operating system releases its file
+lock; the next process must acquire that same family lock and recheck the same
+receipt path before invoking a reviewer. A completed receipt is reused. An
+absent receipt resumes the original key under the acquired lock. Lock files are
+durable coordination names and are not deleted as a recovery technique. If a
+receipt is malformed or its subject does not match, quarantine it and block; do
+not accept it as clean. Emergency budget overrides are narrow, expiring policy
+changes, not command-line force flags.
 
 Before any provider post, read the head again. If it changed during review,
 write no provider comment and route the new head through delta coordination.
@@ -118,24 +130,42 @@ ledger, no budget overflow, and zero Finalize reviewer invocations.
 macOS operators activate the released wheel with the guarded installer. It
 requires a trusted SHA-256 unless an explicit recovery override is supplied,
 installs a non-editable versioned virtual environment, validates package and
-CLI readback, retains both rollback targets, and atomically switches the two
-dispatcher aliases.
+CLI readback, retains the prior alias pair when one exists, and transactionally
+switches and reads back both dispatcher aliases. A filesystem cannot replace
+two symlinks in one atomic operation; the installer restores both aliases and
+their prior rollback pointers if any switch, pair-readback, or receipt write
+fails.
 
 ```bash
 python scripts/release/install-local-release-runtime.py \
   --wheel /path/to/genomes_agentic_os-X.Y.Z-py3-none-any.whl \
   --sha256-file /path/to/SHA256SUMS \
   --release-revision <merged-release-sha> \
+  --dependency-lock /path/to/runtime-requirements.lock \
+  --wheelhouse /path/to/offline-wheelhouse \
   --receipt /path/to/deployment-readback.json \
   --apply
 ```
 
-The receipt records prior and new alias targets, wheel checksum, installed
-package/version/module path, smoke result, exact release revision, rollback
-pointers, and `readback_verified`. The installer refuses to overwrite an
-existing versioned runtime or replace a non-symlink alias. Roll back by
-atomically switching each active alias to its recorded `.previous` target, then
-read back package version, module path, and `agentic-os --help` again.
+The release wheel is always installed with `--no-deps`. For a package with
+runtime dependencies, `--dependency-lock` must enumerate the complete closure,
+pin every distribution, and include a hash for every accepted wheel;
+`--wheelhouse` must contain those wheels. The dependency step uses
+`--no-index --require-hashes --no-deps`, so it cannot contact an index or
+resolve an undeclared transitive dependency. Omitting both options is valid
+only when the wheel has no external runtime dependencies already required by
+its import and CLI smoke checks; those checks fail closed before alias
+activation otherwise.
+
+The receipt records prior and new alias targets, wheel checksum, dependency-lock
+hash and offline mode, installed package/version/module path, smoke result,
+exact release revision, rollback pointers, pair readback, and
+`readback_verified`. The installer refuses to overwrite an existing versioned
+runtime, replace a non-symlink alias, or activate an inconsistent alias pair.
+Roll back by switching each active alias to its recorded `.previous` target as
+one guarded operation; if either switch or the pair readback fails, restore the
+pre-rollback pair. Then read back package version, module path, and
+`agentic-os --help` again.
 
 ## What else is important?
 
@@ -144,4 +174,3 @@ head is historical evidence, not merge authorization. Keep provider prose
 short and terminal; the local receipt and finding ledger are the audit source.
 This contract coordinates reviewers across Claude, Codex, retries, and Auto-Dev
 stages without asking any of them to reread the full review.
-

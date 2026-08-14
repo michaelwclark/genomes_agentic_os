@@ -147,10 +147,91 @@ def test_direct_script_help_bootstraps_the_source_package(tmp_path: Path) -> Non
 def test_review_outcome_is_terminal_and_findings_are_not_reclassified_clean() -> None:
     crossreview = _load_crossreview()
 
-    assert crossreview.classify_review_outcome(0, "No blockers found.", True) == "clean"
-    assert crossreview.classify_review_outcome(0, "WARNING: stale state", True) == "findings"
+    clean = "No blockers found.\n\nAGENTIC_OS_REVIEW_VERDICT: CLEAN"
+    findings = "WARNING: stale state\n\nAGENTIC_OS_REVIEW_VERDICT: FINDINGS"
+    assert crossreview.classify_review_outcome(0, clean, True) == "clean"
+    assert crossreview.classify_review_outcome(0, findings, True) == "findings"
     assert crossreview.classify_review_outcome(1, "review failed", True) == "unavailable"
-    assert crossreview.classify_review_outcome(0, "private path", False) == "unavailable"
+    assert crossreview.classify_review_outcome(0, findings, False) == "findings"
+
+
+@pytest.mark.parametrize(
+    ("text", "expected", "structured"),
+    [
+        ("No issues found", "findings", False),
+        ("AGENTIC_OS_REVIEW_VERDICT: MAYBE", "findings", False),
+        (
+            "AGENTIC_OS_REVIEW_VERDICT: CLEAN\nAGENTIC_OS_REVIEW_VERDICT: CLEAN",
+            "findings",
+            False,
+        ),
+        (
+            "AGENTIC_OS_REVIEW_VERDICT: CLEAN\nAGENTIC_OS_REVIEW_VERDICT: FINDINGS",
+            "findings",
+            False,
+        ),
+        (
+            "WARNING: problem\nAGENTIC_OS_REVIEW_VERDICT: CLEAN",
+            "findings",
+            False,
+        ),
+    ],
+)
+def test_review_verdict_parser_fails_unstructured_or_contradictory_output_closed(
+    text: str, expected: str, structured: bool
+) -> None:
+    crossreview = _load_crossreview()
+
+    assert crossreview.parse_review_verdict(text) == (expected, structured)
+
+
+def test_purpose_and_scope_aliases_share_one_bounded_family() -> None:
+    crossreview = _load_crossreview()
+
+    aliases = ["review_self", "review-repair", "review_others", "finalize"]
+    assert {
+        crossreview.normalize_review_purpose(alias, "full_pr") for alias in aliases
+    } == {("review_self", "full-pr")}
+    with pytest.raises(crossreview.ReviewCoordinationError, match="purpose"):
+        crossreview.normalize_review_purpose("second-opinion", "full-pr")
+    with pytest.raises(crossreview.ReviewCoordinationError, match="scope"):
+        crossreview.normalize_review_purpose("review_self", "changed-files")
+
+
+def test_provider_marker_requires_the_exact_hidden_marker_line(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    crossreview = _load_crossreview()
+    marker = "<!-- agentic-os-review:stable-key -->"
+    monkeypatch.setattr(
+        crossreview,
+        "list_provider_comments",
+        lambda _repo, _pr: [
+            {"id": 1, "body": f"quoted {marker} suffix"},
+            {"id": 2, "body": f"review body\n{marker}\n"},
+        ],
+    )
+
+    assert crossreview.existing_provider_marker("acme/widgets", 42, marker)["id"] == 2
+
+
+def test_delta_diff_requires_ancestry_and_enforces_prompt_bound(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    crossreview = _load_crossreview()
+    responses = iter(["ahead", "bounded diff"])
+    monkeypatch.setattr(crossreview, "gh", lambda *_args, **_kwargs: next(responses))
+
+    assert crossreview.get_revision_diff("acme/widgets", "a" * 40, "b" * 40) == "bounded diff"
+
+    monkeypatch.setattr(crossreview, "gh", lambda *_args, **_kwargs: "diverged")
+    with pytest.raises(crossreview.ReviewCoordinationError, match="ancestor"):
+        crossreview.get_revision_diff("acme/widgets", "a" * 40, "c" * 40)
+
+    responses = iter(["ahead", "x" * (crossreview.MAX_DIFF_CHARS + 1)])
+    monkeypatch.setattr(crossreview, "gh", lambda *_args, **_kwargs: next(responses))
+    with pytest.raises(crossreview.ReviewCoordinationError, match="exceeds"):
+        crossreview.get_revision_diff("acme/widgets", "a" * 40, "d" * 40)
 
 
 def test_terminal_provider_post_reuses_existing_marker_without_writing(
@@ -250,7 +331,14 @@ def test_terminal_provider_post_writes_one_marked_comment_and_reads_it_back(
         42,
         "a" * 40,
         marker,
-        {"status": "completed", "outcome": "findings", "review": {"text": "WARNING: fix me"}},
+        {
+            "status": "completed",
+            "outcome": "clean",
+            "review": {
+                "text": "No blockers.\nAGENTIC_OS_REVIEW_VERDICT: CLEAN",
+                "scrub_passed": True,
+            },
+        },
         post_mode="comment",
     )
 
@@ -259,3 +347,39 @@ def test_terminal_provider_post_writes_one_marked_comment_and_reads_it_back(
     assert len(writes) == 1
     assert writes[0][:4] == ("pr", "comment", "42", "--repo")
     assert marker in writes[0][-1]
+
+
+@pytest.mark.parametrize(
+    "receipt",
+    [
+        {
+            "status": "completed",
+            "outcome": "findings",
+            "review": {"text": "WARNING: fix me", "scrub_passed": True},
+        },
+        {
+            "status": "completed",
+            "outcome": "clean",
+            "review": {"text": "clean", "scrub_passed": False},
+        },
+    ],
+)
+def test_terminal_provider_post_blocks_findings_and_scrub_failures_before_write(
+    monkeypatch: pytest.MonkeyPatch, receipt: dict
+) -> None:
+    crossreview = _load_crossreview()
+    monkeypatch.setattr(crossreview, "get_pr_meta", lambda *_args: {"head_sha": "a" * 40})
+    monkeypatch.setattr(crossreview, "existing_provider_marker", lambda *_args: None)
+    monkeypatch.setattr(
+        crossreview, "gh", lambda *_args, **_kwargs: pytest.fail("provider write must be blocked")
+    )
+
+    with pytest.raises(crossreview.ReviewCoordinationError):
+        crossreview.post_terminal_review(
+            "acme/widgets",
+            42,
+            "a" * 40,
+            "<!-- agentic-os-review:stable-key -->",
+            receipt,
+            post_mode="comment",
+        )

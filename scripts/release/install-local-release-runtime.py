@@ -18,6 +18,7 @@ import re
 import shutil
 import subprocess
 import sys
+from typing import NamedTuple
 import uuid
 import zipfile
 
@@ -27,6 +28,12 @@ MODULE = "genomes_agentic_os"
 ALIASES = ("development-delivery-runtime", "layout-v2-runtime")
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 REVISION = re.compile(r"^[0-9a-fA-F]{7,64}$")
+
+
+class AliasActivation(NamedTuple):
+    aliases: list[dict[str, object]]
+    active_snapshots: dict[Path, dict[str, str | None]]
+    previous_snapshots: dict[Path, dict[str, str | None]]
 
 
 def sha256(path: Path) -> str:
@@ -135,32 +142,74 @@ def _restore_symlink(path: Path, snapshot: dict[str, str | None]) -> None:
     _replace_symlink(path, raw)
 
 
-def activate_aliases(runtime_root: Path, target: Path) -> list[dict[str, object]]:
+def _require_consistent_pair(
+    snapshots: dict[Path, dict[str, str | None]], *, label: str
+) -> str | None:
+    targets = {snapshot["resolved"] for snapshot in snapshots.values()}
+    if len(targets) != 1:
+        rendered = ", ".join(
+            f"{path.name}={snapshot['resolved']!r}"
+            for path, snapshot in snapshots.items()
+        )
+        raise ValueError(f"{label} aliases are inconsistent: {rendered}")
+    target = next(iter(targets))
+    if target is not None and not Path(target).exists():
+        raise ValueError(f"{label} alias target does not exist: {target}")
+    return target
+
+
+def _restore_alias_activation(activation: AliasActivation) -> None:
+    for path, snapshot in activation.active_snapshots.items():
+        _restore_symlink(path, snapshot)
+    for path, snapshot in activation.previous_snapshots.items():
+        _restore_symlink(path, snapshot)
+
+
+def activate_aliases(runtime_root: Path, target: Path) -> AliasActivation:
     aliases = [runtime_root / name for name in ALIASES]
     snapshots = {alias: _link_snapshot(alias) for alias in aliases}
+    prior_target = _require_consistent_pair(snapshots, label="active runtime")
     previous_paths = {alias: alias.with_name(f"{alias.name}.previous") for alias in aliases}
     previous_snapshots = {
-        alias: _link_snapshot(previous_paths[alias]) for alias in aliases
+        previous_paths[alias]: _link_snapshot(previous_paths[alias]) for alias in aliases
     }
-    switched: list[Path] = []
+    activation = AliasActivation([], snapshots, previous_snapshots)
     try:
         for alias in aliases:
-            prior = snapshots[alias]["resolved"]
-            if prior is not None:
-                _replace_symlink(previous_paths[alias], prior)
+            if prior_target is not None:
+                _replace_symlink(previous_paths[alias], prior_target)
             elif os.path.lexists(previous_paths[alias]):
                 previous_paths[alias].unlink()
         for alias in aliases:
             _replace_symlink(alias, target)
-            switched.append(alias)
+
+        active_readback = {alias: _link_snapshot(alias) for alias in aliases}
+        activated_target = _require_consistent_pair(
+            active_readback, label="activated runtime"
+        )
+        expected_target = str(target.resolve(strict=True))
+        if activated_target != expected_target:
+            raise ValueError(
+                f"activated alias readback mismatch: expected {expected_target}, "
+                f"got {activated_target}"
+            )
+
+        rollback_readback = {
+            alias: _link_snapshot(previous_paths[alias]) for alias in aliases
+        }
+        rollback_target = _require_consistent_pair(
+            rollback_readback, label="rollback"
+        )
+        if rollback_target != prior_target:
+            raise ValueError(
+                f"rollback pointer readback mismatch: expected {prior_target}, "
+                f"got {rollback_target}"
+            )
     except Exception:
-        for alias in reversed(switched):
-            _restore_symlink(alias, snapshots[alias])
-        for alias in aliases:
-            _restore_symlink(previous_paths[alias], previous_snapshots[alias])
+        _restore_alias_activation(activation)
         raise
 
-    return [
+    entries = [
         {
             "alias": str(alias),
             "prior_target": snapshots[alias]["resolved"],
@@ -175,6 +224,7 @@ def activate_aliases(runtime_root: Path, target: Path) -> list[dict[str, object]
         }
         for alias in aliases
     ]
+    return AliasActivation(entries, snapshots, previous_snapshots)
 
 
 def _readback(target: Path, version: str) -> dict[str, object]:
@@ -238,21 +288,60 @@ def install(arguments: argparse.Namespace) -> dict[str, object]:
     if expected is not None and actual != expected:
         raise ValueError(f"wheel SHA-256 mismatch: expected {expected}, got {actual}")
 
+    dependency_lock_arg = getattr(arguments, "dependency_lock", None)
+    wheelhouse_arg = getattr(arguments, "wheelhouse", None)
+    if (dependency_lock_arg is None) != (wheelhouse_arg is None):
+        raise ValueError("--dependency-lock and --wheelhouse must be supplied together")
+    dependency_lock = (
+        dependency_lock_arg.expanduser().resolve(strict=False)
+        if dependency_lock_arg is not None
+        else None
+    )
+    wheelhouse = (
+        wheelhouse_arg.expanduser().resolve(strict=False)
+        if wheelhouse_arg is not None
+        else None
+    )
+    if dependency_lock is not None and not dependency_lock.is_file():
+        raise ValueError(f"dependency lock does not exist: {dependency_lock}")
+    if wheelhouse is not None and not wheelhouse.is_dir():
+        raise ValueError(f"dependency wheelhouse does not exist: {wheelhouse}")
+
     release_dir = runtime_root / "releases" / f"{version}-{arguments.release_revision[:7].lower()}"
     target = release_dir / "runtime"
     if os.path.lexists(target):
         raise ValueError(f"versioned runtime already exists; refusing to overwrite: {target}")
     runtime_root.mkdir(parents=True, exist_ok=True)
     receipt_path.parent.mkdir(parents=True, exist_ok=True)
-    for alias_name in ALIASES:
-        _link_snapshot(runtime_root / alias_name)
+    initial_aliases = {
+        runtime_root / alias_name: _link_snapshot(runtime_root / alias_name)
+        for alias_name in ALIASES
+    }
+    _require_consistent_pair(initial_aliases, label="active runtime")
 
     created = False
-    activated_aliases: list[dict[str, object]] = []
+    activation: AliasActivation | None = None
     try:
         release_dir.mkdir(parents=True, exist_ok=False)
         created = True
         _run([arguments.python, "-m", "venv", str(target)])
+        if dependency_lock is not None and wheelhouse is not None:
+            _run(
+                [
+                    str(target / "bin" / "python"),
+                    "-m",
+                    "pip",
+                    "install",
+                    "--disable-pip-version-check",
+                    "--no-index",
+                    "--find-links",
+                    str(wheelhouse),
+                    "--require-hashes",
+                    "--no-deps",
+                    "-r",
+                    str(dependency_lock),
+                ]
+            )
         _run(
             [
                 str(target / "bin" / "python"),
@@ -260,12 +349,13 @@ def install(arguments: argparse.Namespace) -> dict[str, object]:
                 "pip",
                 "install",
                 "--disable-pip-version-check",
+                "--no-deps",
                 str(wheel),
             ]
         )
         validation = _readback(target, version)
-        aliases = activate_aliases(runtime_root, target)
-        activated_aliases = aliases
+        activation = activate_aliases(runtime_root, target)
+        aliases = activation.aliases
         receipt: dict[str, object] = {
             "schema_version": "local-release-runtime-install/v1",
             "created_at": datetime.now(timezone.utc).isoformat(),
@@ -287,6 +377,14 @@ def install(arguments: argparse.Namespace) -> dict[str, object]:
                 "target": str(target),
                 "editable": False,
             },
+            "dependencies": {
+                "mode": "hash-pinned-wheelhouse" if dependency_lock else "none",
+                "lock": str(dependency_lock) if dependency_lock else None,
+                "lock_sha256": sha256(dependency_lock) if dependency_lock else None,
+                "wheelhouse": str(wheelhouse) if wheelhouse else None,
+                "network_disabled": True,
+                "dependency_resolution_disabled": True,
+            },
             "aliases": aliases,
             "smoke": validation["smoke"],
             "readback_verified": True,
@@ -294,18 +392,15 @@ def install(arguments: argparse.Namespace) -> dict[str, object]:
                 entry["prior_target"] is None or entry["rollback_target"] == entry["prior_target"]
                 for entry in aliases
             ),
+            "rollback_available": aliases[0]["prior_target"] is not None,
         }
+        if not receipt["rollback_retained"]:
+            raise ValueError("rollback pointer retention failed")
         _write_json_atomic(receipt_path, receipt)
         return receipt
     except Exception:
-        for entry in reversed(activated_aliases):
-            alias = Path(str(entry["alias"]))
-            prior = entry["prior_target"]
-            if prior is None:
-                if os.path.lexists(alias):
-                    alias.unlink()
-            else:
-                _replace_symlink(alias, str(prior))
+        if activation is not None:
+            _restore_alias_activation(activation)
         if created and release_dir.exists():
             shutil.rmtree(release_dir)
         raise
@@ -326,6 +421,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     checksum.add_argument("--sha256-file", type=Path)
     parser.add_argument("--allow-unverified", action="store_true")
     parser.add_argument("--python", default=sys.executable)
+    parser.add_argument(
+        "--dependency-lock",
+        type=Path,
+        help="complete requirements file with hashes for the dependency closure",
+    )
+    parser.add_argument(
+        "--wheelhouse",
+        type=Path,
+        help="offline wheel directory used with --dependency-lock",
+    )
     parser.add_argument("--apply", action="store_true")
     arguments = parser.parse_args(argv)
     if not arguments.apply:

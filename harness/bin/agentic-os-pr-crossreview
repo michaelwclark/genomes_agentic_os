@@ -54,11 +54,15 @@ from genomes_agentic_os.github_bridge import (
     list_pull_request_commits as bridge_list_pull_request_commits,
 )
 from genomes_agentic_os.review_coordination import (
+    ReviewBudgetExceeded,
     ReviewCoordinationError,
     ReviewCoordinator,
     ReviewSubject,
+    canonical_review_purpose,
     load_review_receipt,
     provider_review_marker,
+    review_chain_key,
+    shared_review_coordination_root,
     stable_review_key,
 )
 
@@ -66,6 +70,7 @@ from genomes_agentic_os.review_coordination import (
 
 INSTANCE_ROOT = Path("/Users/genome/agentic_os")
 ARTIFACT_DIR = INSTANCE_ROOT / "harness/shared_factory/06-runs-and-logs/harness-runs"
+COORDINATION_ROOT = shared_review_coordination_root(INSTANCE_ROOT)
 
 _BIN_DIR = Path(__file__).resolve().parent
 ROUTING_CONFIG = _BIN_DIR.parent / "registries" / "harness-routing.yml"
@@ -78,6 +83,26 @@ MAX_DIFF_CHARS = 40_000
 # instead of silently selecting the wrong reviewer.
 MAX_COMMIT_SCAN = 1_000
 DEFAULT_REVIEW_SCOPE = "full-pr"
+BUDGET_BLOCK_EXIT_CODE = 3
+PURPOSE_ALIASES = {
+    "finalize",
+    "merge-readiness",
+    "review-others",
+    "review-repair",
+    "review-self",
+    "review_others",
+    "review_repair",
+    "review_self",
+}
+SCOPE_ALIASES = {
+    "full-pr": DEFAULT_REVIEW_SCOPE,
+    "full_pr": DEFAULT_REVIEW_SCOPE,
+    "pr": DEFAULT_REVIEW_SCOPE,
+}
+VERDICT_PATTERN = re.compile(
+    r"^AGENTIC_OS_REVIEW_VERDICT:\s*(CLEAN|FINDINGS)\s*$",
+    re.IGNORECASE | re.MULTILINE,
+)
 
 # Patterns that will fail the scrub gate (regex, applied to review text).
 # This list protects team-visible PR comments from leaking internal details.
@@ -167,6 +192,24 @@ def _sha256(value: object) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
+def normalize_review_purpose(purpose: str, scope: str) -> tuple[str, str]:
+    """Collapse stage aliases onto one bounded review family and scope.
+
+    The cross-review command only serves merge-readiness review. Accepting free-form
+    purpose or scope values would create fresh family keys and bypass the circuit
+    breakers, so aliases are closed and normalized before key construction.
+    """
+    requested_purpose = str(purpose).strip().lower()
+    normalized_scope = SCOPE_ALIASES.get(str(scope).strip().lower())
+    if requested_purpose not in PURPOSE_ALIASES:
+        raise ReviewCoordinationError(
+            "cross-review purpose must be one of the documented merge-readiness stage aliases"
+        )
+    if normalized_scope is None:
+        raise ReviewCoordinationError("cross-review scope must resolve to full-pr")
+    return canonical_review_purpose(requested_purpose), normalized_scope
+
+
 def get_base_sha(repo: str, pr: int, meta: dict, override: str | None = None) -> str:
     """Resolve the provider-read exact base SHA used by the stable review key."""
     candidate = override or meta.get("base_sha")
@@ -193,19 +236,32 @@ def list_provider_comments(repo: str, pr: int) -> list[dict]:
 def existing_provider_marker(repo: str, pr: int, marker: str) -> dict | None:
     """Return the existing provider comment carrying the stable review marker."""
     for row in list_provider_comments(repo, pr):
-        if marker in str(row.get("body") or ""):
+        if marker in str(row.get("body") or "").splitlines():
             return row
     return None
 
 
 def get_revision_diff(repo: str, base_sha: str, head_sha: str) -> str:
-    """Read only the changed delta between two provider revisions."""
-    return gh(
+    """Read one bounded descendant delta between two provider revisions."""
+    if base_sha == head_sha:
+        raise ReviewCoordinationError("delta review requires a changed head revision")
+    compare_ref = f"repos/{repo}/compare/{base_sha}...{head_sha}"
+    status = gh("api", compare_ref, "--jq", ".status").strip().lower()
+    if status != "ahead":
+        raise ReviewCoordinationError(
+            "delta parent must be an ancestor of the current provider head"
+        )
+    delta = gh(
         "api",
-        f"repos/{repo}/compare/{base_sha}...{head_sha}",
+        compare_ref,
         "--header",
         "Accept: application/vnd.github.v3.diff",
     )
+    if len(delta) > MAX_DIFF_CHARS:
+        raise ReviewCoordinationError(
+            f"delta diff exceeds the {MAX_DIFF_CHARS}-character review bound"
+        )
+    return delta
 
 
 def post_terminal_review(
@@ -233,11 +289,13 @@ def post_terminal_review(
             "readback_verified": True,
         }
     review = receipt.get("review") or {}
-    if receipt.get("status") != "completed" or receipt.get("outcome") == "unavailable":
-        raise ReviewCoordinationError("only a completed available review may be posted")
+    if receipt.get("status") != "completed" or receipt.get("outcome") != "clean":
+        raise ReviewCoordinationError("only a completed clean terminal review may be posted")
     body = str(review.get("text") or "").strip()
     if not body:
         raise ReviewCoordinationError("terminal review has no provider-safe body")
+    if review.get("scrub_passed") is not True:
+        raise ReviewCoordinationError("terminal review failed the provider content scrub")
     consolidated = f"{body}\n\n{marker}"
     if post_mode == "comment":
         gh("pr", "comment", str(pr), "--repo", repo, "--body", consolidated)
@@ -257,13 +315,24 @@ def post_terminal_review(
     }
 
 
+def parse_review_verdict(review_text: str) -> tuple[str, bool]:
+    """Parse the explicit reviewer verdict, failing ambiguous output closed."""
+    verdicts = [match.upper() for match in VERDICT_PATTERN.findall(review_text)]
+    if verdicts == ["CLEAN"]:
+        if re.search(r"\b(?:BLOCKER|WARNING)\b", review_text, re.IGNORECASE):
+            return "findings", False
+        return "clean", True
+    if verdicts == ["FINDINGS"]:
+        return "findings", True
+    return "findings", False
+
+
 def classify_review_outcome(exit_code: int, review_text: str, scrub_passed: bool) -> str:
-    """Map one reviewer result to the terminal coordination vocabulary."""
-    if exit_code != 0 or not review_text.strip() or not scrub_passed:
+    """Map one reviewer result to canonical availability, independent of scrub."""
+    del scrub_passed  # Provider safety is recorded separately from reviewer availability.
+    if exit_code != 0 or not review_text.strip():
         return "unavailable"
-    if re.search(r"\b(?:BLOCKER|WARNING)\b", review_text, re.IGNORECASE):
-        return "findings"
-    return "clean"
+    return parse_review_verdict(review_text)[0]
 
 
 def get_pr_meta(repo: str, pr: int) -> dict:
@@ -458,7 +527,14 @@ def build_review_prompt(repo: str, pr: int, meta: dict, diff: str) -> str:
 
         Provide your review findings in GitHub-flavored markdown. Start with a one-line
         summary of your overall assessment, then list findings as separate sections.
-        If you find no blockers, say so explicitly.
+        If you find no blockers, say so explicitly. End with exactly one of these
+        machine-readable lines (do not put it in a code block):
+
+        AGENTIC_OS_REVIEW_VERDICT: CLEAN
+        AGENTIC_OS_REVIEW_VERDICT: FINDINGS
+
+        Use CLEAN only when there are no BLOCKER or WARNING findings. Missing,
+        contradictory, or malformed verdict output will fail closed as findings.
     """)
 
 
@@ -551,6 +627,9 @@ _EPILOG = textwrap.dedent("""\
           The full review output (stdout+stderr from the reviewing harness).
       /Users/genome/agentic_os/harness/shared_factory/06-runs-and-logs/harness-runs/<ts>-crossreview-<id>.meta.json
           Receipt: PR, repo, author_harness, reviewer_harness, scrub_passed, artifact path.
+      /Users/genome/agentic_os/state/review-coordination/
+          The single shared coordination root for receipts, locks, budgets, and
+          provider-post deduplication. --output-dir never changes this root.
 
     EXAMPLES
       agentic-os-pr-crossreview --repo owner/repo --pr 123
@@ -627,7 +706,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--purpose",
         default="review_self",
-        help="Review purpose used in the stable key (default: %(default)s).",
+        help=(
+            "Merge-readiness stage alias. Known review/finalize aliases normalize "
+            "to one bounded family (default: %(default)s)."
+        ),
     )
     parser.add_argument(
         "--scope",
@@ -680,6 +762,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         base_sha = get_base_sha(repo, pr_number, meta, args.base_sha)
         policy_fingerprint = args.policy_fingerprint or _sha256(pr_config)
+        purpose, _scope = normalize_review_purpose(args.purpose, args.scope)
         subject = ReviewSubject(
             repository=repo,
             pull_request=f"github:{repo}#{pr_number}",
@@ -687,16 +770,15 @@ def main(argv: list[str] | None = None) -> int:
             base_sha=base_sha,
             head_sha=str(meta["head_sha"]),
             policy_fingerprint=policy_fingerprint,
-            purpose=f"{args.purpose}:{args.scope}",
+            purpose=purpose,
         )
     except ReviewCoordinationError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
-    coordination_root = artifact_dir / "review-coordination"
-    coordinator = ReviewCoordinator(coordination_root)
+    coordinator = ReviewCoordinator(COORDINATION_ROOT)
     review_key = stable_review_key(subject)
-    artifact_stem = coordination_root / "artifacts" / review_key
+    artifact_stem = artifact_dir / "crossreview-artifacts" / review_key
     artifact_stem.parent.mkdir(parents=True, exist_ok=True)
     output_file = Path(str(artifact_stem) + ".txt")
     meta_file = Path(str(artifact_stem) + ".meta.json")
@@ -707,6 +789,11 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         try:
             parent = load_review_receipt(coordinator.receipts / f"{args.parent_key}.json")
+            parent_subject = ReviewSubject.from_mapping(parent["subject"])
+            if review_chain_key(parent_subject) != review_chain_key(subject):
+                raise ReviewCoordinationError(
+                    "delta parent must belong to the same repository, PR, base, policy, and purpose"
+                )
             parent_head = str(parent["subject"]["head_sha"])
             diff = get_revision_diff(repo, parent_head, subject.head_sha)
         except (KeyError, ReviewCoordinationError) as exc:
@@ -758,6 +845,7 @@ def main(argv: list[str] | None = None) -> int:
         duration = round(time.monotonic() - started, 2)
         scrub_hits = scrub_check(review_text)
         scrub_passed = not scrub_hits
+        parsed_outcome, verdict_structured = parse_review_verdict(review_text)
         return {
             "outcome": classify_review_outcome(exit_code, review_text, scrub_passed),
             "text": review_text,
@@ -765,6 +853,8 @@ def main(argv: list[str] | None = None) -> int:
             "duration_sec": duration,
             "scrub_passed": scrub_passed,
             "scrub_hits": scrub_hits,
+            "parsed_outcome": parsed_outcome,
+            "verdict_structured": verdict_structured,
             "artifact_file": str(output_file),
             "author_harness": author_harness,
             "author_detected_by": author_detected_by,
@@ -772,11 +862,11 @@ def main(argv: list[str] | None = None) -> int:
             "model": args.model or "(default)",
         }
 
-    provider_post = None
+    provider_post_call = None
     if args.post:
         post_mode = str(pr_config.get("post_mode", "comment"))
 
-        def provider_post(marker: str, receipt: dict) -> dict:
+        def provider_post_call(marker: str, receipt: dict) -> dict:
             return post_terminal_review(
                 repo,
                 pr_number,
@@ -792,8 +882,21 @@ def main(argv: list[str] | None = None) -> int:
             execute_review,
             mode=args.mode,
             parent_key=args.parent_key,
-            provider_post=provider_post,
         )
+        review_for_post = dict(result.receipt.get("review") or {})
+        if (
+            provider_post_call is not None
+            and result.receipt.get("outcome") == "clean"
+            and review_for_post.get("scrub_passed") is True
+        ):
+            result = coordinator.post_terminal(
+                subject,
+                provider_post_call,
+                scrub_passed=True,
+            )
+    except ReviewBudgetExceeded as exc:
+        print(f"budget-block: {exc}", file=sys.stderr)
+        return BUDGET_BLOCK_EXIT_CODE
     except ReviewCoordinationError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
