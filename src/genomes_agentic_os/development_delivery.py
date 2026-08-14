@@ -167,6 +167,7 @@ ACTIVE_WORKTREE_READY_PR_CREATE_DELIVERY_RECOVERY_SCHEMA = (
 ACTIVE_WORKTREE_READY_RELEASE_PROPAGATION_CONTINUATION_SCHEMA = (
     "active-worktree-ready-release-propagation-continuation/v1"
 )
+ACTIVE_PR_CREATE_DELIVERY_ESCALATION_SCHEMA = "active-pr-create-delivery-escalation/v1"
 _ACTIVE_WORKTREE_READY_RELEASE_PROPAGATION_RECOVERY_VARIANTS = (
     {
         "history_key": "active_worktree_ready_delivery_recoveries",
@@ -196,6 +197,25 @@ _ACTIVE_WORKTREE_READY_DELIVERY_FRESH_STAGES = (
     "qa",
     "finalize",
     "merge",
+)
+_ACTIVE_PR_CREATE_ESCALATION_POST_PR_STAGES = (
+    "review_self",
+    "review_others",
+    "qa",
+    "finalize",
+    "validate_production_release",
+    "merge",
+    "release",
+    "deploy",
+    "closeout",
+    "health",
+)
+_ACTIVE_PR_CREATE_ESCALATION_DERIVED_OUT_OF_SCOPE_STAGES = (
+    "validate_production_release",
+    "release",
+    "deploy",
+    "closeout",
+    "health",
 )
 
 
@@ -4670,6 +4690,1161 @@ def bind_recovered_worktree_ready_pr_family(
                 "receipt": str(receipt_path),
                 "next_action": result["next_action"],
             },
+        )
+        return result
+
+
+def _active_pr_create_escalation_regular_file(
+    raw_path: Any,
+    *,
+    label: str,
+) -> tuple[Path, bytes]:
+    """Read one immutable absolute input through the shared no-follow guard."""
+
+    raw = str(raw_path or "").strip()
+    candidate = Path(raw).expanduser()
+    if not raw or not candidate.is_absolute():
+        raise DevelopmentDeliveryError(
+            f"active pr_create escalation {label} must be an absolute regular file"
+        )
+    return _worktree_ready_recovery_read_file(candidate, label=label)
+
+
+def _active_pr_create_escalation_packet_file(
+    raw_path: Any,
+    *,
+    work_item: Path,
+    label: str,
+) -> tuple[Path, bytes]:
+    """Read one packet-local immutable input without traversal or links."""
+
+    raw = str(raw_path or "").strip()
+    if not raw:
+        raise DevelopmentDeliveryError(
+            f"active pr_create escalation {label} is missing"
+        )
+    candidate = Path(raw).expanduser()
+    if not candidate.is_absolute():
+        candidate = work_item / candidate
+    return _worktree_ready_recovery_read_file(
+        candidate, label=label, work_item=work_item
+    )
+
+
+def _active_pr_create_escalation_mapping(
+    content: bytes,
+    *,
+    label: str,
+) -> dict[str, Any]:
+    """Decode one descriptor-verified immutable mapping."""
+
+    try:
+        value = yaml.safe_load(content.decode("utf-8")) or {}
+    except (UnicodeDecodeError, yaml.YAMLError) as exc:
+        raise DevelopmentDeliveryError(
+            f"active pr_create escalation {label} is malformed"
+        ) from exc
+    if not isinstance(value, Mapping):
+        raise DevelopmentDeliveryError(
+            f"active pr_create escalation {label} is malformed"
+        )
+    return dict(value)
+
+
+def _reuse_active_pr_create_escalation_receipt(
+    receipt_path: Path,
+    *,
+    work_item: Path,
+    receipt: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Reuse one exact orphaned receipt left before task history was written."""
+
+    if not (receipt_path.exists() or receipt_path.is_symlink()):
+        return dict(receipt)
+    existing_path, existing_bytes = _active_pr_create_escalation_packet_file(
+        receipt_path,
+        work_item=work_item,
+        label="escalation receipt",
+    )
+    existing = _active_pr_create_escalation_mapping(
+        existing_bytes, label="escalation receipt"
+    )
+    recorded_at = existing.get("recorded_at")
+    try:
+        parsed_recorded_at = datetime.fromisoformat(
+            str(recorded_at).replace("Z", "+00:00")
+        )
+    except ValueError:
+        parsed_recorded_at = None
+    expected_without_timestamp = {
+        key: value for key, value in receipt.items() if key != "recorded_at"
+    }
+    if not (
+        existing_path == receipt_path.resolve()
+        and set(existing) == set(receipt)
+        and isinstance(existing.get("recorded_at"), str)
+        and re.fullmatch(
+            r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z",
+            str(existing["recorded_at"]),
+        )
+        and parsed_recorded_at is not None
+        and {key: value for key, value in existing.items() if key != "recorded_at"}
+        == expected_without_timestamp
+    ):
+        raise DevelopmentDeliveryError(
+            "active pr_create escalation receipt path already has different content"
+        )
+    return existing
+
+
+def _active_pr_create_escalation_release_identity(
+    task: Mapping[str, Any],
+    *,
+    state_path: Path,
+    work_item: Path,
+    run_dir: Path,
+) -> dict[str, Any]:
+    """Verify the one immutable PR Create receipt retained by the migration."""
+
+    stage_receipts = task.get("stage_receipts")
+    if not isinstance(stage_receipts, Mapping) or set(stage_receipts) != {
+        "release_propagation"
+    }:
+        raise DevelopmentDeliveryError(
+            "active pr_create escalation requires exactly one release_propagation stage receipt"
+        )
+    descriptor = stage_receipts["release_propagation"]
+    if not isinstance(descriptor, Mapping):
+        raise DevelopmentDeliveryError(
+            "active pr_create escalation requires a hash-bound release_propagation receipt"
+        )
+    wrapper, wrapper_bytes = _active_pr_create_escalation_regular_file(
+        descriptor.get("ref"), label="release_propagation wrapper"
+    )
+    try:
+        wrapper.relative_to(run_dir)
+    except ValueError as exc:
+        raise DevelopmentDeliveryError(
+            "active pr_create escalation release_propagation receipt is outside task/run scope"
+        ) from exc
+    expected_wrapper_sha256 = str(descriptor.get("sha256") or "").strip().lower()
+    actual_wrapper_sha256 = hashlib.sha256(wrapper_bytes).hexdigest()
+    if not re.fullmatch(r"[a-f0-9]{64}", expected_wrapper_sha256) or (
+        actual_wrapper_sha256 != expected_wrapper_sha256
+    ):
+        raise DevelopmentDeliveryError(
+            "active pr_create escalation release_propagation receipt digest does not match"
+        )
+    wrapper_payload = _active_pr_create_escalation_mapping(
+        wrapper_bytes, label="release_propagation wrapper"
+    )
+    if not (
+        wrapper_payload.get("schema") == "development-stage-receipt/v1"
+        and wrapper_payload.get("stage") == "release_propagation"
+        and str(wrapper_payload.get("idempotency_key") or "").strip()
+    ):
+        raise DevelopmentDeliveryError(
+            "active pr_create escalation release_propagation wrapper is malformed"
+        )
+    evidence_path, evidence_bytes = _active_pr_create_escalation_packet_file(
+        wrapper_payload.get("receipt"),
+        work_item=work_item,
+        label="release_propagation evidence",
+    )
+    evidence = _active_pr_create_escalation_mapping(
+        evidence_bytes, label="release_propagation evidence"
+    )
+    evidence_sha256 = _json_sha256(evidence)
+    if (
+        wrapper_payload.get("evidence_sha256") != evidence_sha256
+        or evidence.get("schema") != "development-stage-evidence/v1"
+        or evidence.get("state") != "release_propagation"
+        or evidence.get("status") not in {"verified", "passed", "completed"}
+    ):
+        raise DevelopmentDeliveryError(
+            "active pr_create escalation release_propagation evidence is missing or changed"
+        )
+    details = (
+        evidence.get("evidence") if isinstance(evidence.get("evidence"), Mapping) else {}
+    )
+    repository = task.get("repository") if isinstance(task.get("repository"), Mapping) else {}
+    worktree = task.get("worktree") if isinstance(task.get("worktree"), Mapping) else {}
+    repository_id = str(repository.get("id") or "").strip()
+    base_branch = str(repository.get("base_branch") or "").strip()
+    source_branch = str(worktree.get("branch") or "").strip()
+    if not repository_id.startswith("git:github.com/"):
+        raise DevelopmentDeliveryError(
+            "active pr_create escalation requires a selected GitHub repository identity"
+        )
+    github_repository = repository_id.removeprefix("git:github.com/")
+    family = details.get("family") if isinstance(details.get("family"), list) else []
+    row = family[0] if len(family) == 1 and isinstance(family[0], Mapping) else {}
+    pull_request_number = row.get("pull_request")
+    source_head_sha = str(row.get("source_head") or "").strip()
+    base_sha = str(row.get("base_sha") or "").strip()
+    expected_snapshot = work_item / "artifacts" / "auto-dev-pr-create" / "source-snapshot.json"
+    expected_provider = work_item / "artifacts" / "auto-dev-pr-create" / "provider-readback.json"
+    receipt_refs = details.get("receipt_refs") if isinstance(details.get("receipt_refs"), list) else []
+    snapshot_path, snapshot_bytes = _active_pr_create_escalation_packet_file(
+        expected_snapshot, work_item=work_item, label="source snapshot"
+    )
+    provider_path, provider_bytes = _active_pr_create_escalation_packet_file(
+        expected_provider, work_item=work_item, label="provider readback"
+    )
+    snapshot = _active_pr_create_escalation_mapping(snapshot_bytes, label="source snapshot")
+    provider = _active_pr_create_escalation_mapping(provider_bytes, label="provider readback")
+    pull_request = f"github:{github_repository}#{pull_request_number}"
+    if not (
+        repository_id
+        and base_branch
+        and source_branch
+        and len(family) == 1
+        and row.get("base") == base_branch
+        and re.fullmatch(r"[a-fA-F0-9]{7,64}", base_sha)
+        and base_sha.lower()
+        == str(worktree.get("base_sha") or "").strip().lower()
+        and str(row.get("classification") or "") == "created"
+        and row.get("merged") is False
+        and str(row.get("provider") or "").strip().lower() == "github"
+        and row.get("provider_readback_verified") is True
+        and isinstance(pull_request_number, int)
+        and pull_request_number > 0
+        and row.get("repository") == github_repository
+        and row.get("source_branch") == source_branch
+        and re.fullmatch(r"[a-fA-F0-9]{7,64}", source_head_sha)
+        and str(row.get("state") or "").strip().lower() == "open"
+        and row.get("url") == f"https://github.com/{github_repository}/pull/{pull_request_number}"
+        and str(expected_snapshot.relative_to(work_item)) in receipt_refs
+        and str(expected_provider.relative_to(work_item)) in receipt_refs
+        and snapshot_path == expected_snapshot.resolve()
+        and snapshot.get("schema") == "auto-dev-pr-create-source-snapshot/v1"
+        and snapshot.get("repository") == github_repository
+        and str(snapshot.get("provider") or "").lower() == "github"
+        and snapshot.get("base_branch") == base_branch
+        and str(snapshot.get("base_sha") or "") == base_sha
+        and snapshot.get("source_branch") == source_branch
+        and str(snapshot.get("source_head_sha") or "") == source_head_sha
+        and str(snapshot.get("remote_head_sha") or "") == source_head_sha
+        and snapshot.get("remote_head_matches_local") is True
+        and provider_path == expected_provider.resolve()
+        and provider.get("schema") == "auto-dev-pr-create-provider-readback/v1"
+        and provider.get("repository") == github_repository
+        and str(provider.get("provider") or "").lower() == "github"
+        and provider.get("pull_request") == pull_request_number
+        and provider.get("url") == row.get("url")
+        and provider.get("state") == "OPEN"
+        and provider.get("is_draft") is False
+        and provider.get("base_branch") == base_branch
+        and str(provider.get("base_sha") or "") == base_sha
+        and provider.get("source_branch") == source_branch
+        and str(provider.get("source_head_sha") or "") == source_head_sha
+    ):
+        raise DevelopmentDeliveryError(
+            "active pr_create escalation release_propagation evidence identity is incomplete or does not match the selected task"
+        )
+    return {
+        "wrapper": wrapper,
+        "wrapper_sha256": actual_wrapper_sha256,
+        "evidence": evidence_path,
+        "evidence_sha256": evidence_sha256,
+        "source_snapshot": snapshot_path,
+        "source_snapshot_sha256": hashlib.sha256(snapshot_bytes).hexdigest(),
+        "provider_readback": provider_path,
+        "provider_readback_sha256": hashlib.sha256(provider_bytes).hexdigest(),
+        "pull_request_identity": {
+            "provider": "github",
+            "repository": repository_id,
+            "base_branch": base_branch,
+            "pull_request": pull_request,
+            "source_branch": source_branch,
+            "source_head_sha": source_head_sha,
+        },
+        "task_state": state_path,
+    }
+
+
+def _validate_active_pr_create_escalation_portfolio(
+    portfolio: Mapping[str, Any],
+    *,
+    task: Mapping[str, Any],
+    state_path: Path,
+) -> dict[str, Any]:
+    """Accept only AGE-190's recorded one-task PR Create portfolio boundary."""
+
+    auto_dev = (
+        portfolio.get("auto_dev") if isinstance(portfolio.get("auto_dev"), Mapping) else {}
+    )
+    rows = portfolio.get("tasks") if isinstance(portfolio.get("tasks"), list) else []
+    ticket = str(task.get("ticket") or "")
+    if not (
+        portfolio.get("state") == "local_validation"
+        and portfolio.get("run_id") == task.get("run_id")
+        and portfolio.get("tickets") == [ticket]
+        and auto_dev.get("mode") == "single_stage"
+        # AGE-190 recorded develop as the portfolio selector while the task and
+        # packet projection selected the completed PR Create boundary.
+        and auto_dev.get("requested_stage") == "develop"
+        and auto_dev.get("goal") == "pr_create"
+        and auto_dev.get("start_stage") == "groom"
+        and auto_dev.get("completion_stage") == "pr_create"
+        and auto_dev.get("provision_worktree") is True
+        and auto_dev.get("stage_order") == task.get("auto_dev_stage_order")
+        and auto_dev.get("stage_policies") == task.get("auto_dev_stage_policies")
+        and not portfolio.get("active_pr_create_delivery_escalations")
+        and len(rows) == 1
+        and isinstance(rows[0], Mapping)
+        and rows[0].get("ticket") == ticket
+        and Path(str(rows[0].get("state_ref") or "")).expanduser().resolve()
+        == state_path
+        and rows[0].get("canonical_work_id") == task.get("canonical_work_id")
+    ):
+        raise DevelopmentDeliveryError(
+            "active pr_create escalation requires the exact AGE-190 nonblocked one-task pr_create portfolio"
+        )
+    return dict(auto_dev)
+
+
+def _active_pr_create_escalation_stage_contract(
+    task: Mapping[str, Any],
+) -> tuple[tuple[str, ...], list[str], dict[str, dict[str, Any]]]:
+    """Accept only AGE-190's current or exact pre-validation stage contract.
+
+    The historical AGE-190 packet was recorded before
+    ``validate_production_release`` became a canonical stage.  Treating that
+    exact ordered omission as a general stage-order migration would let a
+    different legacy packet enter this one-ticket escalation.  Admit only the
+    historical order here, then return the full current order so the derived
+    Review-through-Merge contract has an explicit fresh production-validation
+    stage.
+    """
+
+    raw_order = task.get("auto_dev_stage_order")
+    raw_policies = task.get("auto_dev_stage_policies")
+    if not isinstance(raw_order, list) or not isinstance(raw_policies, Mapping):
+        raise DevelopmentDeliveryError(
+            "active pr_create escalation requires one exact current or legacy stage contract"
+        )
+    recorded_order = tuple(str(stage) for stage in raw_order)
+    current_order = tuple(AUTO_DEV_STAGE_ORDER)
+    legacy_order = tuple(
+        stage for stage in AUTO_DEV_STAGE_ORDER if stage != "validate_production_release"
+    )
+    if recorded_order not in {current_order, legacy_order}:
+        raise DevelopmentDeliveryError(
+            "active pr_create escalation requires the exact canonical stage order or "
+            "the one legacy order that omits validate_production_release"
+        )
+    if not (
+        set(raw_policies) == set(recorded_order)
+        and all(isinstance(policy, Mapping) for policy in raw_policies.values())
+    ):
+        raise DevelopmentDeliveryError(
+            "active pr_create escalation requires a stage policy map matching its exact stage order"
+        )
+    try:
+        stage_policies = validate_auto_dev_stage_policies(raw_policies)
+    except AutoDevStateError as exc:
+        raise DevelopmentDeliveryError(
+            "active pr_create escalation has an invalid exact stage policy map"
+        ) from exc
+    return recorded_order, list(current_order), stage_policies
+
+
+def _active_pr_create_delivery_escalation_context(state_path: Path) -> dict[str, Any]:
+    """Prove the sole legacy local-validation PR Create boundary is recoverable."""
+
+    state_path = state_path.expanduser().resolve()
+    _, task_bytes = _active_pr_create_escalation_regular_file(
+        state_path, label="task state"
+    )
+    task = _active_pr_create_escalation_mapping(task_bytes, label="task state")
+    if not (
+        task.get("state") == "local_validation"
+        and task.get("failure") is None
+        and task.get("auto_dev_mode") == "single_stage"
+        and task.get("requested_stage") == "pr_create"
+        and task.get("goal") == "pr_create"
+        and task.get("auto_dev_start_stage") == "groom"
+        and task.get("auto_dev_completion_stage") == "pr_create"
+        and not task.get("active_pr_create_delivery_escalations")
+        and not task.get("subject_supersessions")
+        and not task.get("subject_supersession_resolutions")
+        and not any(
+            task.get(field)
+            for field in ("subject_revision", "terminal_revision", "deployed_revision")
+        )
+    ):
+        raise DevelopmentDeliveryError(
+            "active pr_create escalation requires the exact active nonblocked local_validation single-stage pr_create task"
+        )
+    required = (
+        "os_root",
+        "domain",
+        "project",
+        "ticket",
+        "run_id",
+        "work_item",
+        "autodev_path",
+        "canonical_work_id",
+    )
+    if not all(str(task.get(field) or "").strip() for field in required):
+        raise DevelopmentDeliveryError(
+            "active pr_create escalation requires a fully linked canonical task"
+        )
+    recorded_stage_order, stage_order, stage_policies = (
+        _active_pr_create_escalation_stage_contract(task)
+    )
+    legacy_stage_contract = recorded_stage_order != tuple(AUTO_DEV_STAGE_ORDER)
+    root = expand_path(str(task["os_root"]))
+    domain = normalize_domain(str(task["domain"]))
+    project = validate_name(str(task["project"]), "project")
+    ticket = str(task["ticket"])
+    work_item = Path(str(task["work_item"])).expanduser().resolve()
+    project_path = project_root(root, domain, project)
+    if not (
+        work_item.is_dir()
+        and (work_item / "work.yml").is_file()
+        and _project_work_item_lane(work_item, project_path) == "02-active"
+    ):
+        raise DevelopmentDeliveryError(
+            "active pr_create escalation requires one active canonical work-item packet"
+        )
+    autodev_path = Path(str(task["autodev_path"])).expanduser().resolve()
+    if autodev_path != (work_item / "autodev.json").resolve():
+        raise DevelopmentDeliveryError(
+            "active pr_create escalation Auto-Dev projection is not packet-local"
+        )
+    _, autodev_bytes = _active_pr_create_escalation_packet_file(
+        autodev_path, work_item=work_item, label="Auto-Dev projection"
+    )
+    projection = _active_pr_create_escalation_mapping(
+        autodev_bytes, label="Auto-Dev projection"
+    )
+    projection_delivery = (
+        projection.get("delivery") if isinstance(projection.get("delivery"), Mapping) else {}
+    )
+    stages = projection.get("stages") if isinstance(projection.get("stages"), Mapping) else {}
+    if not (
+        projection.get("mode") == "single_stage"
+        and projection.get("requested_stage") == "pr_create"
+        and projection.get("start_stage") == "groom"
+        and projection.get("completion_stage") == "pr_create"
+        and projection.get("stage_order") == list(recorded_stage_order)
+        and projection.get("stage_policies") == task.get("auto_dev_stage_policies")
+        and projection_delivery.get("state") == "local_validation"
+        and projection_delivery.get("goal") == "pr_create"
+        and projection_delivery.get("run_id") == task["run_id"]
+        and Path(str(projection_delivery.get("task_state_ref") or "")).expanduser().resolve()
+        == state_path
+        and Path(str(projection_delivery.get("work_item") or "")).expanduser().resolve()
+        == work_item
+        and projection_delivery.get("canonical_work_id") == task["canonical_work_id"]
+        and projection.get("canonical_work_id") == task["canonical_work_id"]
+        and isinstance(projection.get("source"), Mapping)
+        and projection["source"].get("key") == ticket
+    ):
+        raise DevelopmentDeliveryError(
+            "active pr_create escalation requires the exact single-stage Auto-Dev projection"
+        )
+    pr_index = stage_order.index("pr_create")
+    for stage in stage_order[: pr_index + 1]:
+        row = stages.get(stage)
+        if not (
+            isinstance(row, Mapping)
+            and row.get("status") in {"completed", "not_required"}
+            and isinstance(row.get("receipt_refs"), list)
+            and row.get("receipt_refs")
+        ):
+            raise DevelopmentDeliveryError(
+                "active pr_create escalation requires every pre-PR stage to be terminal and receipt-backed"
+            )
+    for stage in _ACTIVE_PR_CREATE_ESCALATION_POST_PR_STAGES:
+        row = stages.get(stage)
+        if (
+            legacy_stage_contract
+            and stage == "validate_production_release"
+            and row is None
+        ):
+            # The only admitted legacy contract predates this stage entirely.
+            # A missing row is therefore not authority; synchronization below
+            # derives its current, receipt-free boundary before fresh review.
+            continue
+        if not (
+            isinstance(row, Mapping)
+            and row.get("status") == "out_of_scope"
+            and row.get("receipt_refs") == []
+        ):
+            raise DevelopmentDeliveryError(
+                "active pr_create escalation refuses existing post-PR authority"
+            )
+    stage_root = work_item / "artifacts" / "auto-dev-orchestration" / "stages"
+    for stage in _ACTIVE_PR_CREATE_ESCALATION_POST_PR_STAGES:
+        candidates = [stage_root / f"{stage}.json", stage_root / stage / "latest.json"]
+        if any(path.exists() or path.is_symlink() for path in candidates):
+            raise DevelopmentDeliveryError(
+                "active pr_create escalation refuses latent post-PR authority artifacts"
+            )
+    receipts = task.get("receipts")
+    if not (
+        isinstance(receipts, list)
+        and receipts
+        and all(
+            isinstance(row, Mapping)
+            and str(row.get("state") or "").strip()
+            and str(row.get("ref") or "").strip()
+            for row in receipts
+        )
+    ):
+        raise DevelopmentDeliveryError(
+            "active pr_create escalation requires immutable original task receipts"
+        )
+    forbidden_states = {
+        "pre_pr_review",
+        "pr_open",
+        "ci_repair",
+        "review_repair",
+        "post_pr_review",
+        "ready_for_merge",
+        "merged",
+        "deployment_pending",
+        "deploying",
+        "post_deploy_validation",
+        "delivery_complete",
+    }
+    if forbidden_states & {str(row.get("state") or "") for row in receipts}:
+        raise DevelopmentDeliveryError(
+            "active pr_create escalation refuses prior review, QA, Finalize, or terminal delivery authority"
+        )
+    local_validation = [row for row in receipts if row.get("state") == "local_validation"]
+    if len(local_validation) != 1:
+        raise DevelopmentDeliveryError(
+            "active pr_create escalation requires exactly one immutable local_validation receipt"
+        )
+    local_sha256 = str(local_validation[0].get("sha256") or "").strip().lower()
+    try:
+        _, local_bytes = _active_pr_create_escalation_packet_file(
+            local_validation[0].get("ref"),
+            work_item=work_item,
+            label="local_validation receipt",
+        )
+    except DevelopmentDeliveryError as exc:
+        raise DevelopmentDeliveryError(
+            "active pr_create escalation local_validation receipt is not immutable and packet-bound"
+        ) from exc
+    if not re.fullmatch(r"[a-f0-9]{64}", local_sha256) or (
+        hashlib.sha256(local_bytes).hexdigest() != local_sha256
+    ):
+        raise DevelopmentDeliveryError(
+            "active pr_create escalation local_validation receipt is not immutable and packet-bound"
+        )
+    worktree = task.get("worktree") if isinstance(task.get("worktree"), Mapping) else {}
+    worktree_path = Path(str(worktree.get("path") or "")).expanduser()
+    if not (
+        worktree_path.is_dir()
+        and not worktree_path.is_symlink()
+        and str(worktree.get("branch") or "").strip()
+        and re.fullmatch(r"[a-fA-F0-9]{7,64}", str(worktree.get("base_sha") or "").strip())
+    ):
+        raise DevelopmentDeliveryError(
+            "active pr_create escalation requires the original registered worktree receipt"
+        )
+    run_dir = state_path.parent.parent.parent.resolve()
+    release = _active_pr_create_escalation_release_identity(
+        task, state_path=state_path, work_item=work_item, run_dir=run_dir
+    )
+    projected_wrapper_paths: list[Path] = []
+    for ref in stages["pr_create"].get("receipt_refs") or []:
+        candidate = Path(str(ref or "").strip()).expanduser()
+        if candidate.is_absolute():
+            projected_path, _ = _active_pr_create_escalation_regular_file(
+                candidate, label="projected pr_create wrapper"
+            )
+        else:
+            projected_path, _ = _active_pr_create_escalation_packet_file(
+                candidate, work_item=work_item, label="projected pr_create wrapper"
+            )
+        projected_wrapper_paths.append(projected_path)
+    if not any(path == release["wrapper"] for path in projected_wrapper_paths):
+        raise DevelopmentDeliveryError(
+            "active pr_create escalation projection does not bind the immutable release_propagation wrapper"
+        )
+    portfolio_path = run_dir / "portfolio.json"
+    _, portfolio_bytes = _active_pr_create_escalation_regular_file(
+        portfolio_path, label="portfolio"
+    )
+    portfolio = _active_pr_create_escalation_mapping(portfolio_bytes, label="portfolio")
+    portfolio_auto_dev = _validate_active_pr_create_escalation_portfolio(
+        portfolio, task=task, state_path=state_path
+    )
+    canonical = _read_canonical_development_work(
+        root,
+        canonical_work_id=str(task["canonical_work_id"]),
+        ticket=ticket,
+        packet=work_item,
+        diagnostic_root=run_dir,
+    )
+    if not (
+        isinstance(canonical, Mapping)
+        and canonical.get("id") == task["canonical_work_id"]
+        and canonical.get("state") == "validating"
+        and canonical.get("attention") == "active"
+        and canonical.get("domain") == domain
+        and canonical.get("project") == project
+        and canonical.get("source_key") == ticket
+        and canonical.get("packet_path") == str(work_item)
+        and canonical.get("worktree_path") == str(worktree_path)
+        and canonical.get("branch") == worktree.get("branch")
+    ):
+        raise DevelopmentDeliveryError(
+            "active pr_create escalation requires one active canonical local-validation work row"
+        )
+    escalated_portfolio_auto_dev = {
+        **portfolio_auto_dev,
+        "mode": "everything",
+        "requested_stage": None,
+        "goal": "merge",
+        "stage_order": stage_order,
+        "start_stage": "groom",
+        "completion_stage": "merge",
+        "stage_policies": stage_policies,
+    }
+    return {
+        "task": task,
+        "task_sha256": hashlib.sha256(task_bytes).hexdigest(),
+        "work_item": work_item,
+        "autodev_path": autodev_path,
+        "autodev_sha256": hashlib.sha256(autodev_bytes).hexdigest(),
+        "portfolio": portfolio,
+        "portfolio_path": portfolio_path,
+        "portfolio_sha256": hashlib.sha256(portfolio_bytes).hexdigest(),
+        "portfolio_auto_dev": portfolio_auto_dev,
+        "escalated_portfolio_auto_dev": escalated_portfolio_auto_dev,
+        "canonical": dict(canonical),
+        "canonical_sha256": _json_sha256(dict(canonical)),
+        "stage_order": stage_order,
+        "stage_policies": stage_policies,
+        "worktree": dict(worktree),
+        "release": release,
+    }
+
+
+def _revalidate_active_pr_create_escalation_release(
+    current: Mapping[str, Any],
+    *,
+    state_path: Path,
+    original: Mapping[str, Any],
+) -> None:
+    """Re-prove the original PR family before resuming an interrupted replay."""
+
+    work_item = Path(str(current.get("work_item") or "")).expanduser().resolve()
+    run_dir = state_path.parent.parent.parent.resolve()
+    release = _active_pr_create_escalation_release_identity(
+        current, state_path=state_path, work_item=work_item, run_dir=run_dir
+    )
+    expected_release = {
+        "wrapper_ref": str(release["wrapper"]),
+        "wrapper_sha256": release["wrapper_sha256"],
+        "evidence_ref": str(release["evidence"]),
+        "evidence_sha256": release["evidence_sha256"],
+        "source_snapshot_ref": str(release["source_snapshot"]),
+        "source_snapshot_sha256": release["source_snapshot_sha256"],
+        "provider_readback_ref": str(release["provider_readback"]),
+        "provider_readback_sha256": release["provider_readback_sha256"],
+        "pull_request_identity": release["pull_request_identity"],
+    }
+    recorded_release = (
+        original.get("release_propagation")
+        if isinstance(original.get("release_propagation"), Mapping)
+        else {}
+    )
+    if not (
+        dict(recorded_release) == expected_release
+        and original.get("stage_receipts_sha256")
+        == _json_sha256(current.get("stage_receipts") or {})
+    ):
+        raise DevelopmentDeliveryError(
+            "active pr_create escalation immutable release_propagation identity changed before replay"
+        )
+
+
+def _revalidate_active_pr_create_escalation_projection(
+    current: Mapping[str, Any],
+    *,
+    state_path: Path,
+    original: Mapping[str, Any],
+) -> None:
+    """Accept only the immutable original or exact derived fresh-authority view."""
+
+    work_item = Path(str(current.get("work_item") or "")).expanduser().resolve()
+    autodev_path, autodev_bytes = _active_pr_create_escalation_packet_file(
+        current.get("autodev_path"), work_item=work_item, label="Auto-Dev projection"
+    )
+    expected_original_sha256 = str(original.get("autodev_sha256") or "").lower()
+    if not (
+        original.get("autodev_ref") == str(autodev_path)
+        and re.fullmatch(r"[a-f0-9]{64}", expected_original_sha256)
+    ):
+        raise DevelopmentDeliveryError(
+            "active pr_create escalation original Auto-Dev projection identity is malformed"
+        )
+    if hashlib.sha256(autodev_bytes).hexdigest() == expected_original_sha256:
+        return
+
+    projection = _active_pr_create_escalation_mapping(
+        autodev_bytes, label="Auto-Dev projection"
+    )
+    delivery = (
+        projection.get("delivery") if isinstance(projection.get("delivery"), Mapping) else {}
+    )
+    stages = projection.get("stages") if isinstance(projection.get("stages"), Mapping) else {}
+    stage_order = current.get("auto_dev_stage_order")
+    if not isinstance(stage_order, list) or "pr_create" not in stage_order:
+        raise DevelopmentDeliveryError(
+            "active pr_create escalation task stage order is not replayable"
+        )
+    pre_pr_stages = stage_order[: stage_order.index("pr_create") + 1]
+    fresh_stages = ("review_self", "review_others", "qa", "finalize", "merge")
+    projected_known_derived = (
+        projection.get("schema") == "auto-dev-work-item/v1"
+        and projection.get("mode") == "everything"
+        and projection.get("requested_stage") is None
+        and projection.get("start_stage") == "groom"
+        and projection.get("completion_stage") == "merge"
+        and projection.get("current_stage") == "review_self"
+        and projection.get("stage_order") == stage_order
+        and projection.get("stage_policies") == current.get("auto_dev_stage_policies")
+        and projection.get("canonical_work_id") == current.get("canonical_work_id")
+        and projection.get("domain") == current.get("domain")
+        and projection.get("project") == current.get("project")
+        and projection.get("subject_revision") is None
+        and projection.get("terminal_revision") is None
+        and delivery.get("state") == "local_validation"
+        and delivery.get("goal") == "merge"
+        and delivery.get("run_id") == current.get("run_id")
+        and Path(str(delivery.get("task_state_ref") or "")).expanduser().resolve()
+        == state_path
+        and Path(str(delivery.get("work_item") or "")).expanduser().resolve()
+        == work_item
+        and delivery.get("canonical_work_id") == current.get("canonical_work_id")
+        and all(
+            isinstance(stages.get(stage), Mapping)
+            and stages[stage].get("status") in {"completed", "not_required"}
+            and isinstance(stages[stage].get("receipt_refs"), list)
+            and stages[stage].get("receipt_refs")
+            for stage in pre_pr_stages
+        )
+        and all(
+            isinstance(stages.get(stage), Mapping)
+            and stages[stage].get("status") == "not_started"
+            and stages[stage].get("receipt_refs") == []
+            for stage in fresh_stages
+        )
+        and all(
+            isinstance(stages.get(stage), Mapping)
+            and stages[stage].get("status") in {"out_of_scope", "not_started"}
+            and stages[stage].get("receipt_refs") == []
+            for stage in _ACTIVE_PR_CREATE_ESCALATION_DERIVED_OUT_OF_SCOPE_STAGES
+        )
+    )
+    if not projected_known_derived:
+        raise DevelopmentDeliveryError(
+            "active pr_create escalation Auto-Dev projection changed before replay"
+        )
+
+
+def _complete_active_pr_create_delivery_escalation(
+    state_path: Path,
+    *,
+    current: Mapping[str, Any],
+    escalation: Mapping[str, Any],
+    apply: bool,
+) -> dict[str, Any]:
+    """Complete only the derived state of a receipt-backed exact replay."""
+
+    work_item = Path(str(current.get("work_item") or "")).expanduser().resolve()
+    try:
+        receipt_path, receipt_bytes = _active_pr_create_escalation_packet_file(
+            escalation.get("receipt"),
+            work_item=work_item,
+            label="escalation receipt",
+        )
+    except DevelopmentDeliveryError as exc:
+        raise DevelopmentDeliveryError("active pr_create escalation receipt is missing") from exc
+    receipt = _active_pr_create_escalation_mapping(
+        receipt_bytes, label="escalation receipt"
+    )
+    if not (
+        receipt.get("schema") == ACTIVE_PR_CREATE_DELIVERY_ESCALATION_SCHEMA
+        and receipt.get("kind") == "escalate-active-nonblocked-pr-create-delivery"
+        and receipt.get("idempotency_key") == escalation.get("idempotency_key")
+        and _json_sha256(receipt) == escalation.get("sha256")
+    ):
+        raise DevelopmentDeliveryError(
+            "active pr_create escalation receipt identity does not match task state"
+        )
+    escalated = receipt.get("escalated") if isinstance(receipt.get("escalated"), Mapping) else {}
+    expected_portfolio_auto_dev = escalated.get("portfolio_auto_dev")
+    if not (
+        escalated.get("state") == "local_validation"
+        and escalated.get("mode") == "everything"
+        and escalated.get("requested_stage") is None
+        and escalated.get("goal") == "merge"
+        and escalated.get("start_stage") == "groom"
+        and escalated.get("completion_stage") == "merge"
+        and isinstance(escalated.get("stage_order"), list)
+        and isinstance(escalated.get("stage_policies"), Mapping)
+        and isinstance(expected_portfolio_auto_dev, Mapping)
+        and current.get("state") == "local_validation"
+        and current.get("failure") is None
+        and current.get("auto_dev_mode") == "everything"
+        and current.get("requested_stage") is None
+        and current.get("goal") == "merge"
+        and current.get("auto_dev_start_stage") == "groom"
+        and current.get("auto_dev_completion_stage") == "merge"
+        and current.get("auto_dev_stage_order") == escalated.get("stage_order")
+        and current.get("auto_dev_stage_policies") == escalated.get("stage_policies")
+    ):
+        raise DevelopmentDeliveryError(
+            "active pr_create escalation task state is not replayable"
+        )
+    matching_rows = [
+        row
+        for row in current.get("active_pr_create_delivery_escalations") or []
+        if isinstance(row, Mapping)
+        and row.get("idempotency_key") == escalation.get("idempotency_key")
+    ]
+    if len(matching_rows) != 1 or dict(matching_rows[0]) != dict(escalation):
+        raise DevelopmentDeliveryError(
+            "active pr_create escalation history is not replayable"
+        )
+    original = receipt.get("original") if isinstance(receipt.get("original"), Mapping) else {}
+    _revalidate_active_pr_create_escalation_release(
+        current, state_path=state_path, original=original
+    )
+    _revalidate_active_pr_create_escalation_projection(
+        current, state_path=state_path, original=original
+    )
+    if not apply:
+        return receipt
+
+    run_dir = state_path.parent.parent.parent.resolve()
+    root = expand_path(str(current.get("os_root") or ""))
+    canonical = _read_canonical_development_work(
+        root,
+        canonical_work_id=str(current.get("canonical_work_id") or ""),
+        ticket=str(current.get("ticket") or ""),
+        packet=work_item,
+        diagnostic_root=run_dir,
+    )
+    if not isinstance(canonical, Mapping) or _json_sha256(dict(canonical)) != original.get(
+        "canonical_sha256"
+    ):
+        raise DevelopmentDeliveryError(
+            "canonical work row changed during active pr_create escalation; rerun preflight"
+        )
+    portfolio_path = run_dir / "portfolio.json"
+    with _file_lock(portfolio_path.with_suffix(portfolio_path.suffix + ".lock")):
+        _, portfolio_bytes = _active_pr_create_escalation_regular_file(
+            portfolio_path, label="portfolio"
+        )
+        portfolio = _active_pr_create_escalation_mapping(portfolio_bytes, label="portfolio")
+        rows = portfolio.get("tasks") if isinstance(portfolio.get("tasks"), list) else []
+        if not (
+            portfolio.get("run_id") == current.get("run_id")
+            and portfolio.get("tickets") == [current.get("ticket")]
+            and len(rows) == 1
+            and isinstance(rows[0], Mapping)
+            and Path(str(rows[0].get("state_ref") or "")).expanduser().resolve()
+            == state_path
+            and rows[0].get("canonical_work_id") == current.get("canonical_work_id")
+        ):
+            raise DevelopmentDeliveryError(
+                "portfolio changed during active pr_create escalation; rerun preflight"
+            )
+        expected_row = {**dict(escalation), "task_state_ref": str(state_path)}
+        recorded_rows = [
+            row
+            for row in portfolio.get("active_pr_create_delivery_escalations") or []
+            if isinstance(row, Mapping)
+            and row.get("idempotency_key") == escalation.get("idempotency_key")
+        ]
+        if len(recorded_rows) > 1 or (
+            recorded_rows and dict(recorded_rows[0]) != expected_row
+        ):
+            raise DevelopmentDeliveryError(
+                "active pr_create escalation portfolio history is not replayable"
+            )
+        changed = False
+        if portfolio.get("auto_dev") != expected_portfolio_auto_dev:
+            if (
+                original.get("portfolio_ref") != str(portfolio_path)
+                or original.get("portfolio_sha256")
+                != hashlib.sha256(portfolio_bytes).hexdigest()
+                or recorded_rows
+            ):
+                raise DevelopmentDeliveryError(
+                    "active pr_create escalation refuses a portfolio that is not its exact escalated projection"
+                )
+            portfolio["auto_dev"] = dict(expected_portfolio_auto_dev)
+            changed = True
+        if not recorded_rows:
+            portfolio.setdefault("active_pr_create_delivery_escalations", []).append(
+                expected_row
+            )
+            changed = True
+        if changed:
+            portfolio["updated_at"] = utc_now()
+            _atomic_json(portfolio_path, portfolio)
+
+    projection = _sync_auto_dev_projection(state_path)
+    if not (
+        isinstance(projection, Mapping)
+        and projection.get("mode") == "everything"
+        and projection.get("requested_stage") is None
+        and projection.get("start_stage") == "groom"
+        and projection.get("completion_stage") == "merge"
+        and projection.get("current_stage") == "review_self"
+        and projection.get("delivery", {}).get("state") == "local_validation"
+        and projection.get("stages", {}).get("pr_create", {}).get("status") == "completed"
+        and all(
+            projection.get("stages", {}).get(stage, {}).get("status") == "not_started"
+            for stage in ("review_self", "review_others", "qa", "finalize", "merge")
+        )
+        and all(
+            projection.get("stages", {}).get(stage, {}).get("status")
+            in {"out_of_scope", "not_started"}
+            and projection.get("stages", {}).get(stage, {}).get("receipt_refs") == []
+            for stage in _ACTIVE_PR_CREATE_ESCALATION_DERIVED_OUT_OF_SCOPE_STAGES
+        )
+    ):
+        raise DevelopmentDeliveryError(
+            "active pr_create escalation could not refresh its fresh-authority Auto-Dev projection"
+        )
+    TaskState(state_path).emit(
+        event_type="development.task.active_pr_create_delivery_escalated",
+        idempotency_key=str(escalation["idempotency_key"]),
+        payload={
+            "ticket": current.get("ticket"),
+            "receipt": str(receipt_path),
+            "next_action": "record fresh review_self, review_others, qa, finalize, and merge evidence",
+        },
+    )
+    return receipt
+
+
+def escalate_active_nonblocked_pr_create_delivery(
+    state_file: str | Path,
+    *,
+    reason: str,
+    idempotency_key: str,
+    apply: bool = False,
+) -> dict[str, Any]:
+    """Escalate only AGE-190's immutable nonblocked PR Create boundary.
+
+    This is a receipt-backed migration rather than a stage override.  It keeps
+    the original PR identity unchanged and never creates a provider action.
+    Fresh Review Self, Review Others, QA, Finalize, and Merge evidence remain
+    mandatory after the new boundary is installed.
+    """
+
+    state_path = Path(state_file).expanduser().resolve()
+    normalized_reason = reason.strip()
+    normalized_key = idempotency_key.strip()
+    if not normalized_reason:
+        raise DevelopmentDeliveryError("active pr_create escalation requires a reason")
+    if not normalized_key:
+        raise DevelopmentDeliveryError(
+            "active pr_create escalation requires an idempotency key"
+        )
+    state = TaskState(state_path)
+    with _task_provisioning_admission_lock(state_path):
+        current = state.read()
+        escalations = current.get("active_pr_create_delivery_escalations")
+        if isinstance(escalations, list):
+            for escalation in escalations:
+                if not isinstance(escalation, Mapping) or escalation.get(
+                    "idempotency_key"
+                ) != normalized_key:
+                    continue
+                if escalation.get("reason") != normalized_reason:
+                    raise DevelopmentDeliveryError(
+                        "idempotency key belongs to a different active pr_create escalation"
+                    )
+                _complete_active_pr_create_delivery_escalation(
+                    state_path,
+                    current=current,
+                    escalation=escalation,
+                    apply=apply,
+                )
+                return {
+                    "schema": "active-pr-create-delivery-escalation-result/v1",
+                    "result": "replayed",
+                    "state": str(state_path),
+                    "ticket": current.get("ticket"),
+                    "receipt": str(escalation["receipt"]),
+                    "receipt_sha256": str(escalation["sha256"]),
+                    "next_action": "record fresh review_self, review_others, qa, finalize, and merge evidence",
+                }
+        context = _active_pr_create_delivery_escalation_context(state_path)
+        receipt = {
+            "schema": ACTIVE_PR_CREATE_DELIVERY_ESCALATION_SCHEMA,
+            "kind": "escalate-active-nonblocked-pr-create-delivery",
+            "idempotency_key": normalized_key,
+            "reason": normalized_reason,
+            "recorded_at": utc_now(),
+            "original": {
+                "task_state_ref": str(state_path),
+                "task_state_sha256": context["task_sha256"],
+                "portfolio_ref": str(context["portfolio_path"]),
+                "portfolio_sha256": context["portfolio_sha256"],
+                "autodev_ref": str(context["autodev_path"]),
+                "autodev_sha256": context["autodev_sha256"],
+                "canonical_work_id": context["task"]["canonical_work_id"],
+                "canonical_sha256": context["canonical_sha256"],
+                "work_item": str(context["work_item"]),
+                "worktree": context["worktree"],
+                "release_propagation": {
+                    "wrapper_ref": str(context["release"]["wrapper"]),
+                    "wrapper_sha256": context["release"]["wrapper_sha256"],
+                    "evidence_ref": str(context["release"]["evidence"]),
+                    "evidence_sha256": context["release"]["evidence_sha256"],
+                    "source_snapshot_ref": str(
+                        context["release"]["source_snapshot"]
+                    ),
+                    "source_snapshot_sha256": context["release"][
+                        "source_snapshot_sha256"
+                    ],
+                    "provider_readback_ref": str(
+                        context["release"]["provider_readback"]
+                    ),
+                    "provider_readback_sha256": context["release"][
+                        "provider_readback_sha256"
+                    ],
+                    "pull_request_identity": context["release"]["pull_request_identity"],
+                },
+                "stage_receipts_sha256": _json_sha256(
+                    context["task"].get("stage_receipts") or {}
+                ),
+            },
+            "escalated": {
+                "state": "local_validation",
+                "mode": "everything",
+                "requested_stage": None,
+                "goal": "merge",
+                "stage_order": context["stage_order"],
+                "start_stage": "groom",
+                "completion_stage": "merge",
+                "stage_policies": context["stage_policies"],
+                "portfolio_auto_dev": context["escalated_portfolio_auto_dev"],
+                "fresh_stages_required": list(_ACTIVE_WORKTREE_READY_DELIVERY_FRESH_STAGES),
+            },
+        }
+        receipt_path = (
+            context["work_item"]
+            / "artifacts"
+            / "development-delivery"
+            / "active-pr-create-delivery-escalation"
+            / f"{hashlib.sha256(normalized_key.encode('utf-8')).hexdigest()[:20]}.json"
+        )
+        receipt = _reuse_active_pr_create_escalation_receipt(
+            receipt_path,
+            work_item=context["work_item"],
+            receipt=receipt,
+        )
+        digest = _json_sha256(receipt)
+        result = {
+            "schema": "active-pr-create-delivery-escalation-result/v1",
+            "result": "planned" if not apply else "escalated",
+            "state": str(state_path),
+            "ticket": current.get("ticket"),
+            "receipt": str(receipt_path),
+            "receipt_sha256": digest,
+            "next_action": "record fresh review_self, review_others, qa, finalize, and merge evidence",
+        }
+        if not apply:
+            return result
+        portfolio_path = context["portfolio_path"]
+        with _file_lock(portfolio_path.with_suffix(portfolio_path.suffix + ".lock")):
+            locked_context = _active_pr_create_delivery_escalation_context(state_path)
+            if not (
+                locked_context["task_sha256"] == context["task_sha256"]
+                and locked_context["portfolio_sha256"] == context["portfolio_sha256"]
+                and locked_context["autodev_sha256"] == context["autodev_sha256"]
+                and locked_context["canonical_sha256"] == context["canonical_sha256"]
+                and locked_context["release"] == context["release"]
+            ):
+                raise DevelopmentDeliveryError(
+                    "portfolio, task, projection, canonical row, or immutable release evidence changed during active pr_create escalation; rerun preflight"
+                )
+            with _file_lock(state_path.with_suffix(state_path.suffix + ".lock")):
+                latest = state.read()
+                if hashlib.sha256(state_path.read_bytes()).hexdigest() != context[
+                    "task_sha256"
+                ]:
+                    raise DevelopmentDeliveryError(
+                        "task changed during active pr_create escalation; rerun preflight"
+                    )
+                encoded_receipt = (
+                    json.dumps(receipt, indent=2, sort_keys=True) + "\n"
+                ).encode("utf-8")
+                if receipt_path.exists() or receipt_path.is_symlink():
+                    existing_path, existing_receipt = _active_pr_create_escalation_packet_file(
+                        receipt_path,
+                        work_item=context["work_item"],
+                        label="escalation receipt",
+                    )
+                    if (
+                        existing_path != receipt_path.resolve()
+                        or existing_receipt != encoded_receipt
+                    ):
+                        raise DevelopmentDeliveryError(
+                            "active pr_create escalation receipt path already has different content"
+                        )
+                _atomic_json(receipt_path, receipt)
+                escalation = {
+                    "idempotency_key": normalized_key,
+                    "reason": normalized_reason,
+                    "receipt": str(receipt_path),
+                    "sha256": digest,
+                    "recorded_at": receipt["recorded_at"],
+                }
+                latest.update(
+                    {
+                        "auto_dev_mode": "everything",
+                        "requested_stage": None,
+                        "goal": "merge",
+                        "auto_dev_stage_order": context["stage_order"],
+                        "auto_dev_start_stage": "groom",
+                        "auto_dev_completion_stage": "merge",
+                        "auto_dev_stage_policies": context["stage_policies"],
+                        "updated_at": utc_now(),
+                        "last_active_pr_create_delivery_escalation_key": normalized_key,
+                    }
+                )
+                latest.setdefault("active_pr_create_delivery_escalations", []).append(
+                    escalation
+                )
+                latest.setdefault("receipts", []).append(
+                    {
+                        "state": "local_validation",
+                        "ref": str(receipt_path),
+                        "sha256": digest,
+                        "recorded_at": receipt["recorded_at"],
+                    }
+                )
+                _atomic_json(state_path, latest)
+            locked_portfolio = _read_mapping(portfolio_path)
+            locked_portfolio["auto_dev"] = dict(context["escalated_portfolio_auto_dev"])
+            locked_portfolio.setdefault("active_pr_create_delivery_escalations", []).append(
+                {**escalation, "task_state_ref": str(state_path)}
+            )
+            locked_portfolio["updated_at"] = utc_now()
+            _atomic_json(portfolio_path, locked_portfolio)
+        _complete_active_pr_create_delivery_escalation(
+            state_path,
+            current=latest,
+            escalation=escalation,
+            apply=True,
         )
         return result
 
