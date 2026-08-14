@@ -606,11 +606,20 @@ def assert_exact_head_review_receipt(
     subject = payload["subject"]
     checks = {
         "head_sha": head_sha,
-        **({"repository": repository} if repository else {}),
         **({"pull_request": str(pull_request)} if pull_request else {}),
         **({"policy_fingerprint": policy_fingerprint} if policy_fingerprint else {}),
     }
     drift = [name for name, value in checks.items() if str(subject.get(name)) != str(value)]
+    if repository:
+        def canonical_repository(value: Any) -> str:
+            normalized = str(value).strip().lower().removesuffix(".git")
+            for prefix in ("git:github.com/", "github:", "https://github.com/"):
+                if normalized.startswith(prefix):
+                    return normalized.removeprefix(prefix)
+            return normalized
+
+        if canonical_repository(subject.get("repository")) != canonical_repository(repository):
+            drift.append("repository")
     if drift:
         raise ReviewCoordinationError(
             "review coordination receipt drifted for " + ", ".join(sorted(drift))

@@ -8789,16 +8789,23 @@ def run_development_stage(
                         "ready_for_merge review_coordination_receipt is not readable"
                     )
                 try:
+                    review_policy_fingerprint = str(
+                        evidence.get("review_policy_fingerprint")
+                        or task_value.get("policy_fingerprint")
+                        or ""
+                    ).strip()
+                    if review_policy_fingerprint and not re.fullmatch(
+                        r"[0-9a-f]{64}", review_policy_fingerprint
+                    ):
+                        raise DevelopmentDeliveryError(
+                            "ready_for_merge review_policy_fingerprint must be a lowercase SHA-256"
+                        )
                     assert_exact_head_review_receipt(
                         coordination_path,
                         head_sha=str(evidence["subject_revision"]),
                         repository=ready_authority.get("repository"),
                         pull_request=ready_authority.get("pull_request"),
-                        policy_fingerprint=(
-                            str(task_value.get("policy_fingerprint"))
-                            if task_value.get("policy_fingerprint")
-                            else None
-                        ),
+                        policy_fingerprint=review_policy_fingerprint or None,
                     )
                 except ReviewCoordinationError as exc:
                     raise DevelopmentDeliveryError(str(exc)) from exc

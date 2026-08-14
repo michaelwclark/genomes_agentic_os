@@ -54,6 +54,24 @@ def _clean() -> dict[str, str]:
     return {"outcome": "clean", "summary": "No blocking findings."}
 
 
+def test_exact_head_gate_accepts_canonical_github_repository_alias(
+    tmp_path: Path,
+) -> None:
+    completed = ReviewCoordinator(tmp_path / "auto-dev-review").execute(
+        _subject(), _clean
+    )
+
+    receipt = assert_exact_head_review_receipt(
+        completed.receipt_path,
+        head_sha="1" * 40,
+        repository="git:github.com/acme/widgets",
+        pull_request="42",
+        policy_fingerprint=POLICY,
+    )
+
+    assert receipt["key"] == completed.key
+
+
 def test_same_key_reuses_receipt_without_second_external_call(tmp_path: Path) -> None:
     coordinator = ReviewCoordinator(tmp_path / "auto-dev-review")
     calls = 0
