@@ -61,6 +61,10 @@ from .policy_plane import (
     public_policy_plane,
     resolve_markdown_plane,
 )
+from .review_coordination import (
+    ReviewCoordinationError,
+    assert_exact_head_review_receipt,
+)
 from .scaffold import (
     domain_path,
     expand_path,
@@ -8738,7 +8742,7 @@ def run_development_stage(
                 and evidence.get("reviews_verified") is True
                 and evidence.get("readback_verified") is True
                 and re.fullmatch(
-                    r"[a-fA-F0-9]{7,64}", str(evidence.get("subject_revision") or "")
+                    r"[a-fA-F0-9]{40}", str(evidence.get("subject_revision") or "")
                 )
             ):
                 raise DevelopmentDeliveryError(
@@ -8752,6 +8756,59 @@ def run_development_stage(
                 "pr_open",
                 prior_pull_request_authority("pr_open"),
             )
+            coordination_ref = str(
+                evidence.get("review_coordination_receipt") or ""
+            ).strip()
+            task_value = state.read()
+            if task_value.get("autodev_path") and not coordination_ref:
+                raise DevelopmentDeliveryError(
+                    "Auto-Dev ready_for_merge requires review_coordination_receipt"
+                )
+            if coordination_ref:
+                work_item_raw = str(task_value.get("work_item") or "").strip()
+                work_item = (
+                    Path(work_item_raw).expanduser().resolve()
+                    if work_item_raw
+                    else None
+                )
+                candidate = Path(coordination_ref).expanduser()
+                candidates = (
+                    [candidate]
+                    if candidate.is_absolute()
+                    else [
+                        path.parent / candidate,
+                        *(([work_item / candidate]) if work_item is not None else []),
+                    ]
+                )
+                coordination_path = next(
+                    (item.resolve() for item in candidates if item.resolve().is_file()),
+                    None,
+                )
+                if coordination_path is None:
+                    raise DevelopmentDeliveryError(
+                        "ready_for_merge review_coordination_receipt is not readable"
+                    )
+                try:
+                    review_policy_fingerprint = str(
+                        evidence.get("review_policy_fingerprint")
+                        or task_value.get("policy_fingerprint")
+                        or ""
+                    ).strip()
+                    if review_policy_fingerprint and not re.fullmatch(
+                        r"[0-9a-f]{64}", review_policy_fingerprint
+                    ):
+                        raise DevelopmentDeliveryError(
+                            "ready_for_merge review_policy_fingerprint must be a lowercase SHA-256"
+                        )
+                    assert_exact_head_review_receipt(
+                        coordination_path,
+                        head_sha=str(evidence["subject_revision"]),
+                        repository=ready_authority.get("repository"),
+                        pull_request=ready_authority.get("pull_request"),
+                        policy_fingerprint=review_policy_fingerprint or None,
+                    )
+                except ReviewCoordinationError as exc:
+                    raise DevelopmentDeliveryError(str(exc)) from exc
             pending_supersession = pending_subject_supersession(state.read())
             if pending_supersession is not None:
                 expected_identity = pending_supersession.get("pull_request_identity")

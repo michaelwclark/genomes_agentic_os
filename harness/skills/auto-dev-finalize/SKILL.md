@@ -1,6 +1,6 @@
 ---
 name: auto-dev-finalize
-description: Converge every open agent-authored PR for one tracker ticket through independent review, CI and review repair, branch-family parity, and a governed merge-readiness decision. Manual kickoff only.
+description: Consume exact-head review, CI, and parity receipts for every open agent-authored PR and record a governed merge-readiness decision without starting review or repair. Manual kickoff only.
 ---
 
 # Auto-Dev Finalize
@@ -14,11 +14,14 @@ no schedule or automatic opened-PR trigger is enabled.
 2. Resolve merge intent from an explicit run override, then project policy,
    then one direct operator decision. Per-PR and whole-family opt-outs win, but
    Finalize records the decision and never executes the merge.
-3. Require a reviewer from the opposing model family for agent-authored work.
-   Never let the implementation model approve its own result.
-4. Run bounded, quiet assessment and repair rounds. Re-read all automated and
-   human threads after every push. Resolve bot findings only after a fix or a
-   factual false-positive reply; never resolve human threads.
+3. Require the canonical opposing-model review receipt produced by Review Self
+   and any delta receipts produced by Repair. The receipt subject must match the
+   live repository, PR, base/head revisions, policy fingerprint, scope, and
+   purpose exactly.
+4. Consume receipts and re-read provider truth. Finalize must not invoke a
+   reviewer, restart Review Self/Repair, resolve a thread, push a repair, or
+   create another provider review post. A stale or missing receipt returns to
+   its owning stage with the exact mismatch.
 5. Declare the family ready only when every required PR has current green
    checks, clean actionable threads, acceptance evidence, branch parity, and
    required reviews.

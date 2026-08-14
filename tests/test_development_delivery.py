@@ -41,6 +41,7 @@ from genomes_agentic_os.development_delivery import (
     validate_workflow_contracts,
 )
 from genomes_agentic_os.lifecycle import sync_active_container
+from genomes_agentic_os.review_coordination import ReviewCoordinator, ReviewSubject
 from genomes_agentic_os.scaffold import create_project
 from genomes_agentic_os.state import work_items as canonical_work_items
 from genomes_agentic_os.state.db import connect as connect_state
@@ -335,6 +336,30 @@ def _provider_authority(
         "author_kind": "ours" if author_identity.lower() in ours else "others",
         "readback_verified": True,
     }
+
+
+def _review_coordination_receipt(
+    task: TaskState,
+    *,
+    subject_revision: str,
+    pull_request: str,
+) -> str:
+    value = task.read()
+    repository = value["repository"]
+    work_item = Path(value["work_item"])
+    policy_fingerprint = str(value.get("policy_fingerprint") or "b" * 64)
+    subject = ReviewSubject(
+        repository=str(repository["id"]),
+        pull_request=pull_request,
+        base_branch=str(repository["base_branch"]),
+        base_sha=str(repository.get("base_sha") or subject_revision),
+        head_sha=subject_revision,
+        policy_fingerprint=policy_fingerprint,
+    )
+    completed = ReviewCoordinator(
+        work_item / "artifacts" / "auto-dev-review" / "review-coordination"
+    ).execute(subject, lambda: {"outcome": "clean"})
+    return str(completed.receipt_path)
 
 
 def _record_standalone_stage(
@@ -874,6 +899,11 @@ def _active_pr_create_review_receipts(task: TaskState) -> dict[str, str]:
                 "reviews_verified": True,
                 "source_head_sha": source_head,
                 "subject_revision": source_head,
+                "review_coordination_receipt": _review_coordination_receipt(
+                    task,
+                    subject_revision=source_head,
+                    pull_request="github:acme/app#190",
+                ),
             },
         ),
     }
@@ -5329,6 +5359,11 @@ def test_release_propagation_appends_exact_head_supersession_without_rewriting_p
                     "source_branch": "feature/cc-52",
                     "source_head_sha": head,
                     "subject_revision": head,
+                    "review_coordination_receipt": _review_coordination_receipt(
+                        task,
+                        subject_revision=head,
+                        pull_request="github:acme/app#52",
+                    ),
                 },
             ),
         }
@@ -6578,7 +6613,7 @@ def test_review_repair_consumes_pr_create_family_without_creating_prs() -> None:
     contract = yaml.safe_load(
         (workflow_root / "workflow.yml").read_text(encoding="utf-8")
     )
-    assert contract["version"] == 2
+    assert contract["version"] == 3
     assert contract["inputs"][0] == "pr_create_family_receipt"
     assert "open_pr" not in contract["steps"]
     assert "verify_pr_create_family" in contract["steps"]
@@ -6589,7 +6624,7 @@ def test_review_repair_consumes_pr_create_family_without_creating_prs() -> None:
     )
     assert "does not open, retarget, or add pull requests" in workflow
     assert "A missing or wrong target returns to PR Create" in workflow
-    assert "pr_open stores the provider readback already created by PR Create" in (
+    assert "pr_open stores the PR Create provider readback" in (
         workflow.replace("`", "")
     )
 
@@ -8158,6 +8193,11 @@ def test_review_stage_follows_pr_create_without_requiring_its_own_completion(
                 "checks_verified": True,
                 "reviews_verified": True,
                 "subject_revision": base_sha,
+                "review_coordination_receipt": _review_coordination_receipt(
+                    task,
+                    subject_revision=base_sha,
+                    pull_request="github:acme/app#77",
+                ),
             },
         ),
     }
@@ -8178,6 +8218,24 @@ def test_review_stage_follows_pr_create_without_requiring_its_own_completion(
         },
         idempotency_prefix="cc-review-cycle:pr-create",
     )
+    missing_coordination = dict(review_receipts)
+    missing_ready = json.loads(
+        Path(missing_coordination["ready_for_merge"]).read_text(encoding="utf-8")
+    )
+    missing_ready["evidence"].pop("review_coordination_receipt")
+    missing_path = work_item / "stage-receipts" / "ready-for-merge-missing-coordination.json"
+    missing_path.write_text(json.dumps(missing_ready), encoding="utf-8")
+    missing_coordination["ready_for_merge"] = str(missing_path)
+    with pytest.raises(
+        DevelopmentDeliveryError,
+        match="Auto-Dev ready_for_merge requires review_coordination_receipt",
+    ):
+        run_development_stage(
+            task.path,
+            stage="review",
+            receipts=missing_coordination,
+            idempotency_prefix="cc-review-cycle:review-missing-coordination",
+        )
     reviewed = run_development_stage(
         task.path,
         stage="review",
@@ -9872,3 +9930,32 @@ def test_recover_active_worktree_ready_pr_create_delivery_replay_refuses_backfil
     assert family_path.read_bytes() == before["family"]
     assert provider_path.read_bytes() == before["provider"]
     assert Path(recovered["receipt"]).read_bytes() == before["receipt"]
+
+
+def test_review_workflow_has_one_full_owner_and_receipt_only_finalize() -> None:
+    repository = Path(__file__).parents[1]
+    workflow = (
+        repository
+        / "harness/shared_factory/04-workflows/development_delivery/"
+        "testing_review_and_pr_repair/workflow.yml"
+    ).read_text(encoding="utf-8")
+    review_self = (
+        repository / "harness/skills/auto-dev-review-self/SKILL.md"
+    ).read_text(encoding="utf-8")
+    repair = (
+        repository / "harness/skills/auto-dev-review-repair/SKILL.md"
+    ).read_text(encoding="utf-8")
+    finalize = (
+        repository / "harness/skills/auto-dev-finalize/SKILL.md"
+    ).read_text(encoding="utf-8")
+
+    assert "version: 3" in workflow
+    assert "claim_or_reuse_canonical_review" in workflow
+    assert "post_pr_opposing_review" not in workflow
+    assert "normal_full_reviews_per_chain: 1" in workflow
+    assert "delta_reviews_per_chain: 3" in workflow
+    assert "absolute_full_reviews_per_family: 2" in workflow
+    assert "provider_posts_per_family: 1" in workflow
+    assert "sole owner of the canonical full review" in " ".join(review_self.split())
+    assert "Never invoke another full review from Repair" in " ".join(repair.split())
+    assert "Finalize must not invoke a reviewer" in " ".join(finalize.split())

@@ -9,6 +9,32 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-08-14
+
+### Added
+
+- Add a shared, exact-head review coordinator with stable identities,
+  single-flight claims, normalized findings ledgers, immutable receipts, and
+  evidence-gated operator resolution after the review circuit is exhausted.
+- Add a transactional local release-runtime installer with hash-pinned
+  dependency closure, rollout quiescence proof, receipt-ledger migration, and
+  verified rollback pointers.
+
+### Changed
+
+- Make Review Self the sole owner of the initial full review. Repair uses at
+  most three descendant delta reviews, Finalize reuses the exact-head receipt,
+  and provider publication is deferred to one clean terminal summary.
+- Require exact-head review authority, local tests, hosted checks, and policy
+  identity before Auto-Dev can enter `ready_for_merge`.
+
+### Fixed
+
+- Prevent replayed, concurrent, aliased, corrupt, or cross-entrypoint review
+  requests from recreating the duplicate-review storm observed on PR #19.
+- Preserve review budgets across scrub failures, quarantine, legacy receipt
+  migration, and release rollout.
+
 ## [0.6.3] - 2026-08-13
 
 ### Fixed
