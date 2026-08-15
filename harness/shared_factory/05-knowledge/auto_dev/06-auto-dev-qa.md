@@ -31,6 +31,12 @@ evidence against an exact revision, artifact, environment, and policy.
 7. For a failure, determine whether it is a product defect, test defect,
    configuration mismatch, stale version, access problem, or infrastructure
    problem before rerunning or routing work.
+8. For changed serializer, request payload, persistence, rule, template, or
+   configuration boundaries, execute the actual consumer with both the prior
+   and canonical shape for every impacted contract class. Verify expected
+   business output, missing-field behavior, tenant/configuration identity, and
+   all impacted tenants from the inventory; a serializer-only assertion or HTTP
+   success is insufficient.
 
 Independent QA lanes may be delegated to subagents when they do not mutate the
 same fixtures or environment. The coordinator reconciles the results and owns

@@ -34,6 +34,11 @@ revision.
    location, concrete failure mode, and why the current tests do not protect it.
 7. Separate blocking correctness findings from optional improvements and
    questions.
+8. Treat request/payload canonicalization and serializer output changes as
+   compatibility changes. Trace the value into every rule, template,
+   integration, and tenant configuration consumer; require a complete impact
+   matrix and real evaluator tests for both legacy and canonical shapes. Flag
+   any path where a missing value can become a silent empty success.
 
 Use bounded subagents for distinct risk lenses when the diff is large, but
 deduplicate and verify every returned finding against the exact revision before
