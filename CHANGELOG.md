@@ -32,7 +32,12 @@ All notable changes to this project are documented here. The format follows
 - Preserve partial portfolio state when an exhausted executor handoff coexists
   with a recoverable handoff.
 - Bind opposing-review receipt run IDs to their deterministic artifact
-  directory leaves.
+  directory leaves and ingest structured blocking and advisory findings
+  without allowing blocking evidence to be verified away.
+- Require same-head advisory recovery to match explicit non-blocking evidence
+  and remain bound to the immutable reviewer response and canonical findings
+  digest; honor routed `continue_with_receipt` handling when an unavailable
+  review is policy-allowed.
 - Validate required PR checks only after exact-head workflow contexts have had
   two settled observations to appear, rejecting stale labels without failing
   during the downstream-check emission gap.
