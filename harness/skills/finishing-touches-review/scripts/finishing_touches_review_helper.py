@@ -93,6 +93,7 @@ TRANSITIONS = {
     None: {"OPEN"},
     "OPEN": {
         "ACCEPTED",
+        "VERIFIED",
         "REJECTED_WITH_RATIONALE",
         "DEFERRED_WITH_OWNER",
         "BLOCKING_UNRESOLVED",

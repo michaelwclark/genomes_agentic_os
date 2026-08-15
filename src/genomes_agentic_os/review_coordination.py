@@ -125,6 +125,22 @@ def stable_review_key(subject: ReviewSubject) -> str:
     return _canonical_hash(asdict(subject))
 
 
+def advisory_recovery_key(parent_key: str, evidence_sha256: str) -> str:
+    """Return a deterministic immutable child key for advisory-only recovery."""
+
+    if not re.fullmatch(r"[0-9a-f]{64}", str(parent_key)):
+        raise ReviewCoordinationError("advisory recovery requires a canonical parent key")
+    if not re.fullmatch(r"[0-9a-f]{64}", str(evidence_sha256)):
+        raise ReviewCoordinationError("advisory recovery requires an evidence sha256")
+    return _canonical_hash(
+        {
+            "kind": "advisory-recovery/v1",
+            "parent_key": parent_key,
+            "evidence_sha256": evidence_sha256,
+        }
+    )
+
+
 def review_chain_key(subject: ReviewSubject) -> str:
     """Return the chain shared by one full review and its changed-head deltas."""
 
@@ -465,7 +481,14 @@ def load_review_receipt(path: str | Path) -> dict[str, Any]:
     subject = ReviewSubject.from_mapping(subject_raw)
     expected_key = stable_review_key(subject)
     legacy_key = _legacy_subject_hash(subject_raw)
-    if payload.get("key") not in {expected_key, legacy_key}:
+    recovery = payload.get("recovery")
+    advisory_key = ""
+    if payload.get("mode") == "advisory_recovery" and isinstance(recovery, Mapping):
+        advisory_key = advisory_recovery_key(
+            str(payload.get("parent_key") or ""),
+            str(recovery.get("evidence_sha256") or ""),
+        )
+    if payload.get("key") not in {expected_key, legacy_key, advisory_key}:
         raise ReviewCoordinationError("review coordination receipt key does not match subject")
     expected_chain = review_chain_key(subject)
     expected_family = review_family_key(subject)
@@ -514,9 +537,9 @@ def load_review_receipt(path: str | Path) -> dict[str, Any]:
             ),
         }
     mode = payload.get("mode")
-    if mode not in {"full", "delta", "operator_resolution"}:
+    if mode not in {"full", "delta", "operator_resolution", "advisory_recovery"}:
         raise ReviewCoordinationError("review coordination receipt mode is invalid")
-    if mode in {"delta", "operator_resolution"} and not re.fullmatch(
+    if mode in {"delta", "operator_resolution", "advisory_recovery"} and not re.fullmatch(
         r"[0-9a-f]{64}", str(payload.get("parent_key") or "")
     ):
         raise ReviewCoordinationError(
@@ -654,7 +677,10 @@ class ReviewCoordinator:
             "chain_key": receipt.get("chain_key"),
             "mode": receipt.get("mode"),
             "outcome": receipt.get("outcome"),
-            "budget_consumed": receipt.get("outcome") in SUCCESSFUL_REVIEW_OUTCOMES,
+            "budget_consumed": (
+                receipt.get("outcome") in SUCCESSFUL_REVIEW_OUTCOMES
+                and receipt.get("mode") in {"full", "delta"}
+            ),
             "subject": receipt.get("subject"),
             "receipt_ref": str(path),
         }
@@ -1470,6 +1496,129 @@ class ReviewCoordinator:
             }
             self._write_receipt(canonical_path, canonical)
             return self._result(canonical_path, canonical, reused=True)
+
+    def derive_same_head_advisory_clean(
+        self,
+        source_receipt_path: str | Path,
+        *,
+        evidence_path: str | Path,
+        findings: list[Mapping[str, Any]],
+    ) -> ReviewRunResult:
+        """Derive immutable clean authority from one all-advisory model response.
+
+        This is recovery, not a reviewer call or mutation of the original
+        receipt.  It exists for older runner receipts that kept the raw model
+        response but failed to ingest its typed non-blocking findings before
+        determining the coordination outcome.
+        """
+
+        source = Path(source_receipt_path).expanduser().resolve()
+        evidence = Path(evidence_path).expanduser().resolve()
+        if not source.is_file() or not evidence.is_file():
+            raise ReviewCoordinationError(
+                "advisory recovery requires an existing source receipt and evidence file"
+            )
+        source_raw = source.read_bytes()
+        original = load_review_receipt(source)
+        if original.get("outcome") != "findings":
+            raise ReviewCoordinationError(
+                "advisory recovery source must be a terminal findings receipt"
+            )
+        if original.get("mode") not in {"full", "delta"}:
+            raise ReviewCoordinationError(
+                "advisory recovery source must be a full or delta reviewer receipt"
+            )
+        response = (original.get("review") or {}).get("response")
+        if not isinstance(response, str) or not response.strip():
+            raise ReviewCoordinationError(
+                "advisory recovery requires the original typed reviewer response"
+            )
+        evidence_text = evidence.read_text(encoding="utf-8").strip()
+        if hashlib.sha256(response.strip().encode()).hexdigest() != hashlib.sha256(
+            evidence_text.encode()
+        ).hexdigest():
+            raise ReviewCoordinationError(
+                "advisory recovery evidence does not match the source reviewer response"
+            )
+        if not findings or any(
+            not isinstance(row, Mapping) or row.get("blocking") is not False
+            for row in findings
+        ):
+            raise ReviewCoordinationError(
+                "advisory recovery requires one or more explicitly non-blocking findings"
+            )
+
+        subject = ReviewSubject.from_mapping(original["subject"])
+        parent_key = str(original["key"])
+        evidence_sha256 = hashlib.sha256(evidence_text.encode()).hexdigest()
+        key = advisory_recovery_key(parent_key, evidence_sha256)
+        family_key = review_family_key(subject)
+        path = self._path(key)
+        advisory_rows: list[dict[str, Any]] = []
+        for row in findings:
+            finding_id = str(row.get("id") or "").strip()
+            if not finding_id:
+                raise ReviewCoordinationError("advisory recovery findings require IDs")
+            advisory_rows.append(
+                {
+                    **dict(row),
+                    "status": "resolved",
+                    "resolution_refs": [f"reviewer-nonblocking-advisory:{finding_id}"],
+                    "advisory": True,
+                }
+            )
+        outcome, ledger, normalized_review = normalize_findings_ledger(
+            {
+                "outcome": "clean",
+                "findings": advisory_rows,
+                "summary": "Recovered all-nonblocking reviewer advice from immutable model evidence.",
+                "scrub_passed": True,
+            }
+        )
+        if outcome != "clean" or any(row.get("status") == "open" for row in ledger):
+            raise ReviewCoordinationError(
+                "advisory recovery cannot derive clean authority with unresolved findings"
+            )
+        with _exclusive_lock(self.locks / f"{family_key}.lock"):
+            if path.is_file():
+                existing = load_review_receipt(path)
+                if (
+                    existing.get("parent_key") == parent_key
+                    and (existing.get("recovery") or {}).get("evidence_sha256")
+                    == evidence_sha256
+                ):
+                    return self._result(path, existing, reused=True)
+                raise ReviewCoordinationError("advisory recovery child key collision")
+            now = _utc_now()
+            receipt = {
+                "schema": REVIEW_RECEIPT_SCHEMA,
+                "key": key,
+                "chain_key": review_chain_key(subject),
+                "family_key": family_key,
+                "status": "completed",
+                "mode": "advisory_recovery",
+                "outcome": "clean",
+                "subject": asdict(subject),
+                "parent_key": parent_key,
+                "review": normalized_review,
+                "findings_ledger": ledger,
+                "budget": dict(original.get("budget") or {}),
+                "provider_post": {
+                    "status": "not_requested",
+                    "marker": provider_review_marker(key),
+                },
+                "recovery": {
+                    "source_receipt_ref": str(source),
+                    "source_receipt_sha256": hashlib.sha256(source_raw).hexdigest(),
+                    "evidence_ref": str(evidence),
+                    "evidence_sha256": evidence_sha256,
+                    "derived_at": now,
+                },
+                "created_at": now,
+                "completed_at": now,
+            }
+            self._write_receipt(path, receipt)
+            return self._result(path, receipt, reused=False)
 
     def finalize(self, subject: ReviewSubject) -> ReviewRunResult:
         """Reuse the exact-head terminal result without invoking a reviewer."""

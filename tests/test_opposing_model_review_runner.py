@@ -295,3 +295,97 @@ def test_runner_request_run_id_matches_created_artifact_directory(
         check=False,
     )
     assert validation.returncode == 0, validation.stderr
+
+
+def test_advisory_findings_are_preserved_without_becoming_helper_blockers(
+    tmp_path: Path,
+) -> None:
+    runner = _load_runner()
+    response = """```json
+[
+  {
+    "id": "F-advice",
+    "severity": "low",
+    "category": "tests",
+    "file": "tests/test_runner.py",
+    "line": 42,
+    "title": "Add a clarifying assertion",
+    "detail": "The existing test already covers the contract.",
+    "suggested_fix": "Optionally name the assertion.",
+    "blocking": false
+  }
+]
+```
+AGENTIC_OS_REVIEW_VERDICT: FINDINGS"""
+
+    findings = runner.parse_structured_findings(response)
+    events = runner.ledger_events(findings)
+    coordination = runner.coordination_findings(findings)
+
+    assert [event["event_type"] for event in events] == [
+        "finding_opened",
+        "finding_verified",
+    ]
+    assert events[-1]["status"] == "VERIFIED"
+    assert events[-1]["advisory"] is True
+    assert coordination == [
+        {
+            "id": "F-advice",
+            "severity": "low",
+            "summary": "Add a clarifying assertion",
+            "evidence": [
+                "tests/test_runner.py:42 The existing test already covers the contract."
+            ],
+            "status": "resolved",
+            "resolution_refs": ["reviewer-nonblocking-advisory:F-advice"],
+            "advisory": True,
+        }
+    ]
+    run_dir = tmp_path / "review-run"
+    run_dir.mkdir()
+    (run_dir / "review-request.json").write_text(
+        json.dumps(
+            {
+                "work_item_id": "AGE-196",
+                "run_id": run_dir.name,
+                "repo_path": "repository",
+                "implementation_summary": "advisory ingestion",
+                "spec_source": "ticket",
+                "builder_model": "gpt-5.6",
+                "selected_reviewer_model": "opus",
+                "reviewer_selection_source": "policy",
+                "target_branch": "main",
+                "base_sha": "a" * 40,
+                "head_sha": "b" * 40,
+                "diff_hash": "c" * 64,
+                "pr_number": 42,
+                "artifact_dir": f"artifacts/{run_dir.name}",
+                "mode": "post_pr",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (run_dir / "validation-plan.json").write_text(
+        json.dumps(
+            {
+                "model_identity_status": "proven",
+                "reviewer_status": "available",
+                "validation_status": "passed",
+                "pr_check_status": "passed",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (run_dir / "review-ledger.jsonl").write_text(
+        "".join(json.dumps(event) + "\n" for event in events), encoding="utf-8"
+    )
+    completed = subprocess.run(
+        [sys.executable, str(runner.HELPER), "decide", "--run-dir", str(run_dir)],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    decision = json.loads((run_dir / "readiness-decision.json").read_text())
+    assert decision["decision"] == "ready_post_pr_checks"
+    assert decision["active_blocker_count"] == 0

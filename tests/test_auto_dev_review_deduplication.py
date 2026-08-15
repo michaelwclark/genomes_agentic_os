@@ -676,6 +676,73 @@ def test_successful_unavailable_artifact_recovers_without_reviewer_rerun(
     assert Path(recovered.receipt["recovery"]["source_attempt_ref"]).is_file()
 
 
+def test_all_advisory_findings_derive_immutable_same_head_clean_child(
+    tmp_path: Path,
+) -> None:
+    coordinator = ReviewCoordinator(tmp_path / "auto-dev-review")
+    response = """```json
+[{"id":"F-advice","severity":"low","category":"tests","file":"tests/test_x.py","line":7,"title":"Clarify test name","detail":"The current assertion is sufficient.","suggested_fix":"Optionally rename it.","blocking":false}]
+```
+AGENTIC_OS_REVIEW_VERDICT: FINDINGS"""
+    source = coordinator.execute(
+        _subject(),
+        lambda: {
+            "outcome": "findings",
+            "response": response,
+            "findings": [
+                {
+                    "id": "F-advice",
+                    "severity": "low",
+                    "summary": "Clarify test name",
+                    "evidence": ["tests/test_x.py:7 The current assertion is sufficient."],
+                }
+            ],
+        },
+    )
+    original = source.receipt_path.read_bytes()
+    evidence = tmp_path / "reviewer-response.md"
+    evidence.write_text(response + "\n", encoding="utf-8")
+    recovered = coordinator.derive_same_head_advisory_clean(
+        source.receipt_path,
+        evidence_path=evidence,
+        findings=[
+            {
+                "id": "F-advice",
+                "severity": "low",
+                "summary": "Clarify test name",
+                "evidence": ["tests/test_x.py:7 The current assertion is sufficient."],
+                "blocking": False,
+            }
+        ],
+    )
+
+    assert source.receipt_path.read_bytes() == original
+    assert recovered.receipt["mode"] == "advisory_recovery"
+    assert recovered.receipt["outcome"] == "clean"
+    assert recovered.receipt["parent_key"] == source.key
+    assert recovered.receipt["findings_ledger"][0]["status"] == "resolved"
+    assert assert_exact_head_review_receipt(
+        recovered.receipt_path,
+        head_sha=_subject().head_sha,
+        repository="acme/widgets",
+        pull_request="42",
+        policy_fingerprint=POLICY,
+    )["outcome"] == "clean"
+    assert coordinator.derive_same_head_advisory_clean(
+        source.receipt_path,
+        evidence_path=evidence,
+        findings=[
+            {
+                "id": "F-advice",
+                "severity": "low",
+                "summary": "Clarify test name",
+                "evidence": ["tests/test_x.py:7 The current assertion is sufficient."],
+                "blocking": False,
+            }
+        ],
+    ).reused
+
+
 def test_finalize_reuses_exact_head_and_refuses_drift(tmp_path: Path) -> None:
     coordinator = ReviewCoordinator(tmp_path / "auto-dev-review")
     completed = coordinator.execute(_subject(), _clean)
