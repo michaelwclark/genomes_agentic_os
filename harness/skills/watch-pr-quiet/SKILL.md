@@ -115,9 +115,12 @@ Record the PR number and output folder in the Agentic OS work item so future age
 - A named required check passes only with an explicit `success` conclusion;
   `neutral` and `skipped` are not delivery-grade success.
 - When the exact-head check context has settled, supplied `--required-check`
-  values that are not emitted `check_run.name` values fail immediately with
-  `invalid_required_checks` and the observed check names in the state receipt;
-  they must be corrected and the watcher restarted. Do not wait for a stale
-  workflow display label to time out.
+  values that are not emitted `check_run.name` values remain pending for one
+  additional settled poll. If the same labels remain absent on that bounded
+  confirmation poll, they fail with `invalid_required_checks` and the observed
+  check names in the state receipt; correct them and restart the watcher. This
+  grace prevents an eventually emitted downstream check from being rejected,
+  while still rejecting a stale workflow display label without waiting for the
+  full watch timeout.
 - Never paste full polling logs into chat. Reference the summary/state files instead.
 - Do not use this watcher for unrelated production monitoring. It is for PR check status only.
