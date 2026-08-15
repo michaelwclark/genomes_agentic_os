@@ -400,3 +400,20 @@ AGENTIC_OS_REVIEW_VERDICT: FINDINGS"""
     decision = json.loads((run_dir / "readiness-decision.json").read_text())
     assert decision["decision"] == "ready_post_pr_checks"
     assert decision["active_blocker_count"] == 0
+
+    blocking_events = [dict(event) for event in events]
+    for event in blocking_events:
+        event["severity"] = "High"
+        event["blocking"] = True
+    (run_dir / "review-ledger.jsonl").write_text(
+        "".join(json.dumps(event) + "\n" for event in blocking_events),
+        encoding="utf-8",
+    )
+    blocked = subprocess.run(
+        [sys.executable, str(runner.HELPER), "decide", "--run-dir", str(run_dir)],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert blocked.returncode != 0
+    assert "OPEN -> VERIFIED is reserved" in blocked.stderr

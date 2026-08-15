@@ -680,6 +680,19 @@ def test_all_advisory_findings_derive_immutable_same_head_clean_child(
     tmp_path: Path,
 ) -> None:
     coordinator = ReviewCoordinator(tmp_path / "auto-dev-review")
+    advisory_findings = [
+        {
+            "id": "F-advice",
+            "severity": "low",
+            "category": "tests",
+            "file": "tests/test_x.py",
+            "line": 7,
+            "title": "Clarify test name",
+            "detail": "The current assertion is sufficient.",
+            "suggested_fix": "Optionally rename it.",
+            "blocking": False,
+        }
+    ]
     response = """```json
 [{"id":"F-advice","severity":"low","category":"tests","file":"tests/test_x.py","line":7,"title":"Clarify test name","detail":"The current assertion is sufficient.","suggested_fix":"Optionally rename it.","blocking":false}]
 ```
@@ -705,15 +718,7 @@ AGENTIC_OS_REVIEW_VERDICT: FINDINGS"""
     recovered = coordinator.derive_same_head_advisory_clean(
         source.receipt_path,
         evidence_path=evidence,
-        findings=[
-            {
-                "id": "F-advice",
-                "severity": "low",
-                "summary": "Clarify test name",
-                "evidence": ["tests/test_x.py:7 The current assertion is sufficient."],
-                "blocking": False,
-            }
-        ],
+        findings=advisory_findings,
     )
 
     assert source.receipt_path.read_bytes() == original
@@ -731,16 +736,57 @@ AGENTIC_OS_REVIEW_VERDICT: FINDINGS"""
     assert coordinator.derive_same_head_advisory_clean(
         source.receipt_path,
         evidence_path=evidence,
-        findings=[
-            {
-                "id": "F-advice",
-                "severity": "low",
-                "summary": "Clarify test name",
-                "evidence": ["tests/test_x.py:7 The current assertion is sufficient."],
-                "blocking": False,
-            }
-        ],
+        findings=advisory_findings,
     ).reused
+
+    with pytest.raises(ReviewCoordinationError, match="exactly match"):
+        coordinator.derive_same_head_advisory_clean(
+            source.receipt_path,
+            evidence_path=evidence,
+            findings=[],
+        )
+    altered_findings = [dict(advisory_findings[0], title="Altered title")]
+    with pytest.raises(ReviewCoordinationError, match="exactly match"):
+        coordinator.derive_same_head_advisory_clean(
+            source.receipt_path,
+            evidence_path=evidence,
+            findings=altered_findings,
+        )
+
+
+def test_advisory_recovery_rejects_blocking_response_relabelled_as_advice(
+    tmp_path: Path,
+) -> None:
+    coordinator = ReviewCoordinator(tmp_path / "auto-dev-review")
+    response = """```json
+[{"id":"F-block","severity":"high","category":"contract","file":"src/x.py","line":8,"title":"Block release","detail":"The receipt grants clean authority.","suggested_fix":"Keep it open.","blocking":true}]
+```
+AGENTIC_OS_REVIEW_VERDICT: FINDINGS"""
+    source = coordinator.execute(
+        _subject("2" * 40),
+        lambda: {"outcome": "findings", "response": response, "findings": []},
+    )
+    evidence = tmp_path / "blocking-reviewer-response.md"
+    evidence.write_text(response + "\n", encoding="utf-8")
+    relabelled = [
+        {
+            "id": "F-block",
+            "severity": "high",
+            "category": "contract",
+            "file": "src/x.py",
+            "line": 8,
+            "title": "Block release",
+            "detail": "The receipt grants clean authority.",
+            "suggested_fix": "Keep it open.",
+            "blocking": False,
+        }
+    ]
+    with pytest.raises(ReviewCoordinationError, match="immutable non-blocking"):
+        coordinator.derive_same_head_advisory_clean(
+            source.receipt_path,
+            evidence_path=evidence,
+            findings=relabelled,
+        )
 
 
 def test_finalize_reuses_exact_head_and_refuses_drift(tmp_path: Path) -> None:
