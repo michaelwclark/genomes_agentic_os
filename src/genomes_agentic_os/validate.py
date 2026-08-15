@@ -8,7 +8,7 @@ import json
 import os
 from pathlib import Path
 import sqlite3
-from typing import Any
+from typing import Any, Callable
 
 import yaml
 
@@ -118,6 +118,22 @@ REQUIRED_CORE_HOOKS = (
     "context-mode-codex-hooks",
     "mempalace-claude-hooks",
 )
+
+
+VALIDATION_SCOPES = (
+    "root",
+    "registries",
+    "domains",
+    "work-items",
+    "structured-files",
+)
+
+ValidationProgress = Callable[[str], None]
+
+
+def _checkpoint(progress: ValidationProgress | None, stage: str) -> None:
+    if progress is not None:
+        progress(stage)
 
 
 SHARED_KNOWLEDGE_FILES = (
@@ -489,7 +505,13 @@ def validate_project_code_settings(project_root: Path, result: ValidationResult)
         )
 
 
-def validate_project_layer(project_root: Path, result: ValidationResult) -> None:
+def validate_project_layer(
+    project_root: Path,
+    result: ValidationResult,
+    *,
+    progress: ValidationProgress | None = None,
+) -> None:
+    _checkpoint(progress, f"project:{project_root.name}:layout")
     validate_agent_layer(project_root, result)
     for filename in ("README.md", "project.yml", "status.md", "source-map.md", "decisions.md"):
         require_file(project_root / filename, result)
@@ -522,9 +544,12 @@ def validate_project_layer(project_root: Path, result: ValidationResult) -> None
             require_dir(project_root / "work-items" / lane, result)
     require_file(project_root / "worktrees" / "README.md", result)
     require_file(project_root / "worktrees" / "index.yml", result)
+    _checkpoint(progress, f"project:{project_root.name}:settings")
     validate_project_code_settings(project_root, result)
+    _checkpoint(progress, f"project:{project_root.name}:worktrees")
     validate_project_worktrees(project_root, result)
-    validate_project_work_items(project_root, result)
+    _checkpoint(progress, f"project:{project_root.name}:work-items")
+    validate_project_work_items(project_root, result, progress=progress)
     # Load hosts registry for remote validation (best-effort; errors surfaced below).
     # root_candidate: <os-root>/<domain>/02-projects/<project> → parent×3 = <os-root>
     root_candidate = project_root.parent.parent.parent
@@ -537,6 +562,7 @@ def validate_project_layer(project_root: Path, result: ValidationResult) -> None
     else:
         # hosts.yml not yet created (pre-migration); skip host-reference check
         hosts = None
+    _checkpoint(progress, f"project:{project_root.name}:remotes")
     validate_project_remotes(project_root, result, hosts)
 
 
@@ -677,12 +703,18 @@ def validate_project_remotes_connectivity(
     return warnings
 
 
-def validate_project_work_items(project_root: Path, result: ValidationResult) -> None:
+def validate_project_work_items(
+    project_root: Path,
+    result: ValidationResult,
+    *,
+    progress: ValidationProgress | None = None,
+) -> None:
     work_items_root = project_root / "work-items"
     if not work_items_root.is_dir():
         return
     records: list[WorkItemRecord] = []
     for work_item_root in local_work_item_candidates(work_items_root):
+        _checkpoint(progress, f"work-items:{work_item_root.name}")
         metadata_path = metadata_path_for(work_item_root)
         if metadata_path is None:
             result.errors.append(
@@ -718,6 +750,7 @@ def validate_project_work_items(project_root: Path, result: ValidationResult) ->
             message = f"work item {record.path.name} status {record.status!r} missing required file: {path}"
             result.warnings.append(message)
         for log_file in conversation_log_files(record.path):
+            _checkpoint(progress, f"work-item-logs:{record.path.name}")
             try:
                 if log_file.stat().st_size > CONVERSATION_LOG_TOKEN_SCAN_MAX_BYTES:
                     result.warnings.append(
@@ -737,7 +770,9 @@ def validate_domain(
     result: ValidationResult,
     *,
     layout_v2: bool = False,
+    progress: ValidationProgress | None = None,
 ) -> None:
+    _checkpoint(progress, f"domain:{domain_root.name}:layout")
     require_dir(domain_root, result)
     require_file(domain_root / CONFIG_FILENAME, result)
     require_file(domain_root / "README.md", result)
@@ -791,10 +826,13 @@ def validate_domain(
     require_file(domain_root / "08-archive" / "README.md", result)
 
     for project_config in sorted((domain_root / "02-projects").glob("*/project.yml")):
-        validate_project_layer(project_config.parent, result)
+        _checkpoint(progress, f"domain:{domain_root.name}:project:{project_config.parent.name}")
+        validate_project_layer(project_config.parent, result, progress=progress)
     for workflow_spec in sorted((domain_root / "03-workflows").glob("*/*/workflow.md")):
+        _checkpoint(progress, f"domain:{domain_root.name}:workflow:{workflow_spec.parent.name}")
         validate_agent_layer(workflow_spec.parent, result)
     for automation_spec in sorted((domain_root / "04-automations").glob("*/*/automation.md")):
+        _checkpoint(progress, f"domain:{domain_root.name}:automation:{automation_spec.parent.name}")
         validate_agent_layer(automation_spec.parent, result)
 
 
@@ -1437,7 +1475,11 @@ def _schema_target_candidates(root: Path, pattern: str) -> list[Path]:
     return list(dict.fromkeys(candidates))
 
 
-def validate_schemas_strict(root: Path) -> list[StrictFinding]:
+def validate_schemas_strict(
+    root: Path,
+    *,
+    progress: ValidationProgress | None = None,
+) -> list[StrictFinding]:
     """Validate installed files against their JSON schemas.
 
     Only reports findings for files that exist.  Missing files are already
@@ -1464,6 +1506,7 @@ def validate_schemas_strict(root: Path) -> list[StrictFinding]:
     schemas_dir = _install_schemas if _install_schemas.is_dir() else _SCHEMA_DIR
 
     for schema_filename, target_patterns in SCHEMA_TARGETS.items():
+        _checkpoint(progress, f"schemas:{schema_filename}")
         schema_path = schemas_dir / schema_filename
         if not schema_path.is_file():
             continue
@@ -1490,6 +1533,7 @@ def validate_schemas_strict(root: Path) -> list[StrictFinding]:
             for target_path in _schema_target_candidates(root, pattern):
                 if not target_path.is_file():
                     continue
+                _checkpoint(progress, f"schemas:{schema_filename}:{target_path.name}")
                 doc = _load_document(target_path)
                 if doc is None:
                     continue
@@ -1747,7 +1791,11 @@ def lifecycle_closeout_readiness_check(work_item_root: Path) -> list[dict[str, s
     return findings
 
 
-def validate_root(root: str | Path) -> ValidationResult:
+def validate_root(
+    root: str | Path,
+    *,
+    progress: ValidationProgress | None = None,
+) -> ValidationResult:
     os_root = expand_path(root)
     result = ValidationResult(root=os_root)
     if not os_root.exists():
@@ -1757,6 +1805,7 @@ def validate_root(root: str | Path) -> ValidationResult:
         result.errors.append(f"root is not a directory: {os_root}")
         return result
 
+    _checkpoint(progress, "root-files")
     for filename in ROOT_FILES:
         require_file(os_root / filename, result)
     harness_root = harness_path(os_root)
@@ -1784,17 +1833,27 @@ def validate_root(root: str | Path) -> ValidationResult:
     require_dir(harness_path(os_root, "security", "ssh"), result)
     require_dir(harness_path(os_root, "logs", "updates"), result)
     require_dir(harness_path(os_root, "logs", "backups"), result)
+    _checkpoint(progress, "registries:capabilities")
     validate_capability_registries(os_root, result)
+    _checkpoint(progress, "registries:command-skill-coverage")
     validate_command_skill_registry_coverage(os_root, result)
+    _checkpoint(progress, "registries:workflow-automation-invocations")
     validate_workflow_automation_invocations(os_root, result)
+    _checkpoint(progress, "registries:automation-projections")
     validate_automation_projection_registry(os_root, result)
+    _checkpoint(progress, "registries:hooks")
     validate_registered_hooks(os_root, result)
+    _checkpoint(progress, "object-library")
     validate_object_library(os_root, result)
+    _checkpoint(progress, "work-state")
     validate_work_state(os_root, result)
+    _checkpoint(progress, "runtime-integrations")
     validate_required_runtime_integrations(os_root, result)
+    _checkpoint(progress, "update-backup-contract")
     validate_update_backup_contract(os_root, result)
     artifact_config = os_root / "harness" / "artifact-config"
     if artifact_config.is_dir():
+        _checkpoint(progress, "artifact-contracts")
         artifact_health = artifact_contract_doctor(os_root)
         for finding in artifact_health["diagnostics"]:
             message = (
@@ -1811,6 +1870,7 @@ def validate_root(root: str | Path) -> ValidationResult:
         )
     investigation_config = os_root / "harness" / "investigation-config"
     if investigation_config.is_dir():
+        _checkpoint(progress, "investigation-contracts")
         investigation_health = investigation_contract_doctor(os_root)
         for finding in investigation_health["findings"]:
             message = (
@@ -1825,6 +1885,7 @@ def validate_root(root: str | Path) -> ValidationResult:
         result.warnings.append(
             "investigation contract library is not installed; run `agentic-os update apply` or install current docs/assets"
         )
+    _checkpoint(progress, "context-contracts")
     context_check = check_context_contracts(os_root)
     result.errors.extend(context_check.errors)
     if context_check.legacy_fallbacks or context_check.duplicate_groups:
@@ -1844,17 +1905,26 @@ def validate_root(root: str | Path) -> ValidationResult:
     domains_to_validate = profile_domains or installed_domain_names(os_root) or list(DEFAULT_DOMAINS)
     layout_v2 = (os_root / "lib").is_dir()
     for domain in domains_to_validate:
-        validate_domain(domain_path(os_root, domain), result, layout_v2=layout_v2)
+        _checkpoint(progress, f"domains:{domain}")
+        validate_domain(
+            domain_path(os_root, domain),
+            result,
+            layout_v2=layout_v2,
+            progress=progress,
+        )
     if not profile_domains:
-        validate_domain(shared_factory_path(os_root), result)
+        _checkpoint(progress, "domains:shared_factory")
+        validate_domain(shared_factory_path(os_root), result, progress=progress)
 
     shared_knowledge = shared_factory_path(os_root, "05-knowledge")
     for filename in SHARED_KNOWLEDGE_FILES:
+        _checkpoint(progress, f"shared-knowledge:{filename}")
         require_file(shared_knowledge / filename, result)
     for relative_path in SELF_IMPROVEMENT_REQUIRED_FILES:
         require_file(os_root / relative_path, result)
     for relative_path in SELF_IMPROVEMENT_REQUIRED_DIRS:
         require_dir(os_root / relative_path, result)
+    _checkpoint(progress, "registries:watches")
     validate_watch_registries(os_root, result)
 
     for folder in LEGACY_ROOT_FOLDERS:
@@ -1867,6 +1937,7 @@ def validate_root(root: str | Path) -> ValidationResult:
     for path in sorted(json_paths):
         if not path.is_file():
             continue
+        _checkpoint(progress, f"structured-files:{path.name}")
         try:
             json.loads(path.read_text(encoding="utf-8"))
         except json.JSONDecodeError as exc:
@@ -1875,15 +1946,111 @@ def validate_root(root: str | Path) -> ValidationResult:
     for path in sorted(yaml_paths):
         if not path.is_file():
             continue
+        _checkpoint(progress, f"structured-files:{path.name}")
         try:
             yaml.safe_load(path.read_text(encoding="utf-8"))
         except yaml.YAMLError as exc:
             result.errors.append(f"invalid YAML: {path}: {exc}")
 
     # Plan-22: lifecycle staleness checks (warnings, not blockers)
+    _checkpoint(progress, "lifecycle-staleness")
     for finding in lifecycle_staleness_findings(os_root):
         result.warnings.append(finding["message"])
 
+    return result
+
+
+def validate_scope(
+    root: str | Path,
+    scope: str,
+    *,
+    progress: ValidationProgress | None = None,
+) -> ValidationResult:
+    """Validate one supported root surface without traversing unrelated surfaces."""
+    if scope not in VALIDATION_SCOPES:
+        choices = ", ".join(VALIDATION_SCOPES)
+        raise ValueError(f"unknown validation scope {scope!r}; choose one of: {choices}")
+    if scope == "root":
+        return validate_root(root, progress=progress)
+
+    os_root = expand_path(root)
+    result = ValidationResult(root=os_root)
+    if not os_root.exists():
+        result.errors.append(f"missing root: {os_root}")
+        return result
+    if not os_root.is_dir():
+        result.errors.append(f"root is not a directory: {os_root}")
+        return result
+    for filename in ROOT_FILES:
+        require_file(os_root / filename, result)
+    require_dir(harness_path(os_root), result)
+    if not result.ok:
+        return result
+
+    if scope == "registries":
+        for relative_path in REGISTRY_FILES.values():
+            require_file(os_root / relative_path, result)
+        require_file(harness_path(os_root, "registries", "updates.yml"), result)
+        require_file(harness_path(os_root, "registries", "customer-identity.json"), result)
+        require_file(harness_path(os_root, "registries", "backup-policy.yml"), result)
+        _checkpoint(progress, "registries:capabilities")
+        validate_capability_registries(os_root, result)
+        _checkpoint(progress, "registries:command-skill-coverage")
+        validate_command_skill_registry_coverage(os_root, result)
+        _checkpoint(progress, "registries:workflow-automation-invocations")
+        validate_workflow_automation_invocations(os_root, result)
+        _checkpoint(progress, "registries:automation-projections")
+        validate_automation_projection_registry(os_root, result)
+        _checkpoint(progress, "registries:hooks")
+        validate_registered_hooks(os_root, result)
+        _checkpoint(progress, "registries:watches")
+        validate_watch_registries(os_root, result)
+        return result
+
+    profile_domains = profile_domain_names(os_root)
+    domain_names = profile_domains or installed_domain_names(os_root) or list(DEFAULT_DOMAINS)
+    if scope == "domains":
+        layout_v2 = (os_root / "lib").is_dir()
+        for domain in domain_names:
+            _checkpoint(progress, f"domains:{domain}")
+            validate_domain(
+                domain_path(os_root, domain),
+                result,
+                layout_v2=layout_v2,
+                progress=progress,
+            )
+        if not profile_domains:
+            _checkpoint(progress, "domains:shared_factory")
+            validate_domain(shared_factory_path(os_root), result, progress=progress)
+        return result
+
+    if scope == "work-items":
+        domain_roots = [domain_path(os_root, domain) for domain in domain_names]
+        if not profile_domains:
+            domain_roots.append(shared_factory_path(os_root))
+        for domain_root in domain_roots:
+            for project_config in sorted((domain_root / "02-projects").glob("*/project.yml")):
+                _checkpoint(progress, f"work-items:{domain_root.name}:{project_config.parent.name}")
+                validate_project_work_items(project_config.parent, result, progress=progress)
+        return result
+
+    json_paths, yaml_paths = _iter_structured_control_files(os_root)
+    for path in sorted(json_paths):
+        if not path.is_file():
+            continue
+        _checkpoint(progress, f"structured-files:{path.name}")
+        try:
+            json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            result.errors.append(f"invalid JSON: {path}: {exc}")
+    for path in sorted(yaml_paths):
+        if not path.is_file():
+            continue
+        _checkpoint(progress, f"structured-files:{path.name}")
+        try:
+            yaml.safe_load(path.read_text(encoding="utf-8"))
+        except yaml.YAMLError as exc:
+            result.errors.append(f"invalid YAML: {path}: {exc}")
     return result
 
 
