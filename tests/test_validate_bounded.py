@@ -83,6 +83,16 @@ def test_scoped_validation_reports_scope_and_progress(tmp_path: Path, capsys: An
     assert "progress: scope=registries stage=registries:capabilities status=running" in captured.err
 
 
+def test_scoped_validation_rejects_existing_non_os_roots(tmp_path: Path, capsys: Any) -> None:
+    for scope in ("work-items", "structured-files"):
+        exit_code = main(["validate", "--root", str(tmp_path), "--scope", scope])
+
+        captured = capsys.readouterr()
+        assert exit_code == 1
+        assert f"missing required file: {tmp_path / '.agentic_root'}" in captured.err
+        assert "valid:" not in captured.out
+
+
 def test_slow_but_progressing_validation_is_not_misclassified_as_stalled(
     tmp_path: Path,
     capsys: Any,

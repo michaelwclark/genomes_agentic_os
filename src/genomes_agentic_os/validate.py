@@ -1981,6 +1981,11 @@ def validate_scope(
     if not os_root.is_dir():
         result.errors.append(f"root is not a directory: {os_root}")
         return result
+    for filename in ROOT_FILES:
+        require_file(os_root / filename, result)
+    require_dir(harness_path(os_root), result)
+    if not result.ok:
+        return result
 
     if scope == "registries":
         for relative_path in REGISTRY_FILES.values():
