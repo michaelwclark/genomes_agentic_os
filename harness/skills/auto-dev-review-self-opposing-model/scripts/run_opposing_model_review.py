@@ -282,8 +282,12 @@ def main() -> int:
         )
         coordinator = ReviewCoordinator(shared_review_coordination_root(os_root))
         review_key = stable_review_key(subject)
-        run_id = f"{args.ticket.lower()}-pr{pr_number}-{args.mode}-{review_key[:12]}"
         run_dir = work_item / "artifacts/finishing-touches/review-runs" / review_key
+        # The finishing-review artifact contract binds run_id to the artifact
+        # directory leaf. The stable coordination key already provides the
+        # required deterministic identity, so use it directly rather than a
+        # second display-oriented identifier.
+        run_id = run_dir.name
         review_diff_base = base
         review_diff_hash: str | None = None
         if args.mode == "delta":
