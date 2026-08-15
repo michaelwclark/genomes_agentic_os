@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import math
 import multiprocessing
 from queue import Empty
 import sys
@@ -23,7 +24,7 @@ DEFAULT_PROGRESS_INTERVAL_SECONDS = 5.0
 
 def _positive_seconds(value: str) -> float:
     seconds = float(value)
-    if seconds <= 0:
+    if not math.isfinite(seconds) or seconds <= 0:
         raise argparse.ArgumentTypeError("must be greater than zero")
     return seconds
 

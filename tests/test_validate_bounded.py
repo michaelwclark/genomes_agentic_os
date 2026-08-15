@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import importlib
 import multiprocessing
 import os
@@ -14,6 +15,15 @@ from genomes_agentic_os.validate import ValidationResult
 
 
 cli_validate = importlib.import_module("genomes_agentic_os.cli.validate")
+
+
+def test_validation_time_bounds_reject_non_finite_values() -> None:
+    for value in ("nan", "inf", "-inf"):
+        try:
+            cli_validate._positive_seconds(value)
+        except argparse.ArgumentTypeError:
+            continue
+        raise AssertionError(f"expected {value!r} to be rejected")
 
 
 def _silent_worker(queue: Any, root: str, scope: str, strict: bool) -> None:
