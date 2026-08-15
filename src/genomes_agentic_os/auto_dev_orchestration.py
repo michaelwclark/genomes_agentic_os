@@ -1791,10 +1791,18 @@ def _validate_active_pr_create_escalation_develop_predecessor(
         "validate_production_release",
         "merge",
     )
+    requested_stage = current.get("requested_stage")
+    dispatch_selector_is_bound = (
+        requested_stage == task.get("requested_stage")
+        and requested_stage in {None, target_stage}
+    )
     base_contract = (
         len(matching_receipts) == 1
         and current.get("mode") == "everything"
-        and current.get("requested_stage") is None
+        # The immutable escalation receipt records the original Everything
+        # selector. A later named-stage resume may set the coupled live task
+        # and projection selector to precisely the stage being admitted.
+        and dispatch_selector_is_bound
         and current.get("start_stage") == "groom"
         and current.get("completion_stage") == "merge"
         and current.get("stage_order") == stage_order
@@ -1810,7 +1818,6 @@ def _validate_active_pr_create_escalation_develop_predecessor(
             and task.get("state") == "local_validation"
             and task.get("failure") is None
             and task.get("auto_dev_mode") == "everything"
-            and task.get("requested_stage") is None
             and task.get("goal") == "merge"
             and task.get("auto_dev_start_stage") == "groom"
             and task.get("auto_dev_completion_stage") == "merge"
@@ -1848,7 +1855,6 @@ def _validate_active_pr_create_escalation_develop_predecessor(
         and task.get("state") == "ready_for_merge"
         and task.get("failure") is None
         and task.get("auto_dev_mode") == "everything"
-        and task.get("requested_stage") is None
         and task.get("goal") == "merge"
         and task.get("auto_dev_start_stage") == "groom"
         and task.get("auto_dev_completion_stage") == "merge"
