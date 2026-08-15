@@ -45,6 +45,15 @@ def completed_check(name: str, conclusion: str, sha: str = "expected-sha") -> di
     }
 
 
+def running_check(name: str, sha: str = "expected-sha") -> dict:
+    return {
+        "conclusion": None,
+        "headSha": sha,
+        "name": name,
+        "status": "in_progress",
+    }
+
+
 class WatchPrQuietTests(unittest.TestCase):
     def test_waits_for_expected_head_instead_of_accepting_stale_checks(self) -> None:
         state = watcher.summarize_checks(
@@ -89,10 +98,10 @@ class WatchPrQuietTests(unittest.TestCase):
         self.assertEqual(state["status"], "failure")
         self.assertEqual(state["failures"], ["PR head changed from expected SHA"])
 
-    def test_waits_for_required_check_even_when_other_checks_pass(self) -> None:
+    def test_waits_for_required_check_while_exact_head_context_is_not_settled(self) -> None:
         state = watcher.summarize_checks(
             pr(),
-            [successful_check("CodeQL")],
+            [successful_check("CodeQL"), running_check("Python suite and packaging")],
             min_checks=1,
             expected_head_sha="expected-sha",
             required_checks=["PR Smoke"],
@@ -100,6 +109,81 @@ class WatchPrQuietTests(unittest.TestCase):
 
         self.assertEqual(state["status"], "pending")
         self.assertEqual(state["missing_required_checks"], ["PR Smoke"])
+        self.assertEqual(state["invalid_required_checks"], [])
+
+    def test_rejects_stale_workflow_display_labels_after_exact_head_context_settles(self) -> None:
+        state = watcher.summarize_checks(
+            pr(),
+            [successful_check("Docs link policy"), successful_check("Python suite and packaging")],
+            min_checks=1,
+            expected_head_sha="expected-sha",
+            required_checks=["Docs", "Test", "Python suite"],
+        )
+
+        first, missing, observations = watcher.apply_required_check_emission_grace(state)
+
+        self.assertEqual(first["status"], "pending")
+        self.assertEqual(state["missing_required_checks"], ["Docs", "Python suite", "Test"])
+        self.assertEqual(first["invalid_required_checks"], [])
+        self.assertEqual(observations, 1)
+
+        second, _, observations = watcher.apply_required_check_emission_grace(
+            state,
+            previous_missing_required_checks=missing,
+            settled_missing_required_observations=observations,
+        )
+
+        self.assertEqual(second["status"], "failure")
+        self.assertEqual(second["invalid_required_checks"], ["Docs", "Python suite", "Test"])
+        self.assertEqual(observations, 2)
+        self.assertEqual(
+            second["observed_check_names"],
+            ["Docs link policy", "Python suite and packaging"],
+        )
+        self.assertEqual(
+            second["failures"],
+            [
+                "required check label not emitted at exact head: Docs",
+                "required check label not emitted at exact head: Python suite",
+                "required check label not emitted at exact head: Test",
+            ],
+        )
+
+    def test_waits_for_a_required_check_during_the_settled_emission_gap(self) -> None:
+        first = watcher.summarize_checks(
+            pr(),
+            [successful_check("Docs link policy")],
+            min_checks=1,
+            expected_head_sha="expected-sha",
+            required_checks=["Python suite and packaging"],
+        )
+        first, missing, observations = watcher.apply_required_check_emission_grace(first)
+
+        self.assertEqual(first["status"], "pending")
+        self.assertEqual(first["invalid_required_checks"], [])
+        self.assertEqual(missing, ["Python suite and packaging"])
+        self.assertEqual(observations, 1)
+
+        second = watcher.summarize_checks(
+            pr(),
+            [
+                successful_check("Docs link policy"),
+                successful_check("Python suite and packaging"),
+            ],
+            min_checks=1,
+            expected_head_sha="expected-sha",
+            required_checks=["Python suite and packaging"],
+        )
+        second, missing, observations = watcher.apply_required_check_emission_grace(
+            second,
+            previous_missing_required_checks=missing,
+            settled_missing_required_observations=observations,
+        )
+
+        self.assertEqual(second["status"], "success")
+        self.assertEqual(second["invalid_required_checks"], [])
+        self.assertEqual(missing, [])
+        self.assertEqual(observations, 0)
 
     def test_succeeds_only_when_expected_head_and_required_checks_pass(self) -> None:
         state = watcher.summarize_checks(
