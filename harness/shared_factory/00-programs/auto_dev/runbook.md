@@ -38,7 +38,8 @@ canonical work state. Repair the registration and rerun the same command.
 Adoption never creates a replacement packet or worktree.
 
 The shared safe order is Groom, Detective, Create Artifacts, Readiness,
-Develop, Document, PR Create, Review Self, Review Others, QA, Finalize, Merge,
+Develop, Document, PR Create, Review Self, Review Others, QA, Finalize, Validate
+Production Release, Merge,
 Release, Deploy, Closeout, Health. A project may declare a full alternative
 order only when it preserves required lifecycle precedence. Everything runs
 the frozen slice from its configured start through completion; stages outside

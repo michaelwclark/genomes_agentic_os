@@ -46,6 +46,24 @@ contributors:
         mode: local_state_and_summary
         guard: read-only PR check, exact-head, and required-check receipt inspection
         approval: not required
+  - id: auto_dev_validate_production_release
+    title: Auto-Dev Validate Production Release
+    kind: workflow
+    owner: shared_factory/engineering
+    cadence: on_demand_pre_merge
+    notion_surface: none
+    source: lib/workflows/root/validate_production_release/workflow.md
+    summary_source: work-item artifacts/auto-dev-orchestration/stages/validate_production_release/*
+    attention_signals:
+      - any Jira/GitHub Fix Version or branch-family mismatch
+      - any missing or stale exact QA run for a release Jira item
+      - any whole-diff, risk, artifact, rollback, or observability check failure
+      - provider readback or policy fingerprint unavailable
+    actions:
+      - id: inspect_auto_dev_validate_production_release
+        mode: local_state_and_receipts
+        guard: read-only provider and local receipt inspection; no merge, release, or deploy
+        approval: not required
 actions_policy:
   default: disabled
   requirements:

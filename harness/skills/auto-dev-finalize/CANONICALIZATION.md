@@ -1,5 +1,11 @@
 # Canonicalization: PR Review / Finalize Surfaces
 
+> UPDATE (CC-422, 2026-08-14): Review Self is the sole full-review owner;
+> Review Repair consumes its findings and requests delta-only verification;
+> Finalize consumes the exact-head review/CI/parity receipts and never starts a
+> reviewer, repair loop, or provider review post. Older text below describing
+> Finalize as a review/repair driver is retained only as historical context.
+
 > PLAN OF RECORD (2026-07-18): Michael confirmed the consolidation direction
 > and expanded it into the PR & SDLC Program Consolidation Plan at
 > `domains/clarks_consulting/02-projects/genomes_agentic_os/work-items/02-active/063_pr_sdlc_program_consolidation_plan/`
@@ -33,10 +39,10 @@ finalize), OVERLAP (operator decision requested).
 
 Rules of the road going forward:
 
-- New PR-finalization behavior (gates, loop bounds, merge policy handling,
-  closeout) lands in `auto-dev-finalize` first; other surfaces adapt or call
-  it.
-- Review skills stay review-only. Anything that fixes, resolves, or merges
-  belongs to finalize or the implementation skills it dispatches.
+- New PR-finalization behavior is receipt consumption, parity validation, and
+  merge-policy handling. Review behavior lands in Review Self; findings repair
+  and delta verification land in Review Repair; merging remains Merge-owned.
+- Finalize never invokes the review or repair owners. A missing or stale receipt
+  returns to its owner with the exact mismatch.
 - The write side and review side share one gate list
   (`QUALITY-GATES.md` + project addendum); neither side forks its own copy.
