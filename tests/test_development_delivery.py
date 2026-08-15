@@ -940,6 +940,93 @@ def test_escalate_active_nonblocked_pr_create_delivery_admits_fresh_review_self(
     assert projection["stages"]["review_self"]["status"] == "completed"
 
 
+def test_escalate_active_nonblocked_pr_create_delivery_keeps_develop_bound_through_merge(
+    tmp_path: Path,
+) -> None:
+    """The unique escalation receipt remains valid only for its reviewed merge chain."""
+
+    _root, task, _portfolio_path, _release_wrapper, _release_evidence = (
+        _active_nonblocked_pr_create_escalation_fixture(tmp_path)
+    )
+    assert (
+        delivery.escalate_active_nonblocked_pr_create_delivery(
+            task.path,
+            reason="Open the exact immutable AGE-190 PR Create boundary for delivery.",
+            idempotency_key="cc-190:develop-through-merge",
+            apply=True,
+        )["result"]
+        == "escalated"
+    )
+    subject_revision = "d" * 40
+    pull_request = "github:acme/app#190"
+    assert run_development_stage(
+        task.path,
+        stage="review",
+        receipts=_active_pr_create_review_receipts(task),
+        idempotency_prefix="cc-190:develop-through-merge:review",
+    )["state"] == "ready_for_merge"
+    _record_standalone_stage(
+        task, "review_others", revision=subject_revision, status="not_required"
+    )
+    _record_standalone_stage(task, "qa", revision=subject_revision)
+    _record_standalone_stage(
+        task, "finalize", revision=subject_revision, pull_request=pull_request
+    )
+    _record_standalone_stage(
+        task,
+        "validate_production_release",
+        revision=subject_revision,
+        pull_request=pull_request,
+    )
+    readiness = _readiness_authority(
+        task, subject_revision=subject_revision, pull_request=pull_request
+    )
+
+    resumed = delivery.start_development_run(
+        _root,
+        "acme",
+        "app",
+        ["CC-190"],
+        run_id="active-pr-create-escalation",
+        auto_dev_mode="single_stage",
+        requested_stage="merge",
+        goal="merge",
+        provision_worktree=False,
+        selected_work_item=Path(task.read()["work_item"]),
+        existing_state_only=True,
+        apply=True,
+    )
+
+    assert resumed["tasks"][0]["state_ref"] == str(task.path)
+    current = task.read()
+    projection = read_auto_dev_state(current["autodev_path"])
+    assert current["requested_stage"] == "merge"
+    assert projection["requested_stage"] == "merge"
+
+    merged = run_development_stage(
+        task.path,
+        stage="merge",
+        receipts={
+            "merged": _stage_receipt(
+                Path(task.read()["work_item"]) / "artifacts" / "merge",
+                "merged",
+                status="completed",
+                evidence={
+                    "merge_sha": "a" * 40,
+                    "source_head_sha": subject_revision,
+                    **_provider_authority(task, pull_request=pull_request),
+                    "readiness_authority": readiness,
+                },
+            )
+        },
+        idempotency_prefix="cc-190:develop-through-merge:merge",
+    )
+
+    assert merged["state"] == "merged"
+    projection = read_auto_dev_state(task.read()["autodev_path"])
+    assert projection["stages"]["merge"]["status"] == "completed"
+
+
 @pytest.mark.parametrize("tamper", ["generic_receipt", "missing_history", "receipt_bytes"])
 def test_escalate_active_nonblocked_pr_create_delivery_refuses_review_self_bypass(
     tmp_path: Path, tamper: str
