@@ -36,6 +36,25 @@ def _failed_worker(queue: Any, root: str, scope: str, strict: bool) -> None:
     queue.put(("error", {"type": "RuntimeError", "message": "synthetic failure"}))
 
 
+def _chatty_worker(queue: Any, root: str, scope: str, strict: bool) -> None:
+    del strict
+    queue.put(("progress", {"scope": scope, "stage": scope, "status": "started"}))
+    for checkpoint in range(100):
+        queue.put(
+            (
+                "progress",
+                {"scope": scope, "stage": f"chatty-{checkpoint}", "status": "running"},
+            )
+        )
+    queue.put(("progress", {"scope": scope, "stage": scope, "status": "completed"}))
+    queue.put(
+        (
+            "result",
+            {"root": root, "errors": [], "warnings": [], "strict_findings": []},
+        )
+    )
+
+
 def _progressing_scope(
     root: str,
     scope: str,
@@ -80,7 +99,26 @@ def test_scoped_validation_reports_scope_and_progress(tmp_path: Path, capsys: An
     assert f"valid: {root} (scope=registries)" in captured.out
     assert "progress: scope=registries stage=registries status=started" in captured.err
     assert "progress: scope=registries stage=registries status=completed" in captured.err
-    assert "progress: scope=registries stage=registries:capabilities status=running" in captured.err
+
+
+def test_worker_checkpoint_output_is_throttled(tmp_path: Path, capsys: Any, monkeypatch: Any) -> None:
+    monkeypatch.setattr(cli_validate, "_validation_worker", _chatty_worker)
+
+    exit_code = main(
+        [
+            "validate",
+            "--root",
+            str(tmp_path),
+            "--progress-interval-seconds",
+            "10",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "status=started" in captured.err
+    assert "status=completed" in captured.err
+    assert "stage=chatty-" not in captured.err
 
 
 def test_scoped_validation_rejects_existing_non_os_roots(tmp_path: Path, capsys: Any) -> None:
@@ -117,7 +155,8 @@ def test_slow_but_progressing_validation_is_not_misclassified_as_stalled(
     captured = capsys.readouterr()
     assert exit_code == 0
     assert "valid:" in captured.out
-    assert "stage=root:batch-5 status=running" in captured.err
+    assert "progress: scope=root" in captured.err
+    assert "status=running" in captured.err
 
 
 def test_no_progress_root_is_terminated_with_deterministic_status(

@@ -127,10 +127,12 @@ def _run_bounded_validation(
             if kind == "progress":
                 last_worker_progress = time.monotonic()
                 last_stage = str(payload.get("stage") or scope)
-                progress(
-                    f"progress: scope={scope} stage={last_stage} "
-                    f"status={payload.get('status', 'unknown')}"
-                )
+                status = str(payload.get("status") or "unknown")
+                observed_at = time.monotonic()
+                if status in {"started", "completed"} or observed_at >= next_observation:
+                    progress(f"progress: scope={scope} stage={last_stage} status={status}")
+                    if observed_at >= next_observation:
+                        next_observation = observed_at + progress_interval_seconds
                 continue
             process.join(timeout=1.0)
             if kind == "result":
