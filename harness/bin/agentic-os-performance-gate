@@ -1,0 +1,95 @@
+#!/usr/bin/env python3
+"""Fail closed when request-path changes lack query-budget evidence."""
+
+from __future__ import annotations
+
+import argparse
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+
+RISK_PATH = re.compile(
+    r"(^|/)(?:views?|serializers?|api|services?|managers?|selectors?|queries?|models?)(?:/|\.py$)",
+    re.IGNORECASE,
+)
+TEST_PATH = re.compile(r"(^|/)(?:tests?|test_)(?:/|[^/]*$)|(?:^|/)test_[^/]+\.py$", re.IGNORECASE)
+QUERY_BUDGET = re.compile(
+    r"assertNumQueries|django_assert_num_queries|CaptureQueriesContext|query_count|assert_queries",
+    re.IGNORECASE,
+)
+RISK_CONSTRUCT = re.compile(
+    r"Serializer\s*\([^\n]+\)\s*\.data|(?:objects|queryset)\.(?:get|filter|all)\s*\(|"
+    r"(?:boto|s3|head_object|requests|httpx|urllib)",
+    re.IGNORECASE,
+)
+
+
+def git(root: Path, *args: str) -> str:
+    result = subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True, check=False)
+    return result.stdout if result.returncode == 0 else ""
+
+
+def ref_exists(root: Path, ref: str) -> bool:
+    return bool(git(root, "rev-parse", "--verify", ref).strip())
+
+
+def changed_files(root: Path, base: str) -> list[str]:
+    names: set[str] = set()
+    if ref_exists(root, base):
+        names.update(git(root, "diff", "--name-only", "--diff-filter=ACMR", f"{base}...HEAD").splitlines())
+    names.update(git(root, "diff", "--name-only", "--diff-filter=ACMR").splitlines())
+    names.update(git(root, "diff", "--cached", "--name-only", "--diff-filter=ACMR").splitlines())
+    names.update(git(root, "ls-files", "--others", "--exclude-standard").splitlines())
+    return sorted(name.strip() for name in names if name.strip())
+
+
+def diff(root: Path, base: str) -> str:
+    chunks = [git(root, "diff"), git(root, "diff", "--cached")]
+    if ref_exists(root, base):
+        chunks.insert(0, git(root, "diff", f"{base}...HEAD"))
+    for path in git(root, "ls-files", "--others", "--exclude-standard").splitlines():
+        candidate = root / path.strip()
+        if candidate.is_file():
+            try:
+                chunks.append(candidate.read_text(encoding="utf-8"))
+            except OSError:
+                continue
+    return "\n".join(chunks)
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--base", default="origin/develop")
+    parser.add_argument("--root", default=".")
+    args = parser.parse_args(argv)
+    root = Path(args.root).expanduser().resolve()
+    if not git(root, "rev-parse", "--show-toplevel").strip():
+        print(f"PERFORMANCE GATE BLOCKED: not a git repository: {root}", file=sys.stderr)
+        return 2
+    files = changed_files(root, args.base)
+    risk_files = [name for name in files if not TEST_PATH.search(name) and RISK_PATH.search(name)]
+    if not risk_files:
+        print("PERFORMANCE GATE PASS: no request-path files changed.")
+        return 0
+    text = diff(root, args.base)
+    tests = [name for name in files if TEST_PATH.search(name)]
+    if not tests or not QUERY_BUDGET.search(text):
+        print("PERFORMANCE GATE BLOCKED: request-path change lacks bounded-work evidence.", file=sys.stderr)
+        print("Risk files:", file=sys.stderr)
+        for name in risk_files:
+            print(f"  - {name}", file=sys.stderr)
+        if not tests:
+            print("Required: add a representative relation fan-out regression test.", file=sys.stderr)
+        if not QUERY_BUDGET.search(text):
+            print("Required: assert an explicit query budget.", file=sys.stderr)
+        if RISK_CONSTRUCT.search("\n".join(line[1:] for line in text.splitlines() if line.startswith("+") and not line.startswith("+++"))):
+            print("Also document deliberate relation loading/bounded projection and measured remote-I/O evidence.", file=sys.stderr)
+        return 1
+    print("PERFORMANCE GATE PASS: request-path change has query-budget regression evidence.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

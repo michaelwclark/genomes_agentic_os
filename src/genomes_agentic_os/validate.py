@@ -1323,6 +1323,9 @@ SCHEMA_TARGETS: dict[str, list[str]] = {
         "domains/*/02-projects/*/work-items/*/autodev.json",
         "domains/*/02-projects/*/work-items/*/*/autodev.json",
     ],
+    "auto-dev-review-receipt.schema.json": [
+        "**/work-items/*/*/artifacts/auto-dev-review/receipts/*.json",
+    ],
     "auto-dev-health-evidence.schema.json": [
         "domains/*/02-projects/*/work-items/*/*/artifacts/auto-dev-health/evidence.json",
     ],

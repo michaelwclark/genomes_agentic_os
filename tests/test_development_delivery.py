@@ -41,6 +41,7 @@ from genomes_agentic_os.development_delivery import (
     validate_workflow_contracts,
 )
 from genomes_agentic_os.lifecycle import sync_active_container
+from genomes_agentic_os.review_coordination import ReviewCoordinator, ReviewSubject
 from genomes_agentic_os.scaffold import create_project
 from genomes_agentic_os.state import work_items as canonical_work_items
 from genomes_agentic_os.state.db import connect as connect_state
@@ -335,6 +336,30 @@ def _provider_authority(
         "author_kind": "ours" if author_identity.lower() in ours else "others",
         "readback_verified": True,
     }
+
+
+def _review_coordination_receipt(
+    task: TaskState,
+    *,
+    subject_revision: str,
+    pull_request: str,
+) -> str:
+    value = task.read()
+    repository = value["repository"]
+    work_item = Path(value["work_item"])
+    policy_fingerprint = str(value.get("policy_fingerprint") or "b" * 64)
+    subject = ReviewSubject(
+        repository=str(repository["id"]),
+        pull_request=pull_request,
+        base_branch=str(repository["base_branch"]),
+        base_sha=str(repository.get("base_sha") or subject_revision),
+        head_sha=subject_revision,
+        policy_fingerprint=policy_fingerprint,
+    )
+    completed = ReviewCoordinator(
+        work_item / "artifacts" / "auto-dev-review" / "review-coordination"
+    ).execute(subject, lambda: {"outcome": "clean"})
+    return str(completed.receipt_path)
 
 
 def _record_standalone_stage(
@@ -874,6 +899,11 @@ def _active_pr_create_review_receipts(task: TaskState) -> dict[str, str]:
                 "reviews_verified": True,
                 "source_head_sha": source_head,
                 "subject_revision": source_head,
+                "review_coordination_receipt": _review_coordination_receipt(
+                    task,
+                    subject_revision=source_head,
+                    pull_request="github:acme/app#190",
+                ),
             },
         ),
     }
@@ -4081,6 +4111,78 @@ def test_everything_apply_marks_four_unmanaged_tasks_pending_without_stage_recei
         assert projection["stages"]["groom"]["status"] == "not_started"
 
 
+def test_mixed_executor_handoffs_preserve_exhausted_task_in_portfolio_rollup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, base_sha = _repository(tmp_path)
+    root = tmp_path / "os"
+    _project(root, repo)
+    monkeypatch.setattr(
+        delivery,
+        "create_isolated_worktree",
+        lambda **kwargs: {
+            "name": kwargs["ticket"].lower(),
+            "path": f"/tmp/{kwargs['ticket'].lower()}",
+            "branch": f"feature/{kwargs['ticket'].lower()}",
+            "base_sha": base_sha,
+        },
+    )
+
+    run_id = "mixed-executor-handoffs"
+    tickets = ["CC-EXHAUSTED", "CC-PENDING"]
+    first = delivery.start_development_run(
+        root,
+        "acme",
+        "app",
+        tickets,
+        run_id=run_id,
+        auto_dev_mode="everything",
+        require_executor_handoff=True,
+        apply=True,
+    )
+    assert first["state"] == "pending"
+    rows = {row["ticket"]: row for row in first["tasks"]}
+    exhausted = TaskState(Path(rows["CC-EXHAUSTED"]["state_ref"]))
+    selected_packet = Path(exhausted.read()["work_item"])
+
+    for attempt in (2, 3):
+        exhausted.recover(
+            receipt=f"operator-recovery-{attempt}",
+            idempotency_key=f"cc-exhausted:recover:{attempt}",
+        )
+        result = delivery.start_development_run(
+            root,
+            "acme",
+            "app",
+            ["CC-EXHAUSTED"],
+            run_id=run_id,
+            auto_dev_mode="everything",
+            selected_work_item=selected_packet,
+            require_executor_handoff=True,
+            apply=True,
+        )
+
+    assert result["state"] == "partial"
+    result_rows = {row["ticket"]: row for row in result["tasks"]}
+    assert result_rows["CC-EXHAUSTED"]["handoff"]["status"] == "blocked"
+    assert result_rows["CC-EXHAUSTED"]["handoff"]["recoverable"] is False
+    assert result_rows["CC-PENDING"]["handoff"]["status"] == "pending"
+    assert result_rows["CC-PENDING"]["handoff"]["recoverable"] is True
+    assert exhausted.read()["state"] == "blocked"
+    pending = TaskState(Path(result_rows["CC-PENDING"]["state_ref"]))
+    assert pending.read()["state"] == "worktree_ready"
+
+    portfolio_path = Path(result_rows["CC-EXHAUSTED"]["state_ref"]).parents[2] / "portfolio.json"
+    before_replay = portfolio_path.read_bytes()
+    terminal_receipt = result_rows["CC-EXHAUSTED"]["handoff"]["receipt"]
+    replay = exhausted.record_executor_unavailable(stage="groom")
+
+    assert replay["replayed"] is True
+    assert replay["handoff"]["attempt"] == 3
+    assert replay["task"]["failure"]["receipt"] == terminal_receipt
+    assert portfolio_path.read_bytes() == before_replay
+
+
 def test_everything_executor_handoff_blocks_after_bounded_retries(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -5329,6 +5431,11 @@ def test_release_propagation_appends_exact_head_supersession_without_rewriting_p
                     "source_branch": "feature/cc-52",
                     "source_head_sha": head,
                     "subject_revision": head,
+                    "review_coordination_receipt": _review_coordination_receipt(
+                        task,
+                        subject_revision=head,
+                        pull_request="github:acme/app#52",
+                    ),
                 },
             ),
         }
@@ -6578,7 +6685,7 @@ def test_review_repair_consumes_pr_create_family_without_creating_prs() -> None:
     contract = yaml.safe_load(
         (workflow_root / "workflow.yml").read_text(encoding="utf-8")
     )
-    assert contract["version"] == 2
+    assert contract["version"] == 3
     assert contract["inputs"][0] == "pr_create_family_receipt"
     assert "open_pr" not in contract["steps"]
     assert "verify_pr_create_family" in contract["steps"]
@@ -6589,7 +6696,7 @@ def test_review_repair_consumes_pr_create_family_without_creating_prs() -> None:
     )
     assert "does not open, retarget, or add pull requests" in workflow
     assert "A missing or wrong target returns to PR Create" in workflow
-    assert "pr_open stores the provider readback already created by PR Create" in (
+    assert "pr_open stores the PR Create provider readback" in (
         workflow.replace("`", "")
     )
 
@@ -8158,6 +8265,11 @@ def test_review_stage_follows_pr_create_without_requiring_its_own_completion(
                 "checks_verified": True,
                 "reviews_verified": True,
                 "subject_revision": base_sha,
+                "review_coordination_receipt": _review_coordination_receipt(
+                    task,
+                    subject_revision=base_sha,
+                    pull_request="github:acme/app#77",
+                ),
             },
         ),
     }
@@ -8178,6 +8290,24 @@ def test_review_stage_follows_pr_create_without_requiring_its_own_completion(
         },
         idempotency_prefix="cc-review-cycle:pr-create",
     )
+    missing_coordination = dict(review_receipts)
+    missing_ready = json.loads(
+        Path(missing_coordination["ready_for_merge"]).read_text(encoding="utf-8")
+    )
+    missing_ready["evidence"].pop("review_coordination_receipt")
+    missing_path = work_item / "stage-receipts" / "ready-for-merge-missing-coordination.json"
+    missing_path.write_text(json.dumps(missing_ready), encoding="utf-8")
+    missing_coordination["ready_for_merge"] = str(missing_path)
+    with pytest.raises(
+        DevelopmentDeliveryError,
+        match="Auto-Dev ready_for_merge requires review_coordination_receipt",
+    ):
+        run_development_stage(
+            task.path,
+            stage="review",
+            receipts=missing_coordination,
+            idempotency_prefix="cc-review-cycle:review-missing-coordination",
+        )
     reviewed = run_development_stage(
         task.path,
         stage="review",
@@ -9872,3 +10002,32 @@ def test_recover_active_worktree_ready_pr_create_delivery_replay_refuses_backfil
     assert family_path.read_bytes() == before["family"]
     assert provider_path.read_bytes() == before["provider"]
     assert Path(recovered["receipt"]).read_bytes() == before["receipt"]
+
+
+def test_review_workflow_has_one_full_owner_and_receipt_only_finalize() -> None:
+    repository = Path(__file__).parents[1]
+    workflow = (
+        repository
+        / "harness/shared_factory/04-workflows/development_delivery/"
+        "testing_review_and_pr_repair/workflow.yml"
+    ).read_text(encoding="utf-8")
+    review_self = (
+        repository / "harness/skills/auto-dev-review-self/SKILL.md"
+    ).read_text(encoding="utf-8")
+    repair = (
+        repository / "harness/skills/auto-dev-review-repair/SKILL.md"
+    ).read_text(encoding="utf-8")
+    finalize = (
+        repository / "harness/skills/auto-dev-finalize/SKILL.md"
+    ).read_text(encoding="utf-8")
+
+    assert "version: 3" in workflow
+    assert "claim_or_reuse_canonical_review" in workflow
+    assert "post_pr_opposing_review" not in workflow
+    assert "normal_full_reviews_per_chain: 1" in workflow
+    assert "delta_reviews_per_chain: 3" in workflow
+    assert "absolute_full_reviews_per_family: 2" in workflow
+    assert "provider_posts_per_family: 1" in workflow
+    assert "sole owner of the canonical full review" in " ".join(review_self.split())
+    assert "Never invoke another full review from Repair" in " ".join(repair.split())
+    assert "Finalize must not invoke a reviewer" in " ".join(finalize.split())
