@@ -297,6 +297,27 @@ def policy_fingerprint(source: dict[str, Any]) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def review_unavailable_policy(source: dict[str, Any]) -> str:
+    """Read the routed project fallback policy without silently weakening it."""
+
+    candidates: list[Any] = [source.get("review_unavailable_policy")]
+    for key in ("review_policy", "effective_policy"):
+        value = source.get(key)
+        if isinstance(value, dict):
+            candidates.extend(
+                [value.get("review_unavailable_policy"), value.get("unavailable_policy")]
+            )
+    for candidate in candidates:
+        if candidate in {"block", "continue_with_receipt"}:
+            return str(candidate)
+    # The routed Development Delivery policy configures a receipt-backed
+    # fallback by default.  Unknown explicit values fail closed rather than
+    # being treated as permission to continue.
+    if any(candidate not in (None, "") for candidate in candidates):
+        raise ReviewError("review_unavailable_policy must be block or continue_with_receipt")
+    return "continue_with_receipt"
+
+
 def diff_hash(worktree: Path, base: str, head: str) -> str:
     completed = run(["git", "diff", "--binary", f"{base}..{head}"], cwd=worktree)
     if completed.returncode:
@@ -341,8 +362,13 @@ def render_prompt(request: dict[str, Any], provider: dict[str, Any]) -> str:
     return prompt
 
 
-def receipt_markdown(run_id: str, status: str, failure: str | None = None) -> str:
-    lines = ["# Model Receipt", "", f"- Review run: `{run_id}`", "- Reviewer model: `opus`", "- Reviewer family: `opus`", "- Transport: `claude_cli`", "- Authentication: `cli_native`", f"- Reviewer status: `{status}`", "- Unavailable policy: `block`"]
+def receipt_markdown(
+    run_id: str,
+    status: str,
+    unavailable_policy: str,
+    failure: str | None = None,
+) -> str:
+    lines = ["# Model Receipt", "", f"- Review run: `{run_id}`", "- Reviewer model: `opus`", "- Reviewer family: `opus`", "- Transport: `claude_cli`", "- Authentication: `cli_native`", f"- Reviewer status: `{status}`", f"- Unavailable policy: `{unavailable_policy}`"]
     if failure:
         lines.append(f"- Failure code: `{failure}`")
     return "\n".join(lines) + "\n"
@@ -388,6 +414,7 @@ def main() -> int:
         work_item = (args.work_item or locate_work_item(os_root, args.ticket)).resolve()
         worktree = (args.worktree or locate_worktree(os_root, args.ticket)).resolve()
         source = prior_request(work_item, args.ticket)
+        unavailable_policy = review_unavailable_policy(source)
         pr_number = int(source["pr_number"])
         provider = provider_pr(pr_number, worktree)
         head = git_head(worktree)
@@ -481,7 +508,7 @@ def main() -> int:
             plan = {
                 "model_identity_status": "proven",
                 "reviewer_status": "available",
-                "review_unavailable_policy": "block",
+                "review_unavailable_policy": unavailable_policy,
                 "validation_status": "passed",
                 "pr_check_status": "passed"
                 if all(
@@ -573,7 +600,12 @@ def main() -> int:
                 plan["reviewer_status"] = "runtime_failure"
             write_json(run_dir / "validation-plan.json", plan)
             (run_dir / "model-receipt.md").write_text(
-                receipt_markdown(run_id, plan["reviewer_status"], failure),
+                receipt_markdown(
+                    run_id,
+                    plan["reviewer_status"],
+                    unavailable_policy,
+                    failure,
+                ),
                 encoding="utf-8",
             )
             decision = decide(run_dir)

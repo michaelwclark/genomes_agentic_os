@@ -124,6 +124,17 @@ def test_runner_verdict_uses_final_line_and_template_uses_shared_vocabulary() ->
     assert "VERDICT: ready" not in template
 
 
+def test_runner_uses_routed_unavailable_policy_and_rejects_unknown_values() -> None:
+    runner = _load_runner()
+
+    assert runner.review_unavailable_policy({}) == "continue_with_receipt"
+    assert runner.review_unavailable_policy(
+        {"effective_policy": {"unavailable_policy": "block"}}
+    ) == "block"
+    with pytest.raises(runner.ReviewError, match="review_unavailable_policy"):
+        runner.review_unavailable_policy({"review_unavailable_policy": "permit_anything"})
+
+
 def _installed_root(path: Path) -> Path:
     path.mkdir(parents=True)
     (path / ".agentic_root").write_text("installed\n", encoding="utf-8")
