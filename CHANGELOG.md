@@ -9,6 +9,22 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-08-15
+
+### Added
+
+- Guard Compose pressure teardown with lifecycle evidence before acting on
+  unhealthy local Compose resources.
+
+### Fixed
+
+- Allow Auto-Dev Health to remove only exact project-registered external Git
+  worktrees after every existing typed cleanup gate has passed; arbitrary
+  external paths remain rejected.
+- Preserve a partial Auto-Dev portfolio rollup when one executor handoff is
+  exhausted but another task remains recoverable, while retaining pending
+  behavior for single or all-worktree-ready handoffs.
+
 ## [0.7.0] - 2026-08-14
 
 ### Added
