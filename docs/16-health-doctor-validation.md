@@ -28,6 +28,32 @@ Neither command mutates your root by default. `doctor --fix-missing` is the
 one additive exception: it creates missing managed files without overwriting
 anything.
 
+### Compose pressure remains proposal-only
+
+`agentic-os host health-report` inventories Compose projects, their container
+CPU/RSS and bind mounts, OrbStack `vmgr`/`fseventsd` pressure, and the exact
+registered worktree and lifecycle/provider/runtime evidence. The scheduled
+reporter never tears a project down. All five `docker.compose_pressure.thresholds`
+values must be explicitly present and positive; absent, partial, invalid, or
+unknown configuration is reported as `unconfigured`.
+
+A terminal, provider-merged, clean, unambiguous runtime owner can produce an
+immutable `compose-teardown-proposal/v1`. Applying it is a separate manual
+operation:
+
+```bash
+agentic-os host compose-teardown --proposal proposal.json --apply
+```
+
+The executor rebuilds the current host report and refuses a changed safety
+evidence fingerprint. Pressure metrics are sampled again and may drift, but
+the current sample must still exceed policy before execution. Exact bind-mount
+ownership, fresh lifecycle and live provider evidence, runtime identity,
+Compose working directory, and every `-f` config file must still match. Its
+only runtime action is `docker compose ... down`: it never adds `-v`, prunes
+resources, restarts OrbStack, or deletes worktrees. The receipt records
+before/after metrics and verifies that every named volume remains present.
+
 **Gaps C and D have since closed** (verified against the source 2026-07-13):
 `doctor --all` (F-003) aggregates the core, runtime, event-graph, and config
 doctors into one report, snapshots per-subsystem health, and emits an
@@ -104,7 +130,15 @@ Concretely it:
 - Warns about legacy root folders (`domains/`, `workflows/`, etc.) left over from
   older installs.
 
-Exits 1 if any errors are found; exits 0 with warnings printed to stderr.
+Validation runs in a supervised worker. The default hard wall-clock bound is
+300 seconds, and a worker that emits no progress for 60 seconds is terminated.
+Progress observations are printed every 5 seconds. A timeout exits 124, safe
+operator cancellation exits 130, and an unexpected worker failure exits 2.
+Use `--scope registries`, `--scope domains`, `--scope work-items`, or
+`--scope structured-files` for a bounded fallback that skips unrelated root
+surfaces and reports the selected scope in progress and terminal output.
+
+Exits 1 if any validation errors are found; exits 0 with warnings printed to stderr.
 
 > **Gap D — closed by `--strict` (F-011).** `schemas/` holds the JSON/YAML
 > schemas (workflow, automation, domain, run, registries, update-grant, …), and
@@ -118,6 +152,10 @@ Exits 1 if any errors are found; exits 0 with warnings printed to stderr.
 | Arg / Flag | Required | Default | Description |
 | --- | --- | --- | --- |
 | `--root` | No | `~/agentic_os` | Installed OS root path |
+| `--scope` | No | `root` | Named root surface to validate |
+| `--timeout-seconds` | No | `300` | Hard wall-clock bound |
+| `--no-progress-seconds` | No | `60` | Worker no-progress bound |
+| `--progress-interval-seconds` | No | `5` | Running observation interval |
 
 ---
 
