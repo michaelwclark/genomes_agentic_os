@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import json
 import subprocess
+import sys
+from types import SimpleNamespace
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
 
@@ -121,6 +124,17 @@ def test_runner_verdict_uses_final_line_and_template_uses_shared_vocabulary() ->
     assert "VERDICT: ready" not in template
 
 
+def test_runner_uses_routed_unavailable_policy_and_rejects_unknown_values() -> None:
+    runner = _load_runner()
+
+    assert runner.review_unavailable_policy({}) == "continue_with_receipt"
+    assert runner.review_unavailable_policy(
+        {"effective_policy": {"unavailable_policy": "block"}}
+    ) == "block"
+    with pytest.raises(runner.ReviewError, match="review_unavailable_policy"):
+        runner.review_unavailable_policy({"review_unavailable_policy": "permit_anything"})
+
+
 def _installed_root(path: Path) -> Path:
     path.mkdir(parents=True)
     (path / ".agentic_root").write_text("installed\n", encoding="utf-8")
@@ -203,3 +217,203 @@ def test_delta_validation_returns_hash_for_one_bounded_descendant_diff(
     assert runner.validated_delta_hash(
         Path("/tmp/repo"), "a" * 40, "b" * 40
     ) == hashlib.sha256(delta.encode()).hexdigest()
+
+
+def test_runner_request_run_id_matches_created_artifact_directory(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    runner = _load_runner()
+    work_item = tmp_path / "work-item"
+    worktree = tmp_path / "worktree"
+    work_item.mkdir()
+    worktree.mkdir()
+    head = "b" * 40
+    review_key = "review-key"
+    source = {
+        "work_item_id": "AGE-196",
+        "worktree": str(worktree),
+        "repo_path": str(worktree),
+        "implementation_summary": "Bind the review receipt to its artifact directory.",
+        "spec_source": "AGE-196 acceptance criteria",
+        "builder_model": "gpt-5.6",
+        "reviewer_model": "opus",
+        "selected_reviewer_model": "opus",
+        "reviewer_selection_source": "project-policy",
+        "target_branch": "main",
+        "base_sha": "a" * 40,
+        "head_sha": head,
+        "diff_hash": "d" * 64,
+        "pr_number": 42,
+        "artifact_dir": "stale-artifact-dir",
+        "mode": "post_pr",
+    }
+    provider = {
+        "number": 42,
+        "url": "https://example.test/acme/widgets/pull/42",
+        "state": "OPEN",
+        "headRefOid": head,
+        "baseRefName": "main",
+        "statusCheckRollup": [],
+    }
+
+    class FakeCoordinator:
+        def __init__(self, _root: Path) -> None:
+            pass
+
+        def execute(self, _subject, execute_review, **_kwargs):
+            review = execute_review()
+            return SimpleNamespace(
+                key=review_key,
+                receipt={"review": review, "outcome": review["outcome"]},
+                receipt_path=tmp_path / "coordination-receipt.json",
+                reused=False,
+            )
+
+    monkeypatch.setattr(runner, "resolve_os_root", lambda _explicit: tmp_path)
+    monkeypatch.setattr(runner, "prior_request", lambda *_args: source)
+    monkeypatch.setattr(runner, "provider_pr", lambda *_args: provider)
+    monkeypatch.setattr(runner, "git_head", lambda _worktree: head)
+    monkeypatch.setattr(runner, "git_repository", lambda _worktree: "acme/widgets")
+    monkeypatch.setattr(runner, "stable_review_key", lambda _subject: review_key)
+    monkeypatch.setattr(runner, "diff_hash", lambda *_args: "d" * 64)
+    monkeypatch.setattr(runner, "ReviewCoordinator", FakeCoordinator)
+    monkeypatch.setattr(runner.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(runner, "decide", lambda _run_dir: {"decision": "blocked_model_identity"})
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_opposing_model_review.py",
+            "AGE-196",
+            "--os-root",
+            str(tmp_path),
+            "--work-item",
+            str(work_item),
+            "--worktree",
+            str(worktree),
+        ],
+    )
+
+    assert runner.main() == 2
+    run_dir = work_item / "artifacts/finishing-touches/review-runs" / review_key
+    request = json.loads((run_dir / "review-request.json").read_text(encoding="utf-8"))
+
+    assert request["run_id"] == run_dir.name == review_key
+    validation = subprocess.run(
+        [sys.executable, str(runner.HELPER), "validate", "--run-dir", str(run_dir)],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert validation.returncode == 0, validation.stderr
+
+
+def test_advisory_findings_are_preserved_without_becoming_helper_blockers(
+    tmp_path: Path,
+) -> None:
+    runner = _load_runner()
+    response = """```json
+[
+  {
+    "id": "F-advice",
+    "severity": "low",
+    "category": "tests",
+    "file": "tests/test_runner.py",
+    "line": 42,
+    "title": "Add a clarifying assertion",
+    "detail": "The existing test already covers the contract.",
+    "suggested_fix": "Optionally name the assertion.",
+    "blocking": false
+  }
+]
+```
+AGENTIC_OS_REVIEW_VERDICT: FINDINGS"""
+
+    findings = runner.parse_structured_findings(response)
+    events = runner.ledger_events(findings)
+    coordination = runner.coordination_findings(findings)
+
+    assert [event["event_type"] for event in events] == [
+        "finding_opened",
+        "finding_verified",
+    ]
+    assert events[-1]["status"] == "VERIFIED"
+    assert events[-1]["advisory"] is True
+    assert coordination == [
+        {
+            "id": "F-advice",
+            "severity": "low",
+            "summary": "Add a clarifying assertion",
+            "evidence": [
+                "tests/test_runner.py:42 The existing test already covers the contract."
+            ],
+            "status": "resolved",
+            "resolution_refs": ["reviewer-nonblocking-advisory:F-advice"],
+            "advisory": True,
+        }
+    ]
+    run_dir = tmp_path / "review-run"
+    run_dir.mkdir()
+    (run_dir / "review-request.json").write_text(
+        json.dumps(
+            {
+                "work_item_id": "AGE-196",
+                "run_id": run_dir.name,
+                "repo_path": "repository",
+                "implementation_summary": "advisory ingestion",
+                "spec_source": "ticket",
+                "builder_model": "gpt-5.6",
+                "selected_reviewer_model": "opus",
+                "reviewer_selection_source": "policy",
+                "target_branch": "main",
+                "base_sha": "a" * 40,
+                "head_sha": "b" * 40,
+                "diff_hash": "c" * 64,
+                "pr_number": 42,
+                "artifact_dir": f"artifacts/{run_dir.name}",
+                "mode": "post_pr",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (run_dir / "validation-plan.json").write_text(
+        json.dumps(
+            {
+                "model_identity_status": "proven",
+                "reviewer_status": "available",
+                "validation_status": "passed",
+                "pr_check_status": "passed",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (run_dir / "review-ledger.jsonl").write_text(
+        "".join(json.dumps(event) + "\n" for event in events), encoding="utf-8"
+    )
+    completed = subprocess.run(
+        [sys.executable, str(runner.HELPER), "decide", "--run-dir", str(run_dir)],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    decision = json.loads((run_dir / "readiness-decision.json").read_text())
+    assert decision["decision"] == "ready_post_pr_checks"
+    assert decision["active_blocker_count"] == 0
+
+    blocking_events = [dict(event) for event in events]
+    for event in blocking_events:
+        event["severity"] = "High"
+        event["blocking"] = True
+    (run_dir / "review-ledger.jsonl").write_text(
+        "".join(json.dumps(event) + "\n" for event in blocking_events),
+        encoding="utf-8",
+    )
+    blocked = subprocess.run(
+        [sys.executable, str(runner.HELPER), "decide", "--run-dir", str(run_dir)],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert blocked.returncode != 0
+    assert "OPEN -> VERIFIED is reserved" in blocked.stderr
