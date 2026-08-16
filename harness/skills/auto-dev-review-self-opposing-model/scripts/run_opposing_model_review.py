@@ -338,6 +338,19 @@ def validated_delta_hash(worktree: Path, parent_head: str, head: str) -> str:
     return hashlib.sha256(completed.stdout.encode()).hexdigest()
 
 
+def base_forward_evidence(worktree: Path, parent: ReviewSubject, subject: ReviewSubject) -> dict[str, object]:
+    """Prove the only cross-chain delta: an unchanged-policy forward base."""
+    if (parent.repository, parent.pull_request, parent.base_branch, parent.policy_fingerprint) != (subject.repository, subject.pull_request, subject.base_branch, subject.policy_fingerprint):
+        raise ReviewError("base-forward parent changes repository, PR, branch, or policy")
+    if parent.base_sha == subject.base_sha:
+        raise ReviewError("base-forward continuation requires a changed base")
+    if run(["git", "merge-base", "--is-ancestor", parent.base_sha, subject.base_sha], cwd=worktree).returncode:
+        raise ReviewError("base-forward parent base is not an ancestor of current base")
+    if run(["git", "merge-base", "--is-ancestor", parent.head_sha, subject.head_sha], cwd=worktree).returncode:
+        raise ReviewError("base-forward parent head is not an ancestor of current head")
+    return {"transition": "base_forward", "previous_base_sha": parent.base_sha, "current_base_sha": subject.base_sha, "base_ancestor": True, "parent_head_ancestor": True, "provider_verified": True}
+
+
 def render_prompt(request: dict[str, Any], provider: dict[str, Any]) -> str:
     values = {
         "WORK_ITEM_ID": str(request["work_item_id"]), "PROJECT": "Auto-Dev",
@@ -473,15 +486,14 @@ def main() -> int:
         run_id = run_dir.name
         review_diff_base = base
         review_diff_hash: str | None = None
+        continuation: dict[str, object] | None = None
         if args.mode == "delta":
             if not args.parent_key:
                 raise ReviewError("delta review requires --parent-key")
             parent = load_review_receipt(coordinator.receipts / f"{args.parent_key}.json")
             parent_subject = ReviewSubject.from_mapping(parent["subject"])
             if review_chain_key(parent_subject) != review_chain_key(subject):
-                raise ReviewError(
-                    "delta parent must belong to the same repository, PR, base, and policy"
-                )
+                continuation = base_forward_evidence(worktree, parent_subject, subject)
             review_diff_base = str(parent["subject"]["head_sha"])
             review_diff_hash = validated_delta_hash(worktree, review_diff_base, head)
 
@@ -644,6 +656,7 @@ def main() -> int:
             execute_review,
             mode=args.mode,
             parent_key=args.parent_key,
+            base_forward_evidence=continuation,
         )
         review = dict(result.receipt["review"])
         receipt = {
