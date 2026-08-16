@@ -940,6 +940,93 @@ def test_escalate_active_nonblocked_pr_create_delivery_admits_fresh_review_self(
     assert projection["stages"]["review_self"]["status"] == "completed"
 
 
+def test_escalate_active_nonblocked_pr_create_delivery_keeps_develop_bound_through_merge(
+    tmp_path: Path,
+) -> None:
+    """The unique escalation receipt remains valid only for its reviewed merge chain."""
+
+    _root, task, _portfolio_path, _release_wrapper, _release_evidence = (
+        _active_nonblocked_pr_create_escalation_fixture(tmp_path)
+    )
+    assert (
+        delivery.escalate_active_nonblocked_pr_create_delivery(
+            task.path,
+            reason="Open the exact immutable AGE-190 PR Create boundary for delivery.",
+            idempotency_key="cc-190:develop-through-merge",
+            apply=True,
+        )["result"]
+        == "escalated"
+    )
+    subject_revision = "d" * 40
+    pull_request = "github:acme/app#190"
+    assert run_development_stage(
+        task.path,
+        stage="review",
+        receipts=_active_pr_create_review_receipts(task),
+        idempotency_prefix="cc-190:develop-through-merge:review",
+    )["state"] == "ready_for_merge"
+    _record_standalone_stage(
+        task, "review_others", revision=subject_revision, status="not_required"
+    )
+    _record_standalone_stage(task, "qa", revision=subject_revision)
+    _record_standalone_stage(
+        task, "finalize", revision=subject_revision, pull_request=pull_request
+    )
+    _record_standalone_stage(
+        task,
+        "validate_production_release",
+        revision=subject_revision,
+        pull_request=pull_request,
+    )
+    readiness = _readiness_authority(
+        task, subject_revision=subject_revision, pull_request=pull_request
+    )
+
+    resumed = delivery.start_development_run(
+        _root,
+        "acme",
+        "app",
+        ["CC-190"],
+        run_id="active-pr-create-escalation",
+        auto_dev_mode="single_stage",
+        requested_stage="merge",
+        goal="merge",
+        provision_worktree=False,
+        selected_work_item=Path(task.read()["work_item"]),
+        existing_state_only=True,
+        apply=True,
+    )
+
+    assert resumed["tasks"][0]["state_ref"] == str(task.path)
+    current = task.read()
+    projection = read_auto_dev_state(current["autodev_path"])
+    assert current["requested_stage"] == "merge"
+    assert projection["requested_stage"] == "merge"
+
+    merged = run_development_stage(
+        task.path,
+        stage="merge",
+        receipts={
+            "merged": _stage_receipt(
+                Path(task.read()["work_item"]) / "artifacts" / "merge",
+                "merged",
+                status="completed",
+                evidence={
+                    "merge_sha": "a" * 40,
+                    "source_head_sha": subject_revision,
+                    **_provider_authority(task, pull_request=pull_request),
+                    "readiness_authority": readiness,
+                },
+            )
+        },
+        idempotency_prefix="cc-190:develop-through-merge:merge",
+    )
+
+    assert merged["state"] == "merged"
+    projection = read_auto_dev_state(task.read()["autodev_path"])
+    assert projection["stages"]["merge"]["status"] == "completed"
+
+
 @pytest.mark.parametrize("tamper", ["generic_receipt", "missing_history", "receipt_bytes"])
 def test_escalate_active_nonblocked_pr_create_delivery_refuses_review_self_bypass(
     tmp_path: Path, tamper: str
@@ -4477,6 +4564,78 @@ def test_everything_apply_marks_four_unmanaged_tasks_pending_without_stage_recei
         projection = read_auto_dev_state(task["autodev_path"])
         assert projection["mode"] == "everything"
         assert projection["stages"]["groom"]["status"] == "not_started"
+
+
+def test_mixed_executor_handoffs_preserve_exhausted_task_in_portfolio_rollup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, base_sha = _repository(tmp_path)
+    root = tmp_path / "os"
+    _project(root, repo)
+    monkeypatch.setattr(
+        delivery,
+        "create_isolated_worktree",
+        lambda **kwargs: {
+            "name": kwargs["ticket"].lower(),
+            "path": f"/tmp/{kwargs['ticket'].lower()}",
+            "branch": f"feature/{kwargs['ticket'].lower()}",
+            "base_sha": base_sha,
+        },
+    )
+
+    run_id = "mixed-executor-handoffs"
+    tickets = ["CC-EXHAUSTED", "CC-PENDING"]
+    first = delivery.start_development_run(
+        root,
+        "acme",
+        "app",
+        tickets,
+        run_id=run_id,
+        auto_dev_mode="everything",
+        require_executor_handoff=True,
+        apply=True,
+    )
+    assert first["state"] == "pending"
+    rows = {row["ticket"]: row for row in first["tasks"]}
+    exhausted = TaskState(Path(rows["CC-EXHAUSTED"]["state_ref"]))
+    selected_packet = Path(exhausted.read()["work_item"])
+
+    for attempt in (2, 3):
+        exhausted.recover(
+            receipt=f"operator-recovery-{attempt}",
+            idempotency_key=f"cc-exhausted:recover:{attempt}",
+        )
+        result = delivery.start_development_run(
+            root,
+            "acme",
+            "app",
+            ["CC-EXHAUSTED"],
+            run_id=run_id,
+            auto_dev_mode="everything",
+            selected_work_item=selected_packet,
+            require_executor_handoff=True,
+            apply=True,
+        )
+
+    assert result["state"] == "partial"
+    result_rows = {row["ticket"]: row for row in result["tasks"]}
+    assert result_rows["CC-EXHAUSTED"]["handoff"]["status"] == "blocked"
+    assert result_rows["CC-EXHAUSTED"]["handoff"]["recoverable"] is False
+    assert result_rows["CC-PENDING"]["handoff"]["status"] == "pending"
+    assert result_rows["CC-PENDING"]["handoff"]["recoverable"] is True
+    assert exhausted.read()["state"] == "blocked"
+    pending = TaskState(Path(result_rows["CC-PENDING"]["state_ref"]))
+    assert pending.read()["state"] == "worktree_ready"
+
+    portfolio_path = Path(result_rows["CC-EXHAUSTED"]["state_ref"]).parents[2] / "portfolio.json"
+    before_replay = portfolio_path.read_bytes()
+    terminal_receipt = result_rows["CC-EXHAUSTED"]["handoff"]["receipt"]
+    replay = exhausted.record_executor_unavailable(stage="groom")
+
+    assert replay["replayed"] is True
+    assert replay["handoff"]["attempt"] == 3
+    assert replay["task"]["failure"]["receipt"] == terminal_receipt
+    assert portfolio_path.read_bytes() == before_replay
 
 
 def test_everything_executor_handoff_blocks_after_bounded_retries(

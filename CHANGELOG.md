@@ -9,6 +9,39 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-08-15
+
+### Added
+
+- Add report-only Compose pressure teardown proposals backed by typed lifecycle,
+  provider, worktree, dirty-state, and runtime ownership evidence, plus a
+  separately invoked exact-fingerprint executor that retains named volumes.
+
+### Changed
+
+- Make root validation bounded and observable with hard wall-clock,
+  no-progress, cancellation, and scoped fallback behavior.
+- Allow Health to remove an external worktree only through its exact
+  project-owned registration while preserving the existing merge, review,
+  branch, cleanliness, and runtime cleanup gates.
+
+### Fixed
+
+- Preserve the active PR-Create escalation as the authoritative Develop
+  predecessor throughout the governed Review-to-Merge chain.
+- Preserve partial portfolio state when an exhausted executor handoff coexists
+  with a recoverable handoff.
+- Bind opposing-review receipt run IDs to their deterministic artifact
+  directory leaves and ingest structured blocking and advisory findings
+  without allowing blocking evidence to be verified away.
+- Require same-head advisory recovery to match explicit non-blocking evidence
+  and remain bound to the immutable reviewer response and canonical findings
+  digest; honor routed `continue_with_receipt` handling when an unavailable
+  review is policy-allowed.
+- Validate required PR checks only after exact-head workflow contexts have had
+  two settled observations to appear, rejecting stale labels without failing
+  during the downstream-check emission gap.
+
 ## [0.7.0] - 2026-08-14
 
 ### Added

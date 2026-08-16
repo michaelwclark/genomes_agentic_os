@@ -4,13 +4,17 @@ from __future__ import annotations
 
 import argparse
 import json
+from pathlib import Path
+import subprocess
 
 import yaml
 
+from ..compose_pressure import ComposeTeardownProposal, execute_compose_teardown
 from ..hosts import format_host_routing_status, host_routing_status, list_hosts, upsert_host
 from ..host_doctor import (
     apply_safe_repairs,
     build_host_report,
+    collect_metrics,
     default_config_root,
     host_projection,
     load_host_policies,
@@ -137,6 +141,44 @@ def handle_host_health_report(args: argparse.Namespace) -> int:
     return 1 if args.fail_on_unhealthy and report["status"] != "healthy" else 0
 
 
+def handle_compose_teardown(args: argparse.Namespace) -> int:
+    """Apply one proposal only after rebuilding all current host evidence."""
+    if not args.apply:
+        raise ValueError("compose teardown is inert unless --apply is explicit")
+    payload = json.loads(Path(args.proposal).expanduser().read_text(encoding="utf-8"))
+    proposal = ComposeTeardownProposal.from_dict(payload)
+    report = build_host_report(args.root, host_alias=args.host, config_root=args.config_root)
+    current_rows = ((report.get("inventory") or {}).get("compose_pressure") or {}).get("proposals") or []
+    current_payload = next((item for item in current_rows if item.get("project") == proposal.project), None)
+    if not current_payload:
+        raise ValueError(f"Compose project is no longer observed: {proposal.project}")
+    current = ComposeTeardownProposal.from_dict(current_payload)
+
+    def retained_volumes(names):
+        retained: list[str] = []
+        for name in names:
+            result = subprocess.run(
+                ["docker", "volume", "inspect", str(name)],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+            if result.returncode == 0:
+                retained.append(str(name))
+        return retained
+
+    receipt = execute_compose_teardown(
+        proposal,
+        current,
+        runner=subprocess.run,
+        metric_reader=lambda: collect_metrics()[0],
+        volume_reader=retained_volumes,
+    )
+    print(json.dumps(receipt, indent=2, sort_keys=True) if args.json else yaml.safe_dump(receipt, sort_keys=False))
+    return 0 if receipt["applied"] else 1
+
+
 def register(subparsers) -> None:
     """Register the host command group."""
     host_parser = subparsers.add_parser("host", help="Manage the installed SSH host registry.")
@@ -181,3 +223,14 @@ def register(subparsers) -> None:
     host_health.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
     host_health.add_argument("--fail-on-unhealthy", action="store_true", help="Return exit 1 for degraded or critical health (interactive/CI use).")
     host_health.set_defaults(handler=handle_host_health_report)
+    compose_teardown = host_subparsers.add_parser(
+        "compose-teardown",
+        help="Explicitly apply one revalidated report-only Compose teardown proposal.",
+    )
+    compose_teardown.add_argument("--proposal", required=True, help="Path to one compose-teardown-proposal/v1 JSON object.")
+    compose_teardown.add_argument("--apply", action="store_true", help="Required explicit authorization to execute docker compose down.")
+    compose_teardown.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    compose_teardown.add_argument("--host", help="Host policy alias; defaults to the local hostname.")
+    compose_teardown.add_argument("--config-root", help="Auto-Doctor Markdown policy root.")
+    compose_teardown.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
+    compose_teardown.set_defaults(handler=handle_compose_teardown)
