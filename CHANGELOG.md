@@ -9,6 +9,15 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- Pin the `kanga-make-release` production deploy dispatch to `--ref main` in the
+  skill doc and driver script, and land the skill in source as its durable home.
+  A bare `gh workflow run` dispatches the repository's default branch
+  (`develop` on all five Kanga repos), which would build unreleased develop
+  code into the production environment now that deploy secrets are live; the
+  stale "deploys can never touch a server" claim is corrected to match.
+
 ## [0.7.1] - 2026-08-15
 
 ### Added

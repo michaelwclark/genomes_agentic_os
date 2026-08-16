@@ -367,3 +367,9 @@ skills:
   description: Build or open the local desktop conversation driver with domain/project
     focus, native Claude/Codex sessions, pinning, metadata, and continuation.
   source: harness/skills/agentic-os-gui/SKILL.md
+- id: kanga-make-release
+  name: Kanga Make Release
+  description: Cut a Kanga release — promote develop (beta) to main (production
+    channel) across all five Kanga repos with preflight checks, release PRs,
+    semantic-release verification, and gated production/store deploy handling.
+  source: harness/skills/kanga-make-release/SKILL.md

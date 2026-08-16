@@ -1114,6 +1114,12 @@ def skill_entries() -> list[dict[str, str]]:
             "description": "Inspect host speed risks and Agentic OS generated-artifact hygiene with observe-only reports and approval-gated cleanup classes, including guarded Docker/OrbStack reclamation of networks and volumes orphaned by removed worktrees.",
             "source": "harness/skills/os-health/SKILL.md",
         },
+        {
+            "id": "kanga-make-release",
+            "name": "Kanga Make Release",
+            "description": "Cut a Kanga release — promote develop (beta) to main (production channel) across all five Kanga repos with preflight checks, release PRs, semantic-release verification, and gated production/store deploy handling.",
+            "source": "harness/skills/kanga-make-release/SKILL.md",
+        },
     ]
 
 
