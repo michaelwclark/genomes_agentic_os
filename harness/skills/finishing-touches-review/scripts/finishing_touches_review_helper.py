@@ -93,6 +93,7 @@ TRANSITIONS = {
     None: {"OPEN"},
     "OPEN": {
         "ACCEPTED",
+        "VERIFIED",
         "REJECTED_WITH_RATIONALE",
         "DEFERRED_WITH_OWNER",
         "BLOCKING_UNRESOLVED",
@@ -309,6 +310,18 @@ def reduce_ledger(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
             raise HelperError(
                 f"illegal transition for {finding_id}: {previous or 'none'} -> {status}"
             )
+        if previous == "OPEN" and status == "VERIFIED":
+            prior = states[finding_id]
+            advisory_fields = ("severity", "summary", "evidence", "blocking")
+            if not (
+                prior.get("blocking") is False
+                and event.get("blocking") is False
+                and event.get("advisory") is True
+                and all(event.get(field) == prior.get(field) for field in advisory_fields)
+            ):
+                raise HelperError(
+                    "OPEN -> VERIFIED is reserved for an immutable non-blocking advisory"
+                )
         current = dict(event)
         current.pop("_append_order", None)
         current["previous_status"] = previous

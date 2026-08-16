@@ -112,6 +112,9 @@ describe("leadership HTTP contract", () => {
     expect(
       document.components.schemas.CandidateUpdate.properties,
     ).toHaveProperty("policyCandidateDigest");
+    expect(
+      document.components.schemas.ConfigDigestRotationOperatorOverride.properties.actor.pattern,
+    ).toBe("^[a-zA-Z0-9._:-]{1,128}$");
     await server.close();
   });
 

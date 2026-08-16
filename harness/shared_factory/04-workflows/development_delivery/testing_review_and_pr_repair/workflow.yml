@@ -1,17 +1,19 @@
 id: testing_review_and_pr_repair
-version: 2
+version: 3
 owner: development_delivery
 inputs: [pr_create_family_receipt, implementation_diff, acceptance_criteria, risk_test_plan, validation_commands, review_policy]
-outputs: [test_ledger, pre_pr_review, pr_family_snapshot, ci_receipts, repair_commits, post_pr_review, ready_decision]
-states: [local_validation, pre_pr_review, pr_open, ci_repair, review_repair, post_pr_review, ready_for_merge, blocked, abandoned]
-steps: [run_test_triangle, classify_results, pre_pr_opposing_review, verify_pr_create_family, watch_ci, repair_reviews, post_pr_opposing_review]
-validations: [required_layers, aaa_structure, exact_pr_create_family, no_pr_target_mutation, ci_green, no_actionable_threads, opposing_review_clean, external_text_scrub]
+outputs: [test_ledger, canonical_full_review, pr_family_snapshot, ci_receipts, repair_commits, delta_reviews, ready_decision]
+states: [local_validation, canonical_full_review, pr_open, ci_repair, review_repair, delta_verification, ready_for_merge, blocked, abandoned]
+steps: [run_test_triangle, classify_results, claim_or_reuse_canonical_review, verify_pr_create_family, watch_ci, repair_from_findings, verify_changed_delta, consume_exact_head_receipt]
+validations: [required_layers, aaa_structure, exact_pr_create_family, no_pr_target_mutation, ci_green, no_actionable_threads, exact_head_review_receipt, review_budget, terminal_provider_post, external_text_scrub]
 failure_modes:
   code_failed: repair_and_rerun_affected_layer
   environment_unavailable: require_ci_when_policy_allows
   infrastructure_flake: one_evidence_based_rerun
   pr_family_missing_or_wrong: return_to_pr_create
-  review_findings: repair_or_record_non_actionable_reason
-  opposing_harness_unavailable: retry_alternate_then_pause
-events: [quality.layer.completed, quality.layer.failed, review.pre_pr.completed, pr.family.verified, ci.failed, ci.passed, review.finding.repaired, review.post_pr.completed, task.ready_for_merge]
-receipts: [test_commands, classified_results, environment_evidence, review_requests, review_responses, pr_create_family_receipt, pr_family_snapshot, check_runs, thread_ledger, repair_commits]
+  review_findings: repair_then_delta_verify
+  opposing_harness_unavailable: record_terminal_unavailable_receipt
+  review_budget_exhausted: block_before_reviewer_or_provider_call
+events: [quality.layer.completed, quality.layer.failed, review.full.completed, review.receipt.reused, pr.family.verified, ci.failed, ci.passed, review.finding.repaired, review.delta.completed, review.provider_post.completed, task.ready_for_merge]
+receipts: [test_commands, classified_results, environment_evidence, canonical_review_receipt, delta_review_receipts, pr_create_family_receipt, pr_family_snapshot, check_runs, thread_ledger, repair_commits, provider_post_readback]
+limits: {normal_full_reviews_per_chain: 1, delta_reviews_per_chain: 3, absolute_full_reviews_per_family: 2, provider_posts_per_family: 1}

@@ -3,6 +3,9 @@ set -eu
 
 usage() {
   echo "usage: rotate-policy.sh EXPECTED_CURRENT_DIGEST CANDIDATE_DIGEST [ROTATION_ID]" >&2
+  echo "       standalone-primary requires FABRIC_POLICY_OVERRIDE_ACTOR, FABRIC_POLICY_OVERRIDE_REASON," >&2
+  echo "       FABRIC_POLICY_OVERRIDE_APPROVAL_REFERENCE, FABRIC_POLICY_OVERRIDE_WINDOW_START," >&2
+  echo "       and FABRIC_POLICY_OVERRIDE_WINDOW_END." >&2
   echo "       rotate-policy.sh --resume" >&2
   exit 64
 }
@@ -73,6 +76,7 @@ final_temp=$(mktemp "$FABRIC_RUNTIME_STATE_DIR/policy-rotation-receipt.XXXXXX")
 role_recreate_receipt=
 role_verify_receipt=
 role_convergence_deferred=false
+operator_override_json=null
 if [ "$mode" = resume ] && [ "${FABRIC_DEPLOYMENT_ROLE:-}" = standby ]; then
   fabric_require_command docker
   : "${FABRIC_DEPLOYMENT_DIR:?deployment directory is required}"
@@ -128,6 +132,12 @@ if [ "$mode" = resume ]; then
   expected_epoch=$(jq -er '.expectedEpoch' "$preparation")
   preparation_token=$(jq -er '.preparationToken' "$preparation")
   preparation_expired=$(jq -er '.expired' "$preparation")
+  if [ "$standalone_primary" = true ]; then
+    operator_override_json=$(jq -ce '.operatorOverride' "$preparation") || {
+      echo "standalone-primary recovery requires a prepared operator override receipt" >&2
+      exit 75
+    }
+  fi
   jq -e \
     --arg evidenceHost "$evidence_host" \
     --arg leader "$expected_leader" \
@@ -231,6 +241,20 @@ else
     }
     leader=$(jq -er '.currentLeader' "$witness_status")
     epoch=$(jq -er '.fabricEpoch' "$witness_status")
+    if [ "$standalone_primary" = true ]; then
+      : "${FABRIC_POLICY_OVERRIDE_ACTOR:?standalone policy override actor is required}"
+      : "${FABRIC_POLICY_OVERRIDE_REASON:?standalone policy override reason is required}"
+      : "${FABRIC_POLICY_OVERRIDE_APPROVAL_REFERENCE:?standalone policy override approval reference is required}"
+      : "${FABRIC_POLICY_OVERRIDE_WINDOW_START:?standalone policy override maintenance window start is required}"
+      : "${FABRIC_POLICY_OVERRIDE_WINDOW_END:?standalone policy override maintenance window end is required}"
+      operator_override_json=$(jq -cn \
+        --arg actor "$FABRIC_POLICY_OVERRIDE_ACTOR" \
+        --arg reason "$FABRIC_POLICY_OVERRIDE_REASON" \
+        --arg approvalReference "$FABRIC_POLICY_OVERRIDE_APPROVAL_REFERENCE" \
+        --arg startsAt "$FABRIC_POLICY_OVERRIDE_WINDOW_START" \
+        --arg endsAt "$FABRIC_POLICY_OVERRIDE_WINDOW_END" \
+        '{actor:$actor,reason:$reason,approvalReference:$approvalReference,maintenanceWindow:{startsAt:$startsAt,endsAt:$endsAt}}')
+    fi
     witness_digest=$(jq -er '.configDigest' "$witness_status")
     [ "$leader" = "$FABRIC_HOST_ID" ] &&
       [ "$witness_digest" = "$expected_current" ] || {
@@ -275,13 +299,14 @@ else
       --argjson expectedEpoch "$epoch" \
       --arg expectedCurrentDigest "$expected_current" \
       --arg candidateDigest "$candidate_digest" \
+      --argjson operatorOverride "$operator_override_json" \
       '{
         rotationId:$rotationId,
         expectedLeader:$expectedLeader,
         expectedEpoch:$expectedEpoch,
         expectedCurrentDigest:$expectedCurrentDigest,
         candidateDigest:$candidateDigest
-      }')
+      } + (if $operatorOverride == null then {} else {operatorOverride:$operatorOverride} end)')
     fabric_api_post \
       "$FABRIC_LEADERSHIP_API_BASE" \
       "/api/v1/admin/leadership/config-digest-rotations/prepare" \
@@ -303,6 +328,12 @@ else
   expected_leader=$(jq -er '.expectedLeader' "$preparation")
   expected_epoch=$(jq -er '.expectedEpoch' "$preparation")
   preparation_token=$(jq -er '.preparationToken' "$preparation")
+  if [ "$standalone_primary" = true ]; then
+    operator_override_json=$(jq -ce '.operatorOverride' "$preparation") || {
+      echo "standalone-primary preparation is missing its signed operator override" >&2
+      exit 75
+    }
+  fi
 
   fabric_api_get_bearer \
     "$FABRIC_API_BASE" \
@@ -318,12 +349,13 @@ else
       --arg preparationToken "$preparation_token" \
       --arg current "$expected_current" \
       --arg candidate "$candidate_digest" \
+      --argjson operatorOverride "$operator_override_json" \
       '{
         rotationId:$rotationId,
         preparationToken:$preparationToken,
         expectedCurrentFingerprint:$current,
         expectedCandidateFingerprint:$candidate
-      }')
+      } + (if $operatorOverride == null then {} else {operatorOverride:$operatorOverride} end)')
     if ! fabric_api_post \
       "$FABRIC_API_BASE" \
       "/api/v1/admin/config/reload" \
@@ -479,6 +511,7 @@ jq -n \
   --arg expectedCurrentDigest "$expected_current" \
   --arg candidateDigest "$candidate_digest" \
   --arg mode "$mode" \
+  --argjson operatorOverride "$operator_override_json" \
   --arg roleRecreateReceipt "$role_recreate_receipt" \
   --arg roleVerifyReceipt "$role_verify_receipt" \
   --argjson roleConvergenceDeferred "$role_convergence_deferred" \
@@ -490,6 +523,7 @@ jq -n \
     rotationId:$rotationId,
     expectedCurrentDigest:$expectedCurrentDigest,
     candidateDigest:$candidateDigest,
+    operatorOverride:$operatorOverride,
     recoveryMode:$mode,
     roleRecreateReceipt:($roleRecreateReceipt | if length>0 then . else null end),
     roleVerifyReceipt:($roleVerifyReceipt | if length>0 then . else null end),

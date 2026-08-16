@@ -9,8 +9,8 @@ Use this for “take this ticket all the way” work. It is an orchestrator over
 existing owners, not a second implementation or PR engine.
 
 The shared exact order is Groom, Detective, Create Artifacts, Readiness,
-Develop, Document, PR Create, Review Self, Review Others, QA, Finalize, Merge,
-Release, Deploy, Closeout, and Health. PR Create is stage 7. Release
+Develop, Document, PR Create, Review Self, Review Others, QA, Finalize, Production
+Release Validation, Merge, Release, Deploy, Closeout, and Health. PR Create is stage 7. Release
 Propagation is only its lower-level compatibility recorder/legacy alias and
 does not add another Auto-Dev stage.
 

@@ -16,7 +16,11 @@ from ..auto_dev_orchestration import (
 from ..development_delivery import (
     DEVELOPMENT_POLICY_PLANES,
     DevelopmentDeliveryError,
+    bind_recovered_worktree_ready_pr_family,
     correct_failed_base_selection,
+    escalate_active_nonblocked_pr_create_delivery,
+    recover_active_worktree_ready_delivery,
+    recover_active_worktree_ready_pr_create_delivery,
     reconcile_historical_delivery,
     reopen_auto_dev_item,
     start_development_run,
@@ -42,6 +46,7 @@ ACTION_TO_STAGE = {
     "propagate": "pr_create",
     "release-propagation": "pr_create",
     "finalize": "finalize",
+    "validate-production-release": "validate_production_release",
     "release": "release",
     "merge": "merge",
     "deploy": "deploy",
@@ -55,12 +60,19 @@ WORKTREE_REQUIRED_STAGES = {
     "qa",
     "review_self",
     "finalize",
+    "validate_production_release",
     "merge",
     "release",
     "deploy",
     "closeout",
 }
-EXISTING_STATE_REQUIRED_ACTIONS = {"merge", "deploy", "closeout", "health"}
+EXISTING_STATE_REQUIRED_ACTIONS = {
+    "validate-production-release",
+    "merge",
+    "deploy",
+    "closeout",
+    "health",
+}
 
 _STAGE_COMMANDS = {
     "groom": "/auto-dev-grooming",
@@ -74,6 +86,7 @@ _STAGE_COMMANDS = {
     "review_others": "/auto-dev-review-others",
     "qa": "/auto-dev-qa",
     "finalize": "/auto-dev-finalize",
+    "validate_production_release": "/auto-dev-validate-production-release",
     "merge": "/auto-dev-merge",
     "release": "/auto-dev-release",
     "deploy": "/auto-dev-deploy",
@@ -285,6 +298,51 @@ def handle_correct_base_selection(args: argparse.Namespace) -> int:
     result = correct_failed_base_selection(
         args.state,
         corrected_base_branch=args.base_branch,
+        idempotency_key=args.idempotency_key,
+        apply=args.apply,
+    )
+    _print(result, json_output=args.json)
+    return 0
+
+
+def handle_recover_worktree_ready_delivery(args: argparse.Namespace) -> int:
+    result = recover_active_worktree_ready_delivery(
+        args.state,
+        reason=args.reason,
+        idempotency_key=args.idempotency_key,
+        apply=args.apply,
+    )
+    _print(result, json_output=args.json)
+    return 0
+
+
+def handle_recover_worktree_ready_pr_create_delivery(args: argparse.Namespace) -> int:
+    result = recover_active_worktree_ready_pr_create_delivery(
+        args.state,
+        reason=args.reason,
+        idempotency_key=args.idempotency_key,
+        apply=args.apply,
+    )
+    _print(result, json_output=args.json)
+    return 0
+
+
+def handle_bind_recovered_worktree_ready_pr_family(args: argparse.Namespace) -> int:
+    result = bind_recovered_worktree_ready_pr_family(
+        args.state,
+        family_ref=args.family,
+        reason=args.reason,
+        idempotency_key=args.idempotency_key,
+        apply=args.apply,
+    )
+    _print(result, json_output=args.json)
+    return 0
+
+
+def handle_escalate_pr_create_delivery(args: argparse.Namespace) -> int:
+    result = escalate_active_nonblocked_pr_create_delivery(
+        args.state,
+        reason=args.reason,
         idempotency_key=args.idempotency_key,
         apply=args.apply,
     )
@@ -534,6 +592,111 @@ def register(subparsers) -> None:
     )
     _common_output(correct_base)
     correct_base.set_defaults(handler=handle_correct_base_selection)
+
+    recover_worktree_ready = sub.add_parser(
+        "recover-worktree-ready-delivery",
+        help=(
+            "Recover only the exact active legacy worktree_ready/readiness "
+            "single-stage packet into fresh governed delivery."
+        ),
+    )
+    recover_worktree_ready.add_argument(
+        "--state", required=True, help="Exact active development task state.json."
+    )
+    recover_worktree_ready.add_argument(
+        "--reason", required=True, help="Durable recovery reason."
+    )
+    recover_worktree_ready.add_argument("--idempotency-key", required=True)
+    recover_worktree_ready.add_argument(
+        "--apply",
+        action="store_true",
+        help=(
+            "Record one immutable recovery provenance receipt and require fresh Review, "
+            "QA, Finalize, and Merge evidence; never creates provider actions."
+        ),
+    )
+    _common_output(recover_worktree_ready)
+    recover_worktree_ready.set_defaults(handler=handle_recover_worktree_ready_delivery)
+
+    recover_worktree_ready_pr_create = sub.add_parser(
+        "recover-worktree-ready-pr-create-delivery",
+        help=(
+            "Recover only the exact active nonblocked worktree_ready/PR Create "
+            "single-stage packet into fresh governed review delivery."
+        ),
+    )
+    recover_worktree_ready_pr_create.add_argument(
+        "--state", required=True, help="Exact active development task state.json."
+    )
+    recover_worktree_ready_pr_create.add_argument(
+        "--reason", required=True, help="Durable recovery reason."
+    )
+    recover_worktree_ready_pr_create.add_argument("--idempotency-key", required=True)
+    recover_worktree_ready_pr_create.add_argument(
+        "--apply",
+        action="store_true",
+        help=(
+            "Record one immutable recovery provenance receipt and require fresh Review, "
+            "QA, Finalize, and Merge evidence; never creates provider actions."
+        ),
+    )
+    _common_output(recover_worktree_ready_pr_create)
+    recover_worktree_ready_pr_create.set_defaults(
+        handler=handle_recover_worktree_ready_pr_create_delivery
+    )
+
+    bind_recovered_family = sub.add_parser(
+        "bind-recovered-worktree-ready-pr-family",
+        help=(
+            "Bind one current hash-bound PR-family successor to an exact recovered "
+            "worktree-ready delivery packet without recording PR Create authority."
+        ),
+    )
+    bind_recovered_family.add_argument(
+        "--state", required=True, help="Exact recovered development task state.json."
+    )
+    bind_recovered_family.add_argument(
+        "--family",
+        required=True,
+        help="Packet-local current release family evidence JSON.",
+    )
+    bind_recovered_family.add_argument(
+        "--reason", required=True, help="Durable compatibility-continuation reason."
+    )
+    bind_recovered_family.add_argument("--idempotency-key", required=True)
+    bind_recovered_family.add_argument(
+        "--apply",
+        action="store_true",
+        help=(
+            "Append one immutable continuation provenance receipt only; leaves PR Create "
+            "out of scope and requires fresh Review, QA, Finalize, and Merge evidence."
+        ),
+    )
+    _common_output(bind_recovered_family)
+    bind_recovered_family.set_defaults(handler=handle_bind_recovered_worktree_ready_pr_family)
+
+    escalate_pr_create = sub.add_parser(
+        "escalate-pr-create-delivery",
+        help=(
+            "Escalate only the immutable AGE-190 active nonblocked "
+            "local-validation PR Create boundary into fresh governed delivery."
+        ),
+    )
+    escalate_pr_create.add_argument(
+        "--state", required=True, help="Exact nonblocked development task state.json."
+    )
+    escalate_pr_create.add_argument("--reason", required=True, help="Durable escalation reason.")
+    escalate_pr_create.add_argument("--idempotency-key", required=True)
+    escalate_pr_create.add_argument(
+        "--apply",
+        action="store_true",
+        help=(
+            "Record immutable escalation provenance and open only fresh Review, QA, "
+            "Finalize, and Merge authority; never creates provider actions."
+        ),
+    )
+    _common_output(escalate_pr_create)
+    escalate_pr_create.set_defaults(handler=handle_escalate_pr_create_delivery)
 
     record = sub.add_parser(
         "record",

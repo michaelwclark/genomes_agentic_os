@@ -276,6 +276,11 @@ skills:
   description: Converge our tracker pull-request family and record immutable merge
     readiness without merging.
   source: harness/skills/auto-dev-finalize/SKILL.md
+- id: auto-dev-validate-production-release
+  name: Auto-Dev Validate Production Release
+  description: Read-only release-family, revision, QA, and policy validation after
+    Finalize and before Auto-Dev Merge.
+  source: harness/skills/auto-dev-validate-production-release/SKILL.md
 - id: auto-dev-merge
   name: Auto-Dev Merge
   description: Execute the final authorized live merge from a pull-request-owner readiness receipt.
