@@ -549,18 +549,25 @@ def monitor_run(run_dir_value: str | Path) -> int:
         for number, handler in prior.items():
             signal.signal(number, handler)
 
+    expected_git_identity = dict(command.get("expected_git_identity") or {})
+
     def git_identity() -> dict[str, str] | None:
-        expected = command.get("expected_git_identity") or {}
-        if not expected:
+        if not expected_git_identity:
             return None
+
         def value(*args: str) -> str:
             result = subprocess.run(["git", *args], cwd=command["work_dir"], text=True, capture_output=True)
             if result.returncode: raise LongRunError("expected Git identity but work_dir is not a Git checkout")
             return result.stdout.strip()
-        observed = {"repository": value("config", "--get", "remote.origin.url"), "branch": value("branch", "--show-current"), "head": value("rev-parse", "HEAD"), "clean": "true" if not value("status", "--porcelain") else "false"}
-        if any(str(expected.get(key, observed[key])) != observed[key] for key in observed): raise LongRunError("expected Git identity mismatch")
-        return observed
-    _write_state(root, run_dir, {"status": "preflight", "phase": "preflight", "started_at": utc_now(), "git_identity_pre": git_identity()})
+        return {"repository": value("config", "--get", "remote.origin.url"), "branch": value("branch", "--show-current"), "head": value("rev-parse", "HEAD"), "clean": "true" if not value("status", "--porcelain") else "false"}
+
+    def assert_expected_git_identity(observed: dict[str, str] | None) -> None:
+        if observed is not None and any(str(expected_git_identity.get(key, observed[key])) != observed[key] for key in observed):
+            raise LongRunError("expected Git identity mismatch")
+
+    pre_identity = git_identity()
+    _write_state(root, run_dir, {"status": "preflight", "phase": "preflight", "started_at": utc_now(), "expected_git_identity": expected_git_identity, "git_identity_pre": pre_identity})
+    assert_expected_git_identity(pre_identity)
     preflight = _run_checks(command.get("preflight_checks") or [], work_dir=command["work_dir"], phase="preflight")
     atomic_json(run_dir / "preflight.json", {"checks": preflight, "ok": all(row["ok"] for row in preflight)})
     if interrupted:
@@ -743,7 +750,9 @@ def monitor_run(run_dir_value: str | Path) -> int:
 
         exit_code = process.poll()
         post_checks = _run_checks(command.get("post_run_checks") or [], work_dir=command["work_dir"], phase="post-run")
-        git_identity()
+        post_identity = git_identity()
+        _write_state(root, run_dir, {"expected_git_identity": expected_git_identity, "git_identity_post": post_identity})
+        assert_expected_git_identity(post_identity)
         if terminal_status == "success" and any(not row["ok"] for row in post_checks):
             terminal_status, terminal_reason = "failure", "post-run-invariant-failed"
         return _terminal(
@@ -809,6 +818,9 @@ def _terminal(
         "collateral_samples": prior_state.get("collateral_samples") or [],
         "checks": checks,
         "post_run_invariants_ok": all(row.get("ok") for row in checks if row.get("phase") == "post-run"),
+        "expected_git_identity": command.get("expected_git_identity") or {},
+        "git_identity_pre": prior_state.get("git_identity_pre"),
+        "git_identity_post": prior_state.get("git_identity_post"),
         "run_dir": str(run_dir),
         **(extra or {}),
     }
