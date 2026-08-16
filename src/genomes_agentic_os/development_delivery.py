@@ -8315,14 +8315,11 @@ def start_development_run(
         if isinstance(row.get("handoff"), Mapping)
         and row["handoff"].get("status") == "pending"
     ]
+    reported_portfolio_state = portfolio_state
+    if portfolio_state == "dispatching" and pending_handoffs:
+        reported_portfolio_state = "pending"
     plan.update({
-        "state": (
-            "blocked"
-            if portfolio_state == "blocked"
-            else "pending"
-            if pending_handoffs
-            else portfolio_state
-        ),
+        "state": reported_portfolio_state,
         "tasks": task_rows,
         "updated_at": utc_now(),
     })

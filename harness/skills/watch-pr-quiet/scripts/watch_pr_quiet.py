@@ -33,6 +33,7 @@ FAILURE_CONCLUSIONS = {
     "stale",
     "timed_out",
 }
+REQUIRED_CHECK_EMISSION_SETTLED_POLLS = 2
 
 
 def utc_now() -> str:
@@ -146,6 +147,65 @@ def get_workflow_runs(
     )
 
 
+def validate_required_check_contract(
+    required_checks: list[str],
+    workflow_runs: list[dict[str, Any]],
+) -> dict[str, list[str]]:
+    """Validate required labels against the settled exact-head check context."""
+    required_names = sorted(set(required_checks))
+    observed_names = sorted({str(run.get("name") or "unnamed check") for run in workflow_runs})
+    missing_required_checks = sorted(set(required_names) - set(observed_names))
+    context_is_settled = bool(workflow_runs) and all(run.get("status") == "completed" for run in workflow_runs)
+    return {
+        "observed_check_names": observed_names,
+        "missing_required_checks": missing_required_checks,
+        "invalid_required_checks": [],
+        "check_context_settled": context_is_settled,
+    }
+
+
+def apply_required_check_emission_grace(
+    state: Mapping[str, Any],
+    *,
+    previous_missing_required_checks: Sequence[str] = (),
+    settled_missing_required_observations: int = 0,
+) -> tuple[dict[str, Any], list[str], int]:
+    """Fail stale required labels only after stable settled observations.
+
+    A completed workflow run does not prove GitHub has emitted every downstream
+    run for the exact head. Preserve one additional settled poll for the same
+    missing labels before treating them as invalid configuration.
+    """
+    updated = dict(state)
+    missing_required_checks = list(updated.get("missing_required_checks") or [])
+    if not updated.get("check_context_settled") or not missing_required_checks:
+        updated["required_check_emission_observations"] = 0
+        return updated, [], 0
+
+    if sorted(previous_missing_required_checks) == missing_required_checks:
+        observations = settled_missing_required_observations + 1
+    else:
+        observations = 1
+    updated["required_check_emission_observations"] = observations
+    if observations < REQUIRED_CHECK_EMISSION_SETTLED_POLLS:
+        return updated, missing_required_checks, observations
+
+    invalid_required_checks = list(missing_required_checks)
+    invalid_failures = [
+        f"required check label not emitted at exact head: {name}"
+        for name in invalid_required_checks
+    ]
+    updated["invalid_required_checks"] = invalid_required_checks
+    updated["failures"] = sorted(set([*(updated.get("failures") or []), *invalid_failures]))
+    updated["pending"] = [
+        item
+        for item in updated.get("pending") or []
+        if item not in {f"required check not observed: {name}" for name in invalid_required_checks}
+    ]
+    updated["status"] = "failure"
+    return updated, missing_required_checks, observations
+
+
 def summarize_checks(
     pr: dict[str, Any],
     workflow_runs: list[dict[str, Any]],
@@ -160,7 +220,6 @@ def summarize_checks(
     checks: list[dict[str, str | None]] = []
     failures: list[str] = []
     pending: list[str] = []
-    observed_names: set[str] = set()
     required_check_names = set(required_checks)
 
     if pr.get("state") == "closed":
@@ -181,7 +240,6 @@ def summarize_checks(
 
     for run in relevant_workflow_runs:
         name = run.get("name") or "unnamed check"
-        observed_names.add(name)
         status = run.get("status")
         conclusion = run.get("conclusion")
         checks.append(
@@ -196,8 +254,17 @@ def summarize_checks(
         elif conclusion not in SUCCESS_CONCLUSIONS:
             pending.append(name)
 
-    missing_required_checks = sorted(set(required_checks) - observed_names)
-    pending.extend(f"required check not observed: {name}" for name in missing_required_checks)
+    required_check_contract = validate_required_check_contract(required_checks, relevant_workflow_runs)
+    missing_required_checks = required_check_contract["missing_required_checks"]
+    invalid_required_checks = required_check_contract["invalid_required_checks"]
+    failures.extend(
+        f"required check label not emitted at exact head: {name}" for name in invalid_required_checks
+    )
+    pending.extend(
+        f"required check not observed: {name}"
+        for name in missing_required_checks
+        if name not in invalid_required_checks
+    )
 
     if failures:
         status = "failure"
@@ -220,6 +287,9 @@ def summarize_checks(
         "failures": sorted(set(failures)),
         "pending": sorted(set(pending)),
         "missing_required_checks": missing_required_checks,
+        "invalid_required_checks": invalid_required_checks,
+        "check_context_settled": required_check_contract["check_context_settled"],
+        "observed_check_names": required_check_contract["observed_check_names"],
         "checks": sorted(checks, key=lambda item: (item.get("type") or "", item.get("name") or "")),
     }
 
@@ -309,6 +379,8 @@ def main(argv: list[str]) -> int:
     deadline = started_at + dt.timedelta(minutes=args.timeout_minutes)
     repo = args.repo or infer_repo(cwd)
     expected_head_seen = False
+    previous_missing_required_checks: list[str] = []
+    settled_missing_required_observations = 0
 
     while True:
         now = dt.datetime.now(dt.timezone.utc)
@@ -343,6 +415,15 @@ def main(argv: list[str]) -> int:
                     expected_head_seen=expected_head_seen,
                 ),
             }
+            (
+                state,
+                previous_missing_required_checks,
+                settled_missing_required_observations,
+            ) = apply_required_check_emission_grace(
+                state,
+                previous_missing_required_checks=previous_missing_required_checks,
+                settled_missing_required_observations=settled_missing_required_observations,
+            )
             if args.expected_head_sha and sha == args.expected_head_sha:
                 expected_head_seen = True
         except Exception as exc:  # noqa: BLE001 - watcher must record all query failures quietly.
