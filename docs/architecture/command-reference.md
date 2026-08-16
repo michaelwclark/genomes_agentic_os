@@ -55,6 +55,10 @@ Validate an installed OS root for structural correctness. Exits 1 on errors, 0 o
 | Arg / Flag | Required | Description |
 |---|---|---|
 | `--root` | No (default: `~/agentic_os`) | Installed OS root path |
+| `--scope` | No (default: `root`) | Validate `root`, `registries`, `domains`, `work-items`, or `structured-files` |
+| `--timeout-seconds` | No (default: `300`) | Hard wall-clock bound before the worker is terminated |
+| `--no-progress-seconds` | No (default: `60`) | Terminate if the worker emits no progress within this bound |
+| `--progress-interval-seconds` | No (default: `5`) | Emit an observable running status at this interval |
 
 Reads: directory tree at `--root`. Writes: nothing.
 
@@ -64,7 +68,7 @@ agentic-os validate --root /tmp/aos-ref
 
 Real output (success):
 ```text
-valid: /tmp/aos-ref
+valid: /tmp/aos-ref (scope=root)
 ```
 
 Status: **OK** (rc 0)

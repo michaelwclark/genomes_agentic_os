@@ -16,6 +16,7 @@ import platform
 import re
 import shutil
 import socket
+import sqlite3
 import subprocess
 import tempfile
 from typing import Any, Callable, Iterable
@@ -26,10 +27,18 @@ from zoneinfo import ZoneInfo
 import yaml
 
 from . import notion_api
+from .compose_pressure import (
+    ComposeContainer,
+    WorktreeLifecycleEvidence,
+    build_compose_pressure_report,
+    compose_project_matches_worktree,
+)
+from .state.db import StateDbError, connect_readonly, default_db_path
 
 REPORT_ROOT = "harness/shared_factory/06-runs-and-logs/auto-doctor"
 PROGRAM_CONFIG = "lib/programs/root/host_agentic_os_health/config"
 DEFAULT_SCHEDULE = ("06:00", "14:00", "22:00")
+LIFECYCLE_EVIDENCE_MAX_AGE = timedelta(minutes=15)
 SAFE_ACTIONS = {
     "restart_user_service",
     "start_user_service",
@@ -234,6 +243,15 @@ def collect_metrics(*, runner: Runner = subprocess.run) -> tuple[dict[str, Any],
     fsevents = [row for row in processes if row["command"].endswith("/fseventsd")]
     metrics["fseventsd_cpu_percent"] = round(sum(row["cpu_percent"] for row in fsevents), 3)
     metrics["fseventsd_rss_bytes"] = sum(row["rss_bytes"] for row in fsevents)
+    vmgr = [
+        row
+        for row in processes
+        if re.search(r"(?:^|/)(?:orbstack/)?vmgr(?:\s|$)", row["command"], re.IGNORECASE)
+    ]
+    metrics["orbstack_vmgr_cpu_percent"] = round(
+        sum(row["cpu_percent"] for row in vmgr), 3
+    )
+    metrics["orbstack_vmgr_rss_bytes"] = sum(row["rss_bytes"] for row in vmgr)
     return metrics, processes
 
 
@@ -328,20 +346,50 @@ def _docker_inventory(policy: dict[str, Any], *, now: datetime, runner: Runner) 
     ids = ids_result.stdout.split()
     containers: list[dict[str, Any]] = []
     if ids:
-        template = "{{.Name}}\t{{.State.Status}}\t{{.State.StartedAt}}\t{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}\t{{.Image}}"
+        template = "{{.Name}}\t{{.State.Status}}\t{{.State.StartedAt}}\t{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}\t{{.Image}}\t{{json .Config.Labels}}\t{{json .Mounts}}"
         inspected = _run(["docker", "inspect", "--format", template, *ids], timeout=30, runner=runner)
         for line in inspected.stdout.splitlines():
             parts = line.split("\t")
-            if len(parts) != 5:
+            if len(parts) not in {5, 7}:
                 continue
-            name, state, started, health, image_id = parts
+            name, state, started, health, image_id = parts[:5]
+            labels: dict[str, Any] = {}
+            mounts: list[dict[str, Any]] = []
+            if len(parts) == 7:
+                try:
+                    labels = json.loads(parts[5]) or {}
+                except json.JSONDecodeError:
+                    labels = {}
+                try:
+                    mounts = json.loads(parts[6]) or []
+                except json.JSONDecodeError:
+                    mounts = []
             try:
                 started_at = datetime.fromisoformat(started.replace("Z", "+00:00"))
                 age_hours = max(0.0, (now - started_at.astimezone(UTC)).total_seconds() / 3600)
             except ValueError:
                 age_hours = 0.0
-            containers.append({"name": name.removeprefix("/"), "state": state, "health": health,
-                               "started_at": started, "age_hours": round(age_hours, 2), "image_id": image_id})
+            containers.append({
+                "name": name.removeprefix("/"),
+                "state": state,
+                "health": health,
+                "started_at": started,
+                "age_hours": round(age_hours, 2),
+                "image_id": image_id,
+                "compose_project": str(labels.get("com.docker.compose.project") or ""),
+                "compose_working_dir": str(labels.get("com.docker.compose.project.working_dir") or ""),
+                "compose_config_files": str(labels.get("com.docker.compose.project.config_files") or ""),
+                "bind_mounts": sorted({
+                    str(mount.get("Source"))
+                    for mount in mounts
+                    if mount.get("Type") == "bind" and mount.get("Source")
+                }),
+                "named_volumes": sorted({
+                    str(mount.get("Name"))
+                    for mount in mounts
+                    if mount.get("Type") == "volume" and mount.get("Name")
+                }),
+            })
     stats_result = _run(["docker", "stats", "--no-stream", "--format", "{{json .}}"], timeout=30, runner=runner)
     stats: dict[str, dict[str, Any]] = {}
     for line in stats_result.stdout.splitlines():
@@ -516,6 +564,211 @@ def _probe_worktrees(policy: dict[str, Any], inventory: dict[str, Any]) -> list[
     return findings
 
 
+def _load_mapping(path: Path) -> dict[str, Any]:
+    if not path.is_file():
+        return {}
+    try:
+        loaded = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError):
+        return {}
+    return loaded if isinstance(loaded, dict) else {}
+
+
+def _provider_readback(url: str | None, *, runner: Runner) -> dict[str, Any]:
+    if not url:
+        return {"fresh": False, "state": None, "merged": False}
+    result = _run(
+        ["gh", "pr", "view", url, "--json", "state,mergedAt"],
+        timeout=20,
+        runner=runner,
+    )
+    if result.returncode != 0:
+        return {"fresh": False, "state": None, "merged": False}
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return {"fresh": False, "state": None, "merged": False}
+    state = str(payload.get("state") or "").upper() or None
+    return {
+        "fresh": True,
+        "state": state,
+        "merged": state == "MERGED" and bool(payload.get("mergedAt")),
+    }
+
+
+def _compose_worktree_evidence(
+    os_root: Path,
+    containers: list[dict[str, Any]],
+    *,
+    runner: Runner,
+) -> list[WorktreeLifecycleEvidence]:
+    """Join observed Compose projects to exact registered lifecycle evidence."""
+    state_path = default_db_path(os_root)
+    active_payload: dict[str, Any] = {"items": []}
+    try:
+        with connect_readonly(state_path) as connection:
+            rows = connection.execute(
+                "SELECT id, state, packet_path, worktree_path, metadata_json, "
+                "updated_at, last_verified_at FROM work_items WHERE worktree_path IS NOT NULL"
+            ).fetchall()
+        active_payload["items"] = [
+            {
+                **dict(row),
+                "metadata": json.loads(row["metadata_json"] or "{}"),
+            }
+            for row in rows
+        ]
+    except (StateDbError, sqlite3.Error, OSError, json.JSONDecodeError):
+        pass
+    active_by_path = {
+        str(item.get("worktree_path")): item
+        for item in active_payload.get("items") or []
+        if item.get("worktree_path")
+    }
+    projects = {
+        str(item.get("compose_project"))
+        for item in containers
+        if item.get("compose_project")
+    }
+    bind_mounts = {
+        Path(str(value)).expanduser().resolve()
+        for item in containers
+        for value in item.get("bind_mounts") or []
+        if value
+    }
+    evidence: list[WorktreeLifecycleEvidence] = []
+    seen: set[str] = set()
+    project_roots = sorted((os_root / "domains").glob("*/02-projects/*"))
+    for project_root in project_roots:
+        config_path = project_root / "config/worktrees.yml"
+        config = _load_mapping(config_path)
+        registered = ((config.get("worktrees") or {}).get("registered") or [])
+        closed_path = project_root / "worktrees/closed.yml"
+        closed_rows = {
+            str(item.get("path")): item
+            for item in (_load_mapping(closed_path).get("worktrees") or [])
+            if item.get("path")
+        }
+        candidates = [*registered]
+        registered_paths = {str(item.get("path") or "") for item in registered}
+        candidates.extend(
+            item for path, item in closed_rows.items() if path not in registered_paths
+        )
+        for item in candidates:
+            raw_path = str(item.get("path") or "")
+            if not raw_path or raw_path in seen:
+                continue
+            path = Path(raw_path).expanduser().resolve()
+            relevant = any(mount == path or path in mount.parents for mount in bind_mounts)
+            relevant = relevant or any(
+                compose_project_matches_worktree(project, raw_path) for project in projects
+            )
+            if not relevant:
+                continue
+            seen.add(raw_path)
+            active = active_by_path.get(raw_path) or active_by_path.get(str(path))
+            closed = closed_rows.get(raw_path) or closed_rows.get(str(path)) or {}
+            lifecycle = str(
+                (active or {}).get("state")
+                or closed.get("status")
+                or item.get("status")
+                or "unknown"
+            )
+            lifecycle_source = str(state_path if active else closed_path if closed else config_path)
+            verified_at = str((active or {}).get("last_verified_at") or "") or None
+            lifecycle_stale = True
+            if active and verified_at:
+                try:
+                    verified = datetime.fromisoformat(
+                        verified_at.replace("Z", "+00:00")
+                    ).astimezone(UTC)
+                    age = datetime.now(UTC) - verified
+                    lifecycle_stale = age < timedelta(0) or age > LIFECYCLE_EVIDENCE_MAX_AGE
+                except ValueError:
+                    lifecycle_stale = True
+            packet_path = Path(str((active or {}).get("packet_path") or ""))
+            reopen_marker = bool(packet_path and (packet_path / "REOPEN.md").is_file())
+            runtime: dict[str, Any] = {}
+            metadata = (active or {}).get("metadata") or {}
+            autodev_path = str(metadata.get("autodev_path") or metadata.get("delivery_state_path") or "")
+            if autodev_path:
+                try:
+                    runtime = (json.loads(Path(autodev_path).read_text(encoding="utf-8")).get("delivery") or {}).get("runtime") or {}
+                except (OSError, json.JSONDecodeError):
+                    runtime = {}
+            dirty: bool | None = None
+            if path.is_dir():
+                status = _run(
+                    ["git", "-C", str(path), "status", "--porcelain", "--untracked-files=normal"],
+                    timeout=20,
+                    runner=runner,
+                )
+                if status.returncode == 0:
+                    dirty = bool(status.stdout.strip())
+            provider_url = str(
+                closed.get("pull_request")
+                or metadata.get("pull_request")
+                or metadata.get("provider_pull_request")
+                or ""
+            ) or None
+            provider = _provider_readback(provider_url, runner=runner)
+            evidence.append(
+                WorktreeLifecycleEvidence(
+                    worktree_id=str(item.get("id") or path.name),
+                    path=str(path),
+                    lifecycle=lifecycle,
+                    lifecycle_source=lifecycle_source,
+                    lifecycle_stale=lifecycle_stale,
+                    provider_pull_request=provider_url,
+                    provider_merged=bool(provider["merged"]),
+                    dirty=dirty,
+                    reopen_marker=reopen_marker,
+                    runtime_owner=str(runtime.get("ownership") or runtime.get("provider") or "") or None,
+                    runtime_identity=str(runtime.get("identity") or "") or None,
+                    lifecycle_verified_at=verified_at,
+                    provider_fresh=bool(provider["fresh"]),
+                    provider_state=provider["state"],
+                )
+            )
+    return evidence
+
+
+def _probe_compose_pressure(policy: dict[str, Any], report: dict[str, Any]) -> list[dict[str, Any]]:
+    if not report or not report.get("summary", {}).get("projects"):
+        return []
+    thresholds = report.get("thresholds") or {}
+    if not thresholds.get("configured"):
+        return [
+            _finding(
+                policy,
+                "docker.compose_pressure_unconfigured",
+                "degraded",
+                "Compose ownership is report-only because pressure thresholds are unconfigured",
+                errors=thresholds.get("errors") or [],
+            )
+        ]
+    breached = [
+        proposal
+        for proposal in report.get("proposals") or []
+        if proposal.get("pressure_breaches")
+    ]
+    if not breached:
+        return []
+    return [
+        _finding(
+            policy,
+            "docker.compose_pressure",
+            "degraded",
+            f"{len(breached)} Compose projects exceed configured host-pressure thresholds",
+            projects=[item.get("project") for item in breached[:15]],
+            explicit_teardown_candidates=report.get("summary", {}).get(
+                "eligible_for_explicit_teardown", 0
+            ),
+            automatic_teardown=False,
+        )
+    ]
+
+
 def _probe_memory_hogs(policy: dict[str, Any], processes: list[dict[str, Any]]) -> list[dict[str, Any]]:
     config = policy.get("memory_hogs") or {}
     if not config:
@@ -647,6 +900,30 @@ def build_host_report(
                 "docker_cpu_hog_count": len(docker_inventory.get("cpu_hogs") or []),
             })
             findings.extend(_probe_docker(policy, docker_inventory))
+            compose_containers = tuple(
+                value
+                for item in docker_inventory.get("containers") or []
+                if (value := ComposeContainer.from_inventory(item)) is not None
+            )
+            if compose_containers:
+                worktree_evidence = _compose_worktree_evidence(
+                    os_root,
+                    docker_inventory.get("containers") or [],
+                    runner=runner,
+                )
+                threshold_config = (
+                    ((policy.get("docker") or {}).get("compose_pressure") or {}).get("thresholds")
+                )
+                pressure = build_compose_pressure_report(
+                    compose_containers,
+                    worktree_evidence,
+                    metrics,
+                    threshold_config,
+                ).as_dict()
+                inventory["compose_pressure"] = pressure
+                metrics["compose_project_count"] = pressure["summary"]["projects"]
+                metrics["compose_explicit_teardown_candidate_count"] = pressure["summary"]["eligible_for_explicit_teardown"]
+                findings.extend(_probe_compose_pressure(policy, pressure))
         worktree_inventory = _worktree_inventory(policy, now=checked, runner=runner)
         if worktree_inventory.get("worktrees"):
             inventory["worktrees"] = worktree_inventory
