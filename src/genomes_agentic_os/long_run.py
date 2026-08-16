@@ -267,6 +267,7 @@ def start_run(
     post_run_checks: list[str] | None = None,
     collateral_processes: list[str] | None = None,
     environment_overrides: dict[str, str] | None = None,
+    expected_git_identity: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     _validate_command(command)
     os_root = _root(root)
@@ -328,6 +329,7 @@ def start_run(
         "post_run_checks": post_checks,
         "collateral_processes": list(collateral_processes or configured_collateral),
         "environment_overrides": safe_environment,
+        "expected_git_identity": dict(expected_git_identity or {}),
     }
     atomic_json(run_dir / "command.json", payload)
     state = {
@@ -547,7 +549,18 @@ def monitor_run(run_dir_value: str | Path) -> int:
         for number, handler in prior.items():
             signal.signal(number, handler)
 
-    _write_state(root, run_dir, {"status": "preflight", "phase": "preflight", "started_at": utc_now()})
+    def git_identity() -> dict[str, str] | None:
+        expected = command.get("expected_git_identity") or {}
+        if not expected:
+            return None
+        def value(*args: str) -> str:
+            result = subprocess.run(["git", *args], cwd=command["work_dir"], text=True, capture_output=True)
+            if result.returncode: raise LongRunError("expected Git identity but work_dir is not a Git checkout")
+            return result.stdout.strip()
+        observed = {"repository": value("config", "--get", "remote.origin.url"), "branch": value("branch", "--show-current"), "head": value("rev-parse", "HEAD"), "clean": "true" if not value("status", "--porcelain") else "false"}
+        if any(str(expected.get(key, observed[key])) != observed[key] for key in observed): raise LongRunError("expected Git identity mismatch")
+        return observed
+    _write_state(root, run_dir, {"status": "preflight", "phase": "preflight", "started_at": utc_now(), "git_identity_pre": git_identity()})
     preflight = _run_checks(command.get("preflight_checks") or [], work_dir=command["work_dir"], phase="preflight")
     atomic_json(run_dir / "preflight.json", {"checks": preflight, "ok": all(row["ok"] for row in preflight)})
     if interrupted:
@@ -730,6 +743,7 @@ def monitor_run(run_dir_value: str | Path) -> int:
 
         exit_code = process.poll()
         post_checks = _run_checks(command.get("post_run_checks") or [], work_dir=command["work_dir"], phase="post-run")
+        git_identity()
         if terminal_status == "success" and any(not row["ok"] for row in post_checks):
             terminal_status, terminal_reason = "failure", "post-run-invariant-failed"
         return _terminal(
