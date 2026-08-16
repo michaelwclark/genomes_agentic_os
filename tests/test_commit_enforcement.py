@@ -114,7 +114,7 @@ def test_commitizen_package_pin_matches_the_pre_commit_hook_revision() -> None:
     group = sorted(data["dependency-groups"]["dev"])
 
     assert extra == group
-    assert _exact_commitizen_version(extra) == _commitizen_hook_revision() == "4.16.5"
+    assert _exact_commitizen_version(extra) == _commitizen_hook_revision() == "4.17.0"
 
 
 def test_commit_message_ci_syncs_the_locked_repository_development_extra() -> None:
