@@ -103,6 +103,16 @@ FORWARD_STATES = (
     "delivery_complete",
 )
 TERMINAL_STATES = {"delivery_complete", "blocked", "abandoned", "cancelled"}
+# Delivery targets that may carry a not_required receipt, mapped to the policy
+# stage named in their auto-dev-stage-policy-decision/v1 receipt. The strict
+# schema's stage enum must accept every value here plus every stage in
+# auto_dev_orchestration.NOT_REQUIRED_ALLOWED_STAGES.
+NOT_REQUIRED_DELIVERY_POLICY_STAGES = {
+    "release_propagation": "release_propagation",
+    "deployment_pending": "deploy",
+    "deploying": "deploy",
+    "post_deploy_validation": "deploy",
+}
 RETRYABLE_FAILURES = {
     "environment_unavailable",
     "executor_unavailable",
@@ -8671,12 +8681,7 @@ def run_development_stage(
                 "deferred_to_ci is valid only for local_validation"
             )
         if status == "not_required":
-            policy_stage = {
-                "release_propagation": "release_propagation",
-                "deployment_pending": "deploy",
-                "deploying": "deploy",
-                "post_deploy_validation": "deploy",
-            }.get(target)
+            policy_stage = NOT_REQUIRED_DELIVERY_POLICY_STAGES.get(target)
             if not policy_stage or not isinstance(evidence, Mapping):
                 raise DevelopmentDeliveryError(
                     f"{target} cannot use a not_required delivery receipt"

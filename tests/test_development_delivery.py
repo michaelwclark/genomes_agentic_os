@@ -6669,6 +6669,66 @@ def test_shipped_auto_dev_stage_policy_decisions_satisfy_strict_schema(
     assert list(Draft202012Validator(schema).iter_errors(document)) == []
 
 
+def test_stage_policy_decision_schema_enum_matches_runtime_stage_sets() -> None:
+    """The strict stage enum accepts exactly what runtime not_required paths produce."""
+
+    repository = Path(__file__).resolve().parents[1]
+    schema = json.loads(
+        (
+            repository / "schemas/auto-dev-stage-policy-decision.schema.json"
+        ).read_text(encoding="utf-8")
+    )
+    enum = schema["properties"]["stage"]["enum"]
+    expected = auto_dev.NOT_REQUIRED_ALLOWED_STAGES | set(
+        delivery.NOT_REQUIRED_DELIVERY_POLICY_STAGES.values()
+    )
+    assert len(enum) == len(set(enum))
+    assert set(enum) == expected
+    canonical = [stage for stage in AUTO_DEV_STAGE_ORDER if stage in expected]
+    canonical += sorted(expected - set(AUTO_DEV_STAGE_ORDER))
+    assert enum == canonical
+
+
+def test_disabled_document_policy_records_strict_not_required_receipt(
+    tmp_path: Path,
+) -> None:
+    """A project policy disabling Document accepts the typed receipt end to end."""
+
+    repo, _ = _repository(tmp_path)
+    root = tmp_path / "os"
+    project = _project(root, repo)
+    profile_path = project / "config" / "development.yml"
+    profile = yaml.safe_load(profile_path.read_text(encoding="utf-8"))
+    profile["auto_dev"] = {"stages": {"document": {"applicability": "disabled"}}}
+    profile_path.write_text(yaml.safe_dump(profile, sort_keys=False), encoding="utf-8")
+
+    run = delivery.start_development_run(root, "acme", "app", ["CC-DOC"], apply=True)
+    task = TaskState(Path(run["tasks"][0]["state_ref"]))
+    projection = read_auto_dev_state(task.read()["autodev_path"])
+    assert projection["stage_policies"]["document"]["applicability"] == "disabled"
+
+    for stage in ("groom", "detective", "create_artifacts"):
+        _record_standalone_stage(task, stage)
+    result = _record_standalone_stage(task, "document", status="not_required")
+    assert result["state"]["stages"]["document"]["status"] == "not_required"
+
+    work_item = Path(task.read()["work_item"])
+    proofs = sorted(
+        (
+            work_item / "artifacts" / "auto-dev-orchestration" / "proofs" / "document"
+        ).glob("policy-decision-*.json")
+    )
+    assert proofs
+    schema = json.loads(
+        (
+            Path(__file__).resolve().parents[1]
+            / "schemas/auto-dev-stage-policy-decision.schema.json"
+        ).read_text(encoding="utf-8")
+    )
+    materialized = json.loads(proofs[-1].read_text(encoding="utf-8"))
+    assert list(Draft202012Validator(schema).iter_errors(materialized)) == []
+
+
 def test_release_propagation_workflow_is_pr_create_compatibility_recorder() -> None:
     repository = Path(__file__).resolve().parents[1]
     workflow_root = (
