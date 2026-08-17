@@ -244,7 +244,10 @@ branch, source/Jira key, `review_no_merge` mode, title, Notion page ID, and the
 provider-read GitHub author into the closed payload. Its idempotency key binds
 repository, PR, head SHA, source key, and review mode, so repeated button
 observations return the same task instead of
-starting duplicate reviews. The `team_pr_ai_review` worker invokes the
+starting duplicate reviews. An explicit same-head recheck adds the producer's
+validated 12-hex `retry_nonce`; the worker binds its durable intent, helper run,
+and completion effect to that nonce while first/new-head requests omit it. The
+`team_pr_ai_review` worker invokes the
 installed portable helper at
 `lib/programs/domains/los/team_pr_sync/scripts/team_pr_review_fabric.py`.
 That helper reads the canonical LOS project policy from

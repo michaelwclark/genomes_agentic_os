@@ -140,6 +140,7 @@ execution_fabric:
           base_branch: {type: string, pattern: "^[a-zA-Z0-9._/-]{1,255}$"}
           source_key: {type: string, pattern: "^[a-zA-Z0-9._:-]{1,128}$"}
           review_mode: {type: string, enum: [review_no_merge]}
+          retry_nonce: {type: string, pattern: "^[a-f0-9]{12}$"}
           jira_key: {type: string, pattern: "^[A-Z][A-Z0-9]+-[0-9]+$"}
           title: {type: string, pattern: "^.{1,512}$"}
           notion_page_id: {type: string, pattern: "^[a-f0-9-]{32,36}$"}

@@ -1993,6 +1993,11 @@ def _team_pr_review_effect(
             "base_branch": payload["base_branch"],
             "source_key": payload["source_key"],
             "review_mode": TEAM_PR_REVIEW_MODE,
+            **(
+                {"retry_nonce": payload["retry_nonce"]}
+                if payload.get("retry_nonce")
+                else {}
+            ),
             "review_intent_key": intent_key,
             "task_identity": task_id,
             "operation": "project_completed_review",
