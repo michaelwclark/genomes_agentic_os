@@ -97,6 +97,11 @@ function fixture() {
     attemptCount: 0,
     availableAt: new Date().toISOString(),
     createdAt: new Date().toISOString(),
+    result: null,
+    completedAt: null,
+    updatedAt: new Date().toISOString(),
+    lastErrorCode: null,
+    lastErrorSummary: null,
   };
   const ledger = {
     admitTask: vi.fn().mockResolvedValue({ task, admitted: true }),
@@ -336,6 +341,46 @@ describe("HTTP contract", () => {
     expect(response.statusCode).toBe(201);
     expect(ledger.admitTask).toHaveBeenCalledOnce();
     expect(delivery.publish).toHaveBeenCalledOnce();
+    await server.close();
+  });
+
+  it("returns terminal task results without fabricating them for queued tasks", async () => {
+    const { server, ledger, task } = fixture();
+    const completed = {
+      ...task,
+      status: "succeeded",
+      result: { canonicalReceipt: "receipt-123" },
+      completedAt: "2026-01-01T00:00:05.000Z",
+      updatedAt: "2026-01-01T00:00:05.000Z",
+    };
+    ledger.getTask.mockResolvedValueOnce(completed);
+
+    const completedResponse = await server.inject({
+      method: "GET",
+      url: `/api/v1/tasks/${task.id}`,
+      headers: { authorization: `Bearer ${config.apiToken}` },
+    });
+    expect(completedResponse.statusCode).toBe(200);
+    expect(completedResponse.json()).toMatchObject({
+      id: task.id,
+      status: "succeeded",
+      result: { canonicalReceipt: "receipt-123" },
+      completedAt: "2026-01-01T00:00:05.000Z",
+    });
+
+    ledger.getTask.mockResolvedValueOnce(task);
+    const queuedResponse = await server.inject({
+      method: "GET",
+      url: `/api/v1/tasks/${task.id}`,
+      headers: { authorization: `Bearer ${config.apiToken}` },
+    });
+    expect(queuedResponse.statusCode).toBe(200);
+    expect(queuedResponse.json()).toMatchObject({
+      id: task.id,
+      status: "queued",
+      result: null,
+      completedAt: null,
+    });
     await server.close();
   });
 
