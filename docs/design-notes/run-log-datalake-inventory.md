@@ -59,3 +59,17 @@ The same configuration contains the current writer registry: source paths, ownin
 ## Architecture gate
 
 Before implementing any AGE-150 child issue, agents must read `AGENTS.md`, `docs/README.md`, `docs/architecture/system-architecture.md`, and the Ledgerline/LOSMON reference architecture. Services depend on ports, adapters own provider behavior, construction happens in one composition root, dependencies are explicit, and tests exercise contracts at the immediate boundary.
+
+## AGE-152 storage boundary and operator handoff
+
+**Audience:** Agentic OS maintainers and operators preparing the Run Log Datalake.
+**Source of truth:** `harness/config/run-evidence.yml` selects the supported backend and model policy; `harness/config/hosts.yml` owns the bootstrap host record.
+**Owner and freshness:** The Run Log Datalake maintainers update this note whenever the port, backend configuration, host registry, or retention contract changes; its implementation state is current at the AGE-152 PR head.
+
+AGE-152 adds the provider-neutral `RunLogStore` contract, an in-memory implementation for contract tests, and a lazy MongoDB adapter. Application services use only the port. The MongoDB driver is constructed only by the composition root, which reads the single configured backend value and the environment-variable *name* for its connection URI. Credential values are never stored in configuration, documentation, or receipts.
+
+The store validates host attribution and canonical model configuration, upserts and reads back the configured initial host (`bigmac`), supports idempotent imports, queries, aggregates, index setup, and retention operations. The MongoDB adapter keeps evidence collections separate from Rubicon lifecycle, queue, lease, fencing, and idempotency authority. Its integration tests are optional until an approved disposable, least-privilege MongoDB URI is supplied.
+
+**Operational output:** this ticket ships a reusable source package and tests; it does not enable a remote listener, provision credentials, change a deployed backend, or migrate historical files. Before enabling cross-host ingestion, the operator must complete the authenticated private-interface connectivity and rollback proof described above. Until that proof exists, later writer work must retain the bounded-outbox fallback.
+
+The canonical local design note is the correct destination for this implementation because no project Doc Config routes this operational/source-package documentation to Genome's Notion. The separate AGE-158 ticket owns the approved Genome's Notion operations page after the cutover dependencies are satisfied.
