@@ -131,11 +131,23 @@ Everything is the orchestrator, not another stage. It uses this one exact order:
 | 9 | Review Others | `/auto-dev-review-others` | `auto-dev record --stage review_others` |
 | 10 | QA | `/auto-dev-qa` | `auto-dev record --stage qa` |
 | 11 | Finalize | `/auto-dev-finalize` | `auto-dev record --stage finalize` after PR-family convergence |
-| 12 | Merge | `/auto-dev-merge` | `develop stage --stage merge` after typed provider readback |
-| 13 | Release | `/auto-dev-release` | `auto-dev record --stage release` |
-| 14 | Deploy | `/auto-dev-deploy` | `develop stage --stage deploy` |
-| 15 | Closeout | `/auto-dev-closeout` | `develop stage --stage closeout` |
-| 16 | Health | `/auto-dev-health` | strict Health receipt after cleanup and finished-state readback |
+| 12 | Production Release Validation | `/auto-dev-validate-production-release` | `auto-dev record --stage validate_production_release` with read-only evidence |
+| 13 | Merge | `/auto-dev-merge` | `develop stage --stage merge` after typed provider readback |
+| 14 | Release | `/auto-dev-release` | `auto-dev record --stage release` |
+| 15 | Deploy | `/auto-dev-deploy` | `develop stage --stage deploy` |
+| 16 | Closeout | `/auto-dev-closeout` | `develop stage --stage closeout` |
+| 17 | Health | `/auto-dev-health` | strict Health receipt after cleanup and finished-state readback |
+
+When PR Create must refresh an existing PR after its commit ID changes, it
+does not rewrite the old record. It requires provider readback for the new
+head, an explicit link to the old head, and the same complete PR identity in
+both receipts. That identity must match the selected repository, base branch,
+and registered source branch, with a real PR identifier after the repository
+prefix. It appends a new compatibility wrapper and makes that wrapper the
+current PR Create evidence. A refresh is allowed only while
+the task is still in local validation; once PR review begins, a changed head
+requires a fresh delivery run so review, QA, and Finalize cannot stay attached
+to the old commit.
 
 ### Documentation delivery
 
@@ -292,6 +304,18 @@ status and receipt references, the next action, blockers, and a pointer to the
 canonical Development Delivery task. It never replaces tracker/provider truth,
 the SQLite work registry, or delivery transitions.
 
+### Post-materialization executor handoff
+
+`auto-dev everything --apply` can materialize a governed worktree before a
+managed executor accepts the next stage. That is not stage execution. When no
+configured executor accepts the handoff, Auto-Dev writes a task-scoped
+`executor_unavailable` receipt with the worktree and frozen-policy context and
+returns a non-success `pending` result. A repeated unaccepted handoff on the
+exact packet preserves every prior receipt and records the next bounded
+attempt rather than presenting a new `worktree_ready` success. After the
+retry budget is exhausted, the result is `blocked` and nonrecoverable. Neither
+result marks an Auto-Dev stage as executed or completed.
+
 ```bash
 agentic-os auto-dev everything <domain> <project> <ticket> --apply
 agentic-os auto-dev adopt <domain> <project> <ticket> \
@@ -405,3 +429,7 @@ Both harnesses use the same CLI, program/workflow files, policy folders,
 receipts, commands, and skills. Only the harness invocation/installation layer
 differs. Reinstall/sync shared skills after source changes and validate both
 registries before release.
+
+Review Self, Review Repair, opposing-model review, and Finalize share the
+[Auto-Dev Review Coordination](45-auto-dev-review-coordination.md) stable-key,
+receipt, finding-ledger, budget, and terminal-provider-post contract.

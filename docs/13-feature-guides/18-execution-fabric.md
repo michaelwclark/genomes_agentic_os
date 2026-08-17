@@ -82,6 +82,27 @@ create parallel host or alert configuration.
 
 ## Local and cross-host transport
 
+### Local/degraded queue isolation
+
+**Audience:** operators running `agentic-os runtime work` against a local
+Execution Fabric instance. The source of truth is the selected queue and worker
+pool in `harness/config/execution-fabric.yml`; this guide is the operator-facing
+description of that policy.
+
+In local/degraded mode, a worker has concurrency one. When it is configured for
+more than one named queue, each bounded dispatch chooses one configured queue
+and its matching worker pool before claiming work. It never claims from the
+entire fabric and then reports the requested queue afterward. This preserves
+queue and worker-pool admission boundaries: work in another queue remains
+queued for that queue's worker instead of being consumed by whichever local
+worker tick ran first.
+
+The `runtime work` result includes both `requested_queue` and
+`selected_queue`. Operators should treat a mismatch as an investigation signal;
+normal local operation selects only the requested queue. Cross-host shared
+worker-pool concurrency remains a remote-transport capability, not a local
+fallback behavior.
+
 Fresh installs remain on the explicit local/degraded transport:
 
 ```yaml
@@ -466,6 +487,19 @@ be strictly post-expiry. Only one unresolved preparation is allowed per
 cluster. The command waits for renewed active leadership and writes the final
 operator receipt. A stale role can adopt an identical durable fingerprint but
 cannot replace it during startup.
+
+On an explicitly opted-in `standalone_primary`, the same prepared admin reload
+may pass through the intentional on-disk candidate drift that the reload is
+meant to reconcile. This is a single-purpose exception, not a general mutation
+override: it requires the local witnessed leader, exact configured standalone
+host, verified local PostgreSQL durability, an unexpired proof whose current
+digest equals the request, no recovery hold, and an exact signed preparation
+binding the rotation ID, leader, epoch, current fingerprint, and candidate
+fingerprint. Tasks, effects, schedulers, promotion, failover, and every other
+mutation remain fenced while the mounted policy differs from the signed proof.
+The operator still uses the normal maintenance-window approval, pre-read,
+receipt, alert, and fail-closed/no-retry procedures; the endpoint does not
+create an unattended or HA bypass.
 
 The CLI's redacted preview and local reload receipts remain below
 `harness/shared_factory/06-runs-and-logs/execution-fabric/config-reloads/`.

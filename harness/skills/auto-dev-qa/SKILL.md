@@ -6,7 +6,10 @@ description: Run the project-configured risk-based QA gates as a standalone Auto
 # Auto-Dev QA
 
 1. Read the ticket acceptance criteria, effective `qa_gates`, changed surface,
-   and current `autodev.json`.
+   current `autodev.json`, and its frozen context selection. For an LOS Rules
+   Engine context marked `loaded`, QA must use the same bound concrete contract,
+   dictionary, checks, snapshot freshness/coverage, redundancy status, and
+   known findings that Readiness used—never a fresh ad hoc lookup.
 2. Select the smallest complete static, unit, integration, end-to-end, manual,
    CI, and deployed checks justified by risk.
 3. Run the checks through the project's canonical tooling. Keep raw logs out of
@@ -15,6 +18,11 @@ description: Run the project-configured risk-based QA gates as a standalone Auto
    Use CI fallback only when project policy permits it and record why.
 5. Map every acceptance criterion to evidence or a gap. Record `qa` as
    completed only after evidence is current for the exact revision.
+
+For Rules Engine work, `kit-unavailable`, stale, or incomplete snapshots require
+an explicit unknown/insufficient-evidence result. Report only high-confidence
+problems; do not turn healthy cases, unused-rule hypotheses, or raw tenant
+values into QA noise.
 
 ## LOS Django child delivery
 

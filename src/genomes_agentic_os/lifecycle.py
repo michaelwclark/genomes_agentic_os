@@ -667,7 +667,7 @@ def create_project_work_item(
     )
     work_root = work_items_root(project_root)
     work_item_root = work_item_path(project_root, work_id, status, item_format=item_format)
-    result = ScaffoldResult()
+    result = ScaffoldResult(entity_path=work_item_root)
     canonical = lane_root(project_root, status) == work_root
     directories = (
         (work_root, work_root / ARCHIVE_DIRECTORY)
@@ -2332,7 +2332,19 @@ def remove_worktree_files(
     except OSError as exc:
         return False, str(exc)
     if not target_resolved.is_relative_to(managed_root):
-        return False, "target is outside project worktrees/"
+        # A project may register an externally located Git worktree through a
+        # project-owned link.  The Health gate already proves the exact
+        # worktree identity, branch, reviewed revision, and runtime teardown;
+        # require that same registered link here before allowing Git to remove
+        # the external checkout.  An arbitrary external path remains blocked.
+        if str(entry.get("link_policy") or "") != "symlink_to_external_worktree":
+            return False, "target is outside project worktrees/"
+        try:
+            link = _validated_worktree_link(project_root, entry)
+        except ValueError as exc:
+            return False, str(exc)
+        if link is None or not link.is_symlink() or link.resolve() != target_resolved:
+            return False, "external worktree lacks an exact project-owned symlink"
     if (target_resolved / "REOPEN.md").exists():
         return False, "REOPEN.md present; ask before cleanup"
     if health_gate is None:

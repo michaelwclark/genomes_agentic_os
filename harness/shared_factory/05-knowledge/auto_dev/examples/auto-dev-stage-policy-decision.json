@@ -4,9 +4,9 @@
   "canonical_work_id": "work_example",
   "domain": "example_domain",
   "project": "example_project",
-  "stage": "pr_create",
+  "stage": "document",
   "decision": "not_required",
-  "reason": "This project has no downstream configuration repository.",
+  "reason": "The frozen project policy disables the standalone Document stage for this work item.",
   "decided_by": "operator:genome",
   "policy_fingerprint": "replace-with-the-effective-policy-fingerprint",
   "policy_source": {

@@ -27,11 +27,13 @@
       "enum": [
         "detective",
         "create_artifacts",
+        "document",
         "review_others",
-        "pr_create",
+        "qa",
         "finalize",
         "release",
-        "deploy"
+        "deploy",
+        "release_propagation"
       ]
     },
     "decision": {"const": "not_required"},

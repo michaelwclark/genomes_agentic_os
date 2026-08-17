@@ -38,9 +38,11 @@ agentic-os develop start <domain> <project> <ticket> [<ticket> ...] --apply
 - A broken local environment is `environment_unavailable`, not passing. When
   policy permits, finish the branch/PR and require GitHub CI as the final signal.
 - Watch and repair CI and actionable Copilot/review findings until clean.
-- Run initial and final opposing-harness review when configured; preserve the
-  stable `pre_pr_review` and `post_pr_review` receipt names plus prompt,
-  response, model, and decision evidence.
+- Run or reuse one stable-keyed full opposing-harness review when configured;
+  Repair may request at most three chained delta verifications. Preserve
+  `pre_pr_review` and `post_pr_review` only as compatibility names for the
+  canonical receipt and its reuse/final delta chain, plus prompt, response,
+  model, decision, and terminal provider-post evidence.
 - Respect fix-version PR-family policy, preserve the lower-level
   `release_propagation` compatibility receipt, and enforce post-merge
   deployment/cleanup.

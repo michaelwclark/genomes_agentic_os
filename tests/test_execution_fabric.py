@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 from contextlib import contextmanager
 from datetime import datetime, timezone
 import json
@@ -7,11 +8,13 @@ from pathlib import Path
 import sqlite3
 import threading
 import time
+from types import SimpleNamespace
 
 import pytest
 import yaml
 
 from genomes_agentic_os.cli import main
+from genomes_agentic_os.cli import runtime as runtime_cli
 from genomes_agentic_os.runtime_backend import (
     RuntimeBackendError,
     apply_queue_mode,
@@ -1006,6 +1009,180 @@ def test_runtime_dispatch_claims_and_completes_in_execution_fabric(
     assert result["queue_item"]["lease_owner"] is None
     assert result["queue_item"]["dispatch_log"].endswith("run-log.yml")
     assert queue_mode_status(root)["metrics"]["live_worker_count"] == 0
+
+
+def test_runtime_dispatch_queue_filter_keeps_other_queues_queued(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _root(tmp_path)
+    registry_path = root / "harness/shared_factory/00-control-plane/runtime-registry.yml"
+    registry = yaml.safe_load(registry_path.read_text(encoding="utf-8"))
+    registry["execution_targets"] = [{"id": "script", "status": "active"}]
+    registry_path.write_text(yaml.safe_dump(registry, sort_keys=False), encoding="utf-8")
+    apply_queue_mode(root, "execution_fabric", dry_run=False)
+    conn = db.connect(db.default_db_path(root))
+    try:
+        fabric.configure_queue(conn, "codex", max_concurrency=1)
+        fabric.configure_worker_pool(conn, "codex_workers", queue_name="codex", max_workers=1, max_concurrency=1)
+        fabric.configure_queue(conn, "non_llm", max_concurrency=1)
+        fabric.configure_worker_pool(conn, "non_llm_workers", queue_name="non_llm", max_workers=1, max_concurrency=1)
+    finally:
+        conn.close()
+    for item_id, queue_name, worker_pool in (("codex-item", "codex", "codex_workers"), ("other-item", "non_llm", "non_llm_workers")):
+        runtime_ops.append_run_queue_item(root, {"id": item_id, "kind": "manual", "status": "queued", "approval_state": "not_required", "execution_target": "script", "command": "true", "queue_name": queue_name, "worker_pool": worker_pool})
+    monkeypatch.setattr(runtime_ops, "_run_local_script", lambda *_args, **_kwargs: {"supported": True, "ok": True, "command": "true", "errors": [], "warnings": [], "external_effect": "test command executed"})
+    result = runtime_ops.runtime_run_next(root, dry_run=False, queue_name="codex", worker_pool="codex_workers")
+    assert result["queue_item"]["id"] == "codex-item"
+    conn = db.connect(db.default_db_path(root))
+    try:
+        assert state_queue.get(conn, "other-item")["status"] == "queued"
+    finally:
+        conn.close()
+
+
+def test_runtime_dispatch_blocks_divergent_pool_item_instead_of_reporting_idle(
+    tmp_path: Path,
+) -> None:
+    root = _root(tmp_path)
+    apply_queue_mode(root, "execution_fabric", dry_run=False)
+    conn = db.connect(db.default_db_path(root))
+    try:
+        state_queue.enqueue(
+            conn,
+            id="misrouted-item",
+            kind="manual",
+            approval_state="not_required",
+            execution_target="script",
+            queue_name="codex",
+            worker_pool="non_llm_workers",
+        )
+    finally:
+        conn.close()
+
+    result = runtime_ops.runtime_run_next(
+        root,
+        dry_run=False,
+        queue_name="codex",
+        worker_pool="codex_workers",
+    )
+
+    assert result["status"] == "blocked"
+    assert result["queue_item"]["id"] == "misrouted-item"
+    assert result["blocked_reason"] == (
+        "queue item worker pool does not match the requested queue: "
+        "non_llm_workers != codex_workers"
+    )
+    conn = db.connect(db.default_db_path(root))
+    try:
+        item = state_queue.get(conn, "misrouted-item")
+        assert item is not None
+        assert item["status"] == "blocked"
+        assert item["blocked_reason"] == result["blocked_reason"]
+    finally:
+        conn.close()
+
+
+def _local_runtime_work_args(root: Path, queues: list[str]) -> argparse.Namespace:
+    return argparse.Namespace(
+        root=str(root),
+        host_id=None,
+        queue=queues,
+        max_concurrency=None,
+        heartbeat_seconds=None,
+        worker_id="test-worker",
+        bootstrap_id=None,
+        capability=[],
+        apply=True,
+        once=True,
+        max_tasks=None,
+        json=True,
+    )
+
+
+def _stub_local_runtime_work_dependencies(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, object]]:
+    emitted: list[dict[str, object]] = []
+    fabric_value = {
+        "execution_fabric": {
+            "queues": [
+                {"id": "codex", "enabled": True, "worker_pool": "codex_workers"},
+                {"id": "non_llm", "enabled": True, "worker_pool": "non_llm_workers"},
+            ]
+        }
+    }
+    monkeypatch.setattr(
+        runtime_cli,
+        "resolve_remote_settings",
+        lambda *_args, **_kwargs: SimpleNamespace(remote=False, public=lambda: {"mode": "local"}),
+    )
+    monkeypatch.setattr(runtime_cli, "resolve_execution_fabric_host_id", lambda *_args, **_kwargs: "test-host")
+    monkeypatch.setattr(
+        runtime_cli,
+        "load_execution_fabric_config",
+        lambda *_args, **_kwargs: SimpleNamespace(value=fabric_value),
+    )
+    monkeypatch.setattr(runtime_cli, "_configured_worker_defaults", lambda *_args, **_kwargs: (1, 15))
+    monkeypatch.setattr(
+        runtime_cli,
+        "_print_structured",
+        lambda payload, **_kwargs: emitted.append(payload),
+    )
+    return emitted
+
+
+def test_runtime_work_once_skips_idle_queue_and_emits_queue_receipts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _root(tmp_path)
+    emitted = _stub_local_runtime_work_dependencies(monkeypatch)
+    calls: list[str] = []
+
+    def _run_next(_root: str, *, queue_name: str, **_kwargs: object) -> dict[str, object]:
+        calls.append(queue_name)
+        if queue_name == "codex":
+            return {"status": "idle"}
+        return {"status": "done", "queue_item": {"queue_name": "non_llm"}}
+
+    monkeypatch.setattr(runtime_cli, "runtime_run_next", _run_next)
+
+    assert runtime_cli.handle_runtime_work(
+        _local_runtime_work_args(root, ["codex", "non_llm"])
+    ) == 0
+
+    assert calls == ["codex", "non_llm"]
+    assert emitted == [
+        {
+            "status": "stopped-local-degraded",
+            "transport": {"mode": "local"},
+            "worker_id": "test-worker",
+            "results": [
+                {"status": "idle", "requested_queue": "codex", "selected_queue": None},
+                {
+                    "status": "done",
+                    "queue_item": {"queue_name": "non_llm"},
+                    "requested_queue": "non_llm",
+                    "selected_queue": "non_llm",
+                },
+            ],
+        }
+    ]
+
+
+def test_runtime_work_rejects_unknown_queue_before_dispatch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _root(tmp_path)
+    _stub_local_runtime_work_dependencies(monkeypatch)
+    calls: list[str] = []
+    monkeypatch.setattr(
+        runtime_cli,
+        "runtime_run_next",
+        lambda *_args, **_kwargs: calls.append("dispatched"),
+    )
+
+    with pytest.raises(ValueError, match="disabled or unknown queues: typo"):
+        runtime_cli.handle_runtime_work(_local_runtime_work_args(root, ["codex", "typo"]))
+
+    assert calls == []
 
 
 def test_runtime_dispatch_retries_transient_failures_and_honors_nested_policy(

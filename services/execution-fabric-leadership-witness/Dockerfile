@@ -1,7 +1,7 @@
 # Compile and assemble the pure-JavaScript production dependency tree on the
 # native builder architecture. Running npm through QEMU made cross-platform
 # releases nondeterministically crash with SIGILL before an image existed.
-FROM --platform=$BUILDPLATFORM node:22.14.0-alpine3.21 AS build
+FROM --platform=$BUILDPLATFORM node:22.21.1-alpine3.21 AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --ignore-scripts
@@ -11,7 +11,7 @@ RUN npm run build \
   && npm prune --omit=dev --ignore-scripts \
   && npm cache clean --force
 
-FROM node:22.14.0-alpine3.21 AS runtime
+FROM node:22.21.1-alpine3.21 AS runtime
 ENV NODE_ENV=production
 WORKDIR /app
 ARG WITNESS_UID=3195

@@ -124,11 +124,21 @@ def capture_plan(
             status="captured",
             work_id=work_id,
         )
-        work_item_target = next(
-            path
-            for path in (*creation.created, *creation.skipped)
-            if path.name == "SPEC.md" and path.parent.name.endswith(work_id)
-        )
+        # Trust the path the scaffolder reports. It normalises and date-prefixes the
+        # work id, so matching folder names against the id composed here loses to
+        # every rename the scaffolder applies.
+        work_item_target = creation.entity_path
+        if work_item_target is None:
+            raise ValueError(
+                f"work item scaffold reported no path for `{domain}/{project}` work id `{work_id}`"
+            )
+        # A packet keeps its specification in SPEC.md. An intake lane writes the whole
+        # work item as one markdown file, and that file is the specification.
+        if work_item_target.is_dir():
+            spec = work_item_target / "SPEC.md"
+            if not spec.is_file():
+                raise ValueError(f"work item packet is missing SPEC.md: {work_item_target}")
+            work_item_target = spec
         target = work_item_target
         relative_target = target.relative_to(project_root)
         append_once(

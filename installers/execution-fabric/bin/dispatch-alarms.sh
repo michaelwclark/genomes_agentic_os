@@ -41,7 +41,11 @@ jq -c '.alarms[]?' "$response" | while IFS= read -r alarm; do
     *) severity=warning ;;
   esac
 
-  if [ -x "$notifier" ] && "$notifier" \
+  # The notification helper is Python and its env shebang would otherwise
+  # resolve launchd's system interpreter.  Run it through the immutable
+  # Fabric runtime so its declared dependencies (including PyYAML) are always
+  # available on the headless BigMac client plane.
+  if [ -x "$notifier" ] && "$FABRIC_WORKER_PYTHON" "$notifier" \
     --source runtime.execution_fabric.health \
     --level "$severity" \
     --title "Execution Fabric needs attention" \

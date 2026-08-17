@@ -48,6 +48,9 @@ def handle_start(args: argparse.Namespace) -> int:
         repository_id=args.repository,
         base_branch=args.base_branch,
         policy_overlays=overlays,
+        touched_paths=args.touched_path or [],
+        subjects=args.subject or [],
+        rulebook_ids=args.rulebook_id or [],
         apply=args.apply,
     )
     _print(result, json_output=args.json)
@@ -170,6 +173,21 @@ def register(subparsers) -> None:
         "--policy-overlay",
         action="append",
         help="Invocation policy addendum as PLANE=PATH; repeatable.",
+    )
+    start.add_argument(
+        "--touched-path",
+        action="append",
+        help="Normalized repository-relative changed path for frozen context-kit selection; repeatable.",
+    )
+    start.add_argument(
+        "--subject",
+        action="append",
+        help="Declared semantic work subject for frozen context-kit selection; repeatable.",
+    )
+    start.add_argument(
+        "--rulebook-id",
+        action="append",
+        help="Exact Rules Engine rulebook identity for concrete catalog-kit selection; repeatable.",
     )
     start.add_argument("--apply", action="store_true", help="Create state, active work items, and isolated worktrees.")
     start.add_argument("--root", default=DEFAULT_ROOT)

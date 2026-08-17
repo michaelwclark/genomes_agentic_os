@@ -174,6 +174,32 @@ export const reliabilityObservationSchema = z
     }
   });
 
+export const policyReloadOperatorOverrideSchema = z
+  .object({
+    actor: identifier,
+    reason: z.string().min(1).max(2048),
+    approvalReference: z.string().min(1).max(512),
+    maintenanceWindow: z
+      .object({
+        startsAt: z.string().datetime({ offset: true }),
+        endsAt: z.string().datetime({ offset: true }),
+      })
+      .strict(),
+  })
+  .strict()
+  .superRefine((override, context) => {
+    if (
+      new Date(override.maintenanceWindow.endsAt).getTime() <=
+      new Date(override.maintenanceWindow.startsAt).getTime()
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["maintenanceWindow", "endsAt"],
+        message: "maintenance window must end after it starts",
+      });
+    }
+  });
+
 export const configReloadSchema = z
   .object({
     rotationId: z.string().uuid(),
@@ -182,6 +208,9 @@ export const configReloadSchema = z
       .regex(/^cpr1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/),
     expectedCurrentFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
     expectedCandidateFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+    // Normal quorum-backed reloads retain their existing contract. The
+    // standalone drift exception must carry this signed operator envelope.
+    operatorOverride: policyReloadOperatorOverrideSchema.optional(),
   })
   .strict();
 
@@ -229,6 +258,9 @@ export type EffectDelivery = z.infer<typeof effectDeliverySchema>;
 export type EffectFailure = z.infer<typeof effectFailureSchema>;
 export type ReliabilityObservation = z.infer<
   typeof reliabilityObservationSchema
+>;
+export type PolicyReloadOperatorOverride = z.infer<
+  typeof policyReloadOperatorOverrideSchema
 >;
 export type ScheduleUpsert = z.infer<typeof scheduleUpsertSchema>;
 export type DeliveryReconciliation = z.infer<typeof deliveryReconciliationSchema>;

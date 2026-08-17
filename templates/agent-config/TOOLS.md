@@ -21,6 +21,7 @@ List the visible capabilities intended for this layer.
 | `auto-dev-review-self` | Review and repair our own active delivery. | `harness/skills/auto-dev-review-self/SKILL.md` |
 | `auto-dev-review-others` | Review another author's live pull request. | `harness/skills/auto-dev-review-others/SKILL.md` |
 | `auto-dev-finalize` | Converge our ticket's pull-request family and record merge readiness without merging. | `harness/skills/auto-dev-finalize/SKILL.md` |
+| `auto-dev-validate-production-release` | Validate the finalized release family before Merge without mutation. | `harness/skills/auto-dev-validate-production-release/SKILL.md` |
 | `auto-dev-merge` | Run the final live merge gate through the correct pull-request owner. | `harness/skills/auto-dev-merge/SKILL.md` |
 | `auto-dev-release-propagation` | Compatibility alias for Auto-Dev PR Create family mode and its lower-level recorder. | `harness/skills/auto-dev-release-propagation/SKILL.md` |
 | `auto-dev-release` | Create and verify the project version, tag, package, changelog, or provider release. | `harness/skills/auto-dev-release/SKILL.md` |
@@ -48,6 +49,7 @@ List the visible capabilities intended for this layer.
 | `/auto-dev-review-self` | Review and repair our own change. | Friendly route to canonical review/repair. |
 | `/auto-dev-review-others` | Review another author's live pull request. | Uses the canonical PR Review owner. |
 | `/auto-dev-finalize` | Converge the ticket pull-request family. | Leaves immutable merge readiness or an exact hold; never merges. |
+| `/auto-dev-validate-production-release` | Validate the finalized release family before Merge. | Read-only exact-revision, QA, and policy validation. |
 | `/auto-dev-merge` | Execute the final merge gate. | Requires PR-owner readiness, live provider readback, and merge authority. |
 | `/auto-dev-release-propagation` | Invoke Auto-Dev PR Create family mode through the legacy name. | Preserves the lower-level `release_propagation` recorder. |
 | `/auto-dev-release` | Create and verify a project release. | Uses project release policy and provider readback. |

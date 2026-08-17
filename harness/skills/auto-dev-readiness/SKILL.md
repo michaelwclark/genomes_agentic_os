@@ -12,8 +12,15 @@ state packet.
 2. Resolve tracker truth, acceptance criteria, repository, and ticket-derived
    base branch. For environment defects, consume the Detective version receipt.
 3. Explain dev, QA, and gitflow policy; add invocation overlays when needed.
-4. Start with `agentic-os develop start ... --apply`. Multi-repository projects
-   require `--repository`; release/hotfix work passes `--base-branch`.
+   When a change touches an LOS Rules Engine caller or rulebook, also resolve
+   its selector and local evidence status before planning; a match alone does
+   not establish that a kit was loaded.
+4. Start with `agentic-os develop start ... --apply`. Pass each changed
+   repository-relative path as `--touched-path` and `--subject rules-engine`
+   or `--subject rulebook` plus `--rulebook-id <exact-key>` when applicable;
+   this freezes the context result in the effective-policy receipt.
+   Multi-repository projects require
+   `--repository`; release/hotfix work passes `--base-branch`.
 5. Inspect the created work item, exact remote base SHA, and isolated worktree.
 6. Write a plan that names behavior, risks, validation, and artifact outputs.
 7. After the work is verified, create a typed

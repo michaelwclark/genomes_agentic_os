@@ -144,6 +144,12 @@ def command_entries() -> list[dict[str, str]]:
             "source": "harness/commands/auto-dev-finalize.md",
         },
         {
+            "id": "auto-dev-validate-production-release",
+            "command": "/auto-dev-validate-production-release",
+            "description": "Read-only validation of the finalized release family, exact revision, QA, and policy evidence before Merge.",
+            "source": "harness/commands/auto-dev-validate-production-release.md",
+        },
+        {
             "id": "auto-dev-merge",
             "command": "/auto-dev-merge",
             "description": "Execute the final authorized merge from a PR-owner readiness receipt with live provider readback.",
@@ -1011,6 +1017,12 @@ def skill_entries() -> list[dict[str, str]]:
             "name": "Auto-Dev Finalize",
             "description": "Converge our ticket PR family and record immutable merge readiness without merging.",
             "source": "harness/skills/auto-dev-finalize/SKILL.md",
+        },
+        {
+            "id": "auto-dev-validate-production-release",
+            "name": "Auto-Dev Validate Production Release",
+            "description": "Read-only validation of the finalized release family, exact revision, QA, and policy evidence before Merge.",
+            "source": "harness/skills/auto-dev-validate-production-release/SKILL.md",
         },
         {
             "id": "auto-dev-merge",

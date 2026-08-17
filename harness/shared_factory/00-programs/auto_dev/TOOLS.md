@@ -9,6 +9,7 @@
 | One named workflow | `agentic-os auto-dev <verb> ...` and the matching skill | resumable single-stage state |
 | Grooming | `/auto-dev-grooming` | implementation-ready source of truth |
 | Deep bug/RCA investigation | `/auto-dev-detective` or `agentic-os detective ...` | versioned evidence packet and report |
+| LOS Rules Engine caller/rulebook context | `agentic-os detective resolve ... --touched-path <repo-path> --subject rulebook --rulebook-id <key>` | frozen candidate plus concrete artifact/snapshot provenance when available, else fail-closed evidence status |
 | Excellent provider artifact | `/auto-dev-create-artifacts` or `agentic-os artifacts ...` | native draft, validation, apply/readback receipts |
 | Readiness/context stage | `/auto-dev-readiness` then `agentic-os develop stage ... --stage readiness` | verified context and `planned` state |
 | Isolated implementation stage | `/auto-dev-develop` (canonical owner: `/auto-dev-implementation`) then `develop stage --stage implementation` | code/test receipts and `local_validation` |
@@ -19,6 +20,7 @@
 | Standalone QA | `/auto-dev-qa` | exact revision/acceptance evidence |
 | Legacy release propagation invocation | `/auto-dev-release-propagation` | compatibility alias to PR Create family mode |
 | Our PR-family endgame | `/auto-dev-finalize` | independently reviewed, converged PR family and readiness-only receipt |
+| Read-only pre-merge release proof | `/auto-dev-validate-production-release` | exact revision, QA, release-family, and policy evidence or typed hold |
 | Governed merge router | `/auto-dev-merge` then `develop stage --stage merge` | merge SHA, reviewed-head/provider/PR readback, or explicit hold |
 | Version/tag/package release | `/auto-dev-release` | verified release receipt |
 | Deployment | `/auto-dev-deploy` then `develop stage --stage deploy` | exact deployed-version proof or policy skip |

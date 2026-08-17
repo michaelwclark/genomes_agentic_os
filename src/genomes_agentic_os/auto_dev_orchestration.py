@@ -21,12 +21,7 @@ import uuid
 import yaml
 from jsonschema import Draft202012Validator
 
-from .program_run_packets import (
-    begin_program_workflow,
-    read_program_run_packet,
-    record_program_workflow,
-    start_program_run_packet,
-)
+from .program_run_packets import read_program_run_packet, record_program_workflow, start_program_run_packet
 
 
 AUTO_DEV_SCHEMA = "auto-dev-work-item/v1"
@@ -35,6 +30,10 @@ AUTO_DEV_HEALTH_EVIDENCE_SCHEMA = "auto-dev-health-evidence/v1"
 AUTO_DEV_HEALTH_PREFLIGHT_SCHEMA = "auto-dev-health-preflight/v1"
 AUTO_DEV_RUNTIME_CLEANUP_SCHEMA = "auto-dev-runtime-cleanup/v1"
 AUTO_DEV_PACKET_MANIFEST_SCHEMA = "auto-dev-packet-manifest/v1"
+ACTIVE_PR_CREATE_DELIVERY_ESCALATION_SCHEMA = "active-pr-create-delivery-escalation/v1"
+_ACTIVE_PR_CREATE_DELIVERY_ESCALATION_KIND = (
+    "escalate-active-nonblocked-pr-create-delivery"
+)
 AUTO_DEV_STAGE_ORDER = (
     "groom",
     "detective",
@@ -47,6 +46,7 @@ AUTO_DEV_STAGE_ORDER = (
     "review_others",
     "qa",
     "finalize",
+    "validate_production_release",
     "merge",
     "release",
     "deploy",
@@ -66,6 +66,7 @@ AUTO_DEV_STAGE_COMMANDS = {
     "review_others": "/auto-dev-review-others",
     "qa": "/auto-dev-qa",
     "finalize": "/auto-dev-finalize",
+    "validate_production_release": "/auto-dev-validate-production-release",
     "release": "/auto-dev-release",
     "merge": "/auto-dev-merge",
     "deploy": "/auto-dev-deploy",
@@ -100,6 +101,7 @@ REVISION_SENSITIVE_STAGES = REVIEW_REVISION_STAGES | TERMINAL_REVISION_STAGES | 
 STAGE_MINIMUM_DELIVERY_STATE = {
     "qa": "worktree_ready",
     "finalize": "ready_for_merge",
+    "validate_production_release": "ready_for_merge",
     "release": "merged",
     "health": "delivery_complete",
 }
@@ -178,6 +180,8 @@ REQUIRED_STAGE_PRECEDENCE = (
     ("review_self", "review_others"),
     ("review_others", "qa"),
     ("qa", "finalize"),
+    ("finalize", "validate_production_release"),
+    ("validate_production_release", "merge"),
     ("finalize", "merge"),
     ("pr_create", "merge"),
     ("merge", "release"),
@@ -539,6 +543,12 @@ def _complete_from_delivery(stages: dict[str, dict[str, Any]], task: Mapping[str
     }
     receipts = [receipt for receipt in task.get("receipts") or [] if isinstance(receipt, Mapping)]
     for name, milestone in milestones.items():
+        # A PR-head refresh from ready_for_merge deliberately demotes the task
+        # until a *new* Review Self receipt accepts the refreshed head.  The
+        # historical receipt remains auditable, but it must not project as
+        # active workflow authority while that supersession is unresolved.
+        if name == "review_self" and task.get("_subject_supersession_pending"):
+            continue
         if index >= _state_index(milestone):
             receipt = next(
                 (item for item in reversed(receipts) if item.get("state") == milestone),
@@ -580,6 +590,8 @@ def _load_stage_receipts(
     *,
     subject_revision: str | None,
     terminal_revision: str | None,
+    invalidated_subject_revision: str | None = None,
+    suppress_revision_sensitive_stages: bool = False,
 ) -> None:
     stage_dir = work_item / "artifacts" / "auto-dev-orchestration" / "stages"
     if stage_dir.is_dir():
@@ -593,6 +605,25 @@ def _load_stage_receipts(
             if status not in TERMINAL_STAGE_STATUSES:
                 continue
             receipt_revision = payload.get("subject_revision")
+            if (
+                status == "completed"
+                and name in REVISION_SENSITIVE_STAGES
+                and suppress_revision_sensitive_stages
+            ):
+                # A pending PR-head supersession has no accepted subject yet.
+                # Historical receipts remain on disk, but none can project as
+                # active QA/review/finalize authority until fresh Review Self
+                # binds the newest provider-read head.
+                continue
+            if (
+                status == "completed"
+                and name in REVISION_SENSITIVE_STAGES
+                and invalidated_subject_revision
+                and receipt_revision == invalidated_subject_revision
+            ):
+                # Keep old receipts immutable, but never let the obsolete
+                # review/QA/finalize authority satisfy a refreshed PR head.
+                continue
             expected_revision = (
                 terminal_revision if name in TERMINAL_REVISION_STAGES else subject_revision
             )
@@ -646,8 +677,30 @@ def _load_stage_receipts(
         task_ref = link.get("task_state")
         if task_ref:
             task_path = Path(str(task_ref)).expanduser()
-            release_receipt = task_path.parent / "stages" / "release-propagation.json"
-            if release_receipt.is_file():
+            task = _read_json(task_path) if task_path.is_file() else {}
+            descriptor = (
+                task.get("stage_receipts", {}).get("release_propagation")
+                if isinstance(task.get("stage_receipts"), Mapping)
+                else None
+            )
+            release_receipt: Path | None = None
+            if isinstance(descriptor, Mapping):
+                resolved = _resolve_health_receipt(
+                    descriptor.get("ref"), work_item, task_path=task_path
+                )
+                expected_sha = str(descriptor.get("sha256") or "").strip().lower()
+                if (
+                    resolved is not None
+                    and resolved.is_file()
+                    and expected_sha
+                    and hashlib.sha256(resolved.read_bytes()).hexdigest() == expected_sha
+                ):
+                    release_receipt = resolved
+            else:
+                legacy_receipt = task_path.parent / "stages" / "release-propagation.json"
+                if legacy_receipt.is_file():
+                    release_receipt = legacy_receipt
+            if release_receipt is not None:
                 wrapper = _read_json(release_receipt)
                 evidence_ref = _resolve_health_receipt(
                     wrapper.get("receipt"), work_item, task_path=task_path
@@ -752,6 +805,59 @@ def _auto_dev_packet_config_refs(task: Mapping[str, Any]) -> list[dict[str, Any]
                             "sha256": None,
                         }
                     )
+    context_selection = task.get("context_selection")
+    if isinstance(context_selection, Mapping):
+        policy_hash = str(context_selection.get("content_sha256") or "").strip() or None
+        selection = (
+            context_selection.get("selection")
+            if isinstance(context_selection.get("selection"), Mapping)
+            else {}
+        )
+        source_hashes = {
+            str(item.get("source_ref")): str(item.get("sha256"))
+            for item in selection.get("selected_documents") or []
+            if isinstance(item, Mapping)
+            and str(item.get("source_ref") or "").strip()
+            and str(item.get("sha256") or "").strip()
+        }
+        context_documents = context_selection.get(
+            "context_documents", context_selection.get("kits", [])
+        )
+        for document in context_documents or []:
+            if not isinstance(document, Mapping):
+                continue
+            document_id = (
+                str(document.get("id") or "context-policy").strip()
+                or "context-policy"
+            )
+            for ref in document.get("source_refs") or []:
+                if str(ref).strip():
+                    refs.append(
+                        {
+                            "kind": f"context_policy:{document_id}",
+                            "ref": str(ref).strip(),
+                            "sha256": source_hashes.get(str(ref).strip(), policy_hash),
+                        }
+                    )
+        rules_engine_context = context_selection.get("rules_engine_context")
+        if isinstance(rules_engine_context, Mapping):
+            kit = rules_engine_context.get("kit")
+            if isinstance(kit, Mapping):
+                kit_id = str(kit.get("id") or "rules-engine-kit").strip() or "rules-engine-kit"
+                for artifact in kit.get("artifacts") or []:
+                    if not isinstance(artifact, Mapping):
+                        continue
+                    ref = str(artifact.get("ref") or "").strip()
+                    sha256 = str(artifact.get("sha256") or "").strip()
+                    name = str(artifact.get("name") or "artifact").strip() or "artifact"
+                    if ref and sha256:
+                        refs.append(
+                            {
+                                "kind": f"rules_engine_kit:{kit_id}:{name}",
+                                "ref": ref,
+                                "sha256": sha256,
+                            }
+                        )
     return refs
 
 
@@ -861,7 +967,15 @@ def _sync_auto_dev_program_run_packet(
         )
     current_stage = str(value.get("current_stage") or "").strip()
     failure = task.get("failure") if isinstance(task.get("failure"), Mapping) else None
-    if failure and current_stage and current_stage not in sealed_workflows:
+    # An executor handoff happens before a workflow starts. It is a durable
+    # task-level pending/blocked boundary, not an immutable workflow result.
+    # Recording it as execution_failed would permanently misstate a stage that
+    # has not run and would prevent the later accepted execution from closing
+    # the packet correctly.
+    pre_execution_handoff = (
+        isinstance(failure, Mapping) and failure.get("kind") == "executor_unavailable"
+    )
+    if failure and not pre_execution_handoff and current_stage and current_stage not in sealed_workflows:
         record_program_workflow(
             os_root,
             packet_id=packet_id,
@@ -880,17 +994,36 @@ def _sync_auto_dev_program_run_packet(
             finished_at=str(value.get("updated_at") or _utc_now()),
             receipt_refs=[str(failure.get("receipt") or "").strip()] if failure.get("receipt") else [],
         )
-    elif current_stage and current_stage not in sealed_workflows:
-        begin_program_workflow(
-            os_root,
-            packet_id=packet_id,
-            workflow_id=current_stage,
-            transport=transport,
-            config_refs=_auto_dev_packet_config_refs(task),
-            idempotency_key=f"{run_id}:{ticket}:{current_stage}:started",
-            started_at=str(value.get("updated_at") or _utc_now()),
-        )
+    # Creating or resuming a packet does not execute its current stage. A
+    # workflow result is written only after terminal stage evidence exists or
+    # an actual non-handoff task failure is recorded above.
     return descriptor
+
+
+def _pending_subject_supersession(task: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    """Return the latest PR-head refresh that lacks fresh review acceptance."""
+
+    resolutions = task.get("subject_supersession_resolutions")
+    resolved = {
+        str(item.get("supersession_id") or item.get("release_propagation_wrapper") or "")
+        for item in resolutions or []
+        if isinstance(item, Mapping)
+    }
+    supersessions = task.get("subject_supersessions")
+    for item in reversed(supersessions or []):
+        if not isinstance(item, Mapping):
+            continue
+        identifier = str(
+            item.get("supersession_id") or item.get("release_propagation_wrapper") or ""
+        )
+        if not identifier or identifier in resolved:
+            continue
+        if all(
+            str(item.get(field) or "").strip()
+            for field in ("from_subject_revision", "to_source_head_sha")
+        ):
+            return item
+    return None
 
 
 def sync_delivery_projection(task_state_path: str | Path) -> dict[str, Any] | None:
@@ -947,10 +1080,19 @@ def sync_delivery_projection(task_state_path: str | Path) -> dict[str, Any] | No
         active_stages = set(
             auto_dev_workflow_window(stage_order, start_stage, completion_stage)
         )
+        pending_supersession = _pending_subject_supersession(task)
         stages = {name: _stage_row(name) for name in AUTO_DEV_STAGE_ORDER}
-        task_view = {**task, "task_state_ref": str(task_path)}
+        task_view = {
+            **task,
+            "task_state_ref": str(task_path),
+            "_subject_supersession_pending": pending_supersession is not None,
+        }
         _complete_from_delivery(stages, task_view)
-        subject_revision = str(task.get("subject_revision") or existing.get("subject_revision") or "") or None
+        subject_revision = (
+            str(task.get("subject_revision") or "") or None
+            if pending_supersession is not None
+            else str(task.get("subject_revision") or existing.get("subject_revision") or "") or None
+        )
         terminal_revision = str(
             task.get("terminal_revision") or existing.get("terminal_revision") or ""
         ) or None
@@ -959,6 +1101,12 @@ def sync_delivery_projection(task_state_path: str | Path) -> dict[str, Any] | No
             stages,
             subject_revision=subject_revision,
             terminal_revision=terminal_revision,
+            invalidated_subject_revision=(
+                str(pending_supersession.get("from_subject_revision") or "")
+                if pending_supersession is not None
+                else None
+            ),
+            suppress_revision_sensitive_stages=pending_supersession is not None,
         )
         for name, row in stages.items():
             policy = stage_policies.get(name, {"applicability": "required"})
@@ -1026,6 +1174,7 @@ def sync_delivery_projection(task_state_path: str | Path) -> dict[str, Any] | No
                 "policy_receipt": task.get("policy_receipt"),
                 "policy_fingerprint": task.get("policy_fingerprint"),
                 "policy_sources": task.get("policy_sources") or {},
+                "context_selection": task.get("context_selection"),
                 "repository": task.get("repository"),
                 "worktree": task.get("worktree"),
                 "runtime": task.get("runtime"),
@@ -1503,6 +1652,224 @@ def _validate_delivery_stage_task_binding(
     raise AutoDevStateError(f"{stage} lacks immutable task receipt history")
 
 
+def _validate_active_pr_create_escalation_develop_predecessor(
+    current: Mapping[str, Any],
+    work_item: Path,
+    *,
+    target_stage: str,
+) -> None:
+    """Validate the sole AGE-190 escalation as a Develop predecessor.
+
+    An active PR-Create escalation projects ``develop`` as completed so a
+    fresh Review Self can start from its immutable PR family.  Its receipt is
+    deliberately not generic implementation evidence.  It may remain the
+    Develop predecessor for that same governed chain through Merge, but only
+    after every intervening stage has supplied its normal immutable authority.
+    """
+
+    task_ref = str(current.get("delivery", {}).get("task_state_ref") or "").strip()
+    if not task_ref:
+        raise AutoDevStateError("active pr_create escalation develop predecessor lacks a task")
+    task_path = Path(task_ref).expanduser().resolve()
+    task = _read_json(task_path)
+    histories = task.get("active_pr_create_delivery_escalations")
+    if not isinstance(histories, list) or len(histories) != 1 or not isinstance(
+        histories[0], Mapping
+    ):
+        raise AutoDevStateError(
+            "active pr_create escalation develop predecessor requires one verified escalation history"
+        )
+    history = histories[0]
+    key = str(history.get("idempotency_key") or "").strip()
+    receipt_ref = str(history.get("receipt") or "").strip()
+    receipt_sha256 = str(history.get("sha256") or "").strip().lower()
+    if not key or not receipt_ref or len(receipt_sha256) != 64:
+        raise AutoDevStateError(
+            "active pr_create escalation develop predecessor history is malformed"
+        )
+    expected_path = (
+        work_item
+        / "artifacts"
+        / "development-delivery"
+        / "active-pr-create-delivery-escalation"
+        / f"{hashlib.sha256(key.encode('utf-8')).hexdigest()[:20]}.json"
+    ).resolve()
+    candidate = Path(receipt_ref).expanduser()
+    if not (
+        candidate.is_absolute()
+        and not candidate.is_symlink()
+        and candidate.resolve() == expected_path
+        and expected_path.is_file()
+        and not expected_path.is_symlink()
+    ):
+        raise AutoDevStateError(
+            "active pr_create escalation develop predecessor receipt is not packet-canonical"
+        )
+    receipt_bytes = expected_path.read_bytes()
+    try:
+        receipt = json.loads(receipt_bytes.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise AutoDevStateError(
+            "active pr_create escalation develop predecessor receipt is malformed"
+        ) from exc
+    if not isinstance(receipt, Mapping):
+        raise AutoDevStateError(
+            "active pr_create escalation develop predecessor receipt is malformed"
+        )
+    if hashlib.sha256(
+        json.dumps(receipt, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest() != receipt_sha256:
+        raise AutoDevStateError(
+            "active pr_create escalation develop predecessor receipt hash changed"
+        )
+    escalated = receipt.get("escalated") if isinstance(receipt.get("escalated"), Mapping) else {}
+    original = receipt.get("original") if isinstance(receipt.get("original"), Mapping) else {}
+    delivery = current.get("delivery") if isinstance(current.get("delivery"), Mapping) else {}
+    stage_order = list(AUTO_DEV_STAGE_ORDER)
+    stage_policies = task.get("auto_dev_stage_policies")
+    expected_contract = {
+        "state": "local_validation",
+        "mode": "everything",
+        "requested_stage": None,
+        "goal": "merge",
+        "start_stage": "groom",
+        "completion_stage": "merge",
+        "stage_order": stage_order,
+        "stage_policies": stage_policies,
+    }
+    expected_portfolio_contract = {
+        field: expected_contract[field]
+        for field in (
+            "mode",
+            "requested_stage",
+            "goal",
+            "start_stage",
+            "completion_stage",
+            "stage_order",
+            "stage_policies",
+        )
+    }
+    portfolio_auto_dev = (
+        escalated.get("portfolio_auto_dev")
+        if isinstance(escalated.get("portfolio_auto_dev"), Mapping)
+        else {}
+    )
+    if not (
+        receipt.get("schema") == ACTIVE_PR_CREATE_DELIVERY_ESCALATION_SCHEMA
+        and receipt.get("kind") == _ACTIVE_PR_CREATE_DELIVERY_ESCALATION_KIND
+        and receipt.get("idempotency_key") == key
+        and receipt.get("recorded_at") == history.get("recorded_at")
+        and original.get("task_state_ref") == str(task_path)
+        and original.get("canonical_work_id") == task.get("canonical_work_id")
+        and original.get("work_item") == str(work_item)
+        and original.get("worktree") == task.get("worktree")
+        and all(escalated.get(field) == value for field, value in expected_contract.items())
+        and all(
+            portfolio_auto_dev.get(field) == value
+            for field, value in expected_portfolio_contract.items()
+        )
+    ):
+        raise AutoDevStateError(
+            "active pr_create escalation develop predecessor receipt contract is invalid"
+        )
+    matching_receipts = [
+        row
+        for row in task.get("receipts") or []
+        if isinstance(row, Mapping)
+        and row.get("state") == "local_validation"
+        and row.get("ref") == receipt_ref
+        and row.get("sha256") == receipt_sha256
+        and row.get("recorded_at") == history.get("recorded_at")
+    ]
+    stages = current.get("stages") if isinstance(current.get("stages"), Mapping) else {}
+    develop = stages.get("develop") if isinstance(stages.get("develop"), Mapping) else {}
+    fresh_stages = (
+        "review_self",
+        "review_others",
+        "qa",
+        "finalize",
+        "validate_production_release",
+        "merge",
+    )
+    requested_stage = current.get("requested_stage")
+    dispatch_selector_is_bound = (
+        requested_stage == task.get("requested_stage")
+        and requested_stage in {None, target_stage}
+    )
+    base_contract = (
+        len(matching_receipts) == 1
+        and current.get("mode") == "everything"
+        # The immutable escalation receipt records the original Everything
+        # selector. A later named-stage resume may set the coupled live task
+        # and projection selector to precisely the stage being admitted.
+        and dispatch_selector_is_bound
+        and current.get("start_stage") == "groom"
+        and current.get("completion_stage") == "merge"
+        and current.get("stage_order") == stage_order
+        and current.get("stage_policies") == stage_policies
+        and delivery.get("goal") == "merge"
+        and develop.get("status") == "completed"
+        and develop.get("receipt_refs") == [receipt_ref]
+    )
+    if target_stage == "review_self":
+        if not (
+            base_contract
+            and current.get("current_stage") == "review_self"
+            and task.get("state") == "local_validation"
+            and task.get("failure") is None
+            and task.get("auto_dev_mode") == "everything"
+            and task.get("goal") == "merge"
+            and task.get("auto_dev_start_stage") == "groom"
+            and task.get("auto_dev_completion_stage") == "merge"
+            and task.get("auto_dev_stage_order") == stage_order
+            and task.get("auto_dev_stage_policies") == stage_policies
+            and not any(
+                task.get(field)
+                for field in ("subject_revision", "terminal_revision", "deployed_revision")
+            )
+            and delivery.get("state") == "local_validation"
+            and all(
+                isinstance(stages.get(stage), Mapping)
+                and stages[stage].get("status") == "not_started"
+                and stages[stage].get("receipt_refs") == []
+                for stage in fresh_stages
+            )
+        ):
+            raise AutoDevStateError(
+                "active pr_create escalation develop predecessor grants stale downstream authority"
+            )
+        return
+    if target_stage not in {
+        "review_others",
+        "qa",
+        "finalize",
+        "validate_production_release",
+        "merge",
+    }:
+        raise AutoDevStateError(
+            "active pr_create escalation develop predecessor is only valid through governed Merge"
+        )
+    subject_revision = str(task.get("subject_revision") or "").strip()
+    if not (
+        base_contract
+        and task.get("state") == "ready_for_merge"
+        and task.get("failure") is None
+        and task.get("auto_dev_mode") == "everything"
+        and task.get("goal") == "merge"
+        and task.get("auto_dev_start_stage") == "groom"
+        and task.get("auto_dev_completion_stage") == "merge"
+        and task.get("auto_dev_stage_order") == stage_order
+        and task.get("auto_dev_stage_policies") == stage_policies
+        and len(subject_revision) >= 7
+        and not any(task.get(field) for field in ("terminal_revision", "deployed_revision"))
+        and delivery.get("state") == "ready_for_merge"
+        and current.get("subject_revision") == subject_revision
+    ):
+        raise AutoDevStateError(
+            "active pr_create escalation develop predecessor chain is not ready for governed Merge"
+        )
+
+
 def _packet_relative(path: Path, work_item: Path) -> str:
     try:
         return path.resolve().relative_to(work_item.resolve()).as_posix()
@@ -1716,15 +2083,92 @@ def _readiness_stage_authority(
             f"{stage} must bind provider, pull_request, repository, base_branch, "
             "subject_revision, and provider readback"
         )
-    expected_author_kind = "ours" if stage == "finalize" else "others"
+    expected_author_kind = (
+        "ours" if stage in {"finalize", "validate_production_release"} else "others"
+    )
     if authority["author_kind"] != expected_author_kind:
         raise AutoDevStateError(
             f"{stage} can authorize only author_kind={expected_author_kind}"
         )
-    if stage == "finalize" and structured.get("readiness_decision") != "ready_for_merge":
+    if (
+        stage in {"finalize", "validate_production_release"}
+        and structured.get("readiness_decision") != "ready_for_merge"
+    ):
         raise AutoDevStateError(
-            "finalize must record readiness_decision=ready_for_merge and cannot execute the merge"
+            f"{stage} must record readiness_decision=ready_for_merge and cannot execute the merge"
         )
+    if stage == "validate_production_release":
+        check_matrix = structured.get("check_matrix")
+        if not isinstance(check_matrix, list) or not check_matrix:
+            raise AutoDevStateError(
+                "validate_production_release requires a non-empty check_matrix"
+            )
+        check_ids = {
+            str(row.get("check_id") or "").strip()
+            for row in check_matrix
+            if isinstance(row, Mapping)
+        }
+        required_check_ids = {
+            "jira_github_alignment",
+            "exact_release_identity",
+            "qa_per_jira",
+            "whole_diff_policy",
+            "risk_gates",
+            "artifact_rollback_observability",
+            "runtime_consumer_contracts",
+        }
+        missing_check_ids = sorted(required_check_ids - check_ids)
+        if missing_check_ids:
+            raise AutoDevStateError(
+                "validate_production_release check_matrix is missing: "
+                + ", ".join(missing_check_ids)
+            )
+        if not isinstance(structured.get("qa_runs"), list) or not structured[
+            "qa_runs"
+        ]:
+            raise AutoDevStateError(
+                "validate_production_release requires qa_runs per Jira item"
+            )
+        for field, identity_field in (
+            ("consumer_contract_matrix", "consumer_id"),
+            ("tenant_impact_matrix", "tenant"),
+        ):
+            matrix = structured.get(field)
+            if not isinstance(matrix, list) or not matrix:
+                raise AutoDevStateError(
+                    f"validate_production_release requires non-empty {field}"
+                )
+            invalid = [
+                row
+                for row in matrix
+                if not isinstance(row, Mapping)
+                or row.get("status") != "pass"
+                or not str(row.get(identity_field) or "").strip()
+                or not str(row.get("evidence_ref") or "").strip()
+            ]
+            if invalid:
+                raise AutoDevStateError(
+                    f"validate_production_release requires passing, evidence-backed {field}"
+                )
+        if not str(structured.get("compatibility_strategy") or "").strip():
+            raise AutoDevStateError(
+                "validate_production_release requires compatibility_strategy"
+            )
+        for field in ("contract_test_runs", "runtime_readbacks"):
+            if not isinstance(structured.get(field), list) or not structured[field]:
+                raise AutoDevStateError(
+                    f"validate_production_release requires non-empty {field}"
+                )
+        if not str(structured.get("policy_fingerprint") or "").strip():
+            raise AutoDevStateError(
+                "validate_production_release requires policy_fingerprint"
+            )
+        if not isinstance(structured.get("provider_readbacks"), list) or not structured[
+            "provider_readbacks"
+        ]:
+            raise AutoDevStateError(
+                "validate_production_release requires provider_readbacks"
+            )
     if stage == "review_others" and not (
         structured.get("review_mode") == "review_no_merge"
         and structured.get("review_result") == "clean"
@@ -1959,15 +2403,87 @@ def require_auto_dev_predecessors(state_file: str | Path, stage: str) -> dict[st
             missing.append(predecessor)
             continue
         try:
-            receipt_path = _health_stage_receipt_path(
-                work_item,
-                predecessor,
-                str(row.get("status") or ""),
-                row.get("receipt_refs"),
-            )
-            _validate_delivery_stage_task_binding(
-                current, work_item, predecessor, receipt_path
-            )
+            if predecessor == "develop" and name in {
+                "review_self",
+                "review_others",
+                "qa",
+                "finalize",
+                "validate_production_release",
+                "merge",
+            }:
+                # Keep ordinary completed Develop receipts on the normal
+                # immutable task-binding path.  An AGE-190 escalation is
+                # recognisable either from its task-history slot or the
+                # receipt's exact schema/kind; the latter makes deleted
+                # history fail closed rather than turning into a generic
+                # implementation bypass.
+                delivery = (
+                    current.get("delivery")
+                    if isinstance(current.get("delivery"), Mapping)
+                    else {}
+                )
+                task_ref = str(delivery.get("task_state_ref") or "").strip()
+                task = (
+                    _read_json(Path(task_ref).expanduser().resolve())
+                    if task_ref
+                    else {}
+                )
+
+                def active_escalation_receipt(raw_ref: Any) -> bool:
+                    candidate = Path(str(raw_ref or "")).expanduser()
+                    if not candidate.is_file():
+                        return False
+                    try:
+                        receipt = _read_json(candidate.resolve())
+                    except AutoDevStateError:
+                        return False
+                    return (
+                        receipt.get("schema")
+                        == ACTIVE_PR_CREATE_DELIVERY_ESCALATION_SCHEMA
+                        and receipt.get("kind")
+                        == _ACTIVE_PR_CREATE_DELIVERY_ESCALATION_KIND
+                    )
+
+                receipt_refs = row.get("receipt_refs")
+                projected_active_receipt = (
+                    isinstance(receipt_refs, list)
+                    and len(receipt_refs) == 1
+                    and active_escalation_receipt(receipt_refs[0])
+                )
+                recorded_active_receipt = any(
+                    isinstance(receipt, Mapping)
+                    and active_escalation_receipt(receipt.get("ref"))
+                    for receipt in task.get("receipts") or []
+                )
+                is_active_escalation = (
+                    "active_pr_create_delivery_escalations" in task
+                    or projected_active_receipt
+                    or recorded_active_receipt
+                )
+                if is_active_escalation:
+                    _validate_active_pr_create_escalation_develop_predecessor(
+                        current, work_item, target_stage=name
+                    )
+                else:
+                    receipt_path = _health_stage_receipt_path(
+                        work_item,
+                        predecessor,
+                        str(row.get("status") or ""),
+                        receipt_refs,
+                    )
+                    _validate_delivery_stage_task_binding(
+                        current, work_item, predecessor, receipt_path
+                    )
+            else:
+                receipt_path = _health_stage_receipt_path(
+                    work_item,
+                    predecessor,
+                    str(row.get("status") or ""),
+                    row.get("receipt_refs"),
+                )
+                _validate_delivery_stage_task_binding(
+                    current, work_item, predecessor, receipt_path
+                )
         except AutoDevStateError:
             missing.append(predecessor)
     if missing:
@@ -3789,6 +4305,13 @@ def record_auto_dev_stage(
     structured = evidence.get("evidence")
     if not isinstance(structured, Mapping) or not structured:
         raise AutoDevStateError("stage evidence requires a structured evidence object")
+    task_ref = str(current.get("delivery", {}).get("task_state_ref") or "").strip()
+    if name in {"qa", "review_others", "finalize"} and task_ref:
+        task_path = Path(task_ref).expanduser().resolve()
+        if task_path.is_file() and _pending_subject_supersession(_read_json(task_path)):
+            raise AutoDevStateError(
+                f"{name} is blocked until fresh Review Self accepts the refreshed PR head"
+            )
     policy_source: Path | None = None
     proof_sources: list[Path] = []
     if status == "not_required":
@@ -3844,9 +4367,16 @@ def record_auto_dev_stage(
     )
     if status == "completed" and name in REVISION_SENSITIVE_STAGES and not subject_revision:
         raise AutoDevStateError(f"{name} evidence requires subject_revision")
+    if name == "qa" and status == "completed" and task_ref:
+        task_path = Path(task_ref).expanduser().resolve()
+        task = _read_json(task_path) if task_path.is_file() else {}
+        canonical_subject = str(task.get("subject_revision") or "").strip()
+        if canonical_subject and subject_revision != canonical_subject:
+            raise AutoDevStateError(
+                "qa evidence subject_revision must match the canonical reviewed pull-request head"
+            )
     if status == "completed" and name in READINESS_AUTHORITY_STAGES:
         stage_authority = _readiness_stage_authority(name, evidence, subject_revision)
-        task_ref = str(current.get("delivery", {}).get("task_state_ref") or "").strip()
         if not task_ref:
             raise AutoDevStateError(f"{name} requires a linked Development Delivery task")
         task_path = Path(task_ref).expanduser().resolve()

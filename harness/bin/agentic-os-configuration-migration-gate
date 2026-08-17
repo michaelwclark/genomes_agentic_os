@@ -1,0 +1,100 @@
+#!/usr/bin/env python3
+"""Fail-closed gate for migrations that rewrite executable configuration."""
+
+from __future__ import annotations
+
+import argparse
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+MIGRATION_PATH = re.compile(r"(^|/)migrations?/[^/]+\.py$", re.IGNORECASE)
+CONFIG_REWRITE = re.compile(r"reload|configuration|config|rules?|jq|transform|tenant|fixture|backfill|persist", re.IGNORECASE)
+CONFIG_CONTENT = re.compile(r"JQConfiguration|\.jq|transformer|feature[_ -]?flag|tenant[_ -]?(?:config|template)|rules?\s*=", re.IGNORECASE)
+TEST_PATH = re.compile(r"(^|/)(?:tests?|test_)(?:/|[^/]*$)|(?:^|/)test_[^/]+\.py$", re.IGNORECASE)
+COMPILE_EVIDENCE = re.compile(r"jq\.compile|compile\s*\(|JQException|undefined", re.IGNORECASE)
+COMPOSITION_EVIDENCE = re.compile(r"compos|co-dependent|dependency|all\s+six|closure|every\s+dependent", re.IGNORECASE)
+PRESERVE_EVIDENCE = re.compile(r"custom|tenant|drift|preserv|non[- ]?destruct|do not overwrite|audit", re.IGNORECASE)
+RECOVERY_EVIDENCE = re.compile(r"rollback|reverse|revert|before.*after|idempot|transaction", re.IGNORECASE)
+ROLLING_EVIDENCE = re.compile(r"rolling|old pod|previous version|backward|compatib|mixed[- ]version", re.IGNORECASE)
+
+
+def run_git(root: Path, *args: str) -> str:
+    result = subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True, check=False)
+    return result.stdout if result.returncode == 0 else ""
+
+
+def ref_exists(root: Path, ref: str) -> bool:
+    return bool(run_git(root, "rev-parse", "--verify", ref).strip())
+
+
+def changed_files(root: Path, base: str) -> list[str]:
+    names: set[str] = set()
+    if ref_exists(root, base):
+        names.update(run_git(root, "diff", "--name-only", "--diff-filter=ACMR", f"{base}...HEAD").splitlines())
+    names.update(run_git(root, "diff", "--name-only", "--diff-filter=ACMR").splitlines())
+    names.update(run_git(root, "diff", "--cached", "--name-only", "--diff-filter=ACMR").splitlines())
+    names.update(run_git(root, "ls-files", "--others", "--exclude-standard").splitlines())
+    return sorted(name.strip() for name in names if name.strip())
+
+
+def diff_text(root: Path, base: str) -> str:
+    chunks: list[str] = []
+    if ref_exists(root, base):
+        chunks.append(run_git(root, "diff", f"{base}...HEAD"))
+    chunks.extend((run_git(root, "diff"), run_git(root, "diff", "--cached")))
+    for name in run_git(root, "ls-files", "--others", "--exclude-standard").splitlines():
+        path = root / name.strip()
+        if path.is_file():
+            try:
+                chunks.append(path.read_text(encoding="utf-8"))
+            except OSError:
+                pass
+    return "\n".join(chunks)
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--base", default="origin/develop")
+    parser.add_argument("--root", default=".")
+    args = parser.parse_args(argv)
+    root = Path(args.root).expanduser().resolve()
+    if not run_git(root, "rev-parse", "--show-toplevel").strip():
+        print(f"CONFIGURATION MIGRATION GATE BLOCKED: not a git repository: {root}", file=sys.stderr)
+        return 2
+    files = changed_files(root, args.base)
+    diff = diff_text(root, args.base)
+    migration_files = [name for name in files if MIGRATION_PATH.search(name) and (CONFIG_REWRITE.search(name) or CONFIG_CONTENT.search(diff))]
+    if not migration_files:
+        print("CONFIGURATION MIGRATION GATE PASS: no executable-configuration migration changed.")
+        return 0
+    test_files = [name for name in files if TEST_PATH.search(name)]
+    missing: list[str] = []
+    requirements = (
+        (COMPILE_EVIDENCE, "composed runtime compile/undefined-helper evidence"),
+        (COMPOSITION_EVIDENCE, "complete dependency-closure/composition evidence"),
+        (PRESERVE_EVIDENCE, "tenant customization preservation/readback evidence"),
+        (RECOVERY_EVIDENCE, "idempotency and rollback/recovery evidence"),
+        (ROLLING_EVIDENCE, "mixed-version/rolling-deploy compatibility evidence"),
+    )
+    if not test_files:
+        missing.append("a migration regression test")
+    for pattern, label in requirements:
+        if not pattern.search(diff):
+            missing.append(label)
+    if missing:
+        print("CONFIGURATION MIGRATION GATE BLOCKED: executable configuration is rewritten without proof.", file=sys.stderr)
+        print("Migration files:", file=sys.stderr)
+        for name in migration_files:
+            print(f"  - {name}", file=sys.stderr)
+        print("Missing:", file=sys.stderr)
+        for item in missing:
+            print(f"  - {item}", file=sys.stderr)
+        return 1
+    print("CONFIGURATION MIGRATION GATE PASS: composed configuration, preservation, recovery, and rolling-compatibility evidence found.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -55,6 +55,10 @@ Validate an installed OS root for structural correctness. Exits 1 on errors, 0 o
 | Arg / Flag | Required | Description |
 |---|---|---|
 | `--root` | No (default: `~/agentic_os`) | Installed OS root path |
+| `--scope` | No (default: `root`) | Validate `root`, `registries`, `domains`, `work-items`, or `structured-files` |
+| `--timeout-seconds` | No (default: `300`) | Hard wall-clock bound before the worker is terminated |
+| `--no-progress-seconds` | No (default: `60`) | Terminate if the worker emits no progress within this bound |
+| `--progress-interval-seconds` | No (default: `5`) | Emit an observable running status at this interval |
 
 Reads: directory tree at `--root`. Writes: nothing.
 
@@ -64,7 +68,7 @@ agentic-os validate --root /tmp/aos-ref
 
 Real output (success):
 ```text
-valid: /tmp/aos-ref
+valid: /tmp/aos-ref (scope=root)
 ```
 
 Status: **OK** (rc 0)
@@ -481,6 +485,40 @@ agentic-os here context build --root /tmp/aos-ref
 ```
 
 Status: not individually validated in RESULTS.md.
+
+---
+
+### `agentic-os-policy-context`
+
+Resolve the complete, hashed policy context before making a source change or
+reviewing one. This harness executable composes the five Agentic OS policy
+planes with the selected checkout's `AGENTS.md`, nested `AGENTS.md`, and
+declared Claude rule surfaces. It emits a paste-ready
+`effective-policy-context/v1` block and can persist the structured result as a
+work-item receipt.
+
+```bash
+harness/bin/agentic-os-policy-context \
+  --path /path/to/registered/worktree \
+  --strict-source-rules \
+  --receipt artifacts/policy-context.json
+```
+
+It recognizes only canonical project profiles:
+
+- `domains/<domain>/02-projects/<project>/config/development.yml`
+- `harness/shared_factory/02-projects/<project>/config/development.yml`
+
+When `--path` targets a registered worktree, source-rule hashing uses that
+worktree rather than silently substituting the configured primary checkout.
+Project-visible external worktree links are matched before symlink resolution
+and must share the selected repository's Git common directory. In a
+multi-repository project, `--repository` and `--path` must identify the same
+checkout; a mismatch is a blocker rather than a misleading policy receipt.
+The executable fails closed (exit 2) for missing profiles, missing required
+source rules, invalid or unmatched declared source-rule globs, alias profiles,
+or an inventory that exceeds the reviewed safety limit; it never emits a
+partial effective-policy fingerprint.
 
 ---
 
@@ -2105,6 +2143,20 @@ closed terminal canonical row pointing to the selected `03-complete` packet,
 and cleared prior worktree pointers. It creates one new active packet and reopen
 receipt, then provisions a fresh worktree/runtime registration. Repeating the
 same run id returns the existing reopen; it does not create a second packet.
+
+The prior frozen context is carried unchanged by default. Passing a new
+`--touched-path`, `--subject`, or `--rulebook-id` without `--reselect-context`
+fails closed. An explicit reselect uses:
+
+```bash
+agentic-os auto-dev reopen --state <finished-packet-or-autodev.json> \
+  --run-id <new-run-id> --reason "<reason>" --stage qa \
+  --reselect-context --touched-path <repo-relative-path> \
+  --subject rulebook --rulebook-id <exact-rulebook-key> --apply
+```
+
+The reopen receipt binds both prior and selected context hashes, preserving
+path/subject provenance rather than recomputing or silently dropping it.
 
 Run one named workflow with the same state model:
 
