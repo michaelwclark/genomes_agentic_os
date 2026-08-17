@@ -1953,7 +1953,7 @@ the source of truth by themselves.
 | `auto-dev-qa` | Run project-configured QA independently. | `skills/auto-dev-qa/SKILL.md` |
 | `auto-dev-review-repair` | Own canonical review and repair behind Review Self. | `skills/auto-dev-review-repair/SKILL.md` |
 | `auto-dev-finalize` | Converge our ticket's pull-request family and record merge readiness without merging. | `skills/auto-dev-finalize/SKILL.md` |
-| `auto-dev-validate-production-release` | Validate release-family membership, exact revisions, matching QA, whole-diff policy review, risk gates, and release operations before Merge. | `skills/auto-dev-validate-production-release/SKILL.md` |
+| `auto-dev-validate-production-release` | Validate the finalized release family, exact revisions, QA, and policy evidence before Merge without mutation. | `skills/auto-dev-validate-production-release/SKILL.md` |
 | `auto-dev-merge` | Run the final live merge gate. | `skills/auto-dev-merge/SKILL.md` |
 | `auto-dev-release-propagation` | Compatibility alias for Auto-Dev PR Create family mode and its lower-level recorder. | `skills/auto-dev-release-propagation/SKILL.md` |
 | `auto-dev-release` | Create and verify the project release. | `skills/auto-dev-release/SKILL.md` |
@@ -1995,7 +1995,7 @@ the source of truth by themselves.
 | `/auto-dev-qa` | Run project-configured QA independently. | Records exact-revision evidence. |
 | `/auto-dev-review-repair` | Invoke the canonical review-and-repair owner directly. | Compatibility/manual expert entrypoint behind Review Self. |
 | `/auto-dev-finalize` | Converge our ticket's pull-request family. | Leaves immutable merge readiness or an exact hold; never merges. |
-| `/auto-dev-validate-production-release` | Validate the production release candidate before Merge. | Read-only; blocks on missing or stale provider, QA, policy, risk, artifact, rollback, or observability evidence. |
+| `/auto-dev-validate-production-release` | Validate the finalized release family before Merge. | Read-only exact-revision, QA, and policy validation. |
 | `/auto-dev-merge` | Execute the final merge gate. | Requires PR-owner readiness and live provider readback. |
 | `/auto-dev-release-propagation` | Run PR Create family mode through the legacy name. | Compatibility alias. |
 | `/auto-dev-release` | Create and verify the project release. | Uses release policy and provider readback. |
@@ -3841,7 +3841,8 @@ def project_config_file_content(
                 "tracker": "linear",
                 "stages": [
                     "groom", "detective", "create_artifacts", "readiness", "develop", "document",
-                    "pr_create", "review_self", "review_others", "qa", "finalize", "validate_production_release", "merge", "release",
+                    "pr_create", "review_self", "review_others", "qa", "finalize",
+                    "validate_production_release", "merge", "release",
                     "deploy", "closeout", "health",
                 ],
                 "completion": "delivery_complete",

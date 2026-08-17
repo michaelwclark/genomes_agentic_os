@@ -643,7 +643,7 @@ skills:
     status: active
     builtin: true
     bootstrap: false
-    purpose: Validate exact release-candidate evidence and operational gates before merge.
+    purpose: Read-only release-family, revision, QA, and policy validation after Finalize and before Merge.
   - id: auto-dev-merge
     title: Auto-Dev Merge
     source_path: harness/skills/auto-dev-merge

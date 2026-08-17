@@ -37,7 +37,7 @@ The runtime order is:
 9. Review Others
 10. QA
 11. Finalize
-12. Validate Production Release
+12. Production Release Validation
 13. Merge
 14. Release
 15. Deploy

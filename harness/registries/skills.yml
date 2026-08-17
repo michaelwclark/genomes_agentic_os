@@ -278,9 +278,8 @@ skills:
   source: harness/skills/auto-dev-finalize/SKILL.md
 - id: auto-dev-validate-production-release
   name: Auto-Dev Validate Production Release
-  description: Validate the complete Jira/GitHub release family, exact revisions,
-    matching QA evidence, effective-policy diff review, risk gates, and release
-    operations before Auto-Dev Merge.
+  description: Read-only release-family, revision, QA, and policy validation after
+    Finalize and before Auto-Dev Merge.
   source: harness/skills/auto-dev-validate-production-release/SKILL.md
 - id: auto-dev-merge
   name: Auto-Dev Merge

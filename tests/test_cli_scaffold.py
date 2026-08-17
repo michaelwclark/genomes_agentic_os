@@ -599,6 +599,7 @@ def test_auto_dev_artifact_contracts_install_and_validate(tmp_path: Path) -> Non
         "auto-dev-review-self",
         "auto-dev-review-others",
         "auto-dev-finalize",
+        "auto-dev-validate-production-release",
         "auto-dev-merge",
         "auto-dev-release-propagation",
         "auto-dev-release",

@@ -50,7 +50,7 @@ the source of truth by themselves.
 | `pull-request` | Compatibility alias to canonical `pr-review`; legacy flags are preserved, but no duplicate review policy remains. | `harness/skills/pull-request/SKILL.md` |
 | `watch-pr-quiet` | Monitor GitHub PR checks through file-based watcher artifacts instead of repeated chat polling. | `harness/skills/watch-pr-quiet/SKILL.md` |
 | `auto-dev-finalize` | Independently review and finalize every gitflow PR for one tracker ticket, with reciprocal GPT/FABLE review, per-PR opt-out, Copilot/CI/acceptance gates, and guarded family merge. | `harness/skills/auto-dev-finalize/SKILL.md` |
-| `auto-dev-validate-production-release` | Validate Jira/GitHub release-family alignment, exact revisions, matching QA Runs, whole-diff policy review, risk gates, and release operations before Merge. | `harness/skills/auto-dev-validate-production-release/SKILL.md` |
+| `auto-dev-validate-production-release` | Read-only validation of the finalized release family, exact revisions, QA, and policy evidence before Merge. | `harness/skills/auto-dev-validate-production-release/SKILL.md` |
 | `gitflow-pr-create` | Plan or create missing tracker-keyed PR-family targets from the F2 topology resolver; never merge. | `harness/skills/gitflow-pr-create/SKILL.md` |
 | `los-tenant-data` | Route LOS tenant configuration, rules-engine, runtime-data, governed-change, and test-object requests through one local-first program. | `.agents/skills/los-tenant-data/SKILL.md` |
 | `los-rules` | List, inspect, search, compare, and check freshness for local redacted LOS rules-engine snapshots. | `.agents/skills/los-rules/SKILL.md` |
@@ -164,7 +164,6 @@ Registry-confirmed active Composio routes: `notion`, `agent_mail`, `confluence`,
 | `agentic-os-quiet-run` | Detached artifact-backed execution for long local commands. | `harness/bin/agentic-os-quiet-run` |
 | `agentic-os-status-report` | Generate recent-work report bundles. | `harness/bin/agentic-os-status-report` |
 | `agentic-os-automation-run-summary` | Replace a pre-mapped automation's Genome Notion Automations child page with the latest run summary. | `harness/bin/agentic-os-automation-run-summary` |
-| `agentic-os-runtime-contract-gate` | Fail closed on serializer/request/payload/rule contract changes without consumer-compatibility evidence. | `harness/bin/agentic-os-runtime-contract-gate` |
 
 ## Programs
 

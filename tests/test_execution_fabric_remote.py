@@ -1084,7 +1084,8 @@ def test_registered_team_pr_domain_worker_invokes_installed_safe_helper(
         captured["calls"] += 1
         helper_command = shlex.split(command)
         helper_result = {
-            "status": "findings",
+            "status": "succeeded",
+            "outcome": "findings",
             "run_id": helper_command[helper_command.index("--run-id") + 1],
             "source_key": "github-pr-42",
             "canonical_review_receipt": canonical,
@@ -1492,6 +1493,67 @@ def test_team_pr_live_pid_with_unknown_command_stays_fenced(
     )
 
     assert execution_fabric_remote._process_is_team_pr_helper(4242, "run-id") is True
+
+
+def test_team_pr_helper_receipt_wrapper_accepts_only_current_or_legacy_shape(
+    tmp_path: Path,
+) -> None:
+    canonical = {"outcome": "findings"}
+    assert (
+        execution_fabric_remote.TEAM_PR_HELPER_COMPLETED_STATUS
+        not in execution_fabric_remote.TEAM_PR_REVIEW_OUTCOMES
+    )
+    receipt_hash = sha256(
+        json.dumps(
+            canonical, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        ).encode("utf-8")
+    ).hexdigest()
+
+    assert (
+        execution_fabric_remote._validate_team_pr_helper_receipt_wrapper(
+            {
+                "status": "succeeded",
+                "outcome": "findings",
+                "receipt_sha256": receipt_hash,
+            },
+            canonical,
+            receipt_hash,
+            receipt_path=tmp_path / "receipt.json",
+        )
+        == "findings"
+    )
+    assert (
+        execution_fabric_remote._validate_team_pr_helper_receipt_wrapper(
+            {"status": "findings", "receipt_sha256": receipt_hash},
+            canonical,
+            receipt_hash,
+            receipt_path=tmp_path / "receipt.json",
+        )
+        == "findings"
+    )
+    for malformed in (
+        {"status": "succeeded", "outcome": "", "receipt_sha256": receipt_hash},
+        {"status": "completed", "outcome": "findings", "receipt_sha256": receipt_hash},
+        {"status": "succeeded", "outcome": "findings", "receipt_sha256": "bad"},
+        {"status": "pending", "receipt_sha256": receipt_hash},
+    ):
+        with pytest.raises(TaskExecutionError) as failure:
+            execution_fabric_remote._validate_team_pr_helper_receipt_wrapper(
+                malformed,
+                canonical,
+                receipt_hash,
+                receipt_path=tmp_path / "receipt.json",
+            )
+        assert failure.value.code == "invalid_team_pr_helper_receipt"
+
+    with pytest.raises(TaskExecutionError) as empty_canonical:
+        execution_fabric_remote._validate_team_pr_helper_receipt_wrapper(
+            {"status": "succeeded", "outcome": "", "receipt_sha256": receipt_hash},
+            {"outcome": ""},
+            receipt_hash,
+            receipt_path=tmp_path / "receipt.json",
+        )
+    assert empty_canonical.value.code == "invalid_team_pr_helper_receipt"
 
 
 def test_team_pr_changed_head_helper_receipt_produces_no_projection_effect(

@@ -254,6 +254,33 @@ A workflow must not rename a required check accidentally. Protection changes are
 separate, explicitly reviewed provider mutations and are never a side effect of
 release-contract adoption.
 
+## Auto-merge and protection policy
+
+All four repositories use pull requests as the only normal path into a
+protected release branch. Auto-merge may be enabled on an individual pull
+request only after the repository's required checks, a named qualifying
+automated-test check has actually executed tests on that exact head, the
+configured opposing review, and the exact-head Finalize receipt are green. A
+packaging, lint, documentation, or metadata-only result is never a substitute
+for the qualifying test execution. It never bypasses a required check, review,
+or merge method.
+
+The provider policy is deliberately staged by repository readiness:
+
+| Repository | Protection baseline | Qualifying automated-test execution | Auto-merge eligibility |
+| --- | --- | --- | --- |
+| Agentic OS `main` | Required checks listed above; administrators enforced; force-push and deletion disabled | `Python suite and packaging` must report its test execution, not only packaging | Eligible when that test check and Auto-Dev Finalize are green |
+| Harness `main` | `validate-and-package`; administrators enforced; force-push and deletion disabled | `validate-and-package`, but only when its exact job receipt proves the suite executed | Eligible when that proven test check and Finalize are green |
+| Brain `main` and `develop` | `test`; stale-review dismissal enabled; force-push and deletion disabled | `test` | Eligible when the `test` check and Finalize are green on the protected target branch |
+| Library `main` | Require the `validate` workflow check only after provider readback confirms the workflow is present on the target branch | None while the repository remains in staged adoption | Remains in staged adoption until direct-push/release behavior is verified |
+
+The library row is an intentional safety boundary: a missing or skipped check
+must not be replaced with a guessed context, and branch protection must not be
+enabled until its release workflow and direct-push behavior are independently
+verified. Any provider mutation records the repository, branch, exact required
+contexts, actor, timestamp, and readback. No administrator bypass, force push,
+or branch deletion is permitted.
+
 ## Manual run and per-repository runbooks
 
 The contract itself has no manual entry point; it is callable only as a reusable

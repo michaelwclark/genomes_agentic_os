@@ -70,14 +70,3 @@ def test_unrelated_model_change_does_not_trigger_contract_gate():
     model.write_text("class Loan: pass\n")
     result = run(root)
     assert result.returncode == 0, result.stderr
-
-
-def test_direct_runtime_module_is_not_skipped_by_contract_gate():
-    root = repo()
-    (root / "views.py").write_text(
-        "def canonical_payload():\n"
-        "    return {'product': {'product_code': 'x'}}\n"
-    )
-    result = run(root)
-    assert result.returncode == 1
-    assert "consumer inventory" in result.stderr

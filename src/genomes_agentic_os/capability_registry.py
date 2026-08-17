@@ -146,7 +146,7 @@ def command_entries() -> list[dict[str, str]]:
         {
             "id": "auto-dev-validate-production-release",
             "command": "/auto-dev-validate-production-release",
-            "description": "Validate the production release candidate and its exact evidence before the final merge.",
+            "description": "Read-only validation of the finalized release family, exact revision, QA, and policy evidence before Merge.",
             "source": "harness/commands/auto-dev-validate-production-release.md",
         },
         {
@@ -1021,7 +1021,7 @@ def skill_entries() -> list[dict[str, str]]:
         {
             "id": "auto-dev-validate-production-release",
             "name": "Auto-Dev Validate Production Release",
-            "description": "Validate exact release-candidate evidence and operational gates before merge.",
+            "description": "Read-only validation of the finalized release family, exact revision, QA, and policy evidence before Merge.",
             "source": "harness/skills/auto-dev-validate-production-release/SKILL.md",
         },
         {

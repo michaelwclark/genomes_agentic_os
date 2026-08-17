@@ -133,6 +133,23 @@ describe.skipIf(!enabled)("PostgreSQL + Valkey integration", () => {
       ],
     });
     expect(completed.status).toBe("succeeded");
+    expect(completed).toMatchObject({
+      result: { echoed: true },
+      lastErrorCode: null,
+      lastErrorSummary: null,
+    });
+    expect(completed.completedAt).toEqual(expect.any(String));
+    expect(completed.updatedAt).toEqual(expect.any(String));
+    const restartedLedger = new PostgresLedger(pool, 45);
+    expect(await restartedLedger.getTask(first.task.id)).toMatchObject({
+      id: first.task.id,
+      status: "succeeded",
+      result: { echoed: true },
+      completedAt: completed.completedAt,
+      updatedAt: completed.updatedAt,
+      lastErrorCode: null,
+      lastErrorSummary: null,
+    });
     const afterCompletion = await fabric.ledger.runSnapshot(10);
     const attemptHistory = afterCompletion.find(
       (run) => run.taskId === first.task.id,
@@ -303,6 +320,45 @@ describe.skipIf(!enabled)("PostgreSQL + Valkey integration", () => {
         }),
       ]),
     );
+  });
+
+  it("requeues a terminal task without resetting its run counter", async () => {
+    const admitted = await fabric.admit({
+      namespace: `requeue-${randomUUID()}`,
+      queue: "code",
+      taskType: "example.run",
+      idempotencyKey: `requeue-${randomUUID()}`,
+      payload: {},
+      requiredCapabilities: ["test.run"],
+      maxAttempts: 3,
+    });
+    await pool.query(
+      `UPDATE fabric_tasks
+       SET status='dead_lettered',attempt_count=3,completed_at=now()
+       WHERE id=$1`,
+      [admitted.task.id],
+    );
+    await pool.query(
+      `UPDATE fabric_state
+       SET leader_host_id='integration-host',
+           leader_lease_expires_at=now()+interval '1 minute'
+       WHERE singleton=true`,
+    );
+
+    const receipt = await new PostgresReliabilityStore(
+      pool,
+      "integration-host",
+    ).requeueTask(
+      admitted.task.id,
+      "integration-operator",
+      `requeue:${admitted.task.id}`,
+    );
+
+    expect(receipt.after_state).toMatchObject({
+      id: admitted.task.id,
+      status: "queued",
+      attempt_count: 3,
+    });
   });
 
   it("idempotently ingests source-scoped observations and derives sticky alarms", async () => {

@@ -16,7 +16,7 @@ command document explains routing, inputs, safety gates, and output receipts.
 | [`auto-dev-document.md`](auto-dev-document.md) | Create source-backed code, issue, architecture, operational, QA, release, or handoff documentation. |
 | [`auto-dev-everything.md`](auto-dev-everything.md) | Drive every applicable workflow for a work item through one resumable lifecycle. |
 | [`auto-dev-finalize.md`](auto-dev-finalize.md) | Converge agent-authored PRs and record immutable merge readiness without merging. |
-| [`auto-dev-validate-production-release.md`](auto-dev-validate-production-release.md) | Validate exact release-candidate evidence and operational gates before Merge. |
+| [`auto-dev-validate-production-release.md`](auto-dev-validate-production-release.md) | Read-only validation of the finalized release family before Merge. |
 | [`auto-dev-grooming.md`](auto-dev-grooming.md) | Turn rough work into an implementation-ready, provider-backed specification. |
 | [`auto-dev-health.md`](auto-dev-health.md) | Audit final receipts, clean only reconstructable item-local resources, and preserve the packet in the finished lane. |
 | [`auto-dev-implementation.md`](auto-dev-implementation.md) | Manually run isolated implementation and local validation. |

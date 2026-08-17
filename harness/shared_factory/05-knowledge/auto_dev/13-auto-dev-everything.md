@@ -31,7 +31,7 @@ or provider authority.
 | 9 | Review Others | clean no-merge review or actionable findings |
 | 10 | QA | every applicable gate passed, failed, or blocked |
 | 11 | Finalize | governed `ready_for_merge` decision for our work |
-| 12 | Validate Production Release | Jira/GitHub family, exact QA, whole-diff policy, and operational release evidence |
+| 12 | Production Release Validation | read-only release-family and evidence validation before Merge |
 | 13 | Merge | provider-read merged result and `merge_sha` |
 | 14 | Release | exact published version/artifact readback |
 | 15 | Deploy | exact artifact verified in target environment |

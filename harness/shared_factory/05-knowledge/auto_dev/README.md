@@ -65,7 +65,7 @@ runs next.
 | 9 | Review Others | `04-auto-dev-review-others.md` |
 | 10 | QA | `06-auto-dev-qa.md` |
 | 11 | Finalize | `07-auto-dev-finalize.md` |
-| 12 | Validate Production Release | `15-auto-dev-validate-production-release.md` |
+| 12 | Production Release Validation | `19-auto-dev-validate-production-release.md` |
 | 13 | Merge | `08-auto-dev-merge.md` |
 | 14 | Release | `10-auto-dev-release.md` |
 | 15 | Deploy | `09-auto-dev-deploy.md` |
@@ -78,7 +78,7 @@ Create. It is intentionally outside this stage table and never adds a
 seventeenth workflow or moves PR creation after QA.
 
 Each workflow has a same-named command and skill and can be started directly.
-`/auto-dev-everything` coordinates all sixteen over one work item. A later
+`/auto-dev-everything` coordinates all seventeen over one work item. A later
 external stage may not bypass missing predecessor evidence. When policy truly
 makes a stage inapplicable, the stage remains visible with a typed,
 frozen-policy-backed `not_required` decision.

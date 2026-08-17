@@ -451,39 +451,6 @@ def _health_gate(
             if stage == "finalize":
                 structured.update(authority)
                 structured["readiness_decision"] = "ready_for_merge"
-            if stage == "validate_production_release":
-                structured.update(authority)
-                structured["readiness_decision"] = "ready_for_merge"
-                structured["check_matrix"] = [
-                    {"check_id": check_id, "status": "pass"}
-                    for check_id in (
-                        "jira_github_alignment",
-                        "exact_release_identity",
-                        "qa_per_jira",
-                        "whole_diff_policy",
-                        "risk_gates",
-                        "artifact_rollback_observability",
-                        "runtime_consumer_contracts",
-                    )
-                ]
-                structured["qa_runs"] = [{"jira": "fixture-health", "status": "pass"}]
-                structured["consumer_contract_matrix"] = [
-                    {"consumer_id": "fixture", "status": "pass", "evidence_ref": "fixture"}
-                ]
-                structured["tenant_impact_matrix"] = [
-                    {"tenant": "fixture", "status": "pass", "evidence_ref": "fixture"}
-                ]
-                structured["compatibility_strategy"] = "fixture compatibility"
-                structured["contract_test_runs"] = ["fixture"]
-                structured["runtime_readbacks"] = ["fixture"]
-                structured["independent_review"] = {
-                    "status": "pass",
-                    "reviewer": "test:independent",
-                }
-                structured["policy_fingerprint"] = "fixture-policy-fingerprint"
-                structured["provider_readbacks"] = [
-                    {"provider": "github", "status": "pass"}
-                ]
         payload: dict[str, object] = {
             "schema": AUTO_DEV_STAGE_EVIDENCE_SCHEMA,
             "stage": stage,
@@ -510,6 +477,9 @@ def _health_gate(
     record_stage("review_others", not_required=True)
     record_stage("qa", revision=subject_revision)
     record_stage("finalize", revision=subject_revision)
+    # Production-release validation is a required delivery stage whenever it
+    # is present in the frozen workflow order.  Record its terminal fixture
+    # evidence after Finalize so Health can validate every earlier stage.
     record_stage("validate_production_release", revision=subject_revision)
     record_stage("release", revision=terminal_revision)
     if runtime_collision:
@@ -599,6 +569,57 @@ def test_merged_cleanup_uses_exact_git_worktree_removal(tmp_path: Path) -> None:
         text=True,
     ).stdout
     assert str(worktree) not in listed
+
+
+def test_health_cleanup_removes_exact_registered_external_worktree(tmp_path: Path) -> None:
+    root, repository, worktree = _cleanup_fixture(tmp_path, {"pr_state": "merged"})
+    project = root / "domains" / "acme" / "02-projects" / "app"
+    external = tmp_path / "external-feature"
+    subprocess.run(
+        ["git", "-C", str(repository), "worktree", "move", str(worktree), str(external)],
+        check=True,
+        capture_output=True,
+    )
+    visible_link = project / "worktrees" / "feature"
+    visible_link.symlink_to(external, target_is_directory=True)
+    registry = project / "config" / "worktrees.yml"
+    registry.write_text(
+        yaml.safe_dump(
+            {
+                "worktrees": {
+                    "registered": [
+                        {
+                            "id": "feature",
+                            "path": str(external),
+                            "link": "worktrees/feature",
+                            "link_policy": "symlink_to_external_worktree",
+                            "status": "active",
+                            "pr_state": "merged",
+                        }
+                    ]
+                }
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    preflight, runtime = _health_gate(root, external)
+
+    result = cleanup_terminal_worktrees(
+        root,
+        domain="acme",
+        project="app",
+        worktree="feature",
+        health_preflight=preflight,
+        runtime_receipt=runtime,
+        apply=True,
+        remove_files=True,
+    )
+
+    assert not external.exists()
+    assert not visible_link.exists()
+    assert _registered(root) == []
+    assert result["removed"][0]["reason"] == "removed exact typed merged git worktree"
 
 
 def test_cleanup_accepts_configured_later_health_window_and_safe_order(

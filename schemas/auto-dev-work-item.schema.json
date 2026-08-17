@@ -32,13 +32,13 @@
     },
     "subject_revision": {"type": ["string", "null"]},
     "terminal_revision": {"type": ["string", "null"]},
-    "start_stage": {"enum": ["groom", "detective", "create_artifacts", "readiness", "develop", "document", "pr_create", "review_self", "review_others", "qa", "finalize", "merge", "release", "deploy", "closeout", "health"]},
-    "completion_stage": {"enum": ["groom", "detective", "create_artifacts", "readiness", "develop", "document", "pr_create", "review_self", "review_others", "qa", "finalize", "merge", "release", "deploy", "closeout", "health"]},
+    "start_stage": {"enum": ["groom", "detective", "create_artifacts", "readiness", "develop", "document", "pr_create", "review_self", "review_others", "qa", "finalize", "validate_production_release", "merge", "release", "deploy", "closeout", "health"]},
+    "completion_stage": {"enum": ["groom", "detective", "create_artifacts", "readiness", "develop", "document", "pr_create", "review_self", "review_others", "qa", "finalize", "validate_production_release", "merge", "release", "deploy", "closeout", "health"]},
     "stage_policies": {"type": "object"},
     "status": {"enum": ["ready", "running", "paused", "blocked", "completed"]},
     "current_stage": {
       "type": ["string", "null"],
-      "enum": [null, "groom", "detective", "create_artifacts", "readiness", "develop", "document", "pr_create", "review_self", "review_others", "qa", "finalize", "merge", "release", "deploy", "closeout", "health"]
+      "enum": [null, "groom", "detective", "create_artifacts", "readiness", "develop", "document", "pr_create", "review_self", "review_others", "qa", "finalize", "validate_production_release", "merge", "release", "deploy", "closeout", "health"]
     },
     "stage_order": {
       "type": "array",

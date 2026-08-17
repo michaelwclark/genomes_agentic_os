@@ -41,6 +41,7 @@ from genomes_agentic_os.development_delivery import (
     validate_workflow_contracts,
 )
 from genomes_agentic_os.lifecycle import sync_active_container
+from genomes_agentic_os.review_coordination import ReviewCoordinator, ReviewSubject
 from genomes_agentic_os.scaffold import create_project
 from genomes_agentic_os.state import work_items as canonical_work_items
 from genomes_agentic_os.state.db import connect as connect_state
@@ -337,6 +338,30 @@ def _provider_authority(
     }
 
 
+def _review_coordination_receipt(
+    task: TaskState,
+    *,
+    subject_revision: str,
+    pull_request: str,
+) -> str:
+    value = task.read()
+    repository = value["repository"]
+    work_item = Path(value["work_item"])
+    policy_fingerprint = str(value.get("policy_fingerprint") or "b" * 64)
+    subject = ReviewSubject(
+        repository=str(repository["id"]),
+        pull_request=pull_request,
+        base_branch=str(repository["base_branch"]),
+        base_sha=str(repository.get("base_sha") or subject_revision),
+        head_sha=subject_revision,
+        policy_fingerprint=policy_fingerprint,
+    )
+    completed = ReviewCoordinator(
+        work_item / "artifacts" / "auto-dev-review" / "review-coordination"
+    ).execute(subject, lambda: {"outcome": "clean"})
+    return str(completed.receipt_path)
+
+
 def _record_standalone_stage(
     task: TaskState,
     stage: str,
@@ -357,43 +382,11 @@ def _record_standalone_stage(
     else:
         proof = _packet_proof(work_item, stage)
         structured = {"receipt_refs": [str(proof)]}
-        if stage in {"review_others", "finalize", "validate_production_release"}:
+        if stage in {"review_others", "finalize"}:
             assert pull_request is not None
             structured.update(_provider_authority(task, pull_request=pull_request))
             if stage == "finalize":
                 structured["readiness_decision"] = "ready_for_merge"
-            elif stage == "validate_production_release":
-                structured["readiness_decision"] = "ready_for_merge"
-                structured["check_matrix"] = [
-                    {"check_id": check_id, "status": "pass"}
-                    for check_id in (
-                        "jira_github_alignment",
-                        "exact_release_identity",
-                        "qa_per_jira",
-                        "whole_diff_policy",
-                        "risk_gates",
-                        "artifact_rollback_observability",
-                        "runtime_consumer_contracts",
-                    )
-                ]
-                structured["qa_runs"] = [{"jira": "fixture", "status": "pass"}]
-                structured["consumer_contract_matrix"] = [
-                    {"consumer_id": "fixture", "status": "pass", "evidence_ref": "fixture"}
-                ]
-                structured["tenant_impact_matrix"] = [
-                    {"tenant": "fixture", "status": "pass", "evidence_ref": "fixture"}
-                ]
-                structured["compatibility_strategy"] = "fixture compatibility"
-                structured["contract_test_runs"] = ["fixture"]
-                structured["runtime_readbacks"] = ["fixture"]
-                structured["independent_review"] = {
-                    "status": "pass",
-                    "reviewer": "test:independent",
-                }
-                structured["policy_fingerprint"] = "fixture-policy-fingerprint"
-                structured["provider_readbacks"] = [
-                    {"provider": "github", "status": "pass"}
-                ]
             else:
                 structured.update(
                     {"review_mode": "review_no_merge", "review_result": "clean"}
@@ -522,6 +515,905 @@ def _complete_pre_merge_auto_dev(
         subject_revision=subject_revision,
         pull_request=pull_request,
     )
+
+
+def _active_nonblocked_pr_create_escalation_fixture(
+    tmp_path: Path,
+) -> tuple[Path, TaskState, Path, Path, Path]:
+    """Materialize the exact historical AGE-190 PR Create boundary.
+
+    This intentionally retains the odd portfolio-level ``develop`` request and
+    enabled worktree provisioning that the old, already-open PR record wrote.
+    It is not a general single-stage fixture: every predecessor is receipt-backed
+    and the only task-level stage receipt is the immutable release propagation
+    wrapper that owns the PR identity.
+    """
+
+    repo, base_sha = _repository(tmp_path)
+    root = tmp_path / "os"
+    _project(root, repo, repository_id="git:github.com/acme/app")
+    run = delivery.start_development_run(
+        root,
+        "acme",
+        "app",
+        ["CC-190"],
+        run_id="active-pr-create-escalation",
+        auto_dev_mode="single_stage",
+        requested_stage="pr_create",
+        goal="pr_create",
+        apply=True,
+    )
+    task = TaskState(Path(run["tasks"][0]["state_ref"]))
+    work_item = Path(task.read()["work_item"])
+    run_development_stage(
+        task.path,
+        stage="readiness",
+        receipts={"planned": _stage_receipt(work_item, "planned")},
+        idempotency_prefix="cc-190:readiness",
+    )
+    run_development_stage(
+        task.path,
+        stage="implementation",
+        receipts={
+            "implementing": _stage_receipt(work_item, "implementing"),
+            "local_validation": _stage_receipt(work_item, "local_validation"),
+        },
+        idempotency_prefix="cc-190:implementation",
+    )
+    for stage in ("groom", "detective", "create_artifacts", "document"):
+        _record_standalone_stage(task, stage)
+    source_branch = str(task.read()["worktree"]["branch"])
+    source_head_sha = "d" * 40
+    pr_create_artifacts = work_item / "artifacts" / "auto-dev-pr-create"
+    pr_create_artifacts.mkdir(parents=True, exist_ok=True)
+    (pr_create_artifacts / "source-snapshot.json").write_text(
+        json.dumps(
+            {
+                "schema": "auto-dev-pr-create-source-snapshot/v1",
+                "repository": "acme/app",
+                "provider": "github",
+                "base_branch": "main",
+                "base_sha": base_sha,
+                "source_branch": source_branch,
+                "source_head_sha": source_head_sha,
+                "remote_head_sha": source_head_sha,
+                "remote_head_matches_local": True,
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (pr_create_artifacts / "provider-readback.json").write_text(
+        json.dumps(
+            {
+                "schema": "auto-dev-pr-create-provider-readback/v1",
+                "repository": "acme/app",
+                "provider": "github",
+                "pull_request": 190,
+                "url": "https://github.com/acme/app/pull/190",
+                "state": "OPEN",
+                "is_draft": False,
+                "base_branch": "main",
+                "base_sha": base_sha,
+                "source_branch": source_branch,
+                "source_head_sha": source_head_sha,
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    release_evidence = _stage_receipt(
+        work_item / "artifacts" / "delivery",
+        "release_propagation",
+        evidence={
+            "family": [
+                {
+                    "base": "main",
+                    "base_sha": base_sha,
+                    "classification": "created",
+                    "merged": False,
+                    "provider": "github",
+                    "provider_readback_verified": True,
+                    "pull_request": 190,
+                    "repository": "acme/app",
+                    "source_branch": source_branch,
+                    "source_head": source_head_sha,
+                    "state": "open",
+                    "url": "https://github.com/acme/app/pull/190",
+                }
+            ],
+            "receipt_refs": [
+                "artifacts/auto-dev-pr-create/source-snapshot.json",
+                "artifacts/auto-dev-pr-create/provider-readback.json",
+            ],
+        },
+    )
+    run_development_stage(
+        task.path,
+        stage="release_propagation",
+        receipts={"release_propagation": release_evidence},
+        idempotency_prefix="cc-190:release-propagation",
+    )
+    portfolio_path = task.path.parents[2] / "portfolio.json"
+    portfolio = json.loads(portfolio_path.read_text(encoding="utf-8"))
+    portfolio.update({"state": "local_validation"})
+    portfolio["auto_dev"].update(
+        {"requested_stage": "develop", "provision_worktree": True}
+    )
+    portfolio_path.write_text(
+        json.dumps(portfolio, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    release_wrapper = Path(task.read()["stage_receipts"]["release_propagation"]["ref"])
+    release_wrapper_payload = json.loads(release_wrapper.read_text(encoding="utf-8"))
+    canonical_evidence = Path(release_wrapper_payload["receipt"])
+    if not canonical_evidence.is_absolute():
+        canonical_evidence = work_item / canonical_evidence
+    return root, task, portfolio_path, release_wrapper, canonical_evidence
+
+
+def _canonical_delivery_row(root: Path, task: TaskState) -> dict[str, object] | None:
+    connection = connect_state(default_db_path(root))
+    try:
+        row = canonical_work_items.get(connection, task.read()["canonical_work_id"])
+    finally:
+        connection.close()
+    return dict(row) if row else None
+
+
+def _set_exact_age190_legacy_stage_contract(
+    task: TaskState, portfolio_path: Path
+) -> list[str]:
+    """Recreate the one AGE-190 contract recorded before production validation."""
+
+    legacy_order = [
+        stage for stage in AUTO_DEV_STAGE_ORDER if stage != "validate_production_release"
+    ]
+    legacy_stages = set(legacy_order)
+    current = task.read()
+    current["auto_dev_stage_order"] = legacy_order
+    current["auto_dev_stage_policies"] = {
+        stage: policy
+        for stage, policy in current["auto_dev_stage_policies"].items()
+        if stage in legacy_stages
+    }
+    delivery._atomic_json(task.path, current)
+
+    portfolio = json.loads(portfolio_path.read_text(encoding="utf-8"))
+    portfolio["auto_dev"]["stage_order"] = legacy_order
+    portfolio["auto_dev"]["stage_policies"] = {
+        stage: policy
+        for stage, policy in portfolio["auto_dev"]["stage_policies"].items()
+        if stage in legacy_stages
+    }
+    delivery._atomic_json(portfolio_path, portfolio)
+
+    projection_path = Path(current["autodev_path"])
+    projection = json.loads(projection_path.read_text(encoding="utf-8"))
+    projection["stage_order"] = legacy_order
+    projection["stage_policies"] = {
+        stage: policy
+        for stage, policy in projection["stage_policies"].items()
+        if stage in legacy_stages
+    }
+    projection["stages"].pop("validate_production_release")
+    delivery._atomic_json(projection_path, projection)
+    return legacy_order
+
+
+def _active_pr_create_escalation_surfaces(
+    root: Path, task: TaskState, portfolio_path: Path
+) -> dict[str, object]:
+    work_item = Path(task.read()["work_item"])
+    recovery_root = (
+        work_item
+        / "artifacts"
+        / "development-delivery"
+        / "active-pr-create-delivery-escalation"
+    )
+    ledger = task.path.parent / "events.jsonl"
+    return {
+        "task": task.path.read_bytes(),
+        "portfolio": portfolio_path.read_bytes(),
+        "autodev": Path(task.read()["autodev_path"]).read_bytes(),
+        "canonical": _canonical_delivery_row(root, task),
+        "events": ledger.read_bytes() if ledger.is_file() else None,
+        "recovery_receipts": (
+            sorted(
+                (path.relative_to(recovery_root), path.read_bytes())
+                for path in recovery_root.rglob("*")
+                if path.is_file()
+            )
+            if recovery_root.is_dir()
+            else []
+        ),
+    }
+
+
+def test_escalate_active_nonblocked_pr_create_delivery_accepts_only_age190_shape(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root, task, portfolio_path, release_wrapper, release_evidence = (
+        _active_nonblocked_pr_create_escalation_fixture(tmp_path)
+    )
+    original_wrapper = release_wrapper.read_bytes()
+    original_evidence = release_evidence.read_bytes()
+    original_canonical = _canonical_delivery_row(root, task)
+
+    assert main(
+        [
+            "auto-dev",
+            "escalate-pr-create-delivery",
+            "--state",
+            str(task.path),
+            "--reason",
+            "Recover the exact immutable AGE-190 PR Create boundary.",
+            "--idempotency-key",
+            "cc-190:active-pr-create-escalation:v2",
+            "--apply",
+            "--json",
+        ]
+    ) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["result"] == "escalated"
+    receipt = json.loads(Path(result["receipt"]).read_text(encoding="utf-8"))
+    assert receipt["schema"] == "active-pr-create-delivery-escalation/v1"
+    assert receipt["original"]["release_propagation"]["pull_request_identity"] == {
+        "provider": "github",
+        "repository": "git:github.com/acme/app",
+        "base_branch": "main",
+        "pull_request": "github:acme/app#190",
+        "source_branch": task.read()["worktree"]["branch"],
+        "source_head_sha": "d" * 40,
+    }
+    assert receipt["escalated"]["fresh_stages_required"] == [
+        "review_self",
+        "review_others",
+        "qa",
+        "finalize",
+        "merge",
+    ]
+    assert release_wrapper.read_bytes() == original_wrapper
+    assert release_evidence.read_bytes() == original_evidence
+    assert _canonical_delivery_row(root, task) == original_canonical
+
+    current = task.read()
+    assert current["state"] == "local_validation"
+    assert current["failure"] is None
+    assert current["auto_dev_mode"] == "everything"
+    assert current["requested_stage"] is None
+    assert current["goal"] == "merge"
+    assert current["auto_dev_start_stage"] == "groom"
+    assert current["auto_dev_completion_stage"] == "merge"
+    assert current["stage_receipts"]["release_propagation"]["ref"] == str(
+        release_wrapper
+    )
+    portfolio = json.loads(portfolio_path.read_text(encoding="utf-8"))
+    assert portfolio["auto_dev"]["mode"] == "everything"
+    assert portfolio["auto_dev"]["requested_stage"] is None
+    assert portfolio["auto_dev"]["goal"] == "merge"
+    projection = read_auto_dev_state(current["autodev_path"])
+    assert projection["current_stage"] == "review_self"
+    assert projection["stages"]["pr_create"]["status"] == "completed"
+    assert all(
+        projection["stages"][stage]["status"] == "not_started"
+        for stage in ("review_self", "review_others", "qa", "finalize", "merge")
+    )
+    assert projection["stages"]["validate_production_release"]["status"] in {
+        "out_of_scope",
+        "not_started",
+    }
+    assert projection["stages"]["validate_production_release"]["receipt_refs"] == []
+    assert (
+        delivery.escalate_active_nonblocked_pr_create_delivery(
+            task.path,
+            reason="Recover the exact immutable AGE-190 PR Create boundary.",
+            idempotency_key="cc-190:active-pr-create-escalation:v2",
+            apply=True,
+        )["result"]
+        == "replayed"
+    )
+
+
+def test_escalate_active_nonblocked_pr_create_delivery_upgrades_exact_legacy_age190_contract(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root, task, portfolio_path, _release_wrapper, _release_evidence = (
+        _active_nonblocked_pr_create_escalation_fixture(tmp_path)
+    )
+    legacy_order = _set_exact_age190_legacy_stage_contract(task, portfolio_path)
+
+    assert main(
+        [
+            "auto-dev",
+            "escalate-pr-create-delivery",
+            "--state",
+            str(task.path),
+            "--reason",
+            "Upgrade the exact immutable AGE-190 pre-validation stage contract.",
+            "--idempotency-key",
+            "cc-190:legacy-stage-contract",
+            "--apply",
+            "--json",
+        ]
+    ) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["result"] == "escalated"
+    receipt = json.loads(Path(result["receipt"]).read_text(encoding="utf-8"))
+    assert receipt["original"]["task_state_sha256"]
+    assert receipt["escalated"]["stage_order"] == list(AUTO_DEV_STAGE_ORDER)
+
+    current = task.read()
+    assert current["auto_dev_stage_order"] == list(AUTO_DEV_STAGE_ORDER)
+    assert set(current["auto_dev_stage_policies"]) == set(AUTO_DEV_STAGE_ORDER)
+    portfolio = json.loads(portfolio_path.read_text(encoding="utf-8"))
+    assert portfolio["auto_dev"]["stage_order"] == list(AUTO_DEV_STAGE_ORDER)
+    projection = read_auto_dev_state(current["autodev_path"])
+    assert projection["stage_order"] == list(AUTO_DEV_STAGE_ORDER)
+    assert projection["stages"]["validate_production_release"]["status"] in {
+        "out_of_scope",
+        "not_started",
+    }
+    assert projection["stages"]["validate_production_release"]["receipt_refs"] == []
+    assert legacy_order != current["auto_dev_stage_order"]
+    assert _canonical_delivery_row(root, task)
+
+
+def _active_pr_create_review_receipts(task: TaskState) -> dict[str, str]:
+    """Create only the fresh Review Self milestones after an AGE-190 escalation."""
+
+    work_item = Path(task.read()["work_item"])
+    source_head = "d" * 40
+    authority = _provider_authority(task, pull_request="github:acme/app#190")
+    return {
+        "pre_pr_review": _stage_receipt(
+            work_item / "artifacts" / "review-admission",
+            "pre_pr_review",
+        ),
+        "pr_open": _stage_receipt(
+            work_item / "artifacts" / "review-admission",
+            "pr_open",
+            evidence=authority,
+        ),
+        "ci_repair": _stage_receipt(
+            work_item / "artifacts" / "review-admission",
+            "ci_repair",
+        ),
+        "review_repair": _stage_receipt(
+            work_item / "artifacts" / "review-admission",
+            "review_repair",
+        ),
+        "post_pr_review": _stage_receipt(
+            work_item / "artifacts" / "review-admission",
+            "post_pr_review",
+        ),
+        "ready_for_merge": _stage_receipt(
+            work_item / "artifacts" / "review-admission",
+            "ready_for_merge",
+            evidence={
+                **authority,
+                "checks_verified": True,
+                "reviews_verified": True,
+                "source_head_sha": source_head,
+                "subject_revision": source_head,
+                "review_coordination_receipt": _review_coordination_receipt(
+                    task,
+                    subject_revision=source_head,
+                    pull_request="github:acme/app#190",
+                ),
+            },
+        ),
+    }
+
+
+def test_escalate_active_nonblocked_pr_create_delivery_admits_fresh_review_self(
+    tmp_path: Path,
+) -> None:
+    _root, task, _portfolio_path, _release_wrapper, _release_evidence = (
+        _active_nonblocked_pr_create_escalation_fixture(tmp_path)
+    )
+    assert (
+        delivery.escalate_active_nonblocked_pr_create_delivery(
+            task.path,
+            reason="Open only fresh review authority from AGE-190's immutable PR Create boundary.",
+            idempotency_key="cc-190:review-self-admission",
+            apply=True,
+        )["result"]
+        == "escalated"
+    )
+
+    result = run_development_stage(
+        task.path,
+        stage="review",
+        receipts=_active_pr_create_review_receipts(task),
+        idempotency_prefix="cc-190:review-self-admission",
+    )
+
+    assert result["state"] == "ready_for_merge"
+    current = task.read()
+    assert current["state"] == "ready_for_merge"
+    assert current["subject_revision"] == "d" * 40
+    projection = read_auto_dev_state(current["autodev_path"])
+    assert projection["stages"]["review_self"]["status"] == "completed"
+
+
+def test_escalate_active_nonblocked_pr_create_delivery_keeps_develop_bound_through_merge(
+    tmp_path: Path,
+) -> None:
+    """The unique escalation receipt remains valid only for its reviewed merge chain."""
+
+    _root, task, _portfolio_path, _release_wrapper, _release_evidence = (
+        _active_nonblocked_pr_create_escalation_fixture(tmp_path)
+    )
+    assert (
+        delivery.escalate_active_nonblocked_pr_create_delivery(
+            task.path,
+            reason="Open the exact immutable AGE-190 PR Create boundary for delivery.",
+            idempotency_key="cc-190:develop-through-merge",
+            apply=True,
+        )["result"]
+        == "escalated"
+    )
+    subject_revision = "d" * 40
+    pull_request = "github:acme/app#190"
+    assert run_development_stage(
+        task.path,
+        stage="review",
+        receipts=_active_pr_create_review_receipts(task),
+        idempotency_prefix="cc-190:develop-through-merge:review",
+    )["state"] == "ready_for_merge"
+    _record_standalone_stage(
+        task, "review_others", revision=subject_revision, status="not_required"
+    )
+    _record_standalone_stage(task, "qa", revision=subject_revision)
+    _record_standalone_stage(
+        task, "finalize", revision=subject_revision, pull_request=pull_request
+    )
+    _record_standalone_stage(
+        task,
+        "validate_production_release",
+        revision=subject_revision,
+        pull_request=pull_request,
+    )
+    readiness = _readiness_authority(
+        task, subject_revision=subject_revision, pull_request=pull_request
+    )
+
+    resumed = delivery.start_development_run(
+        _root,
+        "acme",
+        "app",
+        ["CC-190"],
+        run_id="active-pr-create-escalation",
+        auto_dev_mode="single_stage",
+        requested_stage="merge",
+        goal="merge",
+        provision_worktree=False,
+        selected_work_item=Path(task.read()["work_item"]),
+        existing_state_only=True,
+        apply=True,
+    )
+
+    assert resumed["tasks"][0]["state_ref"] == str(task.path)
+    current = task.read()
+    projection = read_auto_dev_state(current["autodev_path"])
+    assert current["requested_stage"] == "merge"
+    assert projection["requested_stage"] == "merge"
+
+    merged = run_development_stage(
+        task.path,
+        stage="merge",
+        receipts={
+            "merged": _stage_receipt(
+                Path(task.read()["work_item"]) / "artifacts" / "merge",
+                "merged",
+                status="completed",
+                evidence={
+                    "merge_sha": "a" * 40,
+                    "source_head_sha": subject_revision,
+                    **_provider_authority(task, pull_request=pull_request),
+                    "readiness_authority": readiness,
+                },
+            )
+        },
+        idempotency_prefix="cc-190:develop-through-merge:merge",
+    )
+
+    assert merged["state"] == "merged"
+    projection = read_auto_dev_state(task.read()["autodev_path"])
+    assert projection["stages"]["merge"]["status"] == "completed"
+
+
+@pytest.mark.parametrize("tamper", ["generic_receipt", "missing_history", "receipt_bytes"])
+def test_escalate_active_nonblocked_pr_create_delivery_refuses_review_self_bypass(
+    tmp_path: Path, tamper: str
+) -> None:
+    root, task, portfolio_path, _release_wrapper, _release_evidence = (
+        _active_nonblocked_pr_create_escalation_fixture(tmp_path)
+    )
+    assert (
+        delivery.escalate_active_nonblocked_pr_create_delivery(
+            task.path,
+            reason="Exercise the exact receipt-bound Review Self admission path.",
+            idempotency_key=f"cc-190:review-self-bypass:{tamper}",
+            apply=True,
+        )["result"]
+        == "escalated"
+    )
+    current = task.read()
+    if tamper == "generic_receipt":
+        projection_path = Path(current["autodev_path"])
+        projection = json.loads(projection_path.read_text(encoding="utf-8"))
+        generic = next(
+            row["ref"]
+            for row in current["receipts"]
+            if row["state"] == "local_validation"
+            and "active-pr-create-delivery-escalation" not in row["ref"]
+        )
+        projection["stages"]["develop"]["receipt_refs"] = [generic]
+        delivery._atomic_json(projection_path, projection)
+    elif tamper == "missing_history":
+        current.pop("active_pr_create_delivery_escalations")
+        delivery._atomic_json(task.path, current)
+    else:
+        receipt_path = Path(current["active_pr_create_delivery_escalations"][0]["receipt"])
+        receipt_path.write_text("tampered\n", encoding="utf-8")
+    before = _active_pr_create_escalation_surfaces(root, task, portfolio_path)
+
+    with pytest.raises(AutoDevStateError, match="review_self cannot mutate external state"):
+        require_auto_dev_predecessors(task.read()["autodev_path"], "review_self")
+
+    assert _active_pr_create_escalation_surfaces(root, task, portfolio_path) == before
+
+
+@pytest.mark.parametrize("variant", ["reordered", "duplicate", "other_omission"])
+def test_escalate_active_nonblocked_pr_create_delivery_refuses_nonexact_legacy_stage_contract(
+    tmp_path: Path, variant: str
+) -> None:
+    root, task, portfolio_path, _release_wrapper, _release_evidence = (
+        _active_nonblocked_pr_create_escalation_fixture(tmp_path)
+    )
+    legacy_order = _set_exact_age190_legacy_stage_contract(task, portfolio_path)
+    invalid_order = list(legacy_order)
+    if variant == "reordered":
+        invalid_order[1], invalid_order[2] = invalid_order[2], invalid_order[1]
+    elif variant == "duplicate":
+        invalid_order[-1] = invalid_order[-2]
+    else:
+        invalid_order.remove("health")
+    current = task.read()
+    current["auto_dev_stage_order"] = invalid_order
+    delivery._atomic_json(task.path, current)
+    before = _active_pr_create_escalation_surfaces(root, task, portfolio_path)
+
+    with pytest.raises(DevelopmentDeliveryError, match="exact canonical stage order"):
+        delivery.escalate_active_nonblocked_pr_create_delivery(
+            task.path,
+            reason="Reject every legacy stage contract except AGE-190's exact one.",
+            idempotency_key=f"cc-190:nonexact-legacy-stage-contract:{variant}",
+            apply=True,
+        )
+
+    assert _active_pr_create_escalation_surfaces(root, task, portfolio_path) == before
+
+
+def test_escalate_active_nonblocked_pr_create_delivery_reuses_receipt_before_task_history(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root, task, portfolio_path, _release_wrapper, _release_evidence = (
+        _active_nonblocked_pr_create_escalation_fixture(tmp_path)
+    )
+    before = _active_pr_create_escalation_surfaces(root, task, portfolio_path)
+    original_atomic_json = delivery._atomic_json
+    interrupted = False
+
+    def interrupt_before_task_history(path: Path, value: dict[str, object]) -> None:
+        nonlocal interrupted
+        if Path(path) == task.path:
+            interrupted = True
+            assert _active_pr_create_escalation_surfaces(root, task, portfolio_path)[
+                "recovery_receipts"
+            ]
+            raise RuntimeError("injected interruption before task history")
+        original_atomic_json(path, value)
+
+    monkeypatch.setattr(delivery, "_atomic_json", interrupt_before_task_history)
+    reason = "Finish the exact receipt-backed AGE-190 escalation after interruption."
+    key = "cc-190:receipt-before-task-history"
+    with pytest.raises(RuntimeError, match="injected interruption"):
+        delivery.escalate_active_nonblocked_pr_create_delivery(
+            task.path,
+            reason=reason,
+            idempotency_key=key,
+            apply=True,
+        )
+
+    assert interrupted
+    receipt_only = _active_pr_create_escalation_surfaces(root, task, portfolio_path)
+    assert receipt_only["task"] == before["task"]
+    assert receipt_only["portfolio"] == before["portfolio"]
+    assert receipt_only["autodev"] == before["autodev"]
+    assert receipt_only["canonical"] == before["canonical"]
+    assert receipt_only["events"] == before["events"]
+    assert len(receipt_only["recovery_receipts"]) == 1
+    orphan_path, orphan_bytes = receipt_only["recovery_receipts"][0]
+    orphan = json.loads(orphan_bytes)
+    assert orphan["idempotency_key"] == key
+
+    monkeypatch.setattr(delivery, "_atomic_json", original_atomic_json)
+    result = delivery.escalate_active_nonblocked_pr_create_delivery(
+        task.path,
+        reason=reason,
+        idempotency_key=key,
+        apply=True,
+    )
+    assert result["result"] == "escalated"
+    assert Path(result["receipt"]).name == orphan_path.name
+    assert result["receipt_sha256"] == delivery._json_sha256(orphan)
+    assert Path(result["receipt"]).read_bytes() == orphan_bytes
+    assert _active_pr_create_escalation_surfaces(root, task, portfolio_path)[
+        "recovery_receipts"
+    ] == receipt_only["recovery_receipts"]
+
+
+def test_escalate_active_nonblocked_pr_create_delivery_refuses_locked_release_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root, task, portfolio_path, _release_wrapper, _release_evidence = (
+        _active_nonblocked_pr_create_escalation_fixture(tmp_path)
+    )
+    before = _active_pr_create_escalation_surfaces(root, task, portfolio_path)
+    original_context = delivery._active_pr_create_delivery_escalation_context
+    context_calls = 0
+
+    def drift_release_after_initial_context(path: Path) -> dict[str, object]:
+        nonlocal context_calls
+        context = original_context(path)
+        context_calls += 1
+        if context_calls == 1:
+            snapshot_path = Path(context["release"]["source_snapshot"])
+            snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+            snapshot["changed_after_initial_preflight"] = True
+            delivery._atomic_json(snapshot_path, snapshot)
+        return context
+
+    monkeypatch.setattr(
+        delivery,
+        "_active_pr_create_delivery_escalation_context",
+        drift_release_after_initial_context,
+    )
+    with pytest.raises(
+        DevelopmentDeliveryError, match="immutable release evidence changed"
+    ):
+        delivery.escalate_active_nonblocked_pr_create_delivery(
+            task.path,
+            reason="Reject release evidence that changed while the preflight lock was acquired.",
+            idempotency_key="cc-190:locked-release-drift",
+            apply=True,
+        )
+
+    assert context_calls == 2
+    assert _active_pr_create_escalation_surfaces(root, task, portfolio_path) == before
+
+
+@pytest.mark.parametrize(
+    ("requested_stage", "provision_worktree"),
+    [("groom", False), ("pr_create", True), ("develop", False)],
+)
+def test_escalate_active_nonblocked_pr_create_delivery_refuses_other_portfolio_shapes(
+    tmp_path: Path, requested_stage: str, provision_worktree: bool
+) -> None:
+    root, task, portfolio_path, _release_wrapper, _release_evidence = (
+        _active_nonblocked_pr_create_escalation_fixture(tmp_path)
+    )
+    portfolio = json.loads(portfolio_path.read_text(encoding="utf-8"))
+    portfolio["auto_dev"].update(
+        {
+            "requested_stage": requested_stage,
+            "provision_worktree": provision_worktree,
+        }
+    )
+    delivery._atomic_json(portfolio_path, portfolio)
+    before = _active_pr_create_escalation_surfaces(root, task, portfolio_path)
+
+    with pytest.raises(
+        DevelopmentDeliveryError, match="exact AGE-190 nonblocked one-task"
+    ):
+        delivery.escalate_active_nonblocked_pr_create_delivery(
+            task.path,
+            reason="Refuse another historical portfolio shape.",
+            idempotency_key=f"cc-190:portfolio:{requested_stage}:{provision_worktree}",
+            apply=True,
+        )
+
+    assert _active_pr_create_escalation_surfaces(root, task, portfolio_path) == before
+
+
+def test_escalate_active_nonblocked_pr_create_delivery_refuses_release_tamper(
+    tmp_path: Path,
+) -> None:
+    root, task, portfolio_path, release_wrapper, _release_evidence = (
+        _active_nonblocked_pr_create_escalation_fixture(tmp_path)
+    )
+    release_wrapper.write_text("tampered\n", encoding="utf-8")
+    before = _active_pr_create_escalation_surfaces(root, task, portfolio_path)
+
+    with pytest.raises(DevelopmentDeliveryError, match="receipt digest does not match"):
+        delivery.escalate_active_nonblocked_pr_create_delivery(
+            task.path,
+            reason="Refuse a changed release identity.",
+            idempotency_key="cc-190:tampered-release",
+            apply=True,
+        )
+
+    assert _active_pr_create_escalation_surfaces(root, task, portfolio_path) == before
+
+
+def test_escalate_active_nonblocked_pr_create_delivery_binds_provider_readback(
+    tmp_path: Path,
+) -> None:
+    root, task, portfolio_path, _release_wrapper, _release_evidence = (
+        _active_nonblocked_pr_create_escalation_fixture(tmp_path)
+    )
+    provider_path = (
+        Path(task.read()["work_item"])
+        / "artifacts"
+        / "auto-dev-pr-create"
+        / "provider-readback.json"
+    )
+    provider = json.loads(provider_path.read_text(encoding="utf-8"))
+    provider["source_head_sha"] = "e" * 40
+    delivery._atomic_json(provider_path, provider)
+    before = _active_pr_create_escalation_surfaces(root, task, portfolio_path)
+
+    with pytest.raises(
+        DevelopmentDeliveryError, match="release_propagation evidence identity"
+    ):
+        delivery.escalate_active_nonblocked_pr_create_delivery(
+            task.path,
+            reason="Refuse a provider readback detached from the immutable family.",
+            idempotency_key="cc-190:provider-readback-mismatch",
+            apply=True,
+        )
+
+    assert _active_pr_create_escalation_surfaces(root, task, portfolio_path) == before
+
+
+def test_escalate_active_nonblocked_pr_create_delivery_replay_binds_snapshot_bytes(
+    tmp_path: Path,
+) -> None:
+    _root, task, _portfolio_path, _release_wrapper, _release_evidence = (
+        _active_nonblocked_pr_create_escalation_fixture(tmp_path)
+    )
+    reason = "Bind the immutable PR Create source snapshot before fresh review."
+    key = "cc-190:immutable-source-snapshot"
+    assert (
+        delivery.escalate_active_nonblocked_pr_create_delivery(
+            task.path,
+            reason=reason,
+            idempotency_key=key,
+            apply=True,
+        )["result"]
+        == "escalated"
+    )
+    snapshot_path = (
+        Path(task.read()["work_item"])
+        / "artifacts"
+        / "auto-dev-pr-create"
+        / "source-snapshot.json"
+    )
+    snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+    snapshot["untrusted_after_the_fact_note"] = "same identity, different bytes"
+    delivery._atomic_json(snapshot_path, snapshot)
+
+    with pytest.raises(
+        DevelopmentDeliveryError, match="immutable release_propagation identity changed"
+    ):
+        delivery.escalate_active_nonblocked_pr_create_delivery(
+            task.path,
+            reason=reason,
+            idempotency_key=key,
+            apply=True,
+        )
+
+
+def test_escalate_active_nonblocked_pr_create_delivery_refuses_post_pr_authority(
+    tmp_path: Path,
+) -> None:
+    root, task, portfolio_path, _release_wrapper, _release_evidence = (
+        _active_nonblocked_pr_create_escalation_fixture(tmp_path)
+    )
+    projection_path = Path(task.read()["autodev_path"])
+    projection = json.loads(projection_path.read_text(encoding="utf-8"))
+    projection["stages"]["review_self"].update(
+        {"status": "completed", "receipt_refs": ["untrusted-review-self.json"]}
+    )
+    delivery._atomic_json(projection_path, projection)
+    before = _active_pr_create_escalation_surfaces(root, task, portfolio_path)
+
+    with pytest.raises(DevelopmentDeliveryError, match="refuses existing post-PR authority"):
+        delivery.escalate_active_nonblocked_pr_create_delivery(
+            task.path,
+            reason="Refuse inherited review authority.",
+            idempotency_key="cc-190:post-pr-authority",
+            apply=True,
+        )
+
+    assert _active_pr_create_escalation_surfaces(root, task, portfolio_path) == before
+
+
+def test_escalate_active_nonblocked_pr_create_delivery_refuses_validate_production_authority(
+    tmp_path: Path,
+) -> None:
+    root, task, portfolio_path, _release_wrapper, _release_evidence = (
+        _active_nonblocked_pr_create_escalation_fixture(tmp_path)
+    )
+    projection_path = Path(task.read()["autodev_path"])
+    projection = json.loads(projection_path.read_text(encoding="utf-8"))
+    projection["stages"]["validate_production_release"].update(
+        {
+            "status": "completed",
+            "receipt_refs": ["untrusted-validate-production-release.json"],
+        }
+    )
+    delivery._atomic_json(projection_path, projection)
+    before = _active_pr_create_escalation_surfaces(root, task, portfolio_path)
+
+    with pytest.raises(DevelopmentDeliveryError, match="refuses existing post-PR authority"):
+        delivery.escalate_active_nonblocked_pr_create_delivery(
+            task.path,
+            reason="Refuse inherited production-release validation authority.",
+            idempotency_key="cc-190:validate-production-authority",
+            apply=True,
+        )
+
+    assert _active_pr_create_escalation_surfaces(root, task, portfolio_path) == before
+
+
+@pytest.mark.parametrize("target_name", ["wrapper", "evidence", "snapshot", "provider"])
+def test_escalate_active_nonblocked_pr_create_delivery_refuses_symlink_read_race(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, target_name: str
+) -> None:
+    root, task, portfolio_path, release_wrapper, release_evidence = (
+        _active_nonblocked_pr_create_escalation_fixture(tmp_path)
+    )
+    work_item = Path(task.read()["work_item"])
+    target = {
+        "wrapper": release_wrapper,
+        "evidence": release_evidence,
+        "snapshot": work_item / "artifacts" / "auto-dev-pr-create" / "source-snapshot.json",
+        "provider": work_item / "artifacts" / "auto-dev-pr-create" / "provider-readback.json",
+    }[target_name]
+    external = tmp_path / f"external-{target_name}.json"
+    external.write_text("untrusted bytes\n", encoding="utf-8")
+    original_open = delivery.os.open
+    swapped = False
+
+    def swap_before_open(path: str | Path, flags: int, *args: object) -> int:
+        nonlocal swapped
+        if not swapped and Path(path) == target:
+            target.unlink()
+            target.symlink_to(external)
+            swapped = True
+        return original_open(path, flags, *args)
+
+    monkeypatch.setattr(delivery.os, "open", swap_before_open)
+    before = _active_pr_create_escalation_surfaces(root, task, portfolio_path)
+    with pytest.raises(DevelopmentDeliveryError, match="missing or unsafe"):
+        delivery.escalate_active_nonblocked_pr_create_delivery(
+            task.path,
+            reason="Refuse immutable input replacement.",
+            idempotency_key=f"cc-190:symlink-swap:{target_name}",
+            apply=True,
+        )
+
+    assert swapped
+    assert _active_pr_create_escalation_surfaces(root, task, portfolio_path) == before
 
 
 def _advance_auto_dev_task_to_ready(
@@ -708,6 +1600,69 @@ def _active_worktree_ready_recovery_fixture(
     family_path.write_text(json.dumps(family), encoding="utf-8")
     provider_path.write_text(json.dumps(provider), encoding="utf-8")
     return task, portfolio_path, family_path, provider_path
+
+
+def _recover_pr_create_worktree_ready_with_legacy_stage_order(
+    task: TaskState,
+    portfolio_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> dict[str, object]:
+    """Construct the pre-validation-stage packet before it receives a receipt."""
+
+    legacy_stage_order = [
+        stage for stage in AUTO_DEV_STAGE_ORDER if stage != "validate_production_release"
+    ]
+    legacy_stages = set(legacy_stage_order)
+    current = task.read()
+    current["auto_dev_stage_order"] = legacy_stage_order
+    current["auto_dev_stage_policies"] = {
+        stage: policy
+        for stage, policy in current["auto_dev_stage_policies"].items()
+        if stage in legacy_stages
+    }
+    task.path.write_text(
+        json.dumps(current, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    portfolio = json.loads(portfolio_path.read_text(encoding="utf-8"))
+    portfolio["auto_dev"]["stage_order"] = legacy_stage_order
+    portfolio["auto_dev"]["stage_policies"] = {
+        stage: policy
+        for stage, policy in portfolio["auto_dev"]["stage_policies"].items()
+        if stage in legacy_stages
+    }
+    portfolio_path.write_text(
+        json.dumps(portfolio, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    projection_path = Path(task.read()["autodev_path"])
+    projection = json.loads(projection_path.read_text(encoding="utf-8"))
+    projection["stage_order"] = legacy_stage_order
+    projection["stage_policies"] = {
+        stage: policy
+        for stage, policy in projection["stage_policies"].items()
+        if stage in legacy_stages
+    }
+    projection["stages"].pop("validate_production_release")
+    projection_path.write_text(
+        json.dumps(projection, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    with monkeypatch.context() as historical_runtime:
+        historical_runtime.setattr(auto_dev, "AUTO_DEV_STAGE_ORDER", tuple(legacy_stage_order))
+        historical_runtime.setattr(
+            auto_dev,
+            "REQUIRED_STAGE_PRECEDENCE",
+            tuple(
+                pair
+                for pair in auto_dev.REQUIRED_STAGE_PRECEDENCE
+                if set(pair) <= legacy_stages
+            ),
+        )
+        historical_runtime.setattr(delivery, "AUTO_DEV_STAGE_ORDER", tuple(legacy_stage_order))
+        return delivery.recover_active_worktree_ready_pr_create_delivery(
+            task.path,
+            reason="recover the exact legacy PR Create worktree-ready boundary",
+            idempotency_key="cc-419:pr-create-recover",
+            apply=True,
+        )
 
 
 def _add_valid_worktree_ready_recovery_family(
@@ -938,6 +1893,18 @@ def test_configured_stage_order_allows_safe_friendly_stage_reordering() -> None:
     order.remove("document")
     order.insert(order.index("qa") + 1, "document")
     assert validate_auto_dev_stage_order(order) == order
+
+
+def test_production_release_validation_is_a_canonical_pre_merge_stage() -> None:
+    assert auto_dev.AUTO_DEV_STAGE_COMMANDS["validate_production_release"] == (
+        "/auto-dev-validate-production-release"
+    )
+    assert auto_dev.validate_auto_dev_stage_policies(
+        {"validate_production_release": {"applicability": "required"}}
+    )["validate_production_release"]["applicability"] == "required"
+    assert AUTO_DEV_STAGE_ORDER.index("finalize") < AUTO_DEV_STAGE_ORDER.index(
+        "validate_production_release"
+    ) < AUTO_DEV_STAGE_ORDER.index("merge")
 
 
 def test_legacy_profile_stage_subset_upgrades_to_complete_auto_dev_order(
@@ -2268,6 +3235,374 @@ def _historical_origin_main_failure(tmp_path: Path) -> tuple[Path, Path, Path, s
     return root, repo, task_path, base_sha
 
 
+def _legacy_age163_blocked_single_stage(tmp_path: Path) -> tuple[Path, Path, Path, Path, Path]:
+    """Build the exact legacy AGE-163 blocked/premature-promotion shape."""
+
+    repo, _ = _repository(tmp_path)
+    root = tmp_path / "os"
+    _project(root, repo)
+    started = delivery.start_development_run(
+        root,
+        "acme",
+        "app",
+        ["CC-163"],
+        titles={"CC-163": "Recover legacy packet"},
+        run_id="legacy-age163-recovery",
+        auto_dev_mode="single_stage",
+        requested_stage="detective",
+        goal="detective",
+        provision_worktree=True,
+        apply=True,
+    )
+    task_path = Path(started["tasks"][0]["state_ref"])
+    task = TaskState(task_path).read()
+    work_item = Path(task["work_item"])
+    failure_receipt = root / "artifacts" / "legacy-age163" / "independent-review.txt"
+    failure_receipt.parent.mkdir(parents=True, exist_ok=True)
+    failure_receipt.write_text("independent review transport unavailable\n", encoding="utf-8")
+    release_receipt = work_item / "artifacts" / "development-delivery" / "legacy-release.json"
+    release_receipt.parent.mkdir(parents=True, exist_ok=True)
+    release_receipt.write_text('{"legacy":"release-propagation"}\n', encoding="utf-8")
+    task["receipts"].extend(
+        [
+            {"state": "planned", "ref": "legacy:planned", "recorded_at": "2026-08-08T17:34:12Z"},
+            {"state": "implementing", "ref": "legacy:implementing", "recorded_at": "2026-08-08T17:35:16Z"},
+            {"state": "local_validation", "ref": "legacy:validation", "recorded_at": "2026-08-08T17:35:16Z"},
+        ]
+    )
+    task.update(
+        {
+            "state": "blocked",
+            "failure": {
+                "kind": "independent-review-unavailable",
+                "detail": "Independent reviewer transport has no available credit.",
+                "receipt": str(failure_receipt),
+                "recoverable": False,
+                "retry_state": None,
+                "failed_at": "2026-08-08T17:38:39Z",
+            },
+            "auto_dev_start_stage": None,
+            "auto_dev_completion_stage": None,
+            "stage_receipts": {
+                "release_propagation": {
+                    "ref": str(release_receipt),
+                    "sha256": hashlib.sha256(release_receipt.read_bytes()).hexdigest(),
+                }
+            },
+            "updated_at": "2026-08-08T17:38:39Z",
+        }
+    )
+    delivery._atomic_json(task_path, task)
+    delivery._sync_canonical_task_progress(task_path)
+
+    autodev_path = Path(task["autodev_path"])
+    projection = read_auto_dev_state(autodev_path)
+    projection.update(
+        {
+            "mode": "single_stage",
+            "requested_stage": "detective",
+            "start_stage": "detective",
+            "completion_stage": "detective",
+            "status": "blocked",
+            "current_stage": None,
+        }
+    )
+    projection["delivery"].update(
+        {"state": "blocked", "goal": "detective", "task_state_ref": str(task_path)}
+    )
+    delivery._atomic_json(autodev_path, projection)
+
+    portfolio_path = task_path.parent.parent.parent / "portfolio.json"
+    portfolio = json.loads(portfolio_path.read_text(encoding="utf-8"))
+    portfolio["state"] = "blocked"
+    portfolio["auto_dev"].update(
+        {"mode": "everything", "requested_stage": None, "goal": "delivery_complete"}
+    )
+    portfolio["auto_dev"].pop("start_stage", None)
+    portfolio["auto_dev"].pop("completion_stage", None)
+    delivery._atomic_json(portfolio_path, portfolio)
+    return root, task_path, failure_receipt, release_receipt, portfolio_path
+
+
+def test_recover_active_blocked_single_stage_restores_age163_shape_without_reusing_authority(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root, task_path, failure_receipt, release_receipt, portfolio_path = _legacy_age163_blocked_single_stage(tmp_path)
+    original_task = task_path.read_bytes()
+    original_failure = failure_receipt.read_bytes()
+    original_release = release_receipt.read_bytes()
+    original_portfolio = portfolio_path.read_bytes()
+
+    assert main(
+        [
+            "auto-dev",
+            "recover-blocked-single-stage",
+            "--state",
+            str(task_path),
+            "--reason",
+            "The independent review transport is restored; fresh delivery evidence is required.",
+            "--idempotency-key",
+            "cc-163:recover-active-blocked-single-stage",
+            "--apply",
+            "--json",
+        ]
+    ) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["result"] == "recovered"
+    recovery_path = Path(result["receipt"])
+    recovery = json.loads(recovery_path.read_text(encoding="utf-8"))
+    assert recovery["schema"] == delivery.ACTIVE_BLOCKED_SINGLE_STAGE_RECOVERY_SCHEMA
+    assert recovery["original"]["task_state_sha256"] == hashlib.sha256(original_task).hexdigest()
+    assert recovery["original"]["portfolio_sha256"] == hashlib.sha256(original_portfolio).hexdigest()
+    assert recovery["original"]["failure_receipt_sha256"] == hashlib.sha256(original_failure).hexdigest()
+    assert recovery["recovered"]["fresh_review_and_qa_required"] is True
+
+    recovered = TaskState(task_path).read()
+    assert recovered["state"] == "worktree_ready"
+    assert recovered["failure"] is None
+    assert recovered["auto_dev_mode"] == "everything"
+    assert recovered["requested_stage"] is None
+    assert recovered["goal"] == "delivery_complete"
+    assert (recovered["auto_dev_start_stage"], recovered["auto_dev_completion_stage"]) == ("groom", "health")
+    assert recovered["stage_receipts"]["release_propagation"]["sha256"] == hashlib.sha256(original_release).hexdigest()
+    assert failure_receipt.read_bytes() == original_failure
+    assert release_receipt.read_bytes() == original_release
+    assert len(recovered["active_blocked_single_stage_recoveries"]) == 1
+
+    projection = read_auto_dev_state(recovered["autodev_path"])
+    assert (projection["mode"], projection["start_stage"], projection["completion_stage"]) == (
+        "everything",
+        "groom",
+        "health",
+    )
+    assert projection["current_stage"] == "groom"
+    assert projection["delivery"]["state"] == "worktree_ready"
+    assert projection["stages"]["review_self"]["status"] != "completed"
+    assert projection["stages"]["qa"]["status"] != "completed"
+
+    portfolio = json.loads(portfolio_path.read_text(encoding="utf-8"))
+    assert portfolio["state"] == "dispatching"
+    assert (portfolio["auto_dev"]["mode"], portfolio["auto_dev"]["start_stage"], portfolio["auto_dev"]["completion_stage"]) == (
+        "everything",
+        "groom",
+        "health",
+    )
+    assert portfolio["active_blocked_single_stage_recoveries"] == [
+        {**recovered["active_blocked_single_stage_recoveries"][0], "task_state_ref": str(task_path)}
+    ]
+
+    canonical = delivery._read_canonical_development_work(
+        root,
+        canonical_work_id=recovered["canonical_work_id"],
+        ticket="CC-163",
+        packet=Path(recovered["work_item"]),
+    )
+    assert canonical is not None
+    assert (canonical["state"], canonical["attention"], canonical["id"]) == (
+        "building",
+        "active",
+        recovered["canonical_work_id"],
+    )
+
+    assert main(
+        [
+            "auto-dev",
+            "recover-blocked-single-stage",
+            "--state",
+            str(task_path),
+            "--reason",
+            "The independent review transport is restored; fresh delivery evidence is required.",
+            "--idempotency-key",
+            "cc-163:recover-active-blocked-single-stage",
+            "--apply",
+            "--json",
+        ]
+    ) == 0
+    assert json.loads(capsys.readouterr().out)["result"] == "replayed"
+    events = [
+        json.loads(line)
+        for line in (task_path.parent / "events.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert [event["type"] for event in events].count(
+        "development.task.active_blocked_single_stage_recovered"
+    ) == 1
+
+
+def test_recover_active_blocked_single_stage_refuses_unsupported_blocker_without_partial_mutation(
+    tmp_path: Path,
+) -> None:
+    _, task_path, _, _, portfolio_path = _legacy_age163_blocked_single_stage(tmp_path)
+    task = TaskState(task_path).read()
+    task["failure"]["kind"] = "provider_unavailable"
+    delivery._atomic_json(task_path, task)
+    autodev_path = Path(task["autodev_path"])
+    before = {
+        "task": task_path.read_bytes(),
+        "portfolio": portfolio_path.read_bytes(),
+        "autodev": autodev_path.read_bytes(),
+    }
+
+    with pytest.raises(DevelopmentDeliveryError, match="independent-review-unavailable"):
+        delivery.recover_active_blocked_single_stage_delivery(
+            task_path,
+            reason="Unsupported failures must remain blocked.",
+            idempotency_key="cc-163:unsupported-blocker",
+            apply=True,
+        )
+
+    assert task_path.read_bytes() == before["task"]
+    assert portfolio_path.read_bytes() == before["portfolio"]
+    assert autodev_path.read_bytes() == before["autodev"]
+    assert not (
+        Path(task["work_item"])
+        / "artifacts"
+        / "development-delivery"
+        / "active-blocked-single-stage-recovery"
+    ).exists()
+
+
+def _active_blocked_single_stage_recovery_surfaces(
+    root: Path,
+    task_path: Path,
+    portfolio_path: Path,
+) -> dict[str, object]:
+    """Snapshot every recovery-owned surface before a fail-closed refusal."""
+
+    task = TaskState(task_path).read()
+    canonical = delivery._read_canonical_development_work(
+        root,
+        canonical_work_id=task["canonical_work_id"],
+        ticket=task["ticket"],
+        packet=Path(task["work_item"]),
+    )
+    recovery_dir = (
+        Path(task["work_item"])
+        / "artifacts"
+        / "development-delivery"
+        / "active-blocked-single-stage-recovery"
+    )
+    event_path = task_path.parent / "events.jsonl"
+    return {
+        "task": task_path.read_bytes(),
+        "portfolio": portfolio_path.read_bytes(),
+        "autodev": Path(task["autodev_path"]).read_bytes(),
+        "canonical": json.dumps(canonical, sort_keys=True),
+        "events": event_path.read_bytes() if event_path.is_file() else None,
+        "recovery_artifacts": (
+            {path.relative_to(recovery_dir).as_posix(): path.read_bytes() for path in recovery_dir.rglob("*") if path.is_file()}
+            if recovery_dir.is_dir()
+            else None
+        ),
+    }
+
+
+@pytest.mark.parametrize(
+    ("variant", "error"),
+    [
+        ("missing_stage_entry", "exactly one legacy release_propagation"),
+        ("missing_release_file", "legacy release_propagation receipt is missing"),
+        ("tampered_release_file", "legacy release_propagation receipt digest does not match"),
+        ("outside_task_or_run_scope", "legacy release_propagation receipt is outside task/run scope"),
+    ],
+)
+def test_recover_active_blocked_single_stage_refuses_unverified_legacy_release_receipt_without_mutation(
+    tmp_path: Path,
+    variant: str,
+    error: str,
+) -> None:
+    root, task_path, _, release_receipt, portfolio_path = _legacy_age163_blocked_single_stage(tmp_path)
+    task = TaskState(task_path).read()
+    if variant == "missing_stage_entry":
+        task["stage_receipts"] = {}
+        delivery._atomic_json(task_path, task)
+    elif variant == "missing_release_file":
+        release_receipt.unlink()
+    elif variant == "tampered_release_file":
+        release_receipt.write_text('{"legacy":"tampered"}\n', encoding="utf-8")
+    else:
+        outside_receipt = tmp_path / "outside-legacy-release.json"
+        outside_receipt.write_text('{"legacy":"outside"}\n', encoding="utf-8")
+        task["stage_receipts"]["release_propagation"] = {
+            "ref": str(outside_receipt),
+            "sha256": hashlib.sha256(outside_receipt.read_bytes()).hexdigest(),
+        }
+        delivery._atomic_json(task_path, task)
+    before = _active_blocked_single_stage_recovery_surfaces(root, task_path, portfolio_path)
+
+    with pytest.raises(DevelopmentDeliveryError, match=error):
+        delivery.recover_active_blocked_single_stage_delivery(
+            task_path,
+            reason="Legacy receipt evidence must remain immutable and in scope.",
+            idempotency_key=f"cc-163:unverified-release-{variant}",
+            apply=True,
+        )
+
+    assert _active_blocked_single_stage_recovery_surfaces(root, task_path, portfolio_path) == before
+
+
+def test_recover_active_blocked_single_stage_refuses_portfolio_drift_before_any_recovery_mutation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, task_path, _, _, portfolio_path = _legacy_age163_blocked_single_stage(tmp_path)
+    task = TaskState(task_path).read()
+    autodev_path = Path(task["autodev_path"])
+    event_path = task_path.parent / "events.jsonl"
+    canonical_before = delivery._read_canonical_development_work(
+        root,
+        canonical_work_id=task["canonical_work_id"],
+        ticket=task["ticket"],
+        packet=Path(task["work_item"]),
+    )
+    assert canonical_before is not None
+    before = {
+        "task": task_path.read_bytes(),
+        "autodev": autodev_path.read_bytes(),
+        "canonical": json.dumps(canonical_before, sort_keys=True),
+        "events": event_path.read_bytes() if event_path.is_file() else None,
+    }
+    externally_mutated_portfolio: dict[str, bytes] = {}
+    original_context = delivery._active_blocked_single_stage_recovery_context
+
+    def mutate_portfolio_after_preflight(state_path: Path) -> dict[str, object]:
+        context = original_context(state_path)
+        portfolio = json.loads(portfolio_path.read_text(encoding="utf-8"))
+        portfolio["concurrent_resume_marker"] = "changed after recovery preflight"
+        delivery._atomic_json(portfolio_path, portfolio)
+        externally_mutated_portfolio["bytes"] = portfolio_path.read_bytes()
+        return context
+
+    monkeypatch.setattr(
+        delivery,
+        "_active_blocked_single_stage_recovery_context",
+        mutate_portfolio_after_preflight,
+    )
+    with pytest.raises(DevelopmentDeliveryError, match="portfolio changed during active blocked recovery"):
+        delivery.recover_active_blocked_single_stage_delivery(
+            task_path,
+            reason="A concurrent resume changed the portfolio after preflight.",
+            idempotency_key="cc-163:portfolio-drift",
+            apply=True,
+        )
+
+    assert task_path.read_bytes() == before["task"]
+    assert portfolio_path.read_bytes() == externally_mutated_portfolio["bytes"]
+    assert autodev_path.read_bytes() == before["autodev"]
+    canonical_after = delivery._read_canonical_development_work(
+        root,
+        canonical_work_id=task["canonical_work_id"],
+        ticket=task["ticket"],
+        packet=Path(task["work_item"]),
+    )
+    assert json.dumps(canonical_after, sort_keys=True) == before["canonical"]
+    assert (event_path.read_bytes() if event_path.is_file() else None) == before["events"]
+    assert not (
+        Path(task["work_item"])
+        / "artifacts"
+        / "development-delivery"
+        / "active-blocked-single-stage-recovery"
+    ).exists()
+
+
 def test_correct_failed_base_selection_preserves_failure_then_allows_retry(tmp_path: Path) -> None:
     root, repo, task_path, base_sha = _historical_origin_main_failure(tmp_path)
     before = TaskState(task_path).read()
@@ -3229,6 +4564,78 @@ def test_everything_apply_marks_four_unmanaged_tasks_pending_without_stage_recei
         projection = read_auto_dev_state(task["autodev_path"])
         assert projection["mode"] == "everything"
         assert projection["stages"]["groom"]["status"] == "not_started"
+
+
+def test_mixed_executor_handoffs_preserve_exhausted_task_in_portfolio_rollup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, base_sha = _repository(tmp_path)
+    root = tmp_path / "os"
+    _project(root, repo)
+    monkeypatch.setattr(
+        delivery,
+        "create_isolated_worktree",
+        lambda **kwargs: {
+            "name": kwargs["ticket"].lower(),
+            "path": f"/tmp/{kwargs['ticket'].lower()}",
+            "branch": f"feature/{kwargs['ticket'].lower()}",
+            "base_sha": base_sha,
+        },
+    )
+
+    run_id = "mixed-executor-handoffs"
+    tickets = ["CC-EXHAUSTED", "CC-PENDING"]
+    first = delivery.start_development_run(
+        root,
+        "acme",
+        "app",
+        tickets,
+        run_id=run_id,
+        auto_dev_mode="everything",
+        require_executor_handoff=True,
+        apply=True,
+    )
+    assert first["state"] == "pending"
+    rows = {row["ticket"]: row for row in first["tasks"]}
+    exhausted = TaskState(Path(rows["CC-EXHAUSTED"]["state_ref"]))
+    selected_packet = Path(exhausted.read()["work_item"])
+
+    for attempt in (2, 3):
+        exhausted.recover(
+            receipt=f"operator-recovery-{attempt}",
+            idempotency_key=f"cc-exhausted:recover:{attempt}",
+        )
+        result = delivery.start_development_run(
+            root,
+            "acme",
+            "app",
+            ["CC-EXHAUSTED"],
+            run_id=run_id,
+            auto_dev_mode="everything",
+            selected_work_item=selected_packet,
+            require_executor_handoff=True,
+            apply=True,
+        )
+
+    assert result["state"] == "partial"
+    result_rows = {row["ticket"]: row for row in result["tasks"]}
+    assert result_rows["CC-EXHAUSTED"]["handoff"]["status"] == "blocked"
+    assert result_rows["CC-EXHAUSTED"]["handoff"]["recoverable"] is False
+    assert result_rows["CC-PENDING"]["handoff"]["status"] == "pending"
+    assert result_rows["CC-PENDING"]["handoff"]["recoverable"] is True
+    assert exhausted.read()["state"] == "blocked"
+    pending = TaskState(Path(result_rows["CC-PENDING"]["state_ref"]))
+    assert pending.read()["state"] == "worktree_ready"
+
+    portfolio_path = Path(result_rows["CC-EXHAUSTED"]["state_ref"]).parents[2] / "portfolio.json"
+    before_replay = portfolio_path.read_bytes()
+    terminal_receipt = result_rows["CC-EXHAUSTED"]["handoff"]["receipt"]
+    replay = exhausted.record_executor_unavailable(stage="groom")
+
+    assert replay["replayed"] is True
+    assert replay["handoff"]["attempt"] == 3
+    assert replay["task"]["failure"]["receipt"] == terminal_receipt
+    assert portfolio_path.read_bytes() == before_replay
 
 
 def test_everything_executor_handoff_blocks_after_bounded_retries(
@@ -4479,6 +5886,11 @@ def test_release_propagation_appends_exact_head_supersession_without_rewriting_p
                     "source_branch": "feature/cc-52",
                     "source_head_sha": head,
                     "subject_revision": head,
+                    "review_coordination_receipt": _review_coordination_receipt(
+                        task,
+                        subject_revision=head,
+                        pull_request="github:acme/app#52",
+                    ),
                 },
             ),
         }
@@ -5089,6 +6501,341 @@ def test_release_propagation_derives_only_blank_canonical_github_source_branch(
         assert old_wrapper.read_bytes() == old_wrapper_bytes
         assert hashlib.sha256(old_wrapper.read_bytes()).hexdigest() == old_wrapper_hash
 
+def test_release_propagation_normalizes_exact_legacy_family_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A historical family-complete receipt may refresh without rewriting history."""
+
+    repo, base_sha = _repository(tmp_path)
+    root = tmp_path / "os"
+    _project(root, repo, repository_id="git:github.com/acme/app")
+    monkeypatch.setattr(
+        delivery,
+        "create_isolated_worktree",
+        lambda **kwargs: {
+            "name": "cc-54",
+            "path": "/tmp/cc-54",
+            "branch": "feature/cc-54",
+            "base_sha": base_sha,
+        },
+    )
+    run = delivery.start_development_run(
+        root,
+        "acme",
+        "app",
+        ["CC-54"],
+        run_id="release-propagation-family-identity",
+        auto_dev_mode="everything",
+        apply=True,
+    )
+    task = TaskState(Path(run["tasks"][0]["state_ref"]))
+    _advance_auto_dev_task_to_ready(
+        task,
+        subject_revision=base_sha,
+        pull_request="github:acme/app#54",
+    )
+    for stage_name in ("groom", "detective", "create_artifacts", "document"):
+        _record_standalone_stage(task, stage_name)
+    task_value = task.read()
+    task_value["state"] = "local_validation"
+    task.path.write_text(json.dumps(task_value), encoding="utf-8")
+    work_item = Path(task_value["work_item"])
+
+    def receipt(name: str, evidence: dict[str, object]) -> Path:
+        path = work_item / "artifacts" / "auto-dev-pr-create" / f"family-{name}.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(
+                {
+                    "schema": "development-stage-evidence/v1",
+                    "state": "release_propagation",
+                    "status": "completed",
+                    "summary": f"PR family receipt {name}",
+                    "verified_at": "2026-08-12T18:00:00Z",
+                    "evidence": evidence,
+                }
+            ),
+            encoding="utf-8",
+        )
+        return path
+
+    old = receipt(
+        "old",
+        {
+            "family": [
+                {
+                    "repository": "acme/app",
+                    "provider": "github",
+                    "pull_request": 54,
+                    "base": "main",
+                    "source_branch": "feature/cc-54",
+                    "source_head": base_sha,
+                    "provider_readback_verified": True,
+                }
+            ],
+            "receipt_refs": ["artifacts/auto-dev-pr-create/provider-readback.json"],
+        },
+    )
+    run_development_stage(
+        task.path,
+        stage="release_propagation",
+        receipts={"release_propagation": str(old)},
+        idempotency_prefix="cc-54:pr-create:old",
+    )
+    old_wrapper = Path(task.read()["stage_receipts"]["release_propagation"]["ref"])
+    old_bytes = old.read_bytes()
+    old_wrapper_bytes = old_wrapper.read_bytes()
+
+    new_head = "b" * 40
+    refreshed = receipt(
+        "new",
+        {
+            "repository": "git:github.com/acme/app",
+            "base_branch": "main",
+            "provider": "github",
+            "pull_request": "github:acme/app#54",
+            "source_branch": "feature/cc-54",
+            "source_head_sha": new_head,
+            "readback_verified": True,
+            "provider_observed": {"head_sha": new_head},
+            "supersession": {
+                "supersedes_source_head_sha": base_sha,
+                "reason": "The provider readback reports the refreshed PR head.",
+            },
+        },
+    )
+    output = run_development_stage(
+        task.path,
+        stage="release_propagation",
+        receipts={"release_propagation": str(refreshed)},
+        idempotency_prefix="cc-54:pr-create:new",
+    )
+
+    current_wrapper = Path(task.read()["stage_receipts"]["release_propagation"]["ref"])
+    assert old.read_bytes() == old_bytes
+    assert old_wrapper.read_bytes() == old_wrapper_bytes
+    assert current_wrapper != old_wrapper
+    assert output["supersedes"]["legacy_identity_normalization"] == {
+        "source": "evidence.family[0]",
+        "legacy_fields": {
+            "repository": "acme/app",
+            "base": "main",
+            "provider": "github",
+            "pull_request": 54,
+            "source_branch": "feature/cc-54",
+            "source_head": base_sha,
+        },
+        "normalized_identity": {
+            "repository": "git:github.com/acme/app",
+            "base_branch": "main",
+            "provider": "github",
+            "pull_request": "github:acme/app#54",
+            "source_branch": "feature/cc-54",
+            "source_head_sha": base_sha,
+        },
+    }
+
+
+@pytest.mark.parametrize(
+    ("label", "family_mutation", "successor_mutation", "error"),
+    [
+        (
+            "missing",
+            "missing",
+            None,
+            "requires provider-read new head and explicit prior-head supersession",
+        ),
+        ("empty", "empty", None, "requires exactly one object"),
+        ("multiple", "multiple", None, "requires exactly one object"),
+        ("non-object", "non-object", None, "requires exactly one object"),
+        ("mixed", "mixed", None, "must not mix with another prior identity format"),
+        ("missing-readback", "missing-readback", None, "does not exactly bind"),
+        ("false-readback", "false-readback", None, "does not exactly bind"),
+        ("string-pr", "string-pr", None, "does not exactly bind"),
+        ("zero-pr", "zero-pr", None, "does not exactly bind"),
+        ("foreign-repository", "foreign-repository", None, "does not exactly bind"),
+        ("foreign-base", "foreign-base", None, "does not exactly bind"),
+        ("foreign-provider", "foreign-provider", None, "does not exactly bind"),
+        ("foreign-branch", "foreign-branch", None, "does not exactly bind"),
+        ("malformed-head", "malformed-head", None, "does not exactly bind"),
+        (
+            "case-only-head",
+            "uppercase-head",
+            "case-only-head",
+            "requires provider-read new head and explicit prior-head supersession",
+        ),
+        (
+            "successor-readback-drift",
+            None,
+            "successor-readback-drift",
+            "requires provider-read new head and explicit prior-head supersession",
+        ),
+        (
+            "successor-wrong-branch",
+            None,
+            "successor-wrong-branch",
+            "must retain the same source_branch",
+        ),
+    ],
+)
+def test_release_propagation_refuses_unsafe_legacy_family_identity_without_mutation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    label: str,
+    family_mutation: str | None,
+    successor_mutation: str | None,
+    error: str,
+) -> None:
+    """Malformed legacy family identity cannot mutate the active delivery binding."""
+
+    repo, base_sha = _repository(tmp_path)
+    root = tmp_path / "os"
+    _project(root, repo, repository_id="git:github.com/acme/app")
+    monkeypatch.setattr(
+        delivery,
+        "create_isolated_worktree",
+        lambda **kwargs: {
+            "name": f"cc-55-{label}",
+            "path": f"/tmp/cc-55-{label}",
+            "branch": "feature/cc-55",
+            "base_sha": base_sha,
+        },
+    )
+    run = delivery.start_development_run(
+        root,
+        "acme",
+        "app",
+        ["CC-55"],
+        run_id=f"release-propagation-family-refusal-{label}",
+        auto_dev_mode="everything",
+        apply=True,
+    )
+    task = TaskState(Path(run["tasks"][0]["state_ref"]))
+    _advance_auto_dev_task_to_ready(
+        task,
+        subject_revision=base_sha,
+        pull_request="github:acme/app#55",
+    )
+    for stage_name in ("groom", "detective", "create_artifacts", "document"):
+        _record_standalone_stage(task, stage_name)
+    task_value = task.read()
+    task_value["state"] = "local_validation"
+    task.path.write_text(json.dumps(task_value), encoding="utf-8")
+    work_item = Path(task_value["work_item"])
+
+    family_item: dict[str, object] = {
+        "repository": "acme/app",
+        "provider": "github",
+        "pull_request": 55,
+        "base": "main",
+        "source_branch": "feature/cc-55",
+        "source_head": base_sha,
+        "provider_readback_verified": True,
+    }
+    prior_evidence: dict[str, object] = {"family": [family_item]}
+    if family_mutation == "missing":
+        prior_evidence = {"receipt_refs": ["artifacts/auto-dev-pr-create/provider-readback.json"]}
+    elif family_mutation == "empty":
+        prior_evidence["family"] = []
+    elif family_mutation == "multiple":
+        prior_evidence["family"] = [family_item, dict(family_item)]
+    elif family_mutation == "non-object":
+        prior_evidence["family"] = ["not-an-object"]
+    elif family_mutation == "mixed":
+        prior_evidence["repository"] = "git:github.com/acme/app"
+    elif family_mutation == "missing-readback":
+        family_item.pop("provider_readback_verified")
+    elif family_mutation == "false-readback":
+        family_item["provider_readback_verified"] = False
+    elif family_mutation == "string-pr":
+        family_item["pull_request"] = "55"
+    elif family_mutation == "zero-pr":
+        family_item["pull_request"] = 0
+    elif family_mutation == "foreign-repository":
+        family_item["repository"] = "other/app"
+    elif family_mutation == "foreign-base":
+        family_item["base"] = "release"
+    elif family_mutation == "foreign-provider":
+        family_item["provider"] = "gitlab"
+    elif family_mutation == "foreign-branch":
+        family_item["source_branch"] = "feature/other"
+    elif family_mutation == "malformed-head":
+        family_item["source_head"] = "not-a-sha"
+    elif family_mutation == "uppercase-head":
+        family_item["source_head"] = base_sha.upper()
+
+    def receipt(name: str, evidence: dict[str, object]) -> Path:
+        path = work_item / "artifacts" / "auto-dev-pr-create" / f"refusal-{label}-{name}.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(
+                {
+                    "schema": "development-stage-evidence/v1",
+                    "state": "release_propagation",
+                    "status": "completed",
+                    "summary": f"PR family receipt {name}",
+                    "verified_at": "2026-08-12T18:00:00Z",
+                    "evidence": evidence,
+                }
+            ),
+            encoding="utf-8",
+        )
+        return path
+
+    old = receipt("old", prior_evidence)
+    run_development_stage(
+        task.path,
+        stage="release_propagation",
+        receipts={"release_propagation": str(old)},
+        idempotency_prefix=f"cc-55:{label}:old",
+    )
+    old_wrapper = Path(task.read()["stage_receipts"]["release_propagation"]["ref"])
+    new_head = base_sha if successor_mutation == "case-only-head" else "b" * 40
+    successor_evidence: dict[str, object] = {
+        "repository": "git:github.com/acme/app",
+        "base_branch": "main",
+        "provider": "github",
+        "pull_request": "github:acme/app#55",
+        "source_branch": "feature/cc-55",
+        "source_head_sha": new_head,
+        "readback_verified": True,
+        "provider_observed": {"head_sha": new_head},
+        "supersession": {
+            "supersedes_source_head_sha": base_sha,
+            "reason": "The provider readback reports the refreshed PR head.",
+        },
+    }
+    if successor_mutation == "successor-readback-drift":
+        successor_evidence["provider_observed"] = {"head_sha": base_sha}
+    elif successor_mutation == "successor-wrong-branch":
+        successor_evidence["source_branch"] = "feature/other"
+    refreshed = receipt("new", successor_evidence)
+
+    def snapshot(path: Path) -> bytes | None:
+        return path.read_bytes() if path.is_file() else None
+
+    autodev_path = Path(task.read()["autodev_path"])
+    before = {
+        "task": snapshot(task.path),
+        "autodev": snapshot(autodev_path),
+        "ledger": snapshot(task.ledger),
+        "wrapper": snapshot(old_wrapper),
+        "prior_evidence": snapshot(old),
+    }
+    with pytest.raises(DevelopmentDeliveryError, match=error):
+        run_development_stage(
+            task.path,
+            stage="release_propagation",
+            receipts={"release_propagation": str(refreshed)},
+            idempotency_prefix=f"cc-55:{label}:new",
+        )
+    assert {
+        "task": snapshot(task.path),
+        "autodev": snapshot(autodev_path),
+        "ledger": snapshot(task.ledger),
+        "wrapper": snapshot(old_wrapper),
+        "prior_evidence": snapshot(old),
+    } == before
 
 def test_heartbeat_does_not_refresh_milestone_evidence_timestamp(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -5147,7 +6894,7 @@ def test_shipped_auto_dev_knowledge_matches_canonical_stage_order() -> None:
         "review_others": "Review Others",
         "qa": "QA",
         "finalize": "Finalize",
-        "validate_production_release": "Validate Production Release",
+        "validate_production_release": "Production Release Validation",
         "merge": "Merge",
         "release": "Release",
         "deploy": "Deploy",
@@ -5193,6 +6940,7 @@ def test_shipped_auto_dev_knowledge_matches_canonical_stage_order() -> None:
         ).read_text(encoding="utf-8")
         normalized_command = " ".join(command.split())
         assert "Document, PR Create, Review Self, Review Others, QA" in normalized_command
+        assert "Finalize, Production Release Validation, Merge" in normalized_command
         assert "compatibility recorder/alias for PR Create" in normalized_command
 
     readme = (policy_root / "README.md").read_text(encoding="utf-8")
@@ -5212,7 +6960,7 @@ def test_shipped_auto_dev_knowledge_matches_canonical_stage_order() -> None:
     ).read_text(encoding="utf-8")
     normalized_skill = " ".join(everything_skill.split())
     assert (
-        "Develop, Document, PR Create, Review Self, Review Others, QA, Finalize"
+        "Develop, Document, PR Create, Review Self, Review Others, QA, Finalize, Production Release Validation"
         in normalized_skill
     )
     assert "does not add another Auto-Dev stage" in normalized_skill
@@ -5230,6 +6978,7 @@ def test_shipped_auto_dev_knowledge_matches_canonical_stage_order() -> None:
     assert "$auto-dev-review-self" in numbered_skill_stages[7]
     assert numbered_skill_stages[9] == "10. `$auto-dev-qa`"
     assert numbered_skill_stages[10] == "11. `$auto-dev-finalize`"
+    assert numbered_skill_stages[11] == "12. `$auto-dev-validate-production-release`"
     assert not any(
         "$auto-dev-release-propagation" in line
         for line in numbered_skill_stages
@@ -5286,6 +7035,66 @@ def test_shipped_auto_dev_stage_policy_decisions_satisfy_strict_schema(
     )
     document = json.loads((repository / relative_path).read_text(encoding="utf-8"))
     assert list(Draft202012Validator(schema).iter_errors(document)) == []
+
+
+def test_stage_policy_decision_schema_enum_matches_runtime_stage_sets() -> None:
+    """The strict stage enum accepts exactly what runtime not_required paths produce."""
+
+    repository = Path(__file__).resolve().parents[1]
+    schema = json.loads(
+        (
+            repository / "schemas/auto-dev-stage-policy-decision.schema.json"
+        ).read_text(encoding="utf-8")
+    )
+    enum = schema["properties"]["stage"]["enum"]
+    expected = auto_dev.NOT_REQUIRED_ALLOWED_STAGES | set(
+        delivery.NOT_REQUIRED_DELIVERY_POLICY_STAGES.values()
+    )
+    assert len(enum) == len(set(enum))
+    assert set(enum) == expected
+    canonical = [stage for stage in AUTO_DEV_STAGE_ORDER if stage in expected]
+    canonical += sorted(expected - set(AUTO_DEV_STAGE_ORDER))
+    assert enum == canonical
+
+
+def test_disabled_document_policy_records_strict_not_required_receipt(
+    tmp_path: Path,
+) -> None:
+    """A project policy disabling Document accepts the typed receipt end to end."""
+
+    repo, _ = _repository(tmp_path)
+    root = tmp_path / "os"
+    project = _project(root, repo)
+    profile_path = project / "config" / "development.yml"
+    profile = yaml.safe_load(profile_path.read_text(encoding="utf-8"))
+    profile["auto_dev"] = {"stages": {"document": {"applicability": "disabled"}}}
+    profile_path.write_text(yaml.safe_dump(profile, sort_keys=False), encoding="utf-8")
+
+    run = delivery.start_development_run(root, "acme", "app", ["CC-DOC"], apply=True)
+    task = TaskState(Path(run["tasks"][0]["state_ref"]))
+    projection = read_auto_dev_state(task.read()["autodev_path"])
+    assert projection["stage_policies"]["document"]["applicability"] == "disabled"
+
+    for stage in ("groom", "detective", "create_artifacts"):
+        _record_standalone_stage(task, stage)
+    result = _record_standalone_stage(task, "document", status="not_required")
+    assert result["state"]["stages"]["document"]["status"] == "not_required"
+
+    work_item = Path(task.read()["work_item"])
+    proofs = sorted(
+        (
+            work_item / "artifacts" / "auto-dev-orchestration" / "proofs" / "document"
+        ).glob("policy-decision-*.json")
+    )
+    assert proofs
+    schema = json.loads(
+        (
+            Path(__file__).resolve().parents[1]
+            / "schemas/auto-dev-stage-policy-decision.schema.json"
+        ).read_text(encoding="utf-8")
+    )
+    materialized = json.loads(proofs[-1].read_text(encoding="utf-8"))
+    assert list(Draft202012Validator(schema).iter_errors(materialized)) == []
 
 
 def test_release_propagation_workflow_is_pr_create_compatibility_recorder() -> None:
@@ -5391,7 +7200,7 @@ def test_review_repair_consumes_pr_create_family_without_creating_prs() -> None:
     contract = yaml.safe_load(
         (workflow_root / "workflow.yml").read_text(encoding="utf-8")
     )
-    assert contract["version"] == 2
+    assert contract["version"] == 3
     assert contract["inputs"][0] == "pr_create_family_receipt"
     assert "open_pr" not in contract["steps"]
     assert "verify_pr_create_family" in contract["steps"]
@@ -5402,7 +7211,7 @@ def test_review_repair_consumes_pr_create_family_without_creating_prs() -> None:
     )
     assert "does not open, retarget, or add pull requests" in workflow
     assert "A missing or wrong target returns to PR Create" in workflow
-    assert "pr_open stores the provider readback already created by PR Create" in (
+    assert "pr_open stores the PR Create provider readback" in (
         workflow.replace("`", "")
     )
 
@@ -6971,6 +8780,11 @@ def test_review_stage_follows_pr_create_without_requiring_its_own_completion(
                 "checks_verified": True,
                 "reviews_verified": True,
                 "subject_revision": base_sha,
+                "review_coordination_receipt": _review_coordination_receipt(
+                    task,
+                    subject_revision=base_sha,
+                    pull_request="github:acme/app#77",
+                ),
             },
         ),
     }
@@ -6991,6 +8805,24 @@ def test_review_stage_follows_pr_create_without_requiring_its_own_completion(
         },
         idempotency_prefix="cc-review-cycle:pr-create",
     )
+    missing_coordination = dict(review_receipts)
+    missing_ready = json.loads(
+        Path(missing_coordination["ready_for_merge"]).read_text(encoding="utf-8")
+    )
+    missing_ready["evidence"].pop("review_coordination_receipt")
+    missing_path = work_item / "stage-receipts" / "ready-for-merge-missing-coordination.json"
+    missing_path.write_text(json.dumps(missing_ready), encoding="utf-8")
+    missing_coordination["ready_for_merge"] = str(missing_path)
+    with pytest.raises(
+        DevelopmentDeliveryError,
+        match="Auto-Dev ready_for_merge requires review_coordination_receipt",
+    ):
+        run_development_stage(
+            task.path,
+            stage="review",
+            receipts=missing_coordination,
+            idempotency_prefix="cc-review-cycle:review-missing-coordination",
+        )
     reviewed = run_development_stage(
         task.path,
         stage="review",
@@ -7392,6 +9224,670 @@ def test_recover_active_worktree_ready_delivery_accepts_only_the_post_review_sel
         json.loads(portfolio_path.read_text(encoding="utf-8"))["active_worktree_ready_delivery_recoveries"]
     ) == 1
     assert work_item.is_dir()
+
+
+def _recovered_worktree_ready_successor_family(
+    task: TaskState,
+    family_path: Path,
+    provider_path: Path,
+    *,
+    head: str | None = None,
+) -> tuple[Path, Path]:
+    """Write the provider-read successor required by the narrow continuation."""
+
+    if head is None:
+        worktree = Path(task.read()["worktree"]["path"])
+        _git(
+            "commit",
+            "--allow-empty",
+            "-m",
+            "refresh recovered PR family test head",
+            cwd=worktree,
+        )
+        head = _git("rev-parse", "HEAD", cwd=worktree)
+    family = json.loads(family_path.read_text(encoding="utf-8"))
+    provider = json.loads(provider_path.read_text(encoding="utf-8"))
+    predecessor_head = family["evidence"]["source_head_sha"]
+    family["evidence"]["source_head_sha"] = head
+    family["evidence"]["provider_observed"]["head_sha"] = head
+    family["evidence"]["supersession"] = {
+        "supersedes_source_head_sha": predecessor_head,
+        "reason": "normal non-destructive rebase onto current main",
+    }
+    provider["source_head_sha"] = head
+    successor_family = family_path.with_name(
+        f"refresh-{head[:8].lower()}-family-complete.json"
+    )
+    successor_provider = provider_path.with_name(
+        f"refresh-{head[:8].lower()}-provider-readback.json"
+    )
+    successor_family.write_text(json.dumps(family), encoding="utf-8")
+    successor_provider.write_text(json.dumps(provider), encoding="utf-8")
+    return successor_family, successor_provider
+
+
+def test_bind_recovered_worktree_ready_pr_family_preserves_fresh_stage_boundary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    task, portfolio_path, family_path, provider_path = _active_worktree_ready_recovery_fixture(
+        tmp_path, monkeypatch, post_review_self_admission=True
+    )
+    delivery.recover_active_worktree_ready_delivery(
+        task.path,
+        reason="recover the bounded unaccepted Review Self admission",
+        idempotency_key="cc-419:recover",
+        apply=True,
+    )
+    successor_family, successor_provider = _recovered_worktree_ready_successor_family(
+        task, family_path, provider_path
+    )
+    work_item = Path(task.read()["work_item"])
+    projection_path = Path(task.read()["autodev_path"])
+    before = {
+        "task": task.path.read_bytes(),
+        "portfolio": portfolio_path.read_bytes(),
+        "projection": projection_path.read_bytes(),
+        "family": family_path.read_bytes(),
+        "provider": provider_path.read_bytes(),
+        "successor_family": successor_family.read_bytes(),
+        "successor_provider": successor_provider.read_bytes(),
+    }
+
+    assert main(
+        [
+            "auto-dev",
+            "bind-recovered-worktree-ready-pr-family",
+            "--state",
+            str(task.path),
+            "--family",
+            str(successor_family),
+            "--reason",
+            "bind only the current provider-read successor after recovery",
+            "--idempotency-key",
+            "cc-419:bind",
+            "--json",
+        ]
+    ) == 0
+    planned = json.loads(capsys.readouterr().out)
+    assert planned["result"] == "planned"
+    assert task.path.read_bytes() == before["task"]
+    assert portfolio_path.read_bytes() == before["portfolio"]
+    assert projection_path.read_bytes() == before["projection"]
+
+    bound = delivery.bind_recovered_worktree_ready_pr_family(
+        task.path,
+        family_ref=successor_family,
+        reason="bind only the current provider-read successor after recovery",
+        idempotency_key="cc-419:bind",
+        apply=True,
+    )
+    assert bound["result"] == "bound"
+    receipt = json.loads(Path(bound["receipt"]).read_text(encoding="utf-8"))
+    assert receipt["original"]["release_propagation"]["family_ref"] == str(family_path)
+    assert receipt["continuation"]["release_propagation"]["family_ref"] == str(
+        successor_family
+    )
+    current = task.read()
+    assert current["state"] == "local_validation"
+    assert current.get("stage_receipts") in (None, {})
+    assert current.get("subject_revision") in (None, "")
+    assert len(current["active_worktree_ready_release_propagation_continuations"]) == 1
+    assert portfolio_path.read_bytes() == before["portfolio"]
+    assert projection_path.read_bytes() == before["projection"]
+    assert all(
+        read_auto_dev_state(projection_path)["stages"][stage]["status"] == "not_started"
+        for stage in ("review_self", "review_others", "qa", "finalize", "merge")
+    )
+    assert family_path.read_bytes() == before["family"]
+    assert provider_path.read_bytes() == before["provider"]
+    assert successor_family.read_bytes() == before["successor_family"]
+    assert successor_provider.read_bytes() == before["successor_provider"]
+    assert work_item.is_dir()
+
+    replayed = delivery.bind_recovered_worktree_ready_pr_family(
+        task.path,
+        family_ref=successor_family,
+        reason="bind only the current provider-read successor after recovery",
+        idempotency_key="cc-419:bind",
+        apply=True,
+    )
+    assert replayed["result"] == "replayed"
+    assert len(task.read()["active_worktree_ready_release_propagation_continuations"]) == 1
+
+
+def test_bind_recovered_worktree_ready_pr_family_accepts_pr_create_recovery(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    task, portfolio_path, family_path, provider_path = _active_worktree_ready_recovery_fixture(
+        tmp_path, monkeypatch, single_stage_pr_create=True
+    )
+    recovered = _recover_pr_create_worktree_ready_with_legacy_stage_order(
+        task, portfolio_path, monkeypatch
+    )
+    successor_family, successor_provider = _recovered_worktree_ready_successor_family(
+        task, family_path, provider_path
+    )
+    projection_path = Path(task.read()["autodev_path"])
+    # The approved PR-Create recovery can synchronize the selected Review Self
+    # entrypoint without recording any Review Self authority.  The narrow
+    # continuation must accept only this coupled task/projection shape.
+    recovered_task = task.read()
+    recovered_task["requested_stage"] = "review_self"
+    task.path.write_text(
+        json.dumps(recovered_task, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    projection = json.loads(projection_path.read_text(encoding="utf-8"))
+    projection["requested_stage"] = "review_self"
+    projection_path.write_text(
+        json.dumps(projection, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    before = {
+        "task": task.path.read_bytes(),
+        "portfolio": portfolio_path.read_bytes(),
+        "projection": projection_path.read_bytes(),
+        "family": family_path.read_bytes(),
+        "provider": provider_path.read_bytes(),
+        "successor_family": successor_family.read_bytes(),
+        "successor_provider": successor_provider.read_bytes(),
+        "recovery": Path(recovered["receipt"]).read_bytes(),
+    }
+
+    planned = delivery.bind_recovered_worktree_ready_pr_family(
+        task.path,
+        family_ref=successor_family,
+        reason="bind the exact current PR successor after PR Create recovery",
+        idempotency_key="cc-419:pr-create-bind",
+    )
+    assert planned["result"] == "planned"
+    assert task.path.read_bytes() == before["task"]
+    assert portfolio_path.read_bytes() == before["portfolio"]
+    assert projection_path.read_bytes() == before["projection"]
+
+    bound = delivery.bind_recovered_worktree_ready_pr_family(
+        task.path,
+        family_ref=successor_family,
+        reason="bind the exact current PR successor after PR Create recovery",
+        idempotency_key="cc-419:pr-create-bind",
+        apply=True,
+    )
+    assert bound["result"] == "bound"
+    receipt = json.loads(Path(bound["receipt"]).read_text(encoding="utf-8"))
+    assert receipt["original"]["recovery"]["receipt"] == recovered["receipt"]
+    assert receipt["continuation"]["release_propagation"]["family_ref"] == str(
+        successor_family
+    )
+    current = task.read()
+    assert current["state"] == "local_validation"
+    assert current.get("stage_receipts") in (None, {})
+    assert len(current["active_worktree_ready_pr_create_delivery_recoveries"]) == 1
+    assert current.get("active_worktree_ready_delivery_recoveries") in (None, [])
+    assert len(current["active_worktree_ready_release_propagation_continuations"]) == 1
+    assert portfolio_path.read_bytes() == before["portfolio"]
+    assert projection_path.read_bytes() == before["projection"]
+    assert family_path.read_bytes() == before["family"]
+    assert provider_path.read_bytes() == before["provider"]
+    assert successor_family.read_bytes() == before["successor_family"]
+    assert successor_provider.read_bytes() == before["successor_provider"]
+    assert Path(recovered["receipt"]).read_bytes() == before["recovery"]
+
+    replayed = delivery.bind_recovered_worktree_ready_pr_family(
+        task.path,
+        family_ref=successor_family,
+        reason="bind the exact current PR successor after PR Create recovery",
+        idempotency_key="cc-419:pr-create-bind",
+        apply=True,
+    )
+    assert replayed["result"] == "replayed"
+    assert len(task.read()["active_worktree_ready_release_propagation_continuations"]) == 1
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ("receipt_digest", "receipt_ref", "reordered", "duplicate", "omitted"),
+)
+def test_bind_recovered_worktree_ready_pr_family_refuses_unanchored_or_noncanonical_legacy_order(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mutation: str
+) -> None:
+    task, portfolio_path, family_path, provider_path = _active_worktree_ready_recovery_fixture(
+        tmp_path, monkeypatch, single_stage_pr_create=True
+    )
+    recovered = _recover_pr_create_worktree_ready_with_legacy_stage_order(
+        task, portfolio_path, monkeypatch
+    )
+    successor_family, successor_provider = _recovered_worktree_ready_successor_family(
+        task, family_path, provider_path
+    )
+    recovery_path = Path(recovered["receipt"])
+    current = task.read()
+    current["requested_stage"] = "review_self"
+    task.path.write_text(
+        json.dumps(current, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    projection_path = Path(current["autodev_path"])
+    projection = json.loads(projection_path.read_text(encoding="utf-8"))
+    projection["requested_stage"] = "review_self"
+    projection_path.write_text(
+        json.dumps(projection, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+
+    if mutation == "receipt_digest":
+        payload = json.loads(recovery_path.read_text(encoding="utf-8"))
+        payload["reason"] = "tampered after its immutable local-validation receipt"
+        recovery_path.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
+    elif mutation == "receipt_ref":
+        current = task.read()
+        local_validation = next(
+            row for row in current["receipts"] if row["state"] == "local_validation"
+        )
+        local_validation["ref"] = str(successor_family)
+        task.path.write_text(
+            json.dumps(current, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+    else:
+        payload = json.loads(recovery_path.read_text(encoding="utf-8"))
+        legacy_order = list(payload["recovered"]["stage_order"])
+        if mutation == "reordered":
+            tampered_order = [*legacy_order[:2], legacy_order[3], legacy_order[2], *legacy_order[4:]]
+        elif mutation == "duplicate":
+            tampered_order = [*legacy_order, legacy_order[-1]]
+        else:
+            tampered_order = [stage for stage in legacy_order if stage != "document"]
+        payload["recovered"]["stage_order"] = tampered_order
+        payload["recovered"]["portfolio_auto_dev"]["stage_order"] = tampered_order
+        recovery_path.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
+        digest = delivery._json_sha256(payload)
+        current = task.read()
+        current["auto_dev_stage_order"] = tampered_order
+        current["active_worktree_ready_pr_create_delivery_recoveries"][0]["sha256"] = digest
+        local_validation = next(
+            row for row in current["receipts"] if row["state"] == "local_validation"
+        )
+        local_validation["sha256"] = digest
+        task.path.write_text(
+            json.dumps(current, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        projection = json.loads(projection_path.read_text(encoding="utf-8"))
+        projection["stage_order"] = tampered_order
+        projection_path.write_text(
+            json.dumps(projection, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+
+    work_item = Path(task.read()["work_item"])
+    root = Path(task.read()["os_root"])
+    connection = connect_state(default_db_path(root))
+    try:
+        canonical_before = canonical_work_items.get(
+            connection, task.read()["canonical_work_id"]
+        )
+    finally:
+        connection.close()
+    continuation_dir = (
+        work_item
+        / "artifacts"
+        / "development-delivery"
+        / "active-worktree-ready-release-propagation-continuation"
+    )
+    before = {
+        "task": task.path.read_bytes(),
+        "portfolio": portfolio_path.read_bytes(),
+        "projection": projection_path.read_bytes(),
+        "canonical": json.dumps(canonical_before, sort_keys=True),
+        "ledger": task.ledger.read_bytes() if task.ledger.is_file() else None,
+        "continuation_dir": continuation_dir.exists(),
+        "recovery": recovery_path.read_bytes(),
+        "family": family_path.read_bytes(),
+        "provider": provider_path.read_bytes(),
+        "successor_family": successor_family.read_bytes(),
+        "successor_provider": successor_provider.read_bytes(),
+    }
+
+    with pytest.raises(DevelopmentDeliveryError):
+        delivery.bind_recovered_worktree_ready_pr_family(
+            task.path,
+            family_ref=successor_family,
+            reason="refuse an unanchored or noncanonical legacy recovery order",
+            idempotency_key=f"cc-419:legacy-order-refuse:{mutation}",
+            apply=True,
+        )
+
+    assert task.path.read_bytes() == before["task"]
+    assert portfolio_path.read_bytes() == before["portfolio"]
+    assert projection_path.read_bytes() == before["projection"]
+    connection = connect_state(default_db_path(root))
+    try:
+        canonical_after = canonical_work_items.get(
+            connection, task.read()["canonical_work_id"]
+        )
+    finally:
+        connection.close()
+    assert json.dumps(canonical_after, sort_keys=True) == before["canonical"]
+    assert (task.ledger.read_bytes() if task.ledger.is_file() else None) == before["ledger"]
+    assert continuation_dir.exists() is before["continuation_dir"]
+    assert recovery_path.read_bytes() == before["recovery"]
+    assert family_path.read_bytes() == before["family"]
+    assert provider_path.read_bytes() == before["provider"]
+    assert successor_family.read_bytes() == before["successor_family"]
+    assert successor_provider.read_bytes() == before["successor_provider"]
+
+
+@pytest.mark.parametrize(
+    ("recovery_kind", "task_requested_stage", "projection_requested_stage"),
+    (
+        # Generic recovery is never allowed to inherit the Review Self selector.
+        ("generic", "review_self", "review_self"),
+        # The PR-Create variant accepts only the Review Self selector.
+        ("pr_create", "qa", "qa"),
+        # Even that narrow PR-Create exception requires task/projection coupling.
+        ("pr_create", "review_self", "review_others"),
+    ),
+)
+def test_bind_recovered_worktree_ready_pr_family_refuses_uncoupled_requested_stage(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    recovery_kind: str,
+    task_requested_stage: str,
+    projection_requested_stage: str,
+) -> None:
+    task, portfolio_path, family_path, provider_path = _active_worktree_ready_recovery_fixture(
+        tmp_path, monkeypatch, single_stage_pr_create=recovery_kind == "pr_create"
+    )
+    recover = (
+        delivery.recover_active_worktree_ready_pr_create_delivery
+        if recovery_kind == "pr_create"
+        else delivery.recover_active_worktree_ready_delivery
+    )
+    recovered = recover(
+        task.path,
+        reason=f"recover the exact {recovery_kind} worktree-ready boundary",
+        idempotency_key=f"cc-419:{recovery_kind}:recover",
+        apply=True,
+    )
+    successor_family, successor_provider = _recovered_worktree_ready_successor_family(
+        task, family_path, provider_path
+    )
+    current = task.read()
+    current["requested_stage"] = task_requested_stage
+    task.path.write_text(
+        json.dumps(current, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    projection_path = Path(current["autodev_path"])
+    projection = json.loads(projection_path.read_text(encoding="utf-8"))
+    projection["requested_stage"] = projection_requested_stage
+    projection_path.write_text(
+        json.dumps(projection, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    work_item = Path(current["work_item"])
+    root = Path(current["os_root"])
+    connection = connect_state(default_db_path(root))
+    try:
+        canonical_before = canonical_work_items.get(connection, current["canonical_work_id"])
+    finally:
+        connection.close()
+    continuation_dir = (
+        work_item
+        / "artifacts"
+        / "development-delivery"
+        / "active-worktree-ready-release-propagation-continuation"
+    )
+    recovery_path = Path(recovered["receipt"])
+    before = {
+        "task": task.path.read_bytes(),
+        "portfolio": portfolio_path.read_bytes(),
+        "projection": projection_path.read_bytes(),
+        "canonical": json.dumps(canonical_before, sort_keys=True),
+        "ledger": task.ledger.read_bytes() if task.ledger.is_file() else None,
+        "continuation_dir": continuation_dir.exists(),
+        "recovery": recovery_path.read_bytes(),
+        "family": family_path.read_bytes(),
+        "provider": provider_path.read_bytes(),
+        "successor_family": successor_family.read_bytes(),
+        "successor_provider": successor_provider.read_bytes(),
+    }
+
+    with pytest.raises(DevelopmentDeliveryError):
+        delivery.bind_recovered_worktree_ready_pr_family(
+            task.path,
+            family_ref=successor_family,
+            reason="refuse a requested stage outside the exact recovered projection",
+            idempotency_key=(
+                "cc-419:"
+                f"{recovery_kind}:{task_requested_stage}:{projection_requested_stage}:refuse"
+            ),
+            apply=True,
+        )
+
+    assert task.path.read_bytes() == before["task"]
+    assert portfolio_path.read_bytes() == before["portfolio"]
+    assert projection_path.read_bytes() == before["projection"]
+    connection = connect_state(default_db_path(root))
+    try:
+        canonical_after = canonical_work_items.get(connection, current["canonical_work_id"])
+    finally:
+        connection.close()
+    assert json.dumps(canonical_after, sort_keys=True) == before["canonical"]
+    assert (task.ledger.read_bytes() if task.ledger.is_file() else None) == before["ledger"]
+    assert continuation_dir.exists() is before["continuation_dir"]
+    assert recovery_path.read_bytes() == before["recovery"]
+    assert family_path.read_bytes() == before["family"]
+    assert provider_path.read_bytes() == before["provider"]
+    assert successor_family.read_bytes() == before["successor_family"]
+    assert successor_provider.read_bytes() == before["successor_provider"]
+
+
+@pytest.mark.parametrize("mutation", ("mixed", "foreign", "tampered", "ambiguous"))
+def test_bind_recovered_worktree_ready_pr_family_refuses_invalid_pr_create_history(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mutation: str
+) -> None:
+    task, portfolio_path, family_path, provider_path = _active_worktree_ready_recovery_fixture(
+        tmp_path, monkeypatch, single_stage_pr_create=True
+    )
+    recovered = delivery.recover_active_worktree_ready_pr_create_delivery(
+        task.path,
+        reason="recover the exact legacy PR Create worktree-ready boundary",
+        idempotency_key="cc-419:pr-create-recover",
+        apply=True,
+    )
+    successor_family, successor_provider = _recovered_worktree_ready_successor_family(
+        task, family_path, provider_path
+    )
+    current = task.read()
+    record = dict(current["active_worktree_ready_pr_create_delivery_recoveries"][0])
+    recovery_path = Path(recovered["receipt"])
+    if mutation == "mixed":
+        current["active_worktree_ready_delivery_recoveries"] = [record]
+        task.path.write_text(json.dumps(current, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    elif mutation == "foreign":
+        record["receipt"] = str(successor_family)
+        current["active_worktree_ready_pr_create_delivery_recoveries"] = [record]
+        task.path.write_text(json.dumps(current, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    elif mutation == "tampered":
+        payload = json.loads(recovery_path.read_text(encoding="utf-8"))
+        payload["original"]["recovery_shape"] = "single_stage_readiness"
+        recovery_path.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
+    else:
+        current["active_worktree_ready_pr_create_delivery_recoveries"].append(record)
+        task.path.write_text(json.dumps(current, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    projection_path = Path(task.read()["autodev_path"])
+    work_item = Path(task.read()["work_item"])
+    root = Path(task.read()["os_root"])
+    connection = connect_state(default_db_path(root))
+    try:
+        canonical_before = canonical_work_items.get(
+            connection, task.read()["canonical_work_id"]
+        )
+    finally:
+        connection.close()
+    continuation_dir = (
+        work_item
+        / "artifacts"
+        / "development-delivery"
+        / "active-worktree-ready-release-propagation-continuation"
+    )
+    before = {
+        "task": task.path.read_bytes(),
+        "portfolio": portfolio_path.read_bytes(),
+        "projection": projection_path.read_bytes(),
+        "canonical": json.dumps(canonical_before, sort_keys=True),
+        "ledger": task.ledger.read_bytes() if task.ledger.is_file() else None,
+        "continuation_dir": continuation_dir.exists(),
+        "family": family_path.read_bytes(),
+        "provider": provider_path.read_bytes(),
+        "successor_family": successor_family.read_bytes(),
+        "successor_provider": successor_provider.read_bytes(),
+        "recovery": recovery_path.read_bytes(),
+    }
+
+    with pytest.raises(DevelopmentDeliveryError):
+        delivery.bind_recovered_worktree_ready_pr_family(
+            task.path,
+            family_ref=successor_family,
+            reason="refuse a mixed, foreign, tampered, or ambiguous recovery history",
+            idempotency_key=f"cc-419:pr-create-refuse:{mutation}",
+            apply=True,
+        )
+
+    assert task.path.read_bytes() == before["task"]
+    assert portfolio_path.read_bytes() == before["portfolio"]
+    assert projection_path.read_bytes() == before["projection"]
+    connection = connect_state(default_db_path(root))
+    try:
+        canonical_after = canonical_work_items.get(
+            connection, task.read()["canonical_work_id"]
+        )
+    finally:
+        connection.close()
+    assert json.dumps(canonical_after, sort_keys=True) == before["canonical"]
+    assert (task.ledger.read_bytes() if task.ledger.is_file() else None) == before["ledger"]
+    assert continuation_dir.exists() is before["continuation_dir"]
+    assert family_path.read_bytes() == before["family"]
+    assert provider_path.read_bytes() == before["provider"]
+    assert successor_family.read_bytes() == before["successor_family"]
+    assert successor_provider.read_bytes() == before["successor_provider"]
+    assert recovery_path.read_bytes() == before["recovery"]
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        "generic",
+        "foreign",
+        "old",
+        "recovery_receipt",
+        "different_recovery_receipt",
+        "latent_task_receipt",
+        "projection_authority",
+    ),
+)
+def test_bind_recovered_worktree_ready_pr_family_refuses_without_mutation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mutation: str
+) -> None:
+    task, portfolio_path, family_path, provider_path = _active_worktree_ready_recovery_fixture(
+        tmp_path, monkeypatch
+    )
+    if mutation != "generic":
+        delivery.recover_active_worktree_ready_delivery(
+            task.path,
+            reason="recover the historical readiness packet",
+            idempotency_key="cc-419:recover",
+            apply=True,
+        )
+    successor_family, successor_provider = _recovered_worktree_ready_successor_family(
+        task, family_path, provider_path
+    )
+    work_item = Path(task.read()["work_item"])
+    projection_path = Path(task.read()["autodev_path"])
+    if mutation == "foreign":
+        value = json.loads(successor_family.read_text(encoding="utf-8"))
+        value["evidence"]["repository"] = "git:github.com/foreign/app"
+        successor_family.write_text(json.dumps(value), encoding="utf-8")
+    elif mutation == "old":
+        family_path.write_text("{\"tampered\":true}", encoding="utf-8")
+    elif mutation == "recovery_receipt":
+        recovery = task.read()["active_worktree_ready_delivery_recoveries"][0]
+        Path(recovery["receipt"]).write_text("{\"tampered\":true}", encoding="utf-8")
+    elif mutation == "different_recovery_receipt":
+        value = task.read()
+        recovery = value["active_worktree_ready_delivery_recoveries"][0]
+        original_receipt = Path(recovery["receipt"])
+        copied_receipt = original_receipt.with_name("copied-recovery-receipt.json")
+        copied_receipt.write_bytes(original_receipt.read_bytes())
+        recovery["receipt"] = str(copied_receipt)
+        task.path.write_text(
+            json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+    elif mutation == "latent_task_receipt":
+        value = task.read()
+        value["receipts"].append(
+            {
+                "state": "review_self",
+                "ref": "unexpected-review-self-receipt",
+                "sha256": "b" * 64,
+                "recorded_at": "2026-08-12T00:00:00Z",
+            }
+        )
+        task.path.write_text(
+            json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+    elif mutation == "projection_authority":
+        projection = json.loads(projection_path.read_text(encoding="utf-8"))
+        projection["stages"]["review_self"] = {
+            "status": "completed",
+            "receipt_refs": ["unexpected-review-self-receipt"],
+        }
+        projection_path.write_text(
+            json.dumps(projection, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+    root = Path(task.read()["os_root"])
+    connection = connect_state(default_db_path(root))
+    try:
+        canonical_before = canonical_work_items.get(
+            connection, task.read()["canonical_work_id"]
+        )
+    finally:
+        connection.close()
+    continuation_dir = (
+        work_item
+        / "artifacts"
+        / "development-delivery"
+        / "active-worktree-ready-release-propagation-continuation"
+    )
+    before = {
+        "task": task.path.read_bytes(),
+        "portfolio": portfolio_path.read_bytes(),
+        "projection": projection_path.read_bytes(),
+        "canonical": json.dumps(canonical_before, sort_keys=True),
+        "ledger": task.ledger.read_bytes() if task.ledger.is_file() else None,
+        "continuation_dir": continuation_dir.exists(),
+        "family": family_path.read_bytes(),
+        "provider": provider_path.read_bytes(),
+        "successor_family": successor_family.read_bytes(),
+        "successor_provider": successor_provider.read_bytes(),
+    }
+    with pytest.raises(DevelopmentDeliveryError):
+        delivery.bind_recovered_worktree_ready_pr_family(
+            task.path,
+            family_ref=successor_family,
+            reason="must reject all nonexact recovered shapes",
+            idempotency_key=f"cc-419:{mutation}",
+            apply=True,
+        )
+    assert task.path.read_bytes() == before["task"]
+    assert portfolio_path.read_bytes() == before["portfolio"]
+    assert projection_path.read_bytes() == before["projection"]
+    connection = connect_state(default_db_path(root))
+    try:
+        canonical_after = canonical_work_items.get(
+            connection, task.read()["canonical_work_id"]
+        )
+    finally:
+        connection.close()
+    assert json.dumps(canonical_after, sort_keys=True) == before["canonical"]
+    assert (task.ledger.read_bytes() if task.ledger.is_file() else None) == before["ledger"]
+    assert continuation_dir.exists() is before["continuation_dir"]
+    assert family_path.read_bytes() == before["family"]
+    assert provider_path.read_bytes() == before["provider"]
+    assert successor_family.read_bytes() == before["successor_family"]
+    assert successor_provider.read_bytes() == before["successor_provider"]
 
 
 @pytest.mark.parametrize(
@@ -8021,3 +10517,32 @@ def test_recover_active_worktree_ready_pr_create_delivery_replay_refuses_backfil
     assert family_path.read_bytes() == before["family"]
     assert provider_path.read_bytes() == before["provider"]
     assert Path(recovered["receipt"]).read_bytes() == before["receipt"]
+
+
+def test_review_workflow_has_one_full_owner_and_receipt_only_finalize() -> None:
+    repository = Path(__file__).parents[1]
+    workflow = (
+        repository
+        / "harness/shared_factory/04-workflows/development_delivery/"
+        "testing_review_and_pr_repair/workflow.yml"
+    ).read_text(encoding="utf-8")
+    review_self = (
+        repository / "harness/skills/auto-dev-review-self/SKILL.md"
+    ).read_text(encoding="utf-8")
+    repair = (
+        repository / "harness/skills/auto-dev-review-repair/SKILL.md"
+    ).read_text(encoding="utf-8")
+    finalize = (
+        repository / "harness/skills/auto-dev-finalize/SKILL.md"
+    ).read_text(encoding="utf-8")
+
+    assert "version: 3" in workflow
+    assert "claim_or_reuse_canonical_review" in workflow
+    assert "post_pr_opposing_review" not in workflow
+    assert "normal_full_reviews_per_chain: 1" in workflow
+    assert "delta_reviews_per_chain: 3" in workflow
+    assert "absolute_full_reviews_per_family: 2" in workflow
+    assert "provider_posts_per_family: 1" in workflow
+    assert "sole owner of the canonical full review" in " ".join(review_self.split())
+    assert "Never invoke another full review from Repair" in " ".join(repair.split())
+    assert "Finalize must not invoke a reviewer" in " ".join(finalize.split())

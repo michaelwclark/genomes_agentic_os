@@ -30,12 +30,12 @@ specialize each workflow without forking shared code.
 | 5 | Develop | work item/worktree/code/local checks | `/auto-dev-develop` | `local_validation` |
 | 6 | Document | code, issue, architecture, operations, QA, release, or handoff docs | `/auto-dev-document` | verified documentation receipt |
 | 7 | PR Create | resolve and create or reuse the complete 1-N PR family | `/auto-dev-pr-create`; GitFlow and Release Propagation are aliases | provider-read family receipt |
-| 8 | Review Self | opposing review, CI, and repair loops over the exact PR family | `/auto-dev-review-self` | `ready_for_merge` |
-| 8a | Opposing Model Review | canonical Claude/Codex review transport and receipt for an exact ticket/head | `/auto-dev-review-self-opposing-model <TICKET>` | `pre_pr_review` or `post_pr_review` receipt |
+| 8 | Review Self | sole canonical full review owner plus CI and bounded delta repair over the exact PR family | `/auto-dev-review-self` | `ready_for_merge` |
+| 8a | Opposing Model Review | keyed Claude/Codex transport: one canonical full review or a Repair-owned delta | `/auto-dev-review-self-opposing-model <TICKET>` | canonical or chained delta receipt |
 | 9 | Review Others | review another author's live PR without merging | `/auto-dev-review-others` | clean review-only receipt or typed policy decision |
 | 10 | QA | independently callable risk-based validation | `/auto-dev-qa` | QA receipt for the exact reviewed revision |
-| 11 | Finalize | converge our PR family and record readiness without merging | `/auto-dev-finalize` | immutable readiness receipt or typed policy decision |
-| 12 | Validate Production Release | verify Jira/GitHub family, exact QA, full diff, runtime consumer contracts, and operational release evidence | `/auto-dev-validate-production-release` | immutable pre-merge validation receipt or exact hold |
+| 11 | Finalize | consume exact-head review/CI/parity receipts and record readiness without reviewing, repairing, or merging | `/auto-dev-finalize` | immutable readiness receipt or typed policy decision |
+| 12 | Production Release Validation | read-only release-family, revision, QA, and policy validation after Finalize | `/auto-dev-validate-production-release` | current validation receipt or typed policy decision |
 | 13 | Merge | apply the governed merge decision and read back provider truth | `/auto-dev-merge` | typed `merged` proof or exact hold |
 | 14 | Release | publish a version, tag, package, changelog, or provider release | `/auto-dev-release` | release receipt or typed policy decision |
 | 15 | Deploy | deploy and validate the exact artifact | `/auto-dev-deploy` | deployed-version proof or typed policy decision |

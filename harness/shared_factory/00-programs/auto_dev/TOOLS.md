@@ -20,7 +20,7 @@
 | Standalone QA | `/auto-dev-qa` | exact revision/acceptance evidence |
 | Legacy release propagation invocation | `/auto-dev-release-propagation` | compatibility alias to PR Create family mode |
 | Our PR-family endgame | `/auto-dev-finalize` | independently reviewed, converged PR family and readiness-only receipt |
-| Production release validation | `/auto-dev-validate-production-release` then `agentic-os auto-dev stage --stage validate_production_release` | Jira/GitHub family, exact QA, whole-diff policy, runtime consumer contracts, risk, rollback, and observability evidence |
+| Read-only pre-merge release proof | `/auto-dev-validate-production-release` | exact revision, QA, release-family, and policy evidence or typed hold |
 | Governed merge router | `/auto-dev-merge` then `develop stage --stage merge` | merge SHA, reviewed-head/provider/PR readback, or explicit hold |
 | Version/tag/package release | `/auto-dev-release` | verified release receipt |
 | Deployment | `/auto-dev-deploy` then `develop stage --stage deploy` | exact deployed-version proof or policy skip |
@@ -31,14 +31,6 @@
 | Effective inherited OS rules | `agentic-os rules effective ...` | strictest-wins rule projection |
 | Object Library source/install lifecycle | `$object-library` plus `agentic-os library` list, show, install, verify-install, and doctor | source build/release evidence plus receipt-backed installed projection readback |
 | Managed Auto-Dev admission and observation | `agentic-os runtime submit`, `runtime status`, and `runtime snapshot` | named queue admission plus canonical worker, attempt, retry, dead-letter, and terminal receipts |
-
-## Blocking contract preflights
-
-| Risk | Command | Required proof |
-| --- | --- | --- |
-| Request-path performance | `harness/bin/agentic-os-performance-gate --base <base>` | bounded query work and representative relation fan-out |
-| Executable configuration migration | `harness/bin/agentic-os-configuration-migration-gate --base <base>` | composed configuration, tenant preservation, recovery, and rolling compatibility |
-| Runtime payload/rule contract | `harness/bin/agentic-os-runtime-contract-gate --base <base>` | consumer inventory, tenant impact matrix, dual-shape real-evaluator tests, compatibility strategy, and result assertions |
 
 ## Provider routes
 

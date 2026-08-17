@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "genomes-agentic-os"
-version = "0.6.0"
+version = "0.7.1"
 description = "Scaffold and validate local operating systems for agentic workflows."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -17,10 +17,13 @@ dependencies = [
 # Installed by CI and by anyone using pip: `pip install -e '.[dev]'`.
 # Keep in sync with the uv-facing `[dependency-groups] dev` below.
 [project.optional-dependencies]
+mongodb = [
+  "pymongo>=4.10,<5",
+]
 dev = [
   "pytest>=8.0",
   "pytest-cov>=7.0,<8",
-  "commitizen==4.16.5",
+  "commitizen==4.17.1",
   "pre-commit>=4.6",
 ]
 
@@ -30,7 +33,7 @@ dev = [
 dev = [
   "pytest>=8.0",
   "pytest-cov>=7.0,<8",
-  "commitizen==4.16.5",
+  "commitizen==4.17.1",
   "pre-commit>=4.6",
 ]
 

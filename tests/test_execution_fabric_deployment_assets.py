@@ -1679,6 +1679,7 @@ def test_alarm_dispatch_is_separate_filtered_and_receipt_backed() -> None:
     assert "/api/v1/alarms/${alarm_id}/fail" in dispatcher
     assert "--source runtime.execution_fabric.health" in dispatcher
     assert "FABRIC_ALARM_DISPATCHER_TOKEN_FILE" in dispatcher
+    assert '"$FABRIC_WORKER_PYTHON" "$notifier"' in dispatcher
     assert 'fabric_api_post_bearer_value' in dispatcher
     assert '"$claim_token"' in dispatcher
     assert "FABRIC_ADMIN_TOKEN_FILE" not in dispatcher
@@ -1860,7 +1861,7 @@ printf 'systemctl %s\n' "$*" >>"$ACTIVATION_LOG"
     )
 
 
-def test_macos_activation_preflights_before_bootstrap_and_skips_loaded_jobs(
+def test_macos_activation_preflights_before_restarting_loaded_jobs(
     tmp_path: Path,
 ) -> None:
     home = tmp_path / "home"
@@ -1897,6 +1898,11 @@ case "$1" in
     label=$(basename "$3" .plist)
     printf 'bootstrap %s\n' "$label" >>"$ACTIVATION_LOG"
     : >"$LAUNCH_STATE/$label"
+    ;;
+  bootout)
+    label=${2##*/}
+    printf 'bootout %s\n' "$label" >>"$ACTIVATION_LOG"
+    rm -f "$LAUNCH_STATE/$label"
     ;;
   *) exit 64 ;;
 esac
@@ -1951,7 +1957,10 @@ esac
     lines = activation_log.read_text(encoding="utf-8").splitlines()
     assert lines[0] == "preflight standby"
     assert lines.count("preflight standby") == 2
-    assert len([line for line in lines if line.startswith("bootstrap ")]) == len(
+    assert len([line for line in lines if line.startswith("bootstrap ")]) == 2 * len(
+        suffixes
+    )
+    assert len([line for line in lines if line.startswith("bootout ")]) == len(
         suffixes
     )
 
@@ -1979,8 +1988,20 @@ def test_macos_personal_activation_starts_only_client_plane_after_preflight(
         fake_bin / "launchctl",
         """#!/bin/sh
 case "$1" in
-  print) exit 1 ;;
-  bootstrap) printf 'bootstrap %s\n' "$(basename "$3" .plist)" >>"$ACTIVATION_LOG" ;;
+  print)
+    label=${2##*/}
+    [ -f "$LAUNCH_STATE/$label" ]
+    ;;
+  bootstrap)
+    label=$(basename "$3" .plist)
+    printf 'bootstrap %s\n' "$label" >>"$ACTIVATION_LOG"
+    : >"$LAUNCH_STATE/$label"
+    ;;
+  bootout)
+    label=${2##*/}
+    printf 'bootout %s\n' "$label" >>"$ACTIVATION_LOG"
+    rm -f "$LAUNCH_STATE/$label"
+    ;;
   *) exit 64 ;;
 esac
 """,
@@ -1992,31 +2013,41 @@ esac
             "<plist/>", encoding="utf-8"
         )
 
-    result = subprocess.run(
-        [
-            "sh",
-            str(installer / "activate-macos.sh"),
-            "--apply",
-            "--personal-fallback",
-        ],
-        check=False,
-        capture_output=True,
-        text=True,
-        env={
-            **os.environ,
-            "ACTIVATION_LOG": str(activation_log),
-            "HOME": str(home),
-            "PATH": f"{fake_bin}:{os.environ['PATH']}",
-        },
-    )
+    launch_state = tmp_path / "launch-state"
+    launch_state.mkdir()
+    env = {
+        **os.environ,
+        "ACTIVATION_LOG": str(activation_log),
+        "HOME": str(home),
+        "LAUNCH_STATE": str(launch_state),
+        "PATH": f"{fake_bin}:{os.environ['PATH']}",
+    }
+    for _ in range(2):
+        result = subprocess.run(
+            [
+                "sh",
+                str(installer / "activate-macos.sh"),
+                "--apply",
+                "--personal-fallback",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        assert result.returncode == 0, result.stderr
 
-    assert result.returncode == 0, result.stderr
-    assert activation_log.read_text(encoding="utf-8").splitlines() == [
+    lines = activation_log.read_text(encoding="utf-8").splitlines()
+    assert lines[:4] == [
         "preflight personal-client",
         "bootstrap com.genomes.agentic-os.execution-fabric.worker",
         "bootstrap com.genomes.agentic-os.execution-fabric.alarm-dispatcher",
         "bootstrap com.genomes.agentic-os.execution-fabric.personal-fallback",
     ]
+    assert lines[4] == "preflight personal-client"
+    assert lines.count("bootout com.genomes.agentic-os.execution-fabric.worker") == 1
+    assert lines.count("bootout com.genomes.agentic-os.execution-fabric.alarm-dispatcher") == 1
+    assert lines.count("bootout com.genomes.agentic-os.execution-fabric.personal-fallback") == 1
 
 
 def test_personal_client_preflight_uses_only_scoped_client_credentials() -> None:

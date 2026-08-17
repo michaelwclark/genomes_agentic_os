@@ -81,6 +81,13 @@ class ControlPlaneStoreConfig:
     sqlite_busy_timeout_ms: int = 5000
 
     @classmethod
+    def for_root(cls, root: str | Path, *, busy_timeout_ms: int = 5000) -> "ControlPlaneStoreConfig":
+        """Compose the canonical store without letting callers pick a legacy path."""
+        from .locations import ControlPlaneLocations
+
+        return cls("sqlite", sqlite_path=ControlPlaneLocations.for_root(root).canonical, sqlite_busy_timeout_ms=busy_timeout_ms)
+
+    @classmethod
     def from_mapping(cls, value: Mapping[str, Any]) -> "ControlPlaneStoreConfig":
         """Parse the portable ``control_plane`` config shape without I/O."""
         backend = value.get("backend", "sqlite")
