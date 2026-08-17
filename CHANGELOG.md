@@ -9,6 +9,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-08-17
+
 ### Fixed
 
 - Admit the Team PR producer's validated retry nonce, propagate it to the
