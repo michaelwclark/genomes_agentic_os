@@ -3562,6 +3562,374 @@ def _historical_origin_main_failure(tmp_path: Path) -> tuple[Path, Path, Path, s
     return root, repo, task_path, base_sha
 
 
+def _legacy_age163_blocked_single_stage(tmp_path: Path) -> tuple[Path, Path, Path, Path, Path]:
+    """Build the exact legacy AGE-163 blocked/premature-promotion shape."""
+
+    repo, _ = _repository(tmp_path)
+    root = tmp_path / "os"
+    _project(root, repo)
+    started = delivery.start_development_run(
+        root,
+        "acme",
+        "app",
+        ["CC-163"],
+        titles={"CC-163": "Recover legacy packet"},
+        run_id="legacy-age163-recovery",
+        auto_dev_mode="single_stage",
+        requested_stage="detective",
+        goal="detective",
+        provision_worktree=True,
+        apply=True,
+    )
+    task_path = Path(started["tasks"][0]["state_ref"])
+    task = TaskState(task_path).read()
+    work_item = Path(task["work_item"])
+    failure_receipt = root / "artifacts" / "legacy-age163" / "independent-review.txt"
+    failure_receipt.parent.mkdir(parents=True, exist_ok=True)
+    failure_receipt.write_text("independent review transport unavailable\n", encoding="utf-8")
+    release_receipt = work_item / "artifacts" / "development-delivery" / "legacy-release.json"
+    release_receipt.parent.mkdir(parents=True, exist_ok=True)
+    release_receipt.write_text('{"legacy":"release-propagation"}\n', encoding="utf-8")
+    task["receipts"].extend(
+        [
+            {"state": "planned", "ref": "legacy:planned", "recorded_at": "2026-08-08T17:34:12Z"},
+            {"state": "implementing", "ref": "legacy:implementing", "recorded_at": "2026-08-08T17:35:16Z"},
+            {"state": "local_validation", "ref": "legacy:validation", "recorded_at": "2026-08-08T17:35:16Z"},
+        ]
+    )
+    task.update(
+        {
+            "state": "blocked",
+            "failure": {
+                "kind": "independent-review-unavailable",
+                "detail": "Independent reviewer transport has no available credit.",
+                "receipt": str(failure_receipt),
+                "recoverable": False,
+                "retry_state": None,
+                "failed_at": "2026-08-08T17:38:39Z",
+            },
+            "auto_dev_start_stage": None,
+            "auto_dev_completion_stage": None,
+            "stage_receipts": {
+                "release_propagation": {
+                    "ref": str(release_receipt),
+                    "sha256": hashlib.sha256(release_receipt.read_bytes()).hexdigest(),
+                }
+            },
+            "updated_at": "2026-08-08T17:38:39Z",
+        }
+    )
+    delivery._atomic_json(task_path, task)
+    delivery._sync_canonical_task_progress(task_path)
+
+    autodev_path = Path(task["autodev_path"])
+    projection = read_auto_dev_state(autodev_path)
+    projection.update(
+        {
+            "mode": "single_stage",
+            "requested_stage": "detective",
+            "start_stage": "detective",
+            "completion_stage": "detective",
+            "status": "blocked",
+            "current_stage": None,
+        }
+    )
+    projection["delivery"].update(
+        {"state": "blocked", "goal": "detective", "task_state_ref": str(task_path)}
+    )
+    delivery._atomic_json(autodev_path, projection)
+
+    portfolio_path = task_path.parent.parent.parent / "portfolio.json"
+    portfolio = json.loads(portfolio_path.read_text(encoding="utf-8"))
+    portfolio["state"] = "blocked"
+    portfolio["auto_dev"].update(
+        {"mode": "everything", "requested_stage": None, "goal": "delivery_complete"}
+    )
+    portfolio["auto_dev"].pop("start_stage", None)
+    portfolio["auto_dev"].pop("completion_stage", None)
+    delivery._atomic_json(portfolio_path, portfolio)
+    return root, task_path, failure_receipt, release_receipt, portfolio_path
+
+
+def test_recover_active_blocked_single_stage_restores_age163_shape_without_reusing_authority(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root, task_path, failure_receipt, release_receipt, portfolio_path = _legacy_age163_blocked_single_stage(tmp_path)
+    original_task = task_path.read_bytes()
+    original_failure = failure_receipt.read_bytes()
+    original_release = release_receipt.read_bytes()
+    original_portfolio = portfolio_path.read_bytes()
+
+    assert main(
+        [
+            "auto-dev",
+            "recover-blocked-single-stage",
+            "--state",
+            str(task_path),
+            "--reason",
+            "The independent review transport is restored; fresh delivery evidence is required.",
+            "--idempotency-key",
+            "cc-163:recover-active-blocked-single-stage",
+            "--apply",
+            "--json",
+        ]
+    ) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["result"] == "recovered"
+    recovery_path = Path(result["receipt"])
+    recovery = json.loads(recovery_path.read_text(encoding="utf-8"))
+    assert recovery["schema"] == delivery.ACTIVE_BLOCKED_SINGLE_STAGE_RECOVERY_SCHEMA
+    assert recovery["original"]["task_state_sha256"] == hashlib.sha256(original_task).hexdigest()
+    assert recovery["original"]["portfolio_sha256"] == hashlib.sha256(original_portfolio).hexdigest()
+    assert recovery["original"]["failure_receipt_sha256"] == hashlib.sha256(original_failure).hexdigest()
+    assert recovery["recovered"]["fresh_review_and_qa_required"] is True
+
+    recovered = TaskState(task_path).read()
+    assert recovered["state"] == "worktree_ready"
+    assert recovered["failure"] is None
+    assert recovered["auto_dev_mode"] == "everything"
+    assert recovered["requested_stage"] is None
+    assert recovered["goal"] == "delivery_complete"
+    assert (recovered["auto_dev_start_stage"], recovered["auto_dev_completion_stage"]) == ("groom", "health")
+    assert recovered["stage_receipts"]["release_propagation"]["sha256"] == hashlib.sha256(original_release).hexdigest()
+    assert failure_receipt.read_bytes() == original_failure
+    assert release_receipt.read_bytes() == original_release
+    assert len(recovered["active_blocked_single_stage_recoveries"]) == 1
+
+    projection = read_auto_dev_state(recovered["autodev_path"])
+    assert (projection["mode"], projection["start_stage"], projection["completion_stage"]) == (
+        "everything",
+        "groom",
+        "health",
+    )
+    assert projection["current_stage"] == "groom"
+    assert projection["delivery"]["state"] == "worktree_ready"
+    assert projection["stages"]["review_self"]["status"] != "completed"
+    assert projection["stages"]["qa"]["status"] != "completed"
+
+    portfolio = json.loads(portfolio_path.read_text(encoding="utf-8"))
+    assert portfolio["state"] == "dispatching"
+    assert (portfolio["auto_dev"]["mode"], portfolio["auto_dev"]["start_stage"], portfolio["auto_dev"]["completion_stage"]) == (
+        "everything",
+        "groom",
+        "health",
+    )
+    assert portfolio["active_blocked_single_stage_recoveries"] == [
+        {**recovered["active_blocked_single_stage_recoveries"][0], "task_state_ref": str(task_path)}
+    ]
+
+    canonical = delivery._read_canonical_development_work(
+        root,
+        canonical_work_id=recovered["canonical_work_id"],
+        ticket="CC-163",
+        packet=Path(recovered["work_item"]),
+    )
+    assert canonical is not None
+    assert (canonical["state"], canonical["attention"], canonical["id"]) == (
+        "building",
+        "active",
+        recovered["canonical_work_id"],
+    )
+
+    assert main(
+        [
+            "auto-dev",
+            "recover-blocked-single-stage",
+            "--state",
+            str(task_path),
+            "--reason",
+            "The independent review transport is restored; fresh delivery evidence is required.",
+            "--idempotency-key",
+            "cc-163:recover-active-blocked-single-stage",
+            "--apply",
+            "--json",
+        ]
+    ) == 0
+    assert json.loads(capsys.readouterr().out)["result"] == "replayed"
+    events = [
+        json.loads(line)
+        for line in (task_path.parent / "events.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert [event["type"] for event in events].count(
+        "development.task.active_blocked_single_stage_recovered"
+    ) == 1
+
+
+def test_recover_active_blocked_single_stage_refuses_unsupported_blocker_without_partial_mutation(
+    tmp_path: Path,
+) -> None:
+    _, task_path, _, _, portfolio_path = _legacy_age163_blocked_single_stage(tmp_path)
+    task = TaskState(task_path).read()
+    task["failure"]["kind"] = "provider_unavailable"
+    delivery._atomic_json(task_path, task)
+    autodev_path = Path(task["autodev_path"])
+    before = {
+        "task": task_path.read_bytes(),
+        "portfolio": portfolio_path.read_bytes(),
+        "autodev": autodev_path.read_bytes(),
+    }
+
+    with pytest.raises(DevelopmentDeliveryError, match="independent-review-unavailable"):
+        delivery.recover_active_blocked_single_stage_delivery(
+            task_path,
+            reason="Unsupported failures must remain blocked.",
+            idempotency_key="cc-163:unsupported-blocker",
+            apply=True,
+        )
+
+    assert task_path.read_bytes() == before["task"]
+    assert portfolio_path.read_bytes() == before["portfolio"]
+    assert autodev_path.read_bytes() == before["autodev"]
+    assert not (
+        Path(task["work_item"])
+        / "artifacts"
+        / "development-delivery"
+        / "active-blocked-single-stage-recovery"
+    ).exists()
+
+
+def _active_blocked_single_stage_recovery_surfaces(
+    root: Path,
+    task_path: Path,
+    portfolio_path: Path,
+) -> dict[str, object]:
+    """Snapshot every recovery-owned surface before a fail-closed refusal."""
+
+    task = TaskState(task_path).read()
+    canonical = delivery._read_canonical_development_work(
+        root,
+        canonical_work_id=task["canonical_work_id"],
+        ticket=task["ticket"],
+        packet=Path(task["work_item"]),
+    )
+    recovery_dir = (
+        Path(task["work_item"])
+        / "artifacts"
+        / "development-delivery"
+        / "active-blocked-single-stage-recovery"
+    )
+    event_path = task_path.parent / "events.jsonl"
+    return {
+        "task": task_path.read_bytes(),
+        "portfolio": portfolio_path.read_bytes(),
+        "autodev": Path(task["autodev_path"]).read_bytes(),
+        "canonical": json.dumps(canonical, sort_keys=True),
+        "events": event_path.read_bytes() if event_path.is_file() else None,
+        "recovery_artifacts": (
+            {path.relative_to(recovery_dir).as_posix(): path.read_bytes() for path in recovery_dir.rglob("*") if path.is_file()}
+            if recovery_dir.is_dir()
+            else None
+        ),
+    }
+
+
+@pytest.mark.parametrize(
+    ("variant", "error"),
+    [
+        ("missing_stage_entry", "exactly one legacy release_propagation"),
+        ("missing_release_file", "legacy release_propagation receipt is missing"),
+        ("tampered_release_file", "legacy release_propagation receipt digest does not match"),
+        ("outside_task_or_run_scope", "legacy release_propagation receipt is outside task/run scope"),
+    ],
+)
+def test_recover_active_blocked_single_stage_refuses_unverified_legacy_release_receipt_without_mutation(
+    tmp_path: Path,
+    variant: str,
+    error: str,
+) -> None:
+    root, task_path, _, release_receipt, portfolio_path = _legacy_age163_blocked_single_stage(tmp_path)
+    task = TaskState(task_path).read()
+    if variant == "missing_stage_entry":
+        task["stage_receipts"] = {}
+        delivery._atomic_json(task_path, task)
+    elif variant == "missing_release_file":
+        release_receipt.unlink()
+    elif variant == "tampered_release_file":
+        release_receipt.write_text('{"legacy":"tampered"}\n', encoding="utf-8")
+    else:
+        outside_receipt = tmp_path / "outside-legacy-release.json"
+        outside_receipt.write_text('{"legacy":"outside"}\n', encoding="utf-8")
+        task["stage_receipts"]["release_propagation"] = {
+            "ref": str(outside_receipt),
+            "sha256": hashlib.sha256(outside_receipt.read_bytes()).hexdigest(),
+        }
+        delivery._atomic_json(task_path, task)
+    before = _active_blocked_single_stage_recovery_surfaces(root, task_path, portfolio_path)
+
+    with pytest.raises(DevelopmentDeliveryError, match=error):
+        delivery.recover_active_blocked_single_stage_delivery(
+            task_path,
+            reason="Legacy receipt evidence must remain immutable and in scope.",
+            idempotency_key=f"cc-163:unverified-release-{variant}",
+            apply=True,
+        )
+
+    assert _active_blocked_single_stage_recovery_surfaces(root, task_path, portfolio_path) == before
+
+
+def test_recover_active_blocked_single_stage_refuses_portfolio_drift_before_any_recovery_mutation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, task_path, _, _, portfolio_path = _legacy_age163_blocked_single_stage(tmp_path)
+    task = TaskState(task_path).read()
+    autodev_path = Path(task["autodev_path"])
+    event_path = task_path.parent / "events.jsonl"
+    canonical_before = delivery._read_canonical_development_work(
+        root,
+        canonical_work_id=task["canonical_work_id"],
+        ticket=task["ticket"],
+        packet=Path(task["work_item"]),
+    )
+    assert canonical_before is not None
+    before = {
+        "task": task_path.read_bytes(),
+        "autodev": autodev_path.read_bytes(),
+        "canonical": json.dumps(canonical_before, sort_keys=True),
+        "events": event_path.read_bytes() if event_path.is_file() else None,
+    }
+    externally_mutated_portfolio: dict[str, bytes] = {}
+    original_context = delivery._active_blocked_single_stage_recovery_context
+
+    def mutate_portfolio_after_preflight(state_path: Path) -> dict[str, object]:
+        context = original_context(state_path)
+        portfolio = json.loads(portfolio_path.read_text(encoding="utf-8"))
+        portfolio["concurrent_resume_marker"] = "changed after recovery preflight"
+        delivery._atomic_json(portfolio_path, portfolio)
+        externally_mutated_portfolio["bytes"] = portfolio_path.read_bytes()
+        return context
+
+    monkeypatch.setattr(
+        delivery,
+        "_active_blocked_single_stage_recovery_context",
+        mutate_portfolio_after_preflight,
+    )
+    with pytest.raises(DevelopmentDeliveryError, match="portfolio changed during active blocked recovery"):
+        delivery.recover_active_blocked_single_stage_delivery(
+            task_path,
+            reason="A concurrent resume changed the portfolio after preflight.",
+            idempotency_key="cc-163:portfolio-drift",
+            apply=True,
+        )
+
+    assert task_path.read_bytes() == before["task"]
+    assert portfolio_path.read_bytes() == externally_mutated_portfolio["bytes"]
+    assert autodev_path.read_bytes() == before["autodev"]
+    canonical_after = delivery._read_canonical_development_work(
+        root,
+        canonical_work_id=task["canonical_work_id"],
+        ticket=task["ticket"],
+        packet=Path(task["work_item"]),
+    )
+    assert json.dumps(canonical_after, sort_keys=True) == before["canonical"]
+    assert (event_path.read_bytes() if event_path.is_file() else None) == before["events"]
+    assert not (
+        Path(task["work_item"])
+        / "artifacts"
+        / "development-delivery"
+        / "active-blocked-single-stage-recovery"
+    ).exists()
+
+
 def test_correct_failed_base_selection_preserves_failure_then_allows_retry(tmp_path: Path) -> None:
     root, repo, task_path, base_sha = _historical_origin_main_failure(tmp_path)
     before = TaskState(task_path).read()
@@ -6994,6 +7362,66 @@ def test_shipped_auto_dev_stage_policy_decisions_satisfy_strict_schema(
     )
     document = json.loads((repository / relative_path).read_text(encoding="utf-8"))
     assert list(Draft202012Validator(schema).iter_errors(document)) == []
+
+
+def test_stage_policy_decision_schema_enum_matches_runtime_stage_sets() -> None:
+    """The strict stage enum accepts exactly what runtime not_required paths produce."""
+
+    repository = Path(__file__).resolve().parents[1]
+    schema = json.loads(
+        (
+            repository / "schemas/auto-dev-stage-policy-decision.schema.json"
+        ).read_text(encoding="utf-8")
+    )
+    enum = schema["properties"]["stage"]["enum"]
+    expected = auto_dev.NOT_REQUIRED_ALLOWED_STAGES | set(
+        delivery.NOT_REQUIRED_DELIVERY_POLICY_STAGES.values()
+    )
+    assert len(enum) == len(set(enum))
+    assert set(enum) == expected
+    canonical = [stage for stage in AUTO_DEV_STAGE_ORDER if stage in expected]
+    canonical += sorted(expected - set(AUTO_DEV_STAGE_ORDER))
+    assert enum == canonical
+
+
+def test_disabled_document_policy_records_strict_not_required_receipt(
+    tmp_path: Path,
+) -> None:
+    """A project policy disabling Document accepts the typed receipt end to end."""
+
+    repo, _ = _repository(tmp_path)
+    root = tmp_path / "os"
+    project = _project(root, repo)
+    profile_path = project / "config" / "development.yml"
+    profile = yaml.safe_load(profile_path.read_text(encoding="utf-8"))
+    profile["auto_dev"] = {"stages": {"document": {"applicability": "disabled"}}}
+    profile_path.write_text(yaml.safe_dump(profile, sort_keys=False), encoding="utf-8")
+
+    run = delivery.start_development_run(root, "acme", "app", ["CC-DOC"], apply=True)
+    task = TaskState(Path(run["tasks"][0]["state_ref"]))
+    projection = read_auto_dev_state(task.read()["autodev_path"])
+    assert projection["stage_policies"]["document"]["applicability"] == "disabled"
+
+    for stage in ("groom", "detective", "create_artifacts"):
+        _record_standalone_stage(task, stage)
+    result = _record_standalone_stage(task, "document", status="not_required")
+    assert result["state"]["stages"]["document"]["status"] == "not_required"
+
+    work_item = Path(task.read()["work_item"])
+    proofs = sorted(
+        (
+            work_item / "artifacts" / "auto-dev-orchestration" / "proofs" / "document"
+        ).glob("policy-decision-*.json")
+    )
+    assert proofs
+    schema = json.loads(
+        (
+            Path(__file__).resolve().parents[1]
+            / "schemas/auto-dev-stage-policy-decision.schema.json"
+        ).read_text(encoding="utf-8")
+    )
+    materialized = json.loads(proofs[-1].read_text(encoding="utf-8"))
+    assert list(Draft202012Validator(schema).iter_errors(materialized)) == []
 
 
 def test_release_propagation_workflow_is_pr_create_compatibility_recorder() -> None:

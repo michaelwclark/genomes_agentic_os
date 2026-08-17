@@ -65,6 +65,49 @@ def test_long_run_success_registers_progress_log_and_terminal_receipt(tmp_path: 
     assert registry["runs"][0]["status"] == "success"
 
 
+def test_long_run_persists_expected_and_observed_git_identity_at_both_boundaries(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "agentic_os"
+    work_dir = tmp_path / "worktree"
+    work_dir.mkdir()
+    for command in (
+        ["git", "init", "-q"],
+        ["git", "config", "user.email", "test@example.com"],
+        ["git", "config", "user.name", "Test User"],
+        ["git", "remote", "add", "origin", "git@example.com:owner/repo.git"],
+    ):
+        subprocess.run(command, cwd=work_dir, check=True)
+    (work_dir / "tracked.txt").write_text("tracked\n", encoding="utf-8")
+    subprocess.run(["git", "add", "tracked.txt"], cwd=work_dir, check=True)
+    subprocess.run(["git", "commit", "-qm", "initial"], cwd=work_dir, check=True)
+    identity = {
+        "repository": "git@example.com:owner/repo.git",
+        "branch": subprocess.check_output(
+            ["git", "branch", "--show-current"], cwd=work_dir, text=True
+        ).strip(),
+        "head": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=work_dir, text=True).strip(),
+        "clean": "true",
+    }
+    state = start_run(
+        root,
+        command=[sys.executable, "-c", "print('complete')"],
+        label="guarded identity receipt",
+        artifact_dir=str(tmp_path / "artifacts"),
+        work_dir=str(work_dir),
+        expected_git_identity=identity,
+        budgets={"wall_clock_minutes": 1, "no_progress_minutes": 1},
+    )
+    run_dir = Path(state["run_dir"])
+    terminal = _wait_for(run_dir, {"success", "failure", "error"})
+
+    assert terminal["status"] == "success"
+    receipt = json.loads((run_dir / "terminal-receipt.json").read_text(encoding="utf-8"))
+    assert receipt["expected_git_identity"] == identity
+    assert receipt["git_identity_pre"] == identity
+    assert receipt["git_identity_post"] == identity
+
+
 def test_legacy_quiet_run_start_shape_remains_compatible(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

@@ -54,6 +54,8 @@ from ..runtime_backend import (
     rollback_queue_mode,
 )
 from ..runtime_ops import (
+    apply_runtime_tracking,
+    build_runtime_tracking_plan,
     format_runtime_result,
     heartbeat_list,
     heartbeat_run,
@@ -679,6 +681,35 @@ def handle_execution_fabric_config_validate(args: argparse.Namespace) -> int:
     return 0 if result["ok"] else 1
 
 
+def handle_runtime_tracking(args: argparse.Namespace) -> int:
+    try:
+        os_root = Path(args.root).expanduser().resolve()
+        if args.apply:
+            result = apply_runtime_tracking(os_root, verified_workspace=args.workspace, allow_live=args.live)
+        else:
+            from ..runtime_ops import _live_notion_config, _load_notion_tracking_config
+            from ..notion_api import resolve_token
+            config = _load_notion_tracking_config(os_root)
+            parent_page_id, token_env, _title, _workspace = _live_notion_config(config)
+            token_present = resolve_token(token_env) is not None
+            result = {**build_runtime_tracking_plan(os_root), "applied": False, "mode": "plan",
+                      "would_go_live": bool(parent_page_id and token_present),
+                      "token_configured": token_present}
+    except Exception as exc:
+        result = {
+            "applied": bool(getattr(exc, "partial_result", {}).get("applied", False)),
+            "ok": False,
+            "error_type": type(exc).__name__,
+            "error": str(exc),
+            **getattr(exc, "partial_result", {}),
+            "manifest_path": str(Path(args.root).expanduser().resolve() / ".notion-runtime-tracking" / "manifest.yml"),
+        }
+        _print_structured(result, json_output=args.json)
+        return 1
+    _print_structured(result, json_output=args.json)
+    return 0
+
+
 def handle_execution_fabric_config_reconcile(args: argparse.Namespace) -> int:
     result = reconcile_execution_fabric_configuration(args.root, dry_run=not args.apply)
     _print_structured(result, json_output=args.json)
@@ -879,6 +910,21 @@ def register(subparsers) -> None:
     )
     runtime_health_parser.add_argument("--automation-id", default="queue-worker-health")
     runtime_health_parser.set_defaults(handler=handle_runtime_health_report)
+    runtime_tracking_parser = runtime_subparsers.add_parser(
+        "tracking", help="Plan or apply the guarded runtime tracking projection."
+    )
+    runtime_tracking_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    runtime_tracking_parser.add_argument(
+        "--workspace", default="Genome's Notion", help="Verified Notion workspace name for live tracking."
+    )
+    runtime_tracking_parser.add_argument(
+        "--live", action="store_true", help="Explicitly authorize live Notion writes when --apply is used."
+    )
+    runtime_tracking_mode = runtime_tracking_parser.add_mutually_exclusive_group()
+    runtime_tracking_mode.add_argument("--dry-run", action="store_true", default=False)
+    runtime_tracking_mode.add_argument("--apply", action="store_true")
+    _add_json_arg(runtime_tracking_parser)
+    runtime_tracking_parser.set_defaults(handler=handle_runtime_tracking)
     runtime_snapshot_parser = runtime_subparsers.add_parser(
         "snapshot",
         help="Capture a point-in-time queue, worker, and task snapshot from the selected backend.",

@@ -97,6 +97,60 @@ def test_runtime_health_writes_json_and_markdown(tmp_path: Path) -> None:
     assert Path(paths["latest_markdown"]).read_text(encoding="utf-8") == render_runtime_health(report)
 
 
+def test_recent_failure_degrades_health_and_renders_actionable_details(tmp_path: Path) -> None:
+    root = tmp_path / "os"
+    runtime_init(root)
+    now = datetime(2026, 7, 21, 14, 0, tzinfo=timezone.utc)
+    log = root / "harness/shared_factory/06-runs-and-logs/supervisor.out.log"
+    log.write_text("tick\n", encoding="utf-8")
+    queue_path = root / "harness/shared_factory/00-control-plane/run-queue.yml"
+    queue = yaml.safe_load(queue_path.read_text(encoding="utf-8"))
+    queue["items"] = [
+        {
+            "id": f"done-{index}",
+            "status": "done",
+            "ref": "healthy_schedule",
+            "finished_at": "2026-07-21T13:50:00Z",
+        }
+        for index in range(3)
+    ] + [
+        {
+            "id": "failed-standup",
+            "status": "failed",
+            "ref": "los_engineering_morning_standup_report_0700",
+            "finished_at": "2026-07-21T13:55:00Z",
+            "error": "zsh: read-only variable: status\nstack detail",
+        },
+        {
+            "id": "failed-standup-retry",
+            "status": "failed",
+            "ref": "los_engineering_morning_standup_report_0700",
+            "finished_at": "2026-07-21T13:56:00Z",
+            "error": "zsh: read-only variable: status\nstack detail",
+        },
+    ]
+    queue_path.write_text(yaml.safe_dump(queue, sort_keys=False), encoding="utf-8")
+
+    report = build_runtime_health(root, now=now, launchctl_runner=_launchctl())
+    rendered = render_runtime_health(report)
+
+    assert report["status"] == "degraded"
+    assert report["workers"]["completed_last_hour"] == 3
+    assert report["workers"]["failed_last_hour"] == 2
+    assert report["recent_failures"] == [
+        {
+            "ref": "los_engineering_morning_standup_report_0700",
+            "count": 2,
+            "latest_at": "2026-07-21T13:56:00Z",
+            "reason": "zsh: read-only variable: status stack detail",
+        }
+    ]
+    assert "2 dispatch failures occurred in the last hour" in report["findings"]
+    assert "## Recent Failures (last hour)" in rendered
+    assert "`los_engineering_morning_standup_report_0700`" in rendered
+    assert "zsh: read-only variable: status stack detail" in rendered
+
+
 def test_long_running_worker_is_healthy_inside_declared_budget(tmp_path: Path) -> None:
     root = tmp_path / "os"
     runtime_init(root)
