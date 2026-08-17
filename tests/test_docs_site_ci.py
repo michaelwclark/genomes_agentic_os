@@ -130,7 +130,7 @@ def test_docs_ci_uses_the_committed_pnpm_build_approval_policy(
     assert setup_node["with"]["cache-dependency-path"] == "website/pnpm-lock.yaml"
 
     pnpm_setup = _step_using(build, "pnpm/action-setup")
-    assert pnpm_setup["with"]["version"] == "11.21.0"
+    assert pnpm_setup["with"]["version"] == "11.22.0"
     assert build["steps"].index(pnpm_setup) < build["steps"].index(setup_node)
 
     commands = [str(step.get("run", "")) for step in build["steps"]]
