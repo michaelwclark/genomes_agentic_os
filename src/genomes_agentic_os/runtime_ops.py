@@ -12,8 +12,10 @@ import os
 from pathlib import Path
 import re
 import shlex
+import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -41,6 +43,7 @@ from .self_improvement import (
     self_improvement_queue_health,
 )
 from .thread_closeout import stale_finalize_threads
+from .notion_sync import target_workspace, verify_workspace
 from .state import db as state_db
 from .state import execution_fabric
 from .state import queue as state_queue
@@ -65,6 +68,7 @@ RUNTIME_REQUIRED_TARGETS = {
     "agentmail_api",
     "granola_local",
 }
+NOTION_RUNTIME_MANIFEST = ".notion-runtime-tracking/manifest.yml"
 REQUIRED_INTEGRATIONS = {"orgo", "composio", "agentmail", "granola", "notion"}
 RUN_QUEUE_STATES = (
     "dry-run",
@@ -92,11 +96,31 @@ ACTIVE_RUN_QUEUE_STATES = {"queued", "running", "approval-needed"}
 RUN_QUEUE_STALE_GRACE = timedelta(hours=24)
 SAFE_DISPATCH_TARGETS = {"script", "codex_harness", "claude_harness"}
 SCRIPT_DISPATCH_TIMEOUT_SECONDS = 900
+LEASE_SAFETY_MARGIN_SECONDS = 60
+# Root-scanning inline commands keep their bounded 900s subprocess timeout, but
+# reserve an additional five minutes in the queue lease so a healthy worker is
+# not reclaimed while the dispatcher records the result and closes the run.
+INLINE_SCRIPT_LEASE_SECONDS = (
+    SCRIPT_DISPATCH_TIMEOUT_SECONDS + LEASE_SAFETY_MARGIN_SECONDS + 300
+)
+MAX_LEASE_SECONDS = 24 * 3600
 LONG_RUNNING_THRESHOLD_SECONDS = 120
 SCRIPT_DISPATCH_OUTPUT_LIMIT = 20000
 DEFAULT_RUN_QUEUE_ACTIVE_MAX_AGE_HOURS = 24
 DEFAULT_RUN_QUEUE_TERMINAL_MAX_AGE_DAYS = 2
 DEFAULT_RUN_QUEUE_FAILED_MAX_AGE_DAYS = 7
+RUNTIME_TRACKING_RUN_QUEUE_LIMIT = 50
+RUNTIME_TRACKING_KIND_TO_DATABASE = {
+    "integration": "Integrations",
+    "execution_target": "Execution Targets",
+    "heartbeat": "Heartbeats",
+    "schedule": "Schedules",
+    "run_queue_item": "Run Queue",
+    "approval": "Approvals",
+    "heartbeat_run": "Runs",
+    "run": "Runs",
+    "self_improvement": "Self Improvement",
+}
 DEFAULT_RUN_QUEUE_SKIPPED_MAX_AGE_DAYS = 1
 DEFAULT_RUN_QUEUE_BACKUP_MAX_AGE_DAYS = 7
 DEFAULT_RETRY_BACKOFF_SECONDS = 60
@@ -809,7 +833,32 @@ def _write_yaml(path: Path, data: dict[str, Any]) -> None:
     payload = deepcopy(data)
     payload["updated_at"] = _now()
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            temporary_path = Path(handle.name)
+            handle.write(yaml.safe_dump(payload, sort_keys=False))
+            handle.flush()
+            os.fsync(handle.fileno())
+        if path.exists():
+            shutil.copymode(path, temporary_path)
+        os.replace(temporary_path, path)
+        temporary_path = None
+        directory_fd = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
 
 
 def _seed_yaml(path: Path, data: dict[str, Any], result: dict[str, Any]) -> None:
@@ -992,9 +1041,50 @@ def _append_queue_item(root: Path, item: dict[str, Any]) -> tuple[Path, dict[str
 
 def _prepare_queue_item(root: Path, item: dict[str, Any]) -> dict[str, Any]:
     prepared = _infer_provider_worker(root, deepcopy(item))
+    prepared = _materialize_inline_script_lease(root, prepared)
     prepared = _materialize_quiet_run_timeout(prepared)
     prepared = _materialize_watcher_timeout(root, prepared)
     return _materialize_provider_worker(root, prepared)
+
+
+def _materialize_inline_script_lease(root: Path, item: dict[str, Any]) -> dict[str, Any]:
+    """Reserve a realistic lease for commands executed inside the dispatcher.
+
+    These commands can legitimately scan the full installed root. Keep the
+    subprocess timeout bounded while extending only the queue lease so a healthy
+    worker is not reclaimed before the command returns.
+    """
+    runtime_policy = item.get("runtime_policy")
+    if item.get("timeout_seconds") or item.get("lease_seconds") or (
+        isinstance(runtime_policy, dict) and runtime_policy.get("timeout_seconds")
+    ):
+        return item
+    normalized = str(item.get("command") or "").replace("<root>", str(root)).strip()
+    inline_prefixes = (
+        "agentic-os self-improvement run ",
+        "agentic-os self-improvement morning-report ",
+        "agentic-os self-improvement nightly-apply ",
+    )
+    inline_exact = {
+        f"agentic-os validate --root {root}",
+        f"agentic-os thread stale-finalize --root {root} --older-than-days 3 --apply",
+        f"agentic-os project worktree cleanup-closed --root {root} --apply",
+    }
+    if normalized in inline_exact or normalized.startswith(inline_prefixes):
+        item["lease_seconds"] = INLINE_SCRIPT_LEASE_SECONDS
+    return item
+
+
+def _dispatch_lease_seconds(item: dict[str, Any], timeout_seconds: int) -> int:
+    floor = timeout_seconds + LEASE_SAFETY_MARGIN_SECONDS
+    value = item.get("lease_seconds")
+    if value is None and isinstance(item.get("runtime_policy"), dict):
+        value = item["runtime_policy"].get("lease_seconds")
+    try:
+        lease = int(value) if value is not None and not isinstance(value, bool) else floor
+    except (TypeError, ValueError):
+        lease = floor
+    return max(floor, min(MAX_LEASE_SECONDS, lease))
 
 
 def _provider_from_text(text: str) -> str | None:
@@ -2700,12 +2790,16 @@ def runtime_run_batch(
         candidate_ids = [
             str(row["id"])
             for row in conn.execute(
-                """
+                f"""
                 SELECT id FROM run_queue
                 WHERE status = 'queued' AND (due_at IS NULL OR due_at <= ?)
-                ORDER BY priority DESC, (due_at IS NULL) ASC, due_at, created_at, id
+                ORDER BY {state_queue.DISPATCH_ORDER_SQL}
                 """,
-                (now_value,),
+                (
+                    now_value,
+                    state_queue.starvation_cutoff(now_value),
+                    state_queue.starvation_cutoff(now_value),
+                ),
             ).fetchall()
         ]
     finally:
@@ -3088,11 +3182,11 @@ def _prepare_execution_fabric_dispatch(
                         (
                             "SELECT id FROM run_queue",
                             "WHERE " + " AND ".join(candidate_clauses),
-                            "ORDER BY priority DESC, (due_at IS NULL) ASC, due_at, created_at, id",
+                            f"ORDER BY {state_queue.DISPATCH_ORDER_SQL}",
                             "LIMIT 1",
                         )
                     ),
-                    candidate_params,
+                    (*candidate_params, state_queue.starvation_cutoff(now_value), state_queue.starvation_cutoff(now_value)),
                 ).fetchone()
                 candidate_state = state_queue.get(conn, str(row["id"])) if row is not None else None
                 if candidate_state is None and queue_name and worker_pool:
@@ -3195,12 +3289,13 @@ def _prepare_execution_fabric_dispatch(
             worker_pool = str(item.get("worker_pool") or "default")
             worker_id = f"runtime-{os.uname().nodename}-{os.getpid()}-{_digest(str(item['id']), 10)}"
             timeout_seconds = _dispatch_timeout_seconds(item)
+            lease_seconds = _dispatch_lease_seconds(item, timeout_seconds)
             worker = execution_fabric.register_worker(
                 conn,
                 worker_id,
                 pool_name=worker_pool,
                 capacity=1,
-                lease_seconds=timeout_seconds + 60,
+                lease_seconds=lease_seconds,
                 metadata={"dispatcher": "agentic-os runtime", "queue": queue_name},
             )
             claimed = execution_fabric.claim_next(
@@ -3208,7 +3303,7 @@ def _prepare_execution_fabric_dispatch(
                 worker_id=worker_id,
                 worker_token=str(worker["lease_token"]),
                 item_id=str(item["id"]),
-                lease_seconds=timeout_seconds + 60,
+                lease_seconds=lease_seconds,
             )
             if claimed is None:
                 execution_fabric.retire_worker(
@@ -3972,6 +4067,451 @@ def integration_doctor(root: str | Path, integration_id: str | None = None) -> d
     if not findings:
         findings.append({"severity": "observation", "path": str(_runtime_path(os_root, INTEGRATION_REGISTRY)), "message": "integration setup contract is complete"})
     return {"root": str(os_root), "ok": not any(finding["severity"] == "blocker" for finding in findings), "findings": findings}
+
+
+def _runtime_tracking_queue_items(queue: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return the bounded queue slice worth projecting to Notion.
+
+    Runtime tracking is an operator cockpit, not a historical queue archive. Keep
+    active work visible first, then fill the remaining space with the newest
+    terminal records so live Notion syncs stay bounded.
+    """
+    items = [item for item in queue.get("items") or [] if isinstance(item, dict)]
+    active = [item for item in items if item.get("status") in ACTIVE_RUN_QUEUE_STATES]
+    terminal = [item for item in items if item.get("status") not in ACTIVE_RUN_QUEUE_STATES]
+
+    active.sort(key=_queue_item_time)
+    terminal.sort(key=_queue_item_time, reverse=True)
+
+    selected = active[:RUNTIME_TRACKING_RUN_QUEUE_LIMIT]
+    if len(selected) < RUNTIME_TRACKING_RUN_QUEUE_LIMIT:
+        selected.extend(terminal[: RUNTIME_TRACKING_RUN_QUEUE_LIMIT - len(selected)])
+    return selected
+
+
+def build_runtime_tracking_plan(root: str | Path) -> dict[str, Any]:
+    os_root = expand_path(root)
+    runtime_registry = _load_yaml(_runtime_path(os_root, RUNTIME_REGISTRY), DEFAULT_RUNTIME_REGISTRY)
+    integration_registry = _load_yaml(_runtime_path(os_root, INTEGRATION_REGISTRY), DEFAULT_INTEGRATION_REGISTRY)
+    queue_items_all = runtime_queue_items(os_root)
+    queue = {**deepcopy(DEFAULT_RUN_QUEUE), "items": queue_items_all, "run_queue": queue_items_all}
+    queue_items = _runtime_tracking_queue_items(queue)
+    records = []
+    skipped: list[dict[str, str]] = []
+
+    def add_registry_records(entries: Any, kind: str) -> None:
+        for entry in entries or []:
+            if not isinstance(entry, dict) or not entry.get("id"):
+                skipped.append({"kind": kind, "reason": "entry is not a mapping with an id"})
+                continue
+            key = str(entry["id"])
+            records.append({
+                "kind": kind,
+                "key": key,
+                "title": str(entry.get("display_name") or key),
+                "action": "create-or-update",
+            })
+
+    add_registry_records(runtime_registry.get("execution_targets"), "execution_target")
+    add_registry_records(runtime_registry.get("heartbeats"), "heartbeat")
+    add_registry_records(runtime_registry.get("schedules"), "schedule")
+    add_registry_records(integration_registry.get("integrations"), "integration")
+    for item in queue_items:
+        if not isinstance(item, dict) or not item.get("id"):
+            skipped.append({"kind": "run_queue_item", "reason": "entry is not a mapping with an id"})
+            continue
+        records.append(
+            {
+                "kind": "run_queue_item",
+                "key": item["id"],
+                "title": item.get("ref") or item.get("work_type") or item["id"],
+                "action": "create-or-update",
+            }
+        )
+        if item.get("approval_state") == "required" or item.get("status") == "approval-needed":
+            records.append(
+                {
+                    "kind": "approval",
+                    "key": item["id"],
+                    "title": item.get("ref") or item.get("work_type") or item["id"],
+                    "action": "create-or-update",
+                }
+            )
+    for log_path in sorted(_runtime_path(os_root, HEARTBEAT_LOG_DIR).glob("*.yml"))[-20:]:
+        records.append({"kind": "heartbeat_run", "key": log_path.stem, "title": log_path.stem, "path": str(log_path), "action": "create-or-update"})
+    # Keep the self-improvement cockpit schema live even when its queue is
+    # currently clear. This is a bounded health projection, not a history dump.
+    try:
+        queue_health = self_improvement_queue_health(os_root)
+        records.append(
+            {
+                "kind": "self_improvement",
+                "key": "queue-health",
+                "title": "Self-improvement queue health",
+                "status": queue_health.get("status"),
+                "stale_count": queue_health.get("stale_count", 0),
+                "action": "create-or-update",
+            }
+        )
+    except Exception as exc:
+        skipped.append(
+            {
+                "kind": "self_improvement",
+                "reason": f"queue health unavailable: {type(exc).__name__}",
+            }
+        )
+    database_order = [
+        "Integrations", "Execution Targets", "Heartbeats", "Schedules",
+        "Run Queue", "Approvals", "Runs", "Self Improvement",
+    ]
+    database_names = {RUNTIME_TRACKING_KIND_TO_DATABASE.get(record["kind"]) for record in records}
+    return {
+        "root": str(os_root),
+        "workspace": target_workspace(os_root),
+        "manifest_path": str(_runtime_path(os_root, NOTION_RUNTIME_MANIFEST)),
+        "databases": [name for name in database_order if name in database_names],
+        "record_scope": {
+            "run_queue_item_limit": RUNTIME_TRACKING_RUN_QUEUE_LIMIT,
+            "run_queue_total_items": len(queue.get("items") or []),
+            "run_queue_projected_items": len(queue_items),
+            "run_queue_omitted_items": max(0, len(queue.get("items") or []) - len(queue_items)),
+        },
+        "skipped": skipped,
+        "records": records,
+    }
+
+
+def _load_notion_tracking_config(os_root: Path) -> dict[str, Any]:
+    """Load notion-tracking.yml from the installed root's 00-control-plane."""
+    from .scaffold import shared_factory_path
+    config_path = shared_factory_path(os_root, "00-control-plane", "notion-tracking.yml")
+    return _load_yaml(config_path, {})
+
+
+def _live_notion_config(config: dict[str, Any]) -> tuple[str | None, str, str, str]:
+    """Extract live-path settings from a tracking config dict.
+
+    Returns (parent_page_id_or_None, token_env, cockpit_title, workspace).
+    """
+    parent_page_id = (config.get("parent_page_id") or "").strip() or None
+    token_env = (config.get("token_env") or "GENOMES_NOTION_PAT").strip()
+    cockpit_title = (config.get("cockpit_page_title") or "Runtime Control Plane").strip()
+    workspace = (config.get("workspace") or "Genome's Notion").strip()
+    return parent_page_id, token_env, cockpit_title, workspace
+
+
+def _apply_runtime_tracking_live(
+    os_root: Path,
+    workspace: str,
+    plan: dict[str, Any],
+    manifest_path: Path,
+    existing_manifest: dict[str, Any],
+    parent_page_id: str,
+    token_env: str,
+    cockpit_title: str,
+    fetcher: Any,
+) -> dict[str, Any]:
+    """Execute the live Notion path for apply_runtime_tracking.
+
+    Verifies workspace via live API, ensures the cockpit page and runtime
+    databases exist,
+    upserts all records, writes manifest with real IDs and live: true.
+    """
+    from .notion_api import (
+        DATABASE_PROPERTY_SCHEMAS,
+        _base_db_properties,
+        build_record_properties,
+        create_database,
+        create_database_page,
+        create_page,
+        get_bot_workspace,
+        query_database_by_key,
+        search_child_databases,
+        search_child_pages,
+        update_database_page,
+    )
+
+    # --- live workspace verification ---
+    bot_workspace = get_bot_workspace(
+        token_env, parent_page_id=parent_page_id, fetcher=fetcher
+    )
+    if bot_workspace != workspace:
+        raise ValueError(
+            f"live API workspace mismatch: bot reports {bot_workspace!r} "
+            f"but verified_workspace expects {workspace!r}; refusing Notion write"
+        )
+
+    now = _now()
+
+    # --- cockpit page ---
+    # A local projection uses synthetic IDs. Never reuse those IDs on a live
+    # apply; only a manifest previously written by the live path is trusted.
+    resume_manifest = existing_manifest if existing_manifest.get("live") is True else {}
+    existing_cockpit_id: str | None = resume_manifest.get("cockpit_page_id")
+    cockpit_id: str | None = None
+    cockpit_created = False
+
+    if existing_cockpit_id:
+        cockpit_id = existing_cockpit_id
+    else:
+        child_pages = search_child_pages(parent_page_id, token_env, fetcher=fetcher)
+        for page in child_pages:
+            if page["title"] == cockpit_title:
+                cockpit_id = page["id"]
+                break
+
+    if cockpit_id is None:
+        cockpit_id = create_page(
+            parent_page_id,
+            cockpit_title,
+            token_env,
+            approved_parent_page_id=parent_page_id,
+            fetcher=fetcher,
+        )
+        cockpit_created = True
+
+    # --- runtime databases ---
+    database_ids: dict[str, str] = {}
+    databases_created = 0
+    databases_reused = 0
+
+    existing_db_ids: dict[str, str] = resume_manifest.get("database_ids") or {}
+
+    child_dbs = search_child_databases(cockpit_id, token_env, fetcher=fetcher)
+    live_db_by_title: dict[str, str] = {db["title"]: db["id"] for db in child_dbs}
+
+    for db_name in plan["databases"]:
+        db_id: str | None = existing_db_ids.get(db_name)
+        if db_id:
+            database_ids[db_name] = db_id
+            databases_reused += 1
+        elif db_name in live_db_by_title:
+            database_ids[db_name] = live_db_by_title[db_name]
+            databases_reused += 1
+        else:
+            schema = DATABASE_PROPERTY_SCHEMAS.get(db_name) or _base_db_properties()
+            new_id = create_database(
+                cockpit_id,
+                db_name,
+                schema,
+                token_env,
+                approved_parent_page_id=parent_page_id,
+                fetcher=fetcher,
+            )
+            database_ids[db_name] = new_id
+            databases_created += 1
+
+    # --- kind → database name mapping ---
+    KIND_TO_DATABASE = RUNTIME_TRACKING_KIND_TO_DATABASE
+
+    def persist_manifest(records: list[dict[str, Any]], *, status: str, error_type: str | None = None) -> None:
+        merged_database_ids = {
+            **(resume_manifest.get("database_ids") or {}),
+            **database_ids,
+        }
+        merged_databases = list(dict.fromkeys([
+            *(resume_manifest.get("databases") or []),
+            *plan["databases"],
+            *merged_database_ids,
+        ]))
+        records_by_key = {
+            str(item.get("record_key")): item
+            for item in (resume_manifest.get("records") or [])
+            if isinstance(item, dict) and item.get("record_key")
+        }
+        records_by_key.update({
+            str(item.get("record_key")): item
+            for item in records
+            if isinstance(item, dict) and item.get("record_key")
+        })
+        checkpoint = {
+            "live": True,
+            "sync_status": status,
+            "workspace": workspace,
+            "cockpit_page_id": cockpit_id,
+            "updated_at": now,
+            "databases": merged_databases,
+            "database_ids": merged_database_ids,
+            "record_scope": plan.get("record_scope", {}),
+            "records": list(records_by_key.values()),
+        }
+        if error_type:
+            checkpoint["error_type"] = error_type
+        _write_yaml(manifest_path, checkpoint)
+
+    # Persist remote container IDs before any record loop so an interrupted
+    # apply can resume without losing the cockpit/database identity.
+    prior_records = list(resume_manifest.get("records") or [])
+    persist_manifest(prior_records, status="in_progress")
+
+    # --- upsert records ---
+    records_created = 0
+    records_updated = 0
+    records: list[dict[str, Any]] = []
+
+    try:
+        for record in plan["records"]:
+            record_key = f"{record['kind']}:{record['key']}"
+            record_with_key = {**record, "record_key": record_key}
+            db_name = KIND_TO_DATABASE.get(record["kind"])
+            if db_name is None or db_name not in database_ids:
+                records.append({**record_with_key, "notion_id": None, "skipped": "no database mapping"})
+                persist_manifest(records, status="in_progress")
+                continue
+
+            db_id = database_ids[db_name]
+            props = build_record_properties(record_with_key, now)
+            existing_page_id = query_database_by_key(db_id, record_key, token_env, fetcher=fetcher)
+            if existing_page_id:
+                update_database_page(
+                    existing_page_id,
+                    props,
+                    token_env,
+                    approved_parent_page_id=parent_page_id,
+                    fetcher=fetcher,
+                )
+                notion_id = existing_page_id
+                records_updated += 1
+            else:
+                notion_id = create_database_page(
+                    db_id,
+                    props,
+                    token_env,
+                    approved_parent_page_id=parent_page_id,
+                    fetcher=fetcher,
+                )
+                records_created += 1
+            records.append({**record_with_key, "notion_id": notion_id})
+            persist_manifest(records, status="in_progress")
+    except Exception as exc:
+        persist_manifest(records, status="partial", error_type=type(exc).__name__)
+        error = RuntimeError("live runtime tracking apply incomplete; resume from manifest")
+        error.partial_result = {
+            "applied": True,
+            "sync_status": "partial",
+            "cockpit_page_id": cockpit_id,
+            "records_created": records_created,
+            "records_updated": records_updated,
+            "records_completed": len(records),
+        }
+        raise error from exc
+
+    persist_manifest(records, status="complete")
+
+    return {
+        **plan,
+        "applied": True,
+        "mode": "applied",
+        "live": True,
+        "cockpit_page_id": cockpit_id,
+        "cockpit_created": cockpit_created,
+        "databases_created": databases_created,
+        "databases_reused": databases_reused,
+        "records_created": records_created,
+        "records_updated": records_updated,
+        "database_ids": database_ids,
+        "records": records,
+    }
+
+
+def apply_runtime_tracking(
+    root: str | Path,
+    *,
+    verified_workspace: str | None,
+    fetcher: Any = None,
+    allow_live: bool = False,
+) -> dict[str, Any]:
+    """Apply runtime tracking — writes a local manifest or goes live to Notion.
+
+    Live path is activated when ``harness/shared_factory/00-control-plane/
+    notion-tracking.yml`` has a non-empty ``parent_page_id`` AND the token
+    env var it names is set. In all other cases the local-only path is used
+    and the manifest gains ``live: false``.
+
+    The ``fetcher`` kwarg is the injectable HTTP transport used by the live
+    path — pass a fake in tests to avoid network access.
+    """
+    os_root = expand_path(root)
+    config = _load_notion_tracking_config(os_root)
+    parent_page_id, token_env, cockpit_title, config_workspace = _live_notion_config(config)
+    if config_workspace and verified_workspace and config_workspace != verified_workspace:
+        raise ValueError(
+            f"configured Notion workspace {config_workspace!r} does not match "
+            f"verified workspace {verified_workspace!r}"
+        )
+    workspace = verify_workspace(os_root, config_workspace or verified_workspace)
+    plan = build_runtime_tracking_plan(os_root)
+    plan["workspace"] = workspace
+    manifest_path = _runtime_path(os_root, NOTION_RUNTIME_MANIFEST)
+
+    from .notion_api import resolve_token
+    token_present = resolve_token(token_env) is not None
+
+    go_live = bool(parent_page_id and token_present)
+
+    if allow_live and not go_live:
+        missing = []
+        if not parent_page_id:
+            missing.append("parent_page_id is empty in notion-tracking.yml")
+        if not token_present:
+            missing.append(f"token env {token_env!r} is not set")
+        raise RuntimeError("--live was requested but the live path is unavailable: " + "; ".join(missing))
+
+    if go_live and not allow_live:
+        return {
+            **plan,
+            "applied": False,
+            "mode": "skipped",
+            "live": False,
+            "reason": "live tracking is configured but --live was not passed",
+            "parent_page_id": parent_page_id,
+        }
+
+    existing_manifest: dict[str, Any] = _load_yaml(manifest_path, {})
+    if go_live:
+        from . import notion_api as _notion_api
+        _fetcher = fetcher if fetcher is not None else _notion_api._default_fetcher
+        return _apply_runtime_tracking_live(
+            os_root=os_root,
+            workspace=workspace,
+            plan=plan,
+            manifest_path=manifest_path,
+            existing_manifest=existing_manifest,
+            parent_page_id=parent_page_id,
+            token_env=token_env,
+            cockpit_title=cockpit_title,
+            fetcher=_fetcher,
+        )
+
+    # A local fallback must never destroy a live manifest. Operators can resume
+    # the existing live projection with --live once credentials are available.
+    if existing_manifest.get("live") is True:
+        return {
+            **plan,
+            "applied": False,
+            "mode": "skipped",
+            "live": True,
+            "reason": "live manifest preserved while live credentials are unavailable",
+            "manifest_path": str(manifest_path),
+        }
+
+    # --- local path (original behaviour + live: false) ---
+    database_ids = {database: _local_id(f"database:{workspace}:{database}") for database in plan["databases"]}
+    records = []
+    for record in plan["records"]:
+        record_key = f"{record['kind']}:{record['key']}"
+        records.append({**record, "notion_id": _local_id(record_key), "record_key": record_key})
+    manifest = {
+        "live": False,
+        "workspace": workspace,
+        "updated_at": _now(),
+        "databases": plan["databases"],
+        "database_ids": database_ids,
+        "record_scope": plan.get("record_scope", {}),
+        "records": records,
+    }
+    _write_yaml(manifest_path, manifest)
+    return {**plan, "applied": True, "mode": "applied", "live": False, "database_ids": database_ids, "records": records}
 
 
 def format_runtime_result(result: dict[str, Any]) -> str:
