@@ -33,7 +33,11 @@ except ModuleNotFoundError:  # pragma: no cover - release hosts may expose only 
 
 PACKAGE = "genomes-agentic-os"
 MODULE = "genomes_agentic_os"
-ALIASES = ("development-delivery-runtime", "layout-v2-runtime")
+# The top-level dispatcher falls back to agentic-os-source. Keep that fallback
+# on the same validated release as the Auto-Dev aliases so review coordination
+# cannot be present on only one dispatch path; alias activation retains the
+# existing previous links for rollback.
+ALIASES = ("development-delivery-runtime", "layout-v2-runtime", "agentic-os-source")
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 REVISION = re.compile(r"^[0-9a-fA-F]{7,40}$")
 

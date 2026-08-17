@@ -1111,6 +1111,7 @@ class ReviewCoordinator:
         *,
         mode: str = "full",
         parent_key: str | None = None,
+        base_forward_evidence: Mapping[str, Any] | None = None,
     ) -> ReviewRunResult:
         """Run or reuse one review while holding the PR-family single-flight lock."""
 
@@ -1181,6 +1182,34 @@ class ReviewCoordinator:
             parent: dict[str, Any] | None = None
             if mode == "delta":
                 candidates = [row for row in chain if not row.get("quarantined")]
+                # A base change deliberately remains in the chain key.  The only
+                # exception is an explicit, independently-proven forward merge;
+                # callers must supply immutable ancestry/provider evidence before
+                # a paid review can be reached.
+                if not candidates and base_forward_evidence:
+                    required = {
+                        "transition": "base_forward",
+                        "current_base_sha": subject.base_sha,
+                        "parent_head_ancestor": True,
+                        "base_ancestor": True,
+                        "provider_verified": True,
+                    }
+                    if (
+                        bool(base_forward_evidence.get("previous_base_sha"))
+                        and all(
+                        base_forward_evidence.get(name) == expected
+                        for name, expected in required.items()
+                        )
+                    ):
+                        candidates = [
+                            row for row in successful_family
+                            if not row.get("quarantined")
+                            and row.get("subject", {}).get("repository") == subject.repository
+                            and row.get("subject", {}).get("pull_request") == subject.pull_request
+                            and row.get("subject", {}).get("policy_fingerprint") == subject.policy_fingerprint
+                            and row.get("subject", {}).get("base_branch") == subject.base_branch
+                            and row.get("subject", {}).get("base_sha") == base_forward_evidence.get("previous_base_sha")
+                        ]
                 if parent_key:
                     candidates = [
                         row for row in candidates if row.get("key") == parent_key
@@ -1244,6 +1273,8 @@ class ReviewCoordinator:
                 "created_at": now,
                 "completed_at": now,
             }
+            if base_forward_evidence:
+                receipt["review"]["base_forward_evidence"] = dict(base_forward_evidence)
             if outcome == "unavailable":
                 attempt_path = self.attempts / f"{key}-{uuid.uuid4().hex}.json"
                 _atomic_json(attempt_path, receipt)
