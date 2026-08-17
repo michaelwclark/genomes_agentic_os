@@ -23,7 +23,7 @@ mongodb = [
 dev = [
   "pytest>=8.0",
   "pytest-cov>=7.0,<8",
-  "commitizen==4.16.5",
+  "commitizen==4.17.1",
   "pre-commit>=4.6",
 ]
 
@@ -33,7 +33,7 @@ dev = [
 dev = [
   "pytest>=8.0",
   "pytest-cov>=7.0,<8",
-  "commitizen==4.16.5",
+  "commitizen==4.17.1",
   "pre-commit>=4.6",
 ]
 
