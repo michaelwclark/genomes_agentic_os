@@ -322,6 +322,45 @@ describe.skipIf(!enabled)("PostgreSQL + Valkey integration", () => {
     );
   });
 
+  it("requeues a terminal task without resetting its run counter", async () => {
+    const admitted = await fabric.admit({
+      namespace: `requeue-${randomUUID()}`,
+      queue: "code",
+      taskType: "example.run",
+      idempotencyKey: `requeue-${randomUUID()}`,
+      payload: {},
+      requiredCapabilities: ["test.run"],
+      maxAttempts: 3,
+    });
+    await pool.query(
+      `UPDATE fabric_tasks
+       SET status='dead_lettered',attempt_count=3,completed_at=now()
+       WHERE id=$1`,
+      [admitted.task.id],
+    );
+    await pool.query(
+      `UPDATE fabric_state
+       SET leader_host_id='integration-host',
+           leader_lease_expires_at=now()+interval '1 minute'
+       WHERE singleton=true`,
+    );
+
+    const receipt = await new PostgresReliabilityStore(
+      pool,
+      "integration-host",
+    ).requeueTask(
+      admitted.task.id,
+      "integration-operator",
+      `requeue:${admitted.task.id}`,
+    );
+
+    expect(receipt.after_state).toMatchObject({
+      id: admitted.task.id,
+      status: "queued",
+      attempt_count: 3,
+    });
+  });
+
   it("idempotently ingests source-scoped observations and derives sticky alarms", async () => {
     const store = new PostgresReliabilityStore(pool, "integration-host");
     const incidentKey = `malformed:${randomUUID()}`;
