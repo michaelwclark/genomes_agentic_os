@@ -9,6 +9,20 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-08-17
+
+### Added
+
+- Add the governed production-release validation workflow and durable run-log
+  storage support.
+
+### Fixed
+
+- Recover legacy Auto-Dev delivery boundaries, preserve RunLogStore state, and
+  restart loaded macOS execution-fabric services after release activation.
+- Align Commitizen's package, hook, lockfile, and enforcement contract at
+  version 4.17.1.
+
 ## [0.7.1] - 2026-08-15
 
 ### Added
