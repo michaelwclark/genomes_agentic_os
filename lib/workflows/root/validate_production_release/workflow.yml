@@ -1,0 +1,20 @@
+id: validate_production_release
+version: 1
+owner: auto-dev
+role: pre_merge_release_gate
+canonical_owner: auto_dev_validate_production_release
+auto_dev_stage: validate_production_release
+inputs: [predecessor_receipts, jira_release_authority, github_pr_family, exact_revisions, effective_policy_bundle, qa_run_registry, risk_gate_receipts, consumer_contract_inventory, tenant_impact_matrix]
+outputs: [production_release_validation_receipt, blocker_or_ready_for_merge_decision]
+states: [planned, validating, ready_for_merge, blocked]
+steps: [snapshot_release_authority, enumerate_jira_items, enumerate_github_family, compare_fix_versions_and_targets, verify_exact_revision_identity, verify_matching_passing_qa_runs, review_complete_diff_against_policy, consume_applicable_risk_gates, validate_runtime_consumer_contracts, verify_artifact_rollback_observability, record_receipt]
+validations: [provider_readback_present, fix_versions_aligned, family_complete, exact_heads_match, every_jira_has_passing_exact_qa, whole_diff_reviewed, all_required_markdown_checks_pass, risk_gates_terminal, runtime_consumer_contracts_terminal, artifact_and_recovery_evidence_present, independent_review_present, no_external_mutation]
+failure_modes:
+  provider_unavailable: block_with_exact_provider_gap
+  fix_version_or_branch_mismatch: block_before_merge
+  missing_or_stale_qa: block_before_merge
+  exact_revision_drift: refresh_and_revalidate
+  policy_or_risk_gap: return_to_owning_stage
+  rollback_or_observability_gap: block_before_release
+events: [production_release_validation.planned, production_release_validation.ready_for_merge, production_release_validation.blocked]
+receipts: [authority_snapshots, jira_item_matrix, github_family_matrix, fix_version_comparison, exact_revision_comparison, qa_run_matrix, check_matrix, consumer_contract_matrix, tenant_impact_matrix, contract_test_runs, runtime_readbacks, independent_review_receipt, policy_review_receipt, risk_gate_receipts, artifact_recovery_receipt, policy_fingerprint, decision]
