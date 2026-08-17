@@ -9,13 +9,72 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-08-15
+
+### Added
+
+- Add report-only Compose pressure teardown proposals backed by typed lifecycle,
+  provider, worktree, dirty-state, and runtime ownership evidence, plus a
+  separately invoked exact-fingerprint executor that retains named volumes.
+
+### Changed
+
+- Make root validation bounded and observable with hard wall-clock,
+  no-progress, cancellation, and scoped fallback behavior.
+- Allow Health to remove an external worktree only through its exact
+  project-owned registration while preserving the existing merge, review,
+  branch, cleanliness, and runtime cleanup gates.
+
+### Fixed
+
+- Preserve the active PR-Create escalation as the authoritative Develop
+  predecessor throughout the governed Review-to-Merge chain.
+- Preserve partial portfolio state when an exhausted executor handoff coexists
+  with a recoverable handoff.
+- Bind opposing-review receipt run IDs to their deterministic artifact
+  directory leaves and ingest structured blocking and advisory findings
+  without allowing blocking evidence to be verified away.
+- Require same-head advisory recovery to match explicit non-blocking evidence
+  and remain bound to the immutable reviewer response and canonical findings
+  digest; honor routed `continue_with_receipt` handling when an unavailable
+  review is policy-allowed.
+- Validate required PR checks only after exact-head workflow contexts have had
+  two settled observations to appear, rejecting stale labels without failing
+  during the downstream-check emission gap.
+
+## [0.7.0] - 2026-08-14
+
+### Added
+
+- Add a shared, exact-head review coordinator with stable identities,
+  single-flight claims, normalized findings ledgers, immutable receipts, and
+  evidence-gated operator resolution after the review circuit is exhausted.
+- Add a transactional local release-runtime installer with hash-pinned
+  dependency closure, rollout quiescence proof, receipt-ledger migration, and
+  verified rollback pointers.
+
+### Changed
+
+- Make Review Self the sole owner of the initial full review. Repair uses at
+  most three descendant delta reviews, Finalize reuses the exact-head receipt,
+  and provider publication is deferred to one clean terminal summary.
+- Require exact-head review authority, local tests, hosted checks, and policy
+  identity before Auto-Dev can enter `ready_for_merge`.
+
+### Fixed
+
+- Prevent replayed, concurrent, aliased, corrupt, or cross-entrypoint review
+  requests from recreating the duplicate-review storm observed on PR #19.
+- Preserve review budgets across scrub failures, quarantine, legacy receipt
+  migration, and release rollout.
+
 ## [0.6.3] - 2026-08-13
 
 ### Fixed
 
-- Restart loaded macOS Execution Fabric launchd services only after the
-  complete activation preflight passes, so an activated release cannot leave a
-  worker running the previous package through the `current` symlink switch.
+- Export the canonical Team PR review outcome after validating the helper's
+  successful lifecycle status, so `succeeded + findings` reaches the Fabric
+  projector as a completed review rather than a failed task.
 
 ## [0.6.2] - 2026-08-13
 

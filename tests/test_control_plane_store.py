@@ -38,6 +38,11 @@ def test_sqlite_store_satisfies_event_and_cursor_contract(tmp_path: Path) -> Non
     assert store.get_cursor("github")["last_value"] == "2026-08-02T00:00:00Z"  # type: ignore[index]
 
 
+def test_root_composition_uses_canonical_control_plane_path(tmp_path: Path) -> None:
+    config = ControlPlaneStoreConfig.for_root(tmp_path)
+    assert config.sqlite_path == tmp_path / "harness/shared_factory/00-control-plane/state.db"
+
+
 def test_backend_selection_is_explicit_and_never_fakes_postgres(tmp_path: Path) -> None:
     config = ControlPlaneStoreConfig("sqlite", sqlite_path=tmp_path / "control-plane.db")
     assert build_control_plane_store(config).backend == "sqlite"

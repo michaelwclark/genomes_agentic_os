@@ -1988,8 +1988,20 @@ def test_macos_personal_activation_starts_only_client_plane_after_preflight(
         fake_bin / "launchctl",
         """#!/bin/sh
 case "$1" in
-  print) exit 1 ;;
-  bootstrap) printf 'bootstrap %s\n' "$(basename "$3" .plist)" >>"$ACTIVATION_LOG" ;;
+  print)
+    label=${2##*/}
+    [ -f "$LAUNCH_STATE/$label" ]
+    ;;
+  bootstrap)
+    label=$(basename "$3" .plist)
+    printf 'bootstrap %s\n' "$label" >>"$ACTIVATION_LOG"
+    : >"$LAUNCH_STATE/$label"
+    ;;
+  bootout)
+    label=${2##*/}
+    printf 'bootout %s\n' "$label" >>"$ACTIVATION_LOG"
+    rm -f "$LAUNCH_STATE/$label"
+    ;;
   *) exit 64 ;;
 esac
 """,
@@ -2001,31 +2013,41 @@ esac
             "<plist/>", encoding="utf-8"
         )
 
-    result = subprocess.run(
-        [
-            "sh",
-            str(installer / "activate-macos.sh"),
-            "--apply",
-            "--personal-fallback",
-        ],
-        check=False,
-        capture_output=True,
-        text=True,
-        env={
-            **os.environ,
-            "ACTIVATION_LOG": str(activation_log),
-            "HOME": str(home),
-            "PATH": f"{fake_bin}:{os.environ['PATH']}",
-        },
-    )
+    launch_state = tmp_path / "launch-state"
+    launch_state.mkdir()
+    env = {
+        **os.environ,
+        "ACTIVATION_LOG": str(activation_log),
+        "HOME": str(home),
+        "LAUNCH_STATE": str(launch_state),
+        "PATH": f"{fake_bin}:{os.environ['PATH']}",
+    }
+    for _ in range(2):
+        result = subprocess.run(
+            [
+                "sh",
+                str(installer / "activate-macos.sh"),
+                "--apply",
+                "--personal-fallback",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        assert result.returncode == 0, result.stderr
 
-    assert result.returncode == 0, result.stderr
-    assert activation_log.read_text(encoding="utf-8").splitlines() == [
+    lines = activation_log.read_text(encoding="utf-8").splitlines()
+    assert lines[:4] == [
         "preflight personal-client",
         "bootstrap com.genomes.agentic-os.execution-fabric.worker",
         "bootstrap com.genomes.agentic-os.execution-fabric.alarm-dispatcher",
         "bootstrap com.genomes.agentic-os.execution-fabric.personal-fallback",
     ]
+    assert lines[4] == "preflight personal-client"
+    assert lines.count("bootout com.genomes.agentic-os.execution-fabric.worker") == 1
+    assert lines.count("bootout com.genomes.agentic-os.execution-fabric.alarm-dispatcher") == 1
+    assert lines.count("bootout com.genomes.agentic-os.execution-fabric.personal-fallback") == 1
 
 
 def test_personal_client_preflight_uses_only_scoped_client_credentials() -> None:

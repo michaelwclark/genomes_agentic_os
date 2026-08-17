@@ -52,7 +52,7 @@ if [ "$personal_fallback" = true ]; then
   for suffix in $personal_labels; do
     label="com.genomes.agentic-os.execution-fabric.$suffix"
     plist="$launch_agents/$label.plist"
-    # A release activation changes the current runtime symlink.  Keeping an
+    # A release activation changes the current runtime symlink. Keeping an
     # already loaded job would leave it executing the previous package, so
     # replace it only after the complete preflight above has passed.
     if launchctl print "$domain/$label" >/dev/null 2>&1; then
@@ -65,7 +65,7 @@ if [ "$personal_fallback" = true ]; then
 fi
 
 # launchctl bootstrap starts RunAtLoad jobs, so the complete standby preflight
-# must succeed before the first service-manager mutation.  Restart a loaded
+# must succeed before the first service-manager mutation. Restart a loaded
 # label after that preflight: otherwise an activated release only changes the
 # current symlink while its worker keeps the previous runtime in memory.
 "$preflight" standby

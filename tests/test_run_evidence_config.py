@@ -44,6 +44,9 @@ READ_ONLY_RUN_EVIDENCE_REFERENCES = {
     "src/genomes_agentic_os/report_registry.py",
     "src/genomes_agentic_os/self_improvement.py",
     "src/genomes_agentic_os/source_observation.py",
+    # AGE-85 routes legacy control-plane SQLite stores; it does not write
+    # run-evidence artifacts despite naming the historical runs-and-logs path.
+    "src/genomes_agentic_os/state/locations.py",
     "src/genomes_agentic_os/spec_adapters/filesystem.py",
     "src/genomes_agentic_os/spec_engine.py",
     "src/genomes_agentic_os/validate.py",

@@ -19,6 +19,7 @@ import os
 from pathlib import Path
 import re
 import shlex
+import sys
 import socket
 import subprocess
 import tempfile
@@ -1803,13 +1804,16 @@ if TEAM_PR_HELPER_COMPLETED_STATUS in TEAM_PR_REVIEW_OUTCOMES:
 
 
 def _team_pr_review_identity(payload: Mapping[str, Any]) -> dict[str, Any]:
-    return {
+    identity = {
         "repository": str(payload["repository"]).lower(),
         "pull_request": int(payload["pull_request"]),
         "expected_head_sha": str(payload["expected_head_sha"]).lower(),
         "source_key": str(payload["source_key"]).lower(),
         "review_mode": str(payload.get("review_mode") or TEAM_PR_REVIEW_MODE),
     }
+    if payload.get("retry_nonce"):
+        identity["retry_nonce"] = str(payload["retry_nonce"])
+    return identity
 
 
 def _team_pr_review_intent_key(identity: Mapping[str, Any]) -> str:
@@ -2105,7 +2109,11 @@ def _validate_team_pr_helper_receipt_wrapper(
             retryable=False,
             receipt_path=str(receipt_path),
         )
-    return helper_status
+    # The wrapper's lifecycle state is deliberately distinct from the review
+    # outcome.  Downstream fabric consumers use this return value as the
+    # canonical review result, so exporting ``succeeded`` here would still
+    # turn a valid current-format receipt into a failed projection.
+    return str(canonical_outcome)
 
 
 def _team_pr_ai_review_worker_locked(
@@ -2238,7 +2246,11 @@ def _team_pr_ai_review_worker_locked(
     helper_path = helper_candidates[0]
     command = shlex.join(
         [
-            "python3",
+            # Keep the helper on the same installed runtime as the worker.
+            # Resolving `python3` from PATH can select the host CLT Python,
+            # which lacks the Fabric package and breaks the bundle MCP
+            # evidence interface before review starts.
+            sys.executable,
             str(helper_path),
             "execute",
             "--root",
@@ -2255,6 +2267,11 @@ def _team_pr_ai_review_worker_locked(
             str(payload["source_key"]),
             "--review-mode",
             TEAM_PR_REVIEW_MODE,
+            *(
+                ["--retry-nonce", str(payload["retry_nonce"])]
+                if payload.get("retry_nonce")
+                else []
+            ),
             "--run-id",
             helper_summary_path.parent.name,
             "--summary-path",

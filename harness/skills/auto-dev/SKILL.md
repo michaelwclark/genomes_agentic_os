@@ -57,7 +57,7 @@ but non-blocking when its receipt records that the reviewer was unavailable.
   promise to release or deploy.
 - One friendly stage: `agentic-os auto-dev groom|investigate|create|readiness|
   develop|document|pr-create|review-self|review-others|qa|finalize|merge|release|
-  deploy|closeout|health ...` and the same-named skill. `release-propagation` is
+  validate-production-release|merge|release|deploy|closeout|health ...` and the same-named skill. `release-propagation` is
   a compatibility alias for `pr-create`.
 
 ## Canonical delivery path

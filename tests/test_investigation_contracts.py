@@ -792,6 +792,60 @@ def test_version_gate_pause_resume_conclusion_and_artifact_render(tmp_path: Path
     assert rendered["receipt_ref"].endswith(".receipt.json")
 
 
+def test_non_environment_source_code_requires_explicit_version_not_applicable(tmp_path: Path) -> None:
+    root = _root(tmp_path)
+    request = root / "request.yml"
+    request.write_text(yaml.safe_dump({"title": "Source-only investigation", "summary": "Inspect the local source contract."}), encoding="utf-8")
+    run_dir = root / "runs/source-only"
+    start_investigation(root, request, trigger="question", domain="acme", project="app", run_dir=run_dir)
+
+    with pytest.raises(InvestigationContractError, match="unsatisfied prerequisites"):
+        record_investigation_evidence(
+            root,
+            run_dir,
+            source_id="source-code",
+            summary="Inspected source.",
+            authority="version-controlled repository",
+            evidence_ref="git:source-only:handler",
+        )
+
+    record_source_disposition(
+        root,
+        run_dir,
+        source_id="deployed-version",
+        status="not-applicable",
+        reason="The investigation has no environment scope.",
+        evidence_ref="scope:environment-not-specified",
+    )
+    result = record_investigation_evidence(
+        root,
+        run_dir,
+        source_id="source-code",
+        summary="Inspected source after the conditional version source was dispositioned.",
+        authority="version-controlled repository",
+        evidence_ref="git:source-only:handler",
+    )
+    assert result["evidence_count"] == 1
+
+
+def test_environment_source_code_still_requires_resolved_version(tmp_path: Path) -> None:
+    root = _root(tmp_path)
+    request = root / "request.yml"
+    request.write_text(yaml.safe_dump({"title": "Environment investigation", "summary": "Inspect deployed source."}), encoding="utf-8")
+    run_dir = root / "runs/environment"
+    start_investigation(root, request, trigger="bug", environment="preprod", domain="acme", project="app", run_dir=run_dir)
+
+    with pytest.raises(InvestigationContractError, match="deployed environment version"):
+        record_investigation_evidence(
+            root,
+            run_dir,
+            source_id="source-code",
+            summary="Inspected source.",
+            authority="version-controlled repository",
+            evidence_ref="git:environment:handler",
+        )
+
+
 def test_declared_authority_source_coverage_and_evidence_citations_fail_closed(tmp_path: Path) -> None:
     root = _root(tmp_path)
     request = root / "request.yml"

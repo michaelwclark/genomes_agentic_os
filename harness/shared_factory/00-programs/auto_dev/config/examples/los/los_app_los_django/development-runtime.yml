@@ -9,6 +9,11 @@ auto_dev:
     start_stage: groom
     completion_stage: merge
   stages:
+    validate_production_release:
+      applicability: required
+      decision_point: after_finalize
+      workflow: validate_production_release
+      unavailable_policy: block
     document:
       applicability: disabled
       reason: Ticket-level documentation is not required for LOS today.
@@ -46,6 +51,59 @@ review:
     model: claude-fable-5
     transport: claude_cli
     unavailable_policy: continue_with_receipt
+  performance:
+    required: true
+    readiness: blocking
+    classification: performance_or_observability
+    required_evidence:
+      - query_budget_regression_test
+      - representative_relation_fanout
+      - deliberate_relation_loading_or_bounded_projection
+      - measured_remote_io_evidence_when_applicable
+  configuration_migrations:
+    required: true
+    independent_review: required
+    unavailable_policy: block
+    readiness: blocking
+    classification: configuration_or_rules_migration
+    command: python3 __AGENTIC_OS_ROOT__/harness/bin/agentic-os-configuration-migration-gate --base develop
+    failure_mode: fail_closed
+    required_evidence:
+      - complete_dependency_closure
+      - composed_runtime_compile_before_write
+      - tenant_customization_preservation_and_readback
+      - idempotency_and_rollback_recovery
+      - mixed_version_rolling_deploy_compatibility
+  runtime_consumer_contracts:
+    required: true
+    independent_review: required
+    unavailable_policy: block
+    readiness: blocking
+    classification: request_payload_rule_or_configuration_contract
+    command: python3 __AGENTIC_OS_ROOT__/harness/bin/agentic-os-runtime-contract-gate --base develop
+    failure_mode: fail_closed
+    required_evidence:
+      - complete_consumer_inventory
+      - tenant_impact_matrix
+      - legacy_and_canonical_shape_evaluator_tests
+      - explicit_compatibility_or_coordinated_migration
+      - negative_missing_field_behavior
+      - exact_runtime_configuration_readback
+  production_release_validation:
+    required: true
+    readiness: blocking
+    workflow: validate_production_release
+    position: before_merge
+    unavailable_policy: block
+    required_checks_from_markdown: true
+    required_evidence:
+      - jira_github_fix_version_alignment
+      - exact_branch_family_and_revision_identity
+      - matching_passing_qa_run_per_jira_item
+      - whole_diff_effective_policy_review
+      - applicable_risk_gate_receipts
+      - runtime_consumer_contract_matrix_when_applicable
+      - artifact_rollback_observability_and_post_release_plan
 merge:
   policy: auto_after_gates
   require_checks: true
