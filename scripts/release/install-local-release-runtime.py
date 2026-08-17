@@ -378,13 +378,17 @@ def expected_sha256(
         digest = fields[0].lower().removeprefix("sha256:")
         if not SHA256.fullmatch(digest):
             continue
-        filename = fields[-1].lstrip("*") if len(fields) > 1 else None
+        filename = fields[-1].removeprefix("*") if len(fields) > 1 else None
+        if filename == f"./{wheel.name}":
+            filename = wheel.name
+        elif filename != wheel.name:
+            # Never resolve paths: manifest matching is a parser decision, not
+            # a filesystem lookup. Only the exact basename or POSIX ./ form is legal.
+            filename = None
         candidates.append((digest, filename))
     named = [digest for digest, name in candidates if name == wheel.name]
     if len(named) == 1:
         return named[0]
-    if len(candidates) == 1:
-        return candidates[0][0]
     raise ValueError(
         f"checksum file must contain one unambiguous entry for {wheel.name}"
     )
