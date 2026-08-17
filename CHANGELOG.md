@@ -14,6 +14,9 @@ All notable changes to this project are documented here. The format follows
 - Admit the Team PR producer's validated retry nonce, propagate it to the
   installed helper, and retain it in the completion effect so explicit
   same-head rechecks cannot reuse an earlier worker intent or receipt.
+- Complete the v0.8.0 Python, Node, static manifest, chart, and lockfile version
+  projections so locked CI and the next immutable patch release validate from
+  one coherent version.
 
 ## [0.8.0] - 2026-08-17
 
