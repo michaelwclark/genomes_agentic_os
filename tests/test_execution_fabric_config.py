@@ -205,6 +205,10 @@ def test_effective_config_reports_source_fingerprint_and_canonical_dependencies(
         if route["task_type"] == "los.team_pr.ai_review.v1"
     )
     assert team_pr_route["execution"]["allowed_host_ids"] == ["bigmac"]
+    assert team_pr_route["payload"]["properties"]["retry_nonce"] == {
+        "type": "string",
+        "pattern": "^[a-f0-9]{12}$",
+    }
     assert execution_fabric_remote._eligible_worker_queues(
         root, "bigmac", ["pr_reviews"]
     ) == ["pr_reviews"]

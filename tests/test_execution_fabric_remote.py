@@ -1023,6 +1023,7 @@ def test_registered_team_pr_domain_worker_invokes_installed_safe_helper(
                 "expected_head_sha": "a" * 40,
                 "base_branch": "develop",
                 "source_key": "github-pr-42",
+                "retry_nonce": "0123456789ab",
                 "title": "Review example",
                 "notion_page_id": "a" * 32,
                 "author_identity": author_identity,
@@ -1108,6 +1109,7 @@ def test_registered_team_pr_domain_worker_invokes_installed_safe_helper(
     assert command[:3] == [sys.executable, str(helper), "execute"]
     assert command[-1] == "--apply"
     assert command[command.index("--review-mode") + 1] == "review_no_merge"
+    assert command[command.index("--retry-nonce") + 1] == "0123456789ab"
     assert "auto-dev-review-others" not in captured["command"]
     assert "auto-dev-review-self" not in captured["command"]
     assert "command" not in assignment["task"]["payload"]
@@ -1133,6 +1135,7 @@ def test_registered_team_pr_domain_worker_invokes_installed_safe_helper(
                 "base_branch": "develop",
                 "source_key": "github-pr-42",
                 "review_mode": "review_no_merge",
+                "retry_nonce": "0123456789ab",
                 "review_intent_key": intent_key,
                 "task_identity": assignment["task"]["id"],
                 "operation": "project_completed_review",
