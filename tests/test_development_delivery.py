@@ -1602,6 +1602,333 @@ def _active_worktree_ready_recovery_fixture(
     return task, portfolio_path, family_path, provider_path
 
 
+def _legacy_unbound_everything_bootstrap_fixture(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[TaskState, Path]:
+    """Build the exact former-v1 Everything boundary without any PR authority."""
+
+    repo, base_sha = _repository(tmp_path)
+    root = tmp_path / "os"
+    _project(root, repo, repository_id="git:github.com/acme/app")
+    worktree = tmp_path / "legacy-everything-worktree"
+    branch = "feature/cc-194-legacy-everything"
+    _git("worktree", "add", "-b", branch, str(worktree), base_sha, cwd=repo)
+    monkeypatch.setattr(
+        delivery,
+        "create_isolated_worktree",
+        lambda **kwargs: {
+            "name": "cc-194-legacy-everything",
+            "path": str(worktree),
+            "branch": branch,
+            "base_sha": base_sha,
+            "repository_id": "git:github.com/acme/app",
+            "resumed": False,
+        },
+    )
+    run = delivery.start_development_run(
+        root,
+        "acme",
+        "app",
+        ["CC-194"],
+        run_id="legacy-unbound-everything-bootstrap",
+        auto_dev_mode="everything",
+        apply=True,
+    )
+    task = TaskState(Path(run["tasks"][0]["state_ref"]))
+    portfolio_path = task.path.parent.parent.parent / "portfolio.json"
+    work_item = Path(task.read()["work_item"])
+    legacy_order = [
+        stage for stage in AUTO_DEV_STAGE_ORDER if stage != "validate_production_release"
+    ]
+    current = task.read()
+    current["auto_dev_stage_order"] = legacy_order
+    current.pop("auto_dev_start_stage")
+    current.pop("auto_dev_completion_stage")
+    current.pop("auto_dev_stage_policies")
+    task.path.write_text(json.dumps(current, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    portfolio = json.loads(portfolio_path.read_text(encoding="utf-8"))
+    portfolio["auto_dev"]["stage_order"] = legacy_order
+    portfolio["auto_dev"].pop("start_stage")
+    portfolio["auto_dev"].pop("completion_stage")
+    portfolio["auto_dev"].pop("stage_policies")
+    portfolio_path.write_text(
+        json.dumps(portfolio, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    projection_path = work_item / "autodev.json"
+    projection = json.loads(projection_path.read_text(encoding="utf-8"))
+    projection["stage_order"] = legacy_order
+    projection["stage_policies"].pop("validate_production_release")
+    projection["stages"].pop("validate_production_release")
+    projection_path.write_text(
+        json.dumps(projection, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    return task, portfolio_path
+
+
+def _legacy_unbound_everything_bootstrap_snapshot(task: TaskState, portfolio_path: Path) -> dict[str, object]:
+    current = task.read()
+    root = Path(current["os_root"])
+    connection = connect_state(default_db_path(root))
+    try:
+        canonical = canonical_work_items.get(connection, current["canonical_work_id"])
+    finally:
+        connection.close()
+    work_item = Path(current["work_item"])
+    bootstrap_dir = work_item / "artifacts" / "development-delivery" / "legacy-unbound-everything-bootstrap"
+    return {
+        "task": task.path.read_bytes(),
+        "portfolio": portfolio_path.read_bytes(),
+        "projection": Path(current["autodev_path"]).read_bytes(),
+        "canonical": json.dumps(canonical, sort_keys=True),
+        "ledger": task.ledger.read_bytes() if task.ledger.is_file() else None,
+        "bootstrap_dir": bootstrap_dir.exists(),
+    }
+
+
+def test_bootstrap_active_unbound_everything_delivery_plans_applies_and_replays_without_provider_or_git(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    task, portfolio_path = _legacy_unbound_everything_bootstrap_fixture(tmp_path, monkeypatch)
+    before = _legacy_unbound_everything_bootstrap_snapshot(task, portfolio_path)
+
+    assert main(
+        [
+            "auto-dev",
+            "bootstrap-legacy-unbound-everything-delivery",
+            "--state",
+            str(task.path),
+            "--idempotency-key",
+            "cc-194:bootstrap",
+            "--json",
+        ]
+    ) == 0
+    planned = json.loads(capsys.readouterr().out)
+    assert planned["result"] == "planned"
+    assert _legacy_unbound_everything_bootstrap_snapshot(task, portfolio_path) == before
+
+    def no_subprocess(*_args, **_kwargs):
+        raise AssertionError("bootstrap invoked Git or a provider command")
+
+    monkeypatch.setattr(delivery.subprocess, "run", no_subprocess)
+    applied = delivery.bootstrap_active_unbound_everything_delivery(
+        task.path, idempotency_key="cc-194:bootstrap", apply=True
+    )
+    assert applied["result"] == "bootstrapped"
+    receipt = Path(applied["receipt"])
+    receipt_payload = json.loads(receipt.read_text(encoding="utf-8"))
+    assert receipt_payload["schema"] == delivery.ACTIVE_UNBOUND_EVERYTHING_BOOTSTRAP_SCHEMA
+    assert receipt_payload["original"]["task_state_sha256"] == hashlib.sha256(before["task"]).hexdigest()
+    assert receipt_payload["boundary"]["start_stage"] == "groom"
+    assert receipt_payload["boundary"]["completion_stage"] == "health"
+
+    current = task.read()
+    legacy_order = [
+        stage for stage in AUTO_DEV_STAGE_ORDER if stage != "validate_production_release"
+    ]
+    assert current["state"] == "worktree_ready"
+    assert current["auto_dev_stage_order"] == legacy_order
+    assert current["auto_dev_start_stage"] == "groom"
+    assert current["auto_dev_completion_stage"] == "health"
+    assert not current.get("stage_receipts")
+    assert not any(
+        current.get(field)
+        for field in ("subject_revision", "terminal_revision", "deployed_revision")
+    )
+    assert len(current["active_unbound_everything_bootstraps"]) == 1
+
+    portfolio = json.loads(portfolio_path.read_text(encoding="utf-8"))
+    assert portfolio["state"] == "dispatching"
+    assert portfolio["auto_dev"]["start_stage"] == "groom"
+    assert portfolio["auto_dev"]["completion_stage"] == "health"
+    assert len(portfolio["active_unbound_everything_bootstraps"]) == 1
+
+    projection = read_auto_dev_state(current["autodev_path"])
+    assert projection["stage_order"] == list(AUTO_DEV_STAGE_ORDER)
+    assert projection["current_stage"] == "groom"
+    assert projection["status"] == "ready"
+    assert all(
+        row["status"] == "not_started" and row["receipt_refs"] == []
+        for row in projection["stages"].values()
+    )
+    root = Path(current["os_root"])
+    connection = connect_state(default_db_path(root))
+    try:
+        canonical = canonical_work_items.get(connection, current["canonical_work_id"])
+    finally:
+        connection.close()
+    assert canonical is not None and canonical["state"] == "building"
+
+    receipt_before_replay = receipt.read_bytes()
+    ledger_before_replay = task.ledger.read_bytes()
+    replayed = delivery.bootstrap_active_unbound_everything_delivery(
+        task.path, idempotency_key="cc-194:bootstrap", apply=True
+    )
+    assert replayed["result"] == "replayed"
+    assert receipt.read_bytes() == receipt_before_replay
+    assert task.ledger.read_bytes() == ledger_before_replay
+
+
+def test_bootstrap_active_unbound_everything_delivery_recovers_receipt_only_interruption(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    task, portfolio_path = _legacy_unbound_everything_bootstrap_fixture(tmp_path, monkeypatch)
+    before = _legacy_unbound_everything_bootstrap_snapshot(task, portfolio_path)
+    original_atomic_json = delivery._atomic_json
+    interrupted = False
+
+    def interrupt_after_receipt(path: Path, payload: object) -> None:
+        nonlocal interrupted
+        if Path(path) == task.path and not interrupted:
+            interrupted = True
+            raise RuntimeError("injected interruption after immutable receipt write")
+        original_atomic_json(path, payload)
+
+    monkeypatch.setattr(delivery, "_atomic_json", interrupt_after_receipt)
+    with pytest.raises(RuntimeError, match="interruption"):
+        delivery.bootstrap_active_unbound_everything_delivery(
+            task.path, idempotency_key="cc-194:receipt-only", apply=True
+        )
+
+    assert task.path.read_bytes() == before["task"]
+    assert portfolio_path.read_bytes() == before["portfolio"]
+    assert Path(task.read()["autodev_path"]).read_bytes() == before["projection"]
+    receipt_dir = (
+        Path(task.read()["work_item"])
+        / "artifacts"
+        / "development-delivery"
+        / "legacy-unbound-everything-bootstrap"
+    )
+    [receipt] = list(receipt_dir.glob("*.json"))
+    receipt_before_recovery = receipt.read_bytes()
+    receipt_payload = json.loads(receipt_before_recovery)
+
+    monkeypatch.setattr(delivery, "_atomic_json", original_atomic_json)
+    completed = delivery.bootstrap_active_unbound_everything_delivery(
+        task.path, idempotency_key="cc-194:receipt-only", apply=True
+    )
+    assert completed["result"] == "bootstrapped"
+    assert completed["receipt_sha256"] == delivery._json_sha256(receipt_payload)
+    assert receipt.read_bytes() == receipt_before_recovery
+    assert task.read()["auto_dev_start_stage"] == "groom"
+
+    ledger_before_replay = task.ledger.read_bytes()
+    replayed = delivery.bootstrap_active_unbound_everything_delivery(
+        task.path, idempotency_key="cc-194:receipt-only", apply=True
+    )
+    assert replayed["result"] == "replayed"
+    assert receipt.read_bytes() == receipt_before_recovery
+    assert task.ledger.read_bytes() == ledger_before_replay
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        "blocked",
+        "terminal",
+        "task_boundary",
+        "portfolio_boundary",
+        "task_stage_receipt",
+        "projection_authority",
+        "revision_authority",
+        "invalid_receipts",
+        "unverified_resume",
+        "policy_drift",
+        "multiple_tasks",
+    ),
+)
+def test_bootstrap_active_unbound_everything_delivery_refuses_nonexact_shapes_without_mutation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mutation: str
+) -> None:
+    task, portfolio_path = _legacy_unbound_everything_bootstrap_fixture(tmp_path, monkeypatch)
+    current = task.read()
+    projection_path = Path(current["autodev_path"])
+    if mutation == "blocked":
+        current["state"] = "blocked"
+        current["failure"] = {"kind": "review_findings", "recoverable": False}
+        task.path.write_text(json.dumps(current, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    elif mutation == "terminal":
+        current["state"] = "delivery_complete"
+        task.path.write_text(json.dumps(current, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    elif mutation == "task_boundary":
+        current["auto_dev_start_stage"] = "groom"
+        task.path.write_text(json.dumps(current, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    elif mutation == "task_stage_receipt":
+        current["stage_receipts"] = {"pr_create": {"ref": "forged"}}
+        task.path.write_text(json.dumps(current, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    elif mutation == "revision_authority":
+        current["subject_revision"] = "a" * 40
+        task.path.write_text(json.dumps(current, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    elif mutation == "invalid_receipts":
+        current["receipts"].append({"state": "review_self", "ref": "forged", "recorded_at": "now"})
+        task.path.write_text(json.dumps(current, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    elif mutation == "unverified_resume":
+        current["receipts"].append(
+            {"state": "worktree_ready", "ref": "automatic provisioning resume", "recorded_at": "now"}
+        )
+        current["last_recovery_key"] = "unverified-resume"
+        task.path.write_text(json.dumps(current, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    elif mutation == "projection_authority":
+        projection = json.loads(projection_path.read_text(encoding="utf-8"))
+        projection["stages"]["review_self"] = {"status": "completed", "receipt_refs": ["forged"]}
+        projection_path.write_text(json.dumps(projection, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    else:
+        portfolio = json.loads(portfolio_path.read_text(encoding="utf-8"))
+        if mutation == "portfolio_boundary":
+            portfolio["auto_dev"]["start_stage"] = "groom"
+        elif mutation == "policy_drift":
+            portfolio["policy_fingerprint"] = "b" * 64
+        else:
+            portfolio["tasks"].append(dict(portfolio["tasks"][0]))
+        portfolio_path.write_text(
+            json.dumps(portfolio, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+    before = _legacy_unbound_everything_bootstrap_snapshot(task, portfolio_path)
+
+    with pytest.raises(DevelopmentDeliveryError):
+        delivery.bootstrap_active_unbound_everything_delivery(
+            task.path, idempotency_key=f"cc-194:{mutation}", apply=True
+        )
+
+    assert _legacy_unbound_everything_bootstrap_snapshot(task, portfolio_path) == before
+
+
+def test_bootstrap_active_unbound_everything_delivery_refuses_preapply_drift_without_mutation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    task, portfolio_path = _legacy_unbound_everything_bootstrap_fixture(tmp_path, monkeypatch)
+    original_context = delivery._active_unbound_everything_bootstrap_context
+    calls = 0
+
+    def drift_on_locked_preflight(state_path: Path) -> dict:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            portfolio = json.loads(portfolio_path.read_text(encoding="utf-8"))
+            portfolio["state"] = "partial"
+            portfolio_path.write_text(
+                json.dumps(portfolio, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+            )
+        return original_context(state_path)
+
+    monkeypatch.setattr(
+        delivery, "_active_unbound_everything_bootstrap_context", drift_on_locked_preflight
+    )
+    before = _legacy_unbound_everything_bootstrap_snapshot(task, portfolio_path)
+
+    with pytest.raises(DevelopmentDeliveryError):
+        delivery.bootstrap_active_unbound_everything_delivery(
+            task.path, idempotency_key="cc-194:drift", apply=True
+        )
+
+    after = _legacy_unbound_everything_bootstrap_snapshot(task, portfolio_path)
+    assert after["task"] == before["task"]
+    assert after["projection"] == before["projection"]
+    assert after["canonical"] == before["canonical"]
+    assert after["ledger"] == before["ledger"]
+    assert after["bootstrap_dir"] is False
+    assert json.loads(after["portfolio"])["state"] == "partial"
+
+
 def _recover_pr_create_worktree_ready_with_legacy_stage_order(
     task: TaskState,
     portfolio_path: Path,
