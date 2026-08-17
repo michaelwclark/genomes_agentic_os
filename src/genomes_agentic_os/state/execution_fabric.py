@@ -409,6 +409,8 @@ def claim_next(
             now_value,
             now_value,
             *((item_id,) if item_id else ()),
+            state_queue.starvation_cutoff(now_value),
+            state_queue.starvation_cutoff(now_value),
         )
         row = conn.execute(
             f"""
@@ -417,7 +419,7 @@ def claim_next(
               AND (due_at IS NULL OR due_at <= ?)
               AND (lease_until IS NULL OR lease_until < ?)
               {item_filter}
-            ORDER BY priority DESC, (due_at IS NULL) ASC, due_at ASC, created_at ASC
+            ORDER BY {state_queue.DISPATCH_ORDER_SQL}
             LIMIT 1
             """,
             params,

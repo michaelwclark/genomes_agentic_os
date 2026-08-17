@@ -52,6 +52,7 @@ def handle_start(args: argparse.Namespace) -> int:
         preflight_checks=args.preflight_check,
         post_run_checks=args.post_run_check,
         collateral_processes=args.collateral_process,
+        expected_git_identity=json.loads(args.expected_git_identity) if args.expected_git_identity else None,
     )
     if args.json:
         _print(result, json_output=True)
@@ -132,6 +133,7 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     start.add_argument("--mutation-lock", help="Absolute lock path, or a name under the installed control-plane locks directory.")
     start.add_argument("--preflight-check", action="append", default=[], help="Bounded shell preflight; repeat as needed.")
     start.add_argument("--post-run-check", action="append", default=[], help="Post-run invariant shell command; repeat as needed.")
+    start.add_argument("--expected-git-identity", help="Optional JSON object requiring repository, worktree, branch, HEAD, and cleanliness before and after the run.")
     start.add_argument(
         "--collateral-process",
         action="append",

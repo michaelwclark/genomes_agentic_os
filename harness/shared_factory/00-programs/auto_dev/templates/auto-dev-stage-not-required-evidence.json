@@ -1,6 +1,6 @@
 {
   "schema": "auto-dev-stage-evidence/v1",
-  "stage": "<detective|create_artifacts|review_others|finalize|release>",
+  "stage": "<detective|create_artifacts|document|review_others|qa|finalize|release>",
   "status": "not_required",
   "summary": "<plain-English explanation of why this stage does not apply>",
   "evidence": {

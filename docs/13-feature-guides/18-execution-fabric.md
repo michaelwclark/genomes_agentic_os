@@ -579,6 +579,9 @@ At capacity, the task remains queued. Heartbeats extend worker and task leases.
 Expired work is requeued until its attempt budget is exhausted, then moves to a
 dead-letter state or configured dead-letter queue. Completion, retry,
 cancellation, and pruning clear or respect leases transactionally.
+An operator requeue preserves the task's monotonic attempt counter so its next
+run receives a new run number; it clears terminal delivery/error state but never
+reuses a prior `fabric_runs(task_id, run_number)` identity.
 
 ## Rollback
 

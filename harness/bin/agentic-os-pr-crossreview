@@ -828,6 +828,7 @@ def main(argv: list[str] | None = None) -> int:
     output_file = Path(str(artifact_stem) + ".txt")
     meta_file = Path(str(artifact_stem) + ".meta.json")
 
+    continuation = None
     if args.mode == "delta":
         if not args.parent_key:
             print("error: --parent-key is required for delta review", file=sys.stderr)
@@ -836,9 +837,11 @@ def main(argv: list[str] | None = None) -> int:
             parent = load_review_receipt(coordinator.receipts / f"{args.parent_key}.json")
             parent_subject = ReviewSubject.from_mapping(parent["subject"])
             if review_chain_key(parent_subject) != review_chain_key(subject):
-                raise ReviewCoordinationError(
-                    "delta parent must belong to the same repository, PR, base, policy, and purpose"
-                )
+                if (parent_subject.repository, parent_subject.pull_request, parent_subject.base_branch, parent_subject.policy_fingerprint) != (subject.repository, subject.pull_request, subject.base_branch, subject.policy_fingerprint):
+                    raise ReviewCoordinationError("base-forward parent changes repository, PR, branch, or policy")
+                # GitHub compare returns ahead only for an ancestry-proven forward range.
+                get_revision_diff(repo, parent_subject.base_sha, subject.base_sha)
+                continuation = {"transition": "base_forward", "previous_base_sha": parent_subject.base_sha, "current_base_sha": subject.base_sha, "base_ancestor": True, "parent_head_ancestor": True, "provider_verified": True}
             parent_head = str(parent["subject"]["head_sha"])
             diff = get_revision_diff(repo, parent_head, subject.head_sha)
         except (KeyError, ReviewCoordinationError) as exc:
@@ -942,6 +945,7 @@ def main(argv: list[str] | None = None) -> int:
             execute_review,
             mode=args.mode,
             parent_key=args.parent_key,
+            base_forward_evidence=continuation,
         )
         review_for_post = dict(review_result.receipt.get("review") or {})
         post_result = None

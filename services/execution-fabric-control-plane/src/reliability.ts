@@ -1336,7 +1336,7 @@ export class PostgresReliabilityStore {
           throw new Error("only failed, dead-lettered, or cancelled tasks can be requeued");
         }
         const after = await client.query(
-          `UPDATE fabric_tasks SET status='queued',attempt_count=0,
+          `UPDATE fabric_tasks SET status='queued',
              available_at=now(),delivery_published_at=NULL,completed_at=NULL,
              last_error_code=NULL,last_error_summary=NULL,updated_at=now()
            WHERE id=$1 RETURNING *`,
