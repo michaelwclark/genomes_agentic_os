@@ -9,6 +9,12 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- Derive same-head Team PR completion-effect identity from the retry-aware
+  review intent even when the optional review-mode field is omitted, and carry
+  the admitted Slack channel/thread binding through projection.
+
 ## [0.8.1] - 2026-08-17
 
 ### Fixed

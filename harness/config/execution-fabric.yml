@@ -145,6 +145,8 @@ execution_fabric:
           title: {type: string, pattern: "^.{1,512}$"}
           notion_page_id: {type: string, pattern: "^[a-f0-9-]{32,36}$"}
           author_identity: {type: string, pattern: "^github:[a-zA-Z0-9-]+$"}
+          slack_channel: {type: string, pattern: "^[a-zA-Z0-9_-]{0,128}$"}
+          slack_thread_ts: {type: string, pattern: "^[0-9.]{0,32}$"}
       allowed_effect_types:
         - notion.pr_review.update
     - task_type: los.environment.deployment.observed
