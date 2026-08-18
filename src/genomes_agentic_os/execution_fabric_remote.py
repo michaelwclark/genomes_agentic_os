@@ -1998,6 +1998,16 @@ def _team_pr_review_effect(
                 if payload.get("retry_nonce")
                 else {}
             ),
+            **(
+                {"slack_channel": payload["slack_channel"]}
+                if payload.get("slack_channel")
+                else {}
+            ),
+            **(
+                {"slack_thread_ts": payload["slack_thread_ts"]}
+                if payload.get("slack_thread_ts")
+                else {}
+            ),
             "review_intent_key": intent_key,
             "task_identity": task_id,
             "operation": "project_completed_review",
@@ -2019,7 +2029,7 @@ def _team_pr_review_effect_key(
     record_path = helper_summary_path.with_name("effect-key.json")
     record = _read_json_object(record_path, label="Team PR effect key")
     if record is None:
-        if "review_mode" in payload:
+        if "review_mode" in payload or payload.get("retry_nonce"):
             desired_key = f"{effect_type}:{intent_key}"
             key_format = "full_intent"
         else:

@@ -1027,6 +1027,8 @@ def test_registered_team_pr_domain_worker_invokes_installed_safe_helper(
                 "title": "Review example",
                 "notion_page_id": "a" * 32,
                 "author_identity": author_identity,
+                "slack_channel": "C0123456789",
+                "slack_thread_ts": "1786992375.342999",
             },
         }
     )
@@ -1118,11 +1120,7 @@ def test_registered_team_pr_domain_worker_invokes_installed_safe_helper(
         assignment["task"]["payload"]
     )
     intent_key = execution_fabric_remote._team_pr_review_intent_key(identity)
-    expected_effect_key = (
-        f"notion.pr_review.update:{intent_key}"
-        if "review_mode" in assignment["task"]["payload"]
-        else f"notion.pr_review.update:github-pr-42:{'a' * 40}"
-    )
+    expected_effect_key = f"notion.pr_review.update:{intent_key}"
     expected_effects = [
         {
             "effectKey": expected_effect_key,
@@ -1136,6 +1134,8 @@ def test_registered_team_pr_domain_worker_invokes_installed_safe_helper(
                 "source_key": "github-pr-42",
                 "review_mode": "review_no_merge",
                 "retry_nonce": "0123456789ab",
+                "slack_channel": "C0123456789",
+                "slack_thread_ts": "1786992375.342999",
                 "review_intent_key": intent_key,
                 "task_identity": assignment["task"]["id"],
                 "operation": "project_completed_review",
@@ -1206,6 +1206,7 @@ def test_registered_team_pr_domain_worker_invokes_installed_safe_helper(
         root, identity, "los"
     ).with_name("effect-key.json")
     effect_key_record = json.loads(effect_key_path.read_text(encoding="utf-8"))
+    assert effect_key_record["key_format"] == "full_intent"
     effect_key_path.write_text(
         json.dumps({**effect_key_record, "effect_key": "tampered-key"}),
         encoding="utf-8",
