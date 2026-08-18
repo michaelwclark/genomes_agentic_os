@@ -9,6 +9,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.8.2] - 2026-08-18
+
 ### Fixed
 
 - Derive same-head Team PR completion-effect identity from the retry-aware
