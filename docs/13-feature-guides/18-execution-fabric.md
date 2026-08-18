@@ -293,11 +293,14 @@ changed head
 returns `superseded` and creates no effect. Only the route-derived
 `notion.pr_review.update` effect
 consumer may project a validated terminal review receipt back to Notion.
-For upgrade compatibility, a task admitted before explicit `review_mode`
-continues to emit the legacy `{type}:{source_key}:{head}` effect key. Current
-tasks that carry `review_mode` emit the full-intent key. This transition rule
-preserves control-plane dedup when a legacy effect was staged before a lost
-completion acknowledgment. The first key chosen for an immutable review is
+For upgrade compatibility, a task admitted without explicit `review_mode` or a
+`retry_nonce` continues to emit the legacy `{type}:{source_key}:{head}` effect
+key. Current tasks that carry either field emit the full-intent key. This keeps
+an explicit same-head recheck distinct even when its producer omits the
+optional review-mode field, while preserving control-plane dedup when a legacy
+effect was staged before a lost completion acknowledgment. The completion
+effect also retains an admitted Slack channel/thread binding so projection
+never has to infer a delivery target. The first key chosen for an immutable review is
 published create-once beside its helper summary; any later task shape reuses
 that durable key instead of projecting the same result under another format.
 The record is rederived and validated against its declared format before use.
