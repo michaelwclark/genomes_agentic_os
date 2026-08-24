@@ -505,6 +505,11 @@ def select_repository(profile: dict[str, Any], repository_id: str | None) -> dic
 
     root_value = repository.get("root")
     root_text = root_value.strip() if isinstance(root_value, str) else ""
+    if repository_id is not None:
+        raise Blocker(
+            "--repository is only valid when repository.catalog is configured",
+            "Omit --repository for a singleton repository.root project.",
+        )
     return {"id": None, "root": root_text, "declared": bool(root_text)}
 
 

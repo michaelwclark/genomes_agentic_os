@@ -164,6 +164,44 @@ def test_shared_factory_resolution_selects_repository_and_hashes_source_rules(
     assert len(resolution["effective_policy_fingerprint"]) == 64
 
 
+def test_singleton_repository_omits_selector_and_rejects_explicit_value() -> None:
+    module = load_policy_context()
+    profile = {"repository": {"root": "/tmp/widgets", "base_branch": "main"}}
+
+    assert module.select_repository(profile, None) == {
+        "id": None,
+        "root": "/tmp/widgets",
+        "declared": True,
+    }
+    with pytest.raises(
+        module.Blocker,
+        match="--repository is only valid when repository.catalog is configured",
+    ):
+        module.select_repository(profile, "widgets")
+
+
+def test_catalog_repository_requires_valid_explicit_selection() -> None:
+    module = load_policy_context()
+    profile = {
+        "repository": {
+            "catalog": [
+                {"id": "api", "root": "/tmp/api"},
+                {"id": "web", "root": "/tmp/web"},
+            ]
+        }
+    }
+
+    with pytest.raises(module.Blocker, match="project declares multiple repositories"):
+        module.select_repository(profile, None)
+    with pytest.raises(module.Blocker, match="unknown repository id"):
+        module.select_repository(profile, "invalid")
+    assert module.select_repository(profile, "api") == {
+        "id": "api",
+        "root": "/tmp/api",
+        "declared": True,
+    }
+
+
 def test_shared_factory_duplicate_domain_alias_is_a_handled_blocker(tmp_path: Path) -> None:
     module = load_policy_context()
     root = tmp_path / "os"

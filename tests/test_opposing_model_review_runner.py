@@ -135,6 +135,107 @@ def test_runner_uses_routed_unavailable_policy_and_rejects_unknown_values() -> N
         runner.review_unavailable_policy({"review_unavailable_policy": "permit_anything"})
 
 
+def test_review_repository_selector_omits_singleton_and_requires_catalog_choice() -> None:
+    runner = _load_runner()
+    singleton = {
+        "repository": {"root": "/tmp/widgets", "base_branch": "main"}
+    }
+    catalog = {
+        "repository": {
+            "catalog": [
+                {"id": "api", "root": "/tmp/api", "base_branch": "main"},
+                {"id": "web", "root": "/tmp/web", "base_branch": "main"},
+            ]
+        }
+    }
+
+    assert runner.validate_review_repository_selection(singleton, None)["repository"] == {
+        "root": "/tmp/widgets",
+        "base_branch": "main",
+    }
+    with pytest.raises(runner.ReviewError, match="only valid when repository.catalog"):
+        runner.validate_review_repository_selection(singleton, "widgets")
+    with pytest.raises(runner.ReviewError, match="selection is required"):
+        runner.validate_review_repository_selection(catalog, None)
+    with pytest.raises(runner.ReviewError, match="unknown repository"):
+        runner.validate_review_repository_selection(catalog, "invalid")
+    assert runner.validate_review_repository_selection(catalog, "api")["repository"][
+        "id"
+    ] == "api"
+
+
+def test_invalid_selector_writes_terminal_preflight_before_provider_action(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    runner = _load_runner()
+    os_root = _installed_root(tmp_path / "os")
+    project = os_root / "domains/acme/02-projects/widgets"
+    work_item = project / "work-items/age-204"
+    worktree = project / "worktrees/age-204"
+    work_item.mkdir(parents=True)
+    worktree.mkdir(parents=True)
+    head = "b" * 40
+    source = {
+        "work_item_id": "AGE-204",
+        "base_sha": "a" * 40,
+        "policy_fingerprint": "c" * 64,
+        "pr_number": 42,
+        "repository_id": "github:acme/widgets",
+    }
+    provider_calls = 0
+
+    def provider_must_not_run(*_args: object) -> dict[str, object]:
+        nonlocal provider_calls
+        provider_calls += 1
+        raise AssertionError("provider read must not occur before selector admission")
+
+    monkeypatch.setattr(runner, "prior_request", lambda *_args: source)
+    monkeypatch.setattr(runner, "git_head", lambda _worktree: head)
+    monkeypatch.setattr(
+        runner,
+        "load_development_profile",
+        lambda *_args: (
+            {"repository": {"root": str(worktree), "base_branch": "main"}},
+            project / "config/development.yml",
+        ),
+    )
+    monkeypatch.setattr(runner, "provider_pr", provider_must_not_run)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_opposing_model_review.py",
+            "AGE-204",
+            "--os-root",
+            str(os_root),
+            "--work-item",
+            str(work_item),
+            "--worktree",
+            str(worktree),
+            "--repository",
+            "widgets",
+        ],
+    )
+
+    assert runner.main() == 2
+    assert provider_calls == 0
+    receipts = list(
+        (work_item / "artifacts/finishing-touches/review-preflight").glob("*.json")
+    )
+    assert len(receipts) == 1
+    receipt = json.loads(receipts[0].read_text(encoding="utf-8"))
+    assert receipt["schema"] == "opposing-model-review-preflight-receipt/v1"
+    assert receipt["outcome"] == "unavailable"
+    assert receipt["terminal"] is True
+    assert receipt["subject"] == {
+        "repository": "github:acme/widgets",
+        "base_sha": "a" * 40,
+        "head_sha": head,
+        "policy_fingerprint": "c" * 64,
+    }
+    assert not any(receipt["external_actions"].values())
+
+
 def _installed_root(path: Path) -> Path:
     path.mkdir(parents=True)
     (path / ".agentic_root").write_text("installed\n", encoding="utf-8")
@@ -271,6 +372,15 @@ def test_runner_request_run_id_matches_created_artifact_directory(
 
     monkeypatch.setattr(runner, "resolve_os_root", lambda _explicit: tmp_path)
     monkeypatch.setattr(runner, "prior_request", lambda *_args: source)
+    monkeypatch.setattr(runner, "project_identity", lambda *_args: ("acme", "widgets"))
+    monkeypatch.setattr(
+        runner,
+        "load_development_profile",
+        lambda *_args: (
+            {"repository": {"root": str(worktree), "base_branch": "main"}},
+            tmp_path / "development.yml",
+        ),
+    )
     monkeypatch.setattr(runner, "provider_pr", lambda *_args: provider)
     monkeypatch.setattr(runner, "git_head", lambda _worktree: head)
     monkeypatch.setattr(runner, "git_repository", lambda _worktree: "acme/widgets")
