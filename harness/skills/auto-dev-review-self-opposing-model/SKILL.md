@@ -13,7 +13,11 @@ may request only `delta` with a canonical parent key.
 1. Resolve the existing Auto-Dev work item by ticket and read its tracker,
    PR Create family receipt, project review policy, source worktree, and current
    provider state. Refuse an ambiguous ticket, absent PR family, wrong target,
-   stale head, or unavailable canonical worktree.
+   stale head, or unavailable canonical worktree. Search only canonical domain
+   and `harness/shared_factory` project surfaces. On the initial full review,
+   when no earlier finishing-review request exists, derive the request from the
+   immutable PR Create provider readback and frozen packet policy identity;
+   never guess a PR, base, head, or policy value.
    Repository selection follows the project development profile: omit
    `--repository` for a singleton `repository.root`, and require a valid
    explicit repository id when `repository.catalog` contains multiple

@@ -333,29 +333,111 @@ def one(paths: list[Path], description: str) -> Path:
     return paths[0]
 
 
+def project_roots(os_root: Path) -> list[Path]:
+    """Return only canonical domain and shared-factory project surfaces."""
+
+    roots = list(os_root.glob("domains/*/02-projects/*"))
+    roots.extend((os_root / "harness/shared_factory/02-projects").glob("*"))
+    return sorted({path.resolve() for path in roots if path.is_dir()})
+
+
 def locate_work_item(os_root: Path, ticket: str) -> Path:
     key = normalized(ticket)
-    matches = [path for path in os_root.glob("domains/*/02-projects/*/work-items/*") if key in normalized(path.name)]
+    matches = [
+        manifest.parent
+        for project in project_roots(os_root)
+        for manifest in (project / "work-items").glob("**/autodev.json")
+        if key in normalized(manifest.parent.name)
+    ]
     return one(matches, f"work item for {ticket}")
 
 
 def locate_worktree(os_root: Path, ticket: str) -> Path:
     key = normalized(ticket)
-    matches = [path for path in os_root.glob("domains/*/02-projects/*/worktrees/*") if key in normalized(path.name)]
+    matches = [
+        path
+        for project in project_roots(os_root)
+        for path in (project / "worktrees").glob("*")
+        if path.is_dir() and key in normalized(path.name)
+    ]
     return one(matches, f"worktree for {ticket}")
 
 
-def prior_request(work_item: Path, ticket: str) -> dict[str, Any]:
+def prior_request(work_item: Path, ticket: str) -> dict[str, Any] | None:
     requests = sorted(work_item.glob("artifacts/finishing-touches/**/review-request.json"), key=lambda p: p.stat().st_mtime, reverse=True)
     for path in requests:
         value = json.loads(path.read_text(encoding="utf-8"))
         if str(value.get("work_item_id", "")).upper() == ticket.upper():
             return value
-    raise ReviewError(f"no prior finishing-review request for {ticket}")
+    return None
+
+
+def initial_request(work_item: Path, ticket: str, worktree: Path) -> dict[str, Any]:
+    """Derive the first review request from immutable PR Create and packet truth."""
+
+    readback_path = (
+        work_item
+        / "artifacts/auto-dev-pr-create/pull-request-provider-readback.json"
+    )
+    manifest_path = work_item / "autodev.json"
+    if not readback_path.is_file() or not manifest_path.is_file():
+        raise ReviewError(
+            f"no prior finishing-review request or canonical PR Create readback for {ticket}"
+        )
+    readback = json.loads(readback_path.read_text(encoding="utf-8"))
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    required = {
+        "number",
+        "url",
+        "state",
+        "base_branch",
+        "base_sha",
+        "head_sha",
+        "repository",
+    }
+    missing = sorted(required - set(readback))
+    if missing:
+        raise ReviewError(
+            "PR Create provider readback missing required fields: " + ", ".join(missing)
+        )
+    if readback["state"] != "OPEN":
+        raise ReviewError("PR Create provider readback is not OPEN")
+    subject_revision = str(manifest.get("subject_revision") or "")
+    if subject_revision and subject_revision != str(readback["head_sha"]):
+        raise ReviewError(
+            "PR Create provider readback head does not match the packet subject revision"
+        )
+    delivery = manifest.get("delivery") or {}
+    supplied_policy_fingerprint = str(delivery.get("policy_fingerprint") or "")
+    if len(supplied_policy_fingerprint) != 64:
+        raise ReviewError("packet delivery policy fingerprint is missing or invalid")
+    return {
+        "work_item_id": ticket,
+        "run_id": "pending-initial-review",
+        "repository": str(readback["repository"]),
+        "repo_path": str(worktree),
+        "implementation_summary": str(
+            readback.get("title") or f"Exact-head implementation for {ticket}"
+        ),
+        "spec_source": "SPEC.md" if (work_item / "SPEC.md").is_file() else "provider ticket",
+        "builder_model": "codex",
+        "selected_reviewer_model": "opus",
+        "reviewer_selection_source": "auto-dev-review-self-opposing-model",
+        "target_branch": str(readback["base_branch"]),
+        "base_sha": str(readback["base_sha"]),
+        "head_sha": str(readback["head_sha"]),
+        "diff_hash": "pending-live-diff",
+        "pr_number": int(readback["number"]),
+        "artifact_dir": "pending-initial-review",
+        "mode": "post_pr",
+        "policy_fingerprint": supplied_policy_fingerprint,
+        "request_origin": "auto-dev-pr-create-provider-readback",
+        "provider_readback_ref": str(readback_path.relative_to(work_item)),
+    }
 
 
 def provider_pr(pr_number: int, worktree: Path) -> dict[str, Any]:
-    completed = run(["gh", "pr", "view", str(pr_number), "--json", "number,url,state,headRefOid,baseRefName,statusCheckRollup"], cwd=worktree)
+    completed = run(["gh", "pr", "view", str(pr_number), "--json", "number,url,state,headRefOid,baseRefName,baseRefOid,statusCheckRollup"], cwd=worktree)
     if completed.returncode:
         raise ReviewError("GitHub PR readback failed")
     value = json.loads(completed.stdout)
@@ -526,7 +608,9 @@ def main() -> int:
         os_root = resolve_os_root(args.os_root)
         work_item = (args.work_item or locate_work_item(os_root, args.ticket)).resolve()
         worktree = (args.worktree or locate_worktree(os_root, args.ticket)).resolve()
-        source = prior_request(work_item, args.ticket)
+        source = prior_request(work_item, args.ticket) or initial_request(
+            work_item, args.ticket, worktree
+        )
         unavailable_policy = review_unavailable_policy(source)
         head = git_head(worktree)
         base = str(source["base_sha"])
@@ -567,6 +651,10 @@ def main() -> int:
         provider = provider_pr(pr_number, worktree)
         if provider["headRefOid"] != head:
             raise ReviewError(f"exact-head mismatch: provider={provider['headRefOid']} worktree={head}")
+        if provider.get("baseRefOid") and provider["baseRefOid"] != base:
+            raise ReviewError(
+                f"exact-base mismatch: provider={provider['baseRefOid']} request={base}"
+            )
         repository = git_repository(worktree)
         purpose, _scope = normalize_review_purpose(args.purpose, args.scope)
         subject = ReviewSubject(
