@@ -182,6 +182,101 @@ def test_runner_explicit_root_must_match_configured_canonical_root(
         runner.resolve_os_root(other)
 
 
+def test_runner_locates_shared_factory_packet_and_worktree(tmp_path: Path) -> None:
+    runner = _load_runner()
+    project = tmp_path / "harness/shared_factory/02-projects/genomes_agentic_lib"
+    packet = project / "work-items/082526_pr_57_checked_review"
+    worktree = project / "worktrees/082526-pr-57-checked-review"
+    packet.mkdir(parents=True)
+    worktree.mkdir(parents=True)
+    (packet / "autodev.json").write_text("{}\n", encoding="utf-8")
+
+    assert runner.locate_work_item(tmp_path, "PR-57") == packet
+    assert runner.locate_worktree(tmp_path, "PR-57") == worktree
+
+
+def test_initial_review_request_uses_exact_pr_create_readback(
+    tmp_path: Path,
+) -> None:
+    runner = _load_runner()
+    packet = tmp_path / "work-item"
+    worktree = tmp_path / "worktree"
+    readback = packet / "artifacts/auto-dev-pr-create/pull-request-provider-readback.json"
+    readback.parent.mkdir(parents=True)
+    worktree.mkdir()
+    head = "b" * 40
+    base = "a" * 40
+    (packet / "SPEC.md").write_text("# Spec\n", encoding="utf-8")
+    (packet / "autodev.json").write_text(
+        json.dumps(
+            {
+                "subject_revision": head,
+                "delivery": {"policy_fingerprint": "c" * 64},
+            }
+        ),
+        encoding="utf-8",
+    )
+    readback.write_text(
+        json.dumps(
+            {
+                "repository": "acme/widgets",
+                "number": 57,
+                "url": "https://example.test/acme/widgets/pull/57",
+                "state": "OPEN",
+                "title": "Guarantee checked review delivery",
+                "base_branch": "main",
+                "base_sha": base,
+                "head_sha": head,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    request = runner.initial_request(packet, "PR-57", worktree)
+
+    assert request["pr_number"] == 57
+    assert request["base_sha"] == base
+    assert request["head_sha"] == head
+    assert request["policy_fingerprint"] == "c" * 64
+    assert request["request_origin"] == "auto-dev-pr-create-provider-readback"
+    assert request["mode"] == "post_pr"
+
+
+def test_initial_review_request_rejects_stale_packet_subject(tmp_path: Path) -> None:
+    runner = _load_runner()
+    packet = tmp_path / "work-item"
+    worktree = tmp_path / "worktree"
+    readback = packet / "artifacts/auto-dev-pr-create/pull-request-provider-readback.json"
+    readback.parent.mkdir(parents=True)
+    worktree.mkdir()
+    (packet / "autodev.json").write_text(
+        json.dumps(
+            {
+                "subject_revision": "b" * 40,
+                "delivery": {"policy_fingerprint": "c" * 64},
+            }
+        ),
+        encoding="utf-8",
+    )
+    readback.write_text(
+        json.dumps(
+            {
+                "repository": "acme/widgets",
+                "number": 57,
+                "url": "https://example.test/acme/widgets/pull/57",
+                "state": "OPEN",
+                "base_branch": "main",
+                "base_sha": "a" * 40,
+                "head_sha": "d" * 40,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(runner.ReviewError, match="packet subject revision"):
+        runner.initial_request(packet, "PR-57", worktree)
+
+
 def test_delta_validation_requires_parent_ancestry(monkeypatch: pytest.MonkeyPatch) -> None:
     runner = _load_runner()
     monkeypatch.setattr(runner, "run", lambda *_args, **_kwargs: _completed(1))
