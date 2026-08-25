@@ -39,6 +39,11 @@ from genomes_agentic_os.review_coordination import (  # noqa: E402
     shared_review_coordination_root,
     stable_review_key,
 )
+from genomes_agentic_os.development_delivery import (  # noqa: E402
+    DevelopmentDeliveryError,
+    load_development_profile,
+    select_development_repository,
+)
 from genomes_agentic_os.review_verdicts import reconcile_json_verdict  # noqa: E402
 
 HELPER = ROOT / "harness/skills/finishing-touches-review/scripts/finishing_touches_review_helper.py"
@@ -71,6 +76,97 @@ def now() -> str:
 def write_json(path: Path, value: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def project_identity(work_item: Path, os_root: Path) -> tuple[str, str]:
+    """Resolve the owning configured project without guessing from the CWD."""
+
+    try:
+        relative = work_item.resolve().relative_to(os_root.resolve())
+    except ValueError as exc:
+        raise ReviewError("work item is outside the canonical Agentic OS root") from exc
+    parts = relative.parts
+    if len(parts) >= 5 and parts[0] == "domains" and parts[2] == "02-projects":
+        return parts[1], parts[3]
+    if (
+        len(parts) >= 5
+        and parts[0] == "harness"
+        and parts[1] == "shared_factory"
+        and parts[2] == "02-projects"
+    ):
+        return "shared_factory", parts[3]
+    raise ReviewError("work item is not under a configured project")
+
+
+def validate_review_repository_selection(
+    profile: dict[str, Any], repository_id: str | None
+) -> dict[str, Any]:
+    """Normalize Review Self repository admission before any external action."""
+
+    repository = profile.get("repository")
+    repository = repository if isinstance(repository, dict) else {}
+    catalog = repository.get("catalog")
+    has_catalog = bool(catalog) and isinstance(catalog, (dict, list))
+    if has_catalog and not repository_id:
+        raise ReviewError("review repository selection is required for repository.catalog")
+    try:
+        return select_development_repository(profile, repository_id)
+    except DevelopmentDeliveryError as exc:
+        raise ReviewError(str(exc)) from exc
+
+
+def repository_preflight_receipt(
+    *,
+    work_item: Path,
+    ticket: str,
+    repository: str,
+    base_sha: str,
+    head_sha: str,
+    policy: str,
+    selector: str | None,
+    failure: str,
+) -> Path:
+    """Persist a typed terminal selector failure without consuming review budget."""
+
+    subject = {
+        "repository": repository,
+        "base_sha": base_sha,
+        "head_sha": head_sha,
+        "policy_fingerprint": policy,
+    }
+    key = hashlib.sha256(
+        json.dumps(subject, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    path = (
+        work_item
+        / "artifacts/finishing-touches/review-preflight"
+        / f"{key}.json"
+    )
+    write_json(
+        path,
+        {
+            "schema": "opposing-model-review-preflight-receipt/v1",
+            "status": "completed",
+            "outcome": "unavailable",
+            "terminal": True,
+            "phase": "pre_admission",
+            "failure_code": "repository_selector_invalid",
+            "failure": failure,
+            "ticket": ticket,
+            "key": key,
+            "subject": subject,
+            "repository_selector": selector,
+            "external_actions": {
+                "model_invoked": False,
+                "provider_read": False,
+                "provider_write": False,
+                "review_started": False,
+            },
+            "created_at": now(),
+            "next_action": "correct repository selection and retry admission",
+        },
+    )
+    return path
 
 
 def run(command: list[str], *, cwd: Path | None = None, timeout: int = 30, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
@@ -318,6 +414,7 @@ def initial_request(work_item: Path, ticket: str, worktree: Path) -> dict[str, A
     return {
         "work_item_id": ticket,
         "run_id": "pending-initial-review",
+        "repository": str(readback["repository"]),
         "repo_path": str(worktree),
         "implementation_summary": str(
             readback.get("title") or f"Exact-head implementation for {ticket}"
@@ -488,6 +585,10 @@ def main() -> int:
     )
     parser.add_argument("--work-item", type=Path)
     parser.add_argument("--worktree", type=Path)
+    parser.add_argument(
+        "--repository",
+        help="Required catalog id for multi-repository projects; omit for repository.root.",
+    )
     parser.add_argument("--timeout-seconds", type=int, default=180)
     parser.add_argument("--mode", choices=["full", "delta"], default="full")
     parser.add_argument("--parent-key")
@@ -511,12 +612,45 @@ def main() -> int:
             work_item, args.ticket, worktree
         )
         unavailable_policy = review_unavailable_policy(source)
+        head = git_head(worktree)
+        base = str(source["base_sha"])
+        policy = policy_fingerprint(source)
+        domain, project = project_identity(work_item, os_root)
+        profile, _profile_path = load_development_profile(os_root, domain, project)
+        try:
+            selected_profile = validate_review_repository_selection(
+                profile, args.repository
+            )
+        except ReviewError as exc:
+            repository_hint = source.get("repository_id") or source.get("repository")
+            if isinstance(repository_hint, dict):
+                repository_hint = repository_hint.get("id") or repository_hint.get("root")
+            receipt_path = repository_preflight_receipt(
+                work_item=work_item,
+                ticket=args.ticket,
+                repository=str(repository_hint or worktree),
+                base_sha=base,
+                head_sha=head,
+                policy=policy,
+                selector=args.repository,
+                failure=str(exc),
+            )
+            print(
+                json.dumps(
+                    {
+                        "ok": False,
+                        "outcome": "unavailable",
+                        "error": str(exc),
+                        "preflight_receipt": str(receipt_path),
+                    },
+                    indent=2,
+                )
+            )
+            return 2
         pr_number = int(source["pr_number"])
         provider = provider_pr(pr_number, worktree)
-        head = git_head(worktree)
         if provider["headRefOid"] != head:
             raise ReviewError(f"exact-head mismatch: provider={provider['headRefOid']} worktree={head}")
-        base = str(source["base_sha"])
         if provider.get("baseRefOid") and provider["baseRefOid"] != base:
             raise ReviewError(
                 f"exact-base mismatch: provider={provider['baseRefOid']} request={base}"
@@ -529,7 +663,7 @@ def main() -> int:
             base_branch=str(provider["baseRefName"]),
             base_sha=base,
             head_sha=head,
-            policy_fingerprint=policy_fingerprint(source),
+            policy_fingerprint=policy,
             purpose=purpose,
         )
         coordinator = ReviewCoordinator(shared_review_coordination_root(os_root))
@@ -601,6 +735,8 @@ def main() -> int:
                 "reviewer_transport": "claude_cli",
                 "reviewer_auth": "cli_native",
                 "reviewer_environment_removed": list(CLAUDE_ENV_REMOVED),
+                "repository_selector": args.repository,
+                "selected_repository": selected_profile.get("repository"),
                 "provider_pr_url": provider["url"],
                 "provider_read_at": now(),
             }

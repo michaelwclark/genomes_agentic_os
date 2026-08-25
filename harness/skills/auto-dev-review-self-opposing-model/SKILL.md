@@ -18,6 +18,11 @@ may request only `delta` with a canonical parent key.
    when no earlier finishing-review request exists, derive the request from the
    immutable PR Create provider readback and frozen packet policy identity;
    never guess a PR, base, head, or policy value.
+   Repository selection follows the project development profile: omit
+   `--repository` for a singleton `repository.root`, and require a valid
+   explicit repository id when `repository.catalog` contains multiple
+   entries. Invalid selection is a pre-admission blocker; its terminal receipt
+   must show that no reviewer, provider post, or other external action ran.
 2. Select the required independent model family from proven builder identity.
    For an Anthropic reviewer, use only the installed `claude` CLI with
    CLI-native authentication; remove `ANTHROPIC_API_KEY` and
