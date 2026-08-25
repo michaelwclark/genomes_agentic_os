@@ -14,6 +14,11 @@ may request only `delta` with a canonical parent key.
    PR Create family receipt, project review policy, source worktree, and current
    provider state. Refuse an ambiguous ticket, absent PR family, wrong target,
    stale head, or unavailable canonical worktree.
+   Repository selection follows the project development profile: omit
+   `--repository` for a singleton `repository.root`, and require a valid
+   explicit repository id when `repository.catalog` contains multiple
+   entries. Invalid selection is a pre-admission blocker; its terminal receipt
+   must show that no reviewer, provider post, or other external action ran.
 2. Select the required independent model family from proven builder identity.
    For an Anthropic reviewer, use only the installed `claude` CLI with
    CLI-native authentication; remove `ANTHROPIC_API_KEY` and
