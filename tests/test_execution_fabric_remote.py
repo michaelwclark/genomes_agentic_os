@@ -872,6 +872,47 @@ def test_remote_snapshot_normalizes_queue_worker_and_run_contract(tmp_path: Path
     assert snapshot["control_plane"]["leadership_receipt_id"] == "receipt-seven"
 
 
+def test_cli_runtime_status_renders_health_through_remote_transport(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """AGE-211 regression: `agentic-os runtime status` must reuse the same
+    build_runtime_snapshot() normalization that `runtime snapshot` uses,
+    instead of feeding build_remote_runtime_snapshot()'s raw client-boundary
+    payload straight to format_runtime_snapshot(). The raw payload has no
+    top-level `health` key, which crashed the renderer with KeyError."""
+    root = _root(tmp_path, remote=True)
+    monkeypatch.setenv("TEST_FABRIC_TOKEN", "not-a-real-observer-token")
+
+    def fake_status(self, *, limit: int = 200) -> dict[str, Any]:
+        return {
+            "sampledAt": "2026-08-26T07:00:00Z",
+            "queues": [
+                {
+                    "queue": "pr_reviews",
+                    "queued": 0,
+                    "running": 0,
+                    "succeeded": 0,
+                    "failed": 0,
+                    "deadLettered": 150,
+                }
+            ],
+            "workers": [],
+            "runs": [],
+            "controlPlane": {},
+            "healing": {},
+            "alarms": [],
+        }
+
+    monkeypatch.setattr(ExecutionFabricClient, "status", fake_status)
+
+    exit_code = main(["runtime", "status", "--root", str(root)])
+    rendered = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "Health: critical" in rendered
+    assert "TASKS (0 of 0 matching)" in rendered
+
+
 def test_cli_submit_preserves_explicit_local_degraded_mode(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
