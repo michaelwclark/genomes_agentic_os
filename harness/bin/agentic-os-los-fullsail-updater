@@ -2,5 +2,15 @@
 set -eu
 
 ROOT="${AGENTIC_OS_ROOT:-/Users/genome/agentic_os}"
-exec python3 "$ROOT/lib/programs/domains/los/los_fullsail_updater/scripts/fullsail_updater.py" \
-  --root "$ROOT" "$@"
+SELF_NAME=${0##*/}
+OBJECT_ID=$(printf '%s\n' "${SELF_NAME#agentic-os-}" | tr '-' '_')
+DOMAIN=${OBJECT_ID%%_*}
+PROGRAM=${OBJECT_ID#*_}
+CONTROLLER="$ROOT/lib/programs/domains/$DOMAIN/$OBJECT_ID/scripts/$PROGRAM.py"
+
+if [ ! -f "$CONTROLLER" ]; then
+  printf 'FullSail updater controller not found in the installed library.\n' >&2
+  exit 1
+fi
+
+exec python3 "$CONTROLLER" --root "$ROOT" "$@"
