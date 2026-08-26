@@ -2861,6 +2861,8 @@ def _los_fullsail_updater_worker(
             "task_type": str(task.get("taskType") or ""),
             "queue_name": str(task.get("queue") or ""),
             "domain_worker": "los_fullsail_updater",
+            "job_id": job_id,
+            "job_kind": job_kind,
             "error": {
                 "code": code,
                 "message": message,
@@ -2868,7 +2870,14 @@ def _los_fullsail_updater_worker(
             },
             "evidence": dict(evidence or {}),
         }
-        _write_receipt(receipt_path, worker_receipt, durable=True)
+        try:
+            _write_receipt(receipt_path, worker_receipt, durable=True)
+        except OSError as exc:
+            raise TaskExecutionError(
+                "fullsail_durable_receipt_unavailable",
+                f"could not retain the FullSail failure receipt for {code}",
+                retryable=True,
+            ) from exc
         raise TaskExecutionError(
             code,
             message,
@@ -2876,10 +2885,24 @@ def _los_fullsail_updater_worker(
             receipt_path=str(receipt_path),
         )
 
-    def bounded_text(value: Any) -> str:
+    def output_fingerprint(value: Any) -> dict[str, Any]:
         if isinstance(value, bytes):
-            value = value.decode("utf-8", errors="replace")
-        return str(value or "")[-20000:]
+            raw = value
+        else:
+            raw = str(value or "").encode("utf-8", errors="replace")
+        return {
+            "bytes": len(raw),
+            "sha256": sha256(raw).hexdigest(),
+        }
+
+    def controller_output_evidence(stdout: Any, stderr: Any) -> dict[str, Any]:
+        # Controller output can contain tenant, VPN-route, or credential-shaped
+        # material. Keep only bounded, correlation-safe fingerprints in the
+        # worker receipt; the controller's local ledger owns full diagnostics.
+        return {
+            "stdout": output_fingerprint(stdout),
+            "stderr": output_fingerprint(stderr),
+        }
 
     if not job_id.startswith(job_kind + "-"):
         fail(
@@ -2899,6 +2922,7 @@ def _los_fullsail_updater_worker(
             "fullsail_controller_unavailable",
             "the installed FullSail Updater controller is unavailable",
             retryable=True,
+            evidence={"controller_relative_path": str(controller.relative_to(root))},
         )
     try:
         completed = subprocess.run(
@@ -2925,8 +2949,7 @@ def _los_fullsail_updater_worker(
             retryable=False,
             evidence={
                 "timeout_seconds": FULLSAIL_CONTROLLER_TIMEOUT_SECONDS,
-                "stdout": bounded_text(exc.stdout),
-                "stderr": bounded_text(exc.stderr),
+                **controller_output_evidence(exc.stdout, exc.stderr),
             },
         )
     if completed.returncode:
@@ -2936,8 +2959,7 @@ def _los_fullsail_updater_worker(
             retryable=False,
             evidence={
                 "exit_code": completed.returncode,
-                "stdout": bounded_text(completed.stdout),
-                "stderr": bounded_text(completed.stderr),
+                **controller_output_evidence(completed.stdout, completed.stderr),
             },
         )
     try:
@@ -2947,10 +2969,7 @@ def _los_fullsail_updater_worker(
             "fullsail_controller_receipt_invalid",
             "the FullSail controller did not emit one valid JSON receipt",
             retryable=False,
-            evidence={
-                "stdout": bounded_text(completed.stdout),
-                "stderr": bounded_text(completed.stderr),
-            },
+            evidence=controller_output_evidence(completed.stdout, completed.stderr),
         )
     if (
         not isinstance(receipt, dict)
@@ -2973,7 +2992,8 @@ def _los_fullsail_updater_worker(
                 "reported_id": receipt.get("id") if isinstance(receipt, dict) else None,
                 "reported_kind": receipt.get("kind") if isinstance(receipt, dict) else None,
                 "reported_status": receipt.get("status") if isinstance(receipt, dict) else None,
-                "stderr": bounded_text(completed.stderr),
+                "reported_type": type(receipt).__name__,
+                **controller_output_evidence(completed.stdout, completed.stderr),
             },
         )
     controller_result = dict(receipt.get("result") or {})
