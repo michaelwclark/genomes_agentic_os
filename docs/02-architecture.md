@@ -124,38 +124,46 @@ valid for older installs and will be updated as each doc is revised.
 
 ## Python package map
 
-The CLI is a single Python package (`src/genomes_agentic_os/`, ~10k LOC). It is
-a **layered functional CLI** — not the TypeScript/hexagonal pattern used in other
-projects. The philosophy is the same (explicit naming, dependencies passed in, no
-hidden globals); the mechanism is Pythonic (modules of pure functions, `argparse`
-composition root).
+The CLI is one Python package (`src/genomes_agentic_os/`, ~115k LOC) split into
+two layers: a `cli/` package (43 modules, one per command group) that owns
+argument parsing and dispatch, and top-level `*_ops.py` / domain modules that
+hold the actual business logic. It is a **layered functional CLI** — not the
+TypeScript/hexagonal pattern used in other projects. The philosophy is the same
+(explicit naming, dependencies passed in, no hidden globals); the mechanism is
+Pythonic (modules of pure functions, `argparse` composition root).
 
-![Python package layering: cli.py composition root dispatches to single-concern ops modules, which share scaffold.py primitives and read/write only the filesystem](diagrams/architecture-package-layers.png)
+![Python package layering: the cli/ package composition root dispatches to single-concern ops modules, which share scaffold.py primitives and read/write only the filesystem](diagrams/architecture-package-layers.png)
 
-**Dependency rule:** `cli.py` depends on the ops modules; ops modules depend on
-`scaffold.py` for shared primitives. Ops modules must not import `cli.py`. No
-circular imports. New shared primitives belong in `scaffold.py`, not a new
-`utils.py`.
+**Dependency rule:** `cli/` modules depend on the top-level ops modules; ops
+modules depend on `scaffold.py` for shared primitives. Ops modules must not
+import from `cli/`. No circular imports. New shared primitives belong in
+`scaffold.py`, not a new `utils.py`.
 
 ### Module responsibility table
 
-| Module | LOC | Responsibility |
-| --- | --- | --- |
-| `scaffold.py` | 1981 | **The backbone.** `DEFAULT_DOMAINS`, `STANDARD_LANES`, `WORKFLOW_FILES`, `AUTOMATION_FILES`; `.agentic_root` marker; `validate_name`, `expand_path`; template rendering; `init` / domain / project creation. |
-| `runtime_ops.py` | 1186 | **Runtime registries.** Heartbeats, schedules, integrations, the run-queue, and `run-next` dispatch. File-backed; dry-run by default. |
-| `cli.py` | 1117 | **Composition root.** `build_parser()` declares every command; `handle_*` functions adapt args → ops calls; `main()` dispatches. The one place wiring lives. |
-| `source_watch.py` | 665 | **Connected sources.** `connected-system` + `watch-source` registries, cursors, polling. |
-| `config_ops.py` | 628 | **Codex `config.toml`.** Per-layer install/doctor with conflict-aware merge. |
-| `customer.py` | 619 | **Customer-OS factory.** Renders a client OS (router/context/rules/tools/assets) from a profile. |
-| `event_graph.py` | 582 | **Event ledger + chains.** Append-only event log, declarative chain rules, idempotency keys, chain-depth loop guard, run-queue emission. |
-| `validate.py` | 480 | **Structural validation.** Confirms an installed root has the expected shape; parses YAML/JSON. |
-| `update_ops.py` | 454 | **Update & backup.** Grants/keys, plan/apply/rollback, `phone-home` heartbeat payload. |
-| `capability_registry.py` | 291 | **Visible capability registry.** Commands, skills, MCP servers, libraries, hooks, plugins, rules → registry YAML + inventory markdown. |
-| `routing.py` | 283 | **Deterministic routing.** `ContextPacket` assembly, `detect_from_cwd`, `detect_from_request`, `RISK_KEYWORDS` approval detection. No LLM. |
-| `automation_ops.py` | 282 | **Automation maturity ladder.** Readiness checks + `observe → prepare → propose → execute_approved → execute_guarded`. |
-| `workflow_ops.py` | 278 | **Workflow readiness + run closeout.** Required-section checks, `run-log close` audit gate. |
-| `workflow_engine.py` | — | **Governed workflow authoring.** Typed definition/version/instance/run projections, field-addressable validation, immutable publish, drift-safe rollback, and queue-only run requests. |
-| `notion_sync.py` | — | **Notion projection.** `plan-sync`, `sync`, and `bootstrap`. Dry-run by default. |
+These are the top-level business-logic modules; the `cli/` package (43 modules
+under `src/genomes_agentic_os/cli/`) is the thin argument-parsing and dispatch
+layer that calls into them, one `register(subparsers)` per command group.
+Line counts are omitted here deliberately — this table drifted badly out of
+date against a fast-moving codebase; see `git ls-files | xargs wc -l` for a
+current count if you need one.
+
+| Module | Responsibility |
+| --- | --- |
+| `scaffold.py` | **The backbone.** `DEFAULT_DOMAINS`, `STANDARD_LANES`, `WORKFLOW_FILES`, `AUTOMATION_FILES`; `.agentic_root` marker; `validate_name`, `expand_path`; template rendering; `init` / domain / project creation. |
+| `runtime_ops.py` | **Runtime registries.** Heartbeats, schedules, integrations, the run-queue, and `run-next` dispatch. File-backed; dry-run by default. |
+| `source_watch.py` | **Connected sources.** `connected-system` + `watch-source` registries, cursors, polling. |
+| `config_ops.py` | **Codex `config.toml`.** Per-layer install/doctor with conflict-aware merge. |
+| `customer.py` | **Customer-OS factory.** Renders a client OS (router/context/rules/tools/assets) from a profile. |
+| `event_graph.py` | **Event ledger + chains.** Append-only event log, declarative chain rules, idempotency keys, chain-depth loop guard, run-queue emission. |
+| `validate.py` | **Structural validation.** Confirms an installed root has the expected shape; parses YAML/JSON. |
+| `update_ops.py` | **Update & backup.** Grants/keys, plan/apply/rollback, `phone-home` heartbeat payload. |
+| `capability_registry.py` | **Visible capability registry.** Commands, skills, MCP servers, libraries, hooks, plugins, rules → registry YAML + inventory markdown. |
+| `routing.py` | **Deterministic routing.** `ContextPacket` assembly, `detect_from_cwd`, `detect_from_request`, `RISK_KEYWORDS` approval detection. No LLM. |
+| `automation_ops.py` | **Automation maturity ladder.** Readiness checks + `observe → prepare → propose → execute_approved → execute_guarded`. |
+| `workflow_ops.py` | **Workflow readiness + run closeout.** Required-section checks, `run-log close` audit gate. |
+| `workflow_engine.py` | **Governed workflow authoring.** Typed definition/version/instance/run projections, field-addressable validation, immutable publish, drift-safe rollback, and queue-only run requests. |
+| `notion_sync.py` | **Notion projection.** `plan-sync`, `sync`, and `bootstrap`. Dry-run by default. |
 
 ---
 
@@ -171,7 +179,7 @@ There is **no DI framework and no module-level mutable global**. The pattern is
   on demand — never cached in a singleton.
 - **`config.toml`** (Codex) and **profile YAML** are *data dependencies* resolved
   once at the CLI handler edge and passed down — never re-read deep in the call tree.
-- **`cli.py` handlers are the composition root:** parse args, resolve `root`, call
+- **`cli/` handlers are the composition root:** parse args, resolve `root`, call
   the ops function with explicit arguments. Ops functions are pure with respect to
   their inputs plus the filesystem.
 
@@ -257,8 +265,9 @@ These are not style suggestions — they are enforced by the CLI:
 
 ### Adding a new command
 
-1. Add the subparser + flags in `cli.py:build_parser()` — match the style of a
-   sibling command.
+1. Add a module under `cli/` exposing `register(subparsers)`, then add one
+   import and one `COMMAND_MODULES` entry in `cli/__init__.py` — match the
+   style of a sibling command group.
 2. Add a `handle_<command>(args)` function (thin adapter: resolve root → call ops
    → print result).
 3. Put the real logic in the matching `*_ops.py` module (or a new
