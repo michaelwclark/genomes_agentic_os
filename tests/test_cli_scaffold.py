@@ -5062,7 +5062,8 @@ def test_genomes_agentic_os_project_gets_full_auto_dev_policy(tmp_path: Path) ->
     project_config = yaml.safe_load((project / "project.yml").read_text(encoding="utf-8"))
 
     assert development["tracker"]["primary"] == "linear"
-    assert development["tracker"]["linear"]["project_id"] == "5812f46f-f7a5-4518-8a59-593aaa45f418"
+    assert development["tracker"]["linear"]["team_id"] == "0f317b8b-5249-4757-98fa-ccddc174b108"
+    assert development["tracker"]["linear"]["project_id"] == "7cc2034f-ec14-4279-93da-f35a18a9aeec"
     assert development["repository"]["root"] == str(repo)
     assert development["validation"]["secondary_install"]["required_passes"] == 3
     assert development["review"]["opposing_harness"]["required"] is False
@@ -5443,3 +5444,38 @@ def test_generated_markdown_has_level_specific_contracts(tmp_path: Path) -> None
             assert content.startswith("# "), path
         for section in sections:
             assert section in content, path
+
+
+def test_genomes_agentic_os_linear_seed_targets_agentic_os_team() -> None:
+    """The seeded Linear tracker target must match where AGE issues actually live.
+
+    Guards against the CC-era drift where the scaffold kept pointing at the
+    Clarks Consulting team after this project's issues moved to the dedicated
+    Agentic OS (AGE) team, which made team-scoped workflow-state lookups fail
+    with "state from a different team" at delivery time (AGE-205).
+    """
+    from genomes_agentic_os.scaffold import project_config_file_content
+
+    age_team_id = "0f317b8b-5249-4757-98fa-ccddc174b108"
+    kernel_project_id = "7cc2034f-ec14-4279-93da-f35a18a9aeec"
+
+    development = yaml.safe_load(
+        project_config_file_content(
+            "clarks_consulting", "genomes_agentic_os", "active", None, "development.yml"
+        )
+    )
+    linear = development["tracker"]["linear"]
+    assert linear["team"] == "Agentic OS"
+    assert linear["team_id"] == age_team_id
+    assert linear["project_id"] == kernel_project_id
+    # The Agentic OS team defines no "Blocked" workflow state.
+    assert "Blocked" not in linear["statuses"].values()
+
+    spec_engine = yaml.safe_load(
+        project_config_file_content(
+            "clarks_consulting", "genomes_agentic_os", "active", None, "spec-engine.yml"
+        )
+    )
+    target = spec_engine["spec_engine"]["adapters"]["linear"]["target"]
+    assert target["team_id"] == age_team_id
+    assert target["project_id"] == kernel_project_id
