@@ -544,6 +544,22 @@ def test_artifact_spool_retries_with_fresh_worker_session_grant(
     assert not spool.exists()
 
 
+def test_artifact_spool_rejects_missing_source(tmp_path: Path) -> None:
+    with pytest.raises(ExecutionFabricRemoteError, match="source is unavailable"):
+        _spool_artifact(
+            tmp_path,
+            task_id="task-one",
+            attempt_id="attempt-one",
+            path=tmp_path / "missing.json",
+            name="run-report.json",
+            content_type="application/json",
+            worker_id="worker-one",
+            workload_id="worker-bootstrap-one",
+            attempt_recovery_token="40000000-0000-4000-8000-000000000001",
+            error="store unavailable",
+        )
+
+
 def test_generic_worker_image_advertises_only_shipped_remote_handlers(
     tmp_path: Path,
 ) -> None:
@@ -1880,6 +1896,7 @@ def test_fullsail_worker_rejects_controller_reported_failure(
         "reported_type": "dict",
         "stdout": {
             "bytes": 74,
+            "redacted": False,
             "sha256": "d77699d51ffe75cd8eff08ac11668f3a976f1c6333fe4ec8ff481b0accc549de",
             "text": json.dumps(
                 {
@@ -1888,11 +1905,14 @@ def test_fullsail_worker_rejects_controller_reported_failure(
                     "status": "failed",
                 }
             ),
+            "truncated": False,
         },
         "stderr": {
             "bytes": 0,
+            "redacted": False,
             "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
             "text": "",
+            "truncated": False,
         },
     }
 
@@ -1949,13 +1969,17 @@ def test_fullsail_worker_retains_controller_failure_diagnostics(
         "exit_code": 9,
         "stdout": {
             "bytes": 25,
+            "redacted": False,
             "sha256": "4d377c0e66feca0f9833113bdac5e3d9d3e4b51e46e80a0c6b33cb173bd33f3e",
             "text": "partial controller output",
+            "truncated": False,
         },
         "stderr": {
             "bytes": 26,
+            "redacted": False,
             "sha256": "ba6473f72c82b9d3959edd8b7d87d0ec4fd8b202b93ca31fd22bc8f2a2a636d7",
             "text": "bounded controller failure",
+            "truncated": False,
         },
     }
 
@@ -1963,6 +1987,11 @@ def test_fullsail_worker_retains_controller_failure_diagnostics(
 def test_fullsail_worker_retains_timeout_fingerprints(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setattr(
+        execution_fabric_remote,
+        "resolve_execution_fabric_host_id",
+        lambda *_args, **_kwargs: "bigmac",
+    )
     root = _root(tmp_path, remote=False)
     controller = (
         root
@@ -2000,8 +2029,13 @@ def test_fullsail_worker_retains_timeout_fingerprints(
 
 
 def test_fullsail_worker_marks_missing_controller_retryable(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setattr(
+        execution_fabric_remote,
+        "resolve_execution_fabric_host_id",
+        lambda *_args, **_kwargs: "bigmac",
+    )
     root = _root(tmp_path, remote=False)
     assignment = _assignment(3)
     assignment["task"].update(
@@ -2026,8 +2060,13 @@ def test_fullsail_worker_marks_missing_controller_retryable(
 
 
 def test_fullsail_worker_rejects_mismatched_job_identity_with_receipt(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setattr(
+        execution_fabric_remote,
+        "resolve_execution_fabric_host_id",
+        lambda *_args, **_kwargs: "bigmac",
+    )
     root = _root(tmp_path, remote=False)
     assignment = _assignment(3)
     assignment["task"].update(
@@ -2053,6 +2092,11 @@ def test_fullsail_worker_rejects_mismatched_job_identity_with_receipt(
 def test_fullsail_worker_retains_invalid_receipt_fingerprint(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setattr(
+        execution_fabric_remote,
+        "resolve_execution_fabric_host_id",
+        lambda *_args, **_kwargs: "bigmac",
+    )
     root = _root(tmp_path, remote=False)
     controller = (
         root
@@ -2060,11 +2104,12 @@ def test_fullsail_worker_retains_invalid_receipt_fingerprint(
     )
     controller.parent.mkdir(parents=True)
     controller.write_text("# installed closed controller\n", encoding="utf-8")
+    secret_tail = "token=abcdefghijklmnopqrstuvwx"
     monkeypatch.setattr(
         execution_fabric_remote.subprocess,
         "run",
         lambda command, **_kwargs: subprocess.CompletedProcess(
-            command, 0, stdout="not-json", stderr="sensitive route"
+            command, 0, stdout="not-json", stderr=secret_tail
         ),
     )
     assignment = _assignment(3)
@@ -2085,13 +2130,19 @@ def test_fullsail_worker_retains_invalid_receipt_fingerprint(
     receipt = json.loads(Path(failure.value.receipt_path).read_text())
     assert receipt["error"]["code"] == "fullsail_controller_receipt_invalid"
     assert receipt["evidence"]["stdout"]["bytes"] == 8
-    assert receipt["evidence"]["stderr"]["bytes"] == 15
-    assert receipt["evidence"]["stderr"]["text"] == "sensitive route"
+    assert receipt["evidence"]["stderr"]["bytes"] == len(secret_tail)
+    assert receipt["evidence"]["stderr"]["text"] == "[REDACTED]"
+    assert receipt["evidence"]["stderr"]["redacted"] is True
 
 
 def test_fullsail_worker_preserves_retryability_when_receipt_write_fails(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setattr(
+        execution_fabric_remote,
+        "resolve_execution_fabric_host_id",
+        lambda *_args, **_kwargs: "bigmac",
+    )
     root = _root(tmp_path, remote=False)
     assignment = _assignment(3)
     assignment["task"].update(
@@ -2114,4 +2165,37 @@ def test_fullsail_worker_preserves_retryability_when_receipt_write_fails(
 
     assert failure.value.code == "fullsail_durable_receipt_unavailable"
     assert failure.value.retryable is False
-    assert failure.value.receipt_path
+    assert failure.value.receipt_path is None
+
+
+def test_fullsail_worker_preserves_retryable_receipt_write_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        execution_fabric_remote,
+        "resolve_execution_fabric_host_id",
+        lambda *_args, **_kwargs: "bigmac",
+    )
+    root = _root(tmp_path, remote=False)
+    assignment = _assignment(3)
+    assignment["task"].update(
+        {
+            "queue": "los_fullsail",
+            "taskType": "los.fullsail_updater.job.v1",
+            "payload": {
+                "job_id": "capture-20260826-0123abcd",
+                "job_kind": "capture",
+            },
+        }
+    )
+
+    def unavailable(*_args: Any, **_kwargs: Any) -> None:
+        raise OSError("ledger unavailable")
+
+    monkeypatch.setattr(execution_fabric_remote, "_write_receipt", unavailable)
+    with pytest.raises(TaskExecutionError, match="could not retain") as failure:
+        execute_assignment(root, assignment)
+
+    assert failure.value.code == "fullsail_durable_receipt_unavailable"
+    assert failure.value.retryable is True
+    assert failure.value.receipt_path is None

@@ -1319,6 +1319,10 @@ def _spool_artifact(
     error: str,
 ) -> dict[str, Any]:
     source = Path(path).expanduser().resolve()
+    if not source.is_file():
+        raise ExecutionFabricRemoteError(
+            f"artifact source is unavailable: {source.name}"
+        )
     digest, size_bytes = _artifact_file_identity(source)
     payload_path = _artifact_spool_payload_path(
         root,
@@ -2878,7 +2882,7 @@ def _los_fullsail_updater_worker(
                 "fullsail_durable_receipt_unavailable",
                 f"could not retain the FullSail failure receipt for {code}: {message}",
                 retryable=retryable,
-                receipt_path=str(receipt_path),
+                receipt_path=str(receipt_path) if receipt_path.is_file() else None,
             ) from exc
         raise TaskExecutionError(
             code,
@@ -2892,16 +2896,20 @@ def _los_fullsail_updater_worker(
             raw = value
         else:
             raw = str(value or "").encode("utf-8", errors="replace")
+        raw_text = raw.decode("utf-8", errors="replace")
+        redacted_text = redact_text(raw_text)
         return {
             "bytes": len(raw),
             "sha256": sha256(raw).hexdigest(),
-            "text": redact_text(raw.decode("utf-8", errors="replace"))[-20000:],
+            "text": redacted_text[-20000:],
+            "truncated": len(redacted_text) > 20000,
+            "redacted": raw_text != redacted_text,
         }
 
     def controller_output_evidence(stdout: Any, stderr: Any) -> dict[str, Any]:
-        # Controller output can contain tenant, VPN-route, or credential-shaped
-        # material. Keep only bounded, correlation-safe fingerprints in the
-        # worker receipt; the controller's local ledger owns full diagnostics.
+        # Retain the last 20,000 redacted characters plus a digest of the full
+        # stream. The controller's local ledger remains the diagnostic source
+        # when the published tail is redacted or truncated.
         return {
             "stdout": output_fingerprint(stdout),
             "stderr": output_fingerprint(stderr),
@@ -3309,7 +3317,7 @@ class RemoteFabricWorker:
                         )
                         completed += 1
                     except TaskExecutionError as exc:
-                        if exc.receipt_path:
+                        if exc.receipt_path and Path(exc.receipt_path).is_file():
                             _publish_or_spool(
                                 self.client,
                                 self.root,
