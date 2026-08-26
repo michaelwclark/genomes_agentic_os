@@ -2834,8 +2834,55 @@ def _los_fullsail_updater_worker(
     attempt_id = str(assignment.get("attemptId") or "")
     job_id = str(payload["job_id"])
     job_kind = str(payload["job_kind"])
-    if not job_id.startswith(job_kind + "-"):
+    started_at = _utc_now()
+    receipt_path = (
+        root
+        / "harness/shared_factory/06-runs-and-logs/execution-fabric/worker-runs"
+        / task_id
+        / f"{attempt_id}.json"
+    )
+
+    def fail(
+        code: str,
+        message: str,
+        *,
+        retryable: bool,
+        evidence: Mapping[str, Any] | None = None,
+    ) -> None:
+        worker_receipt = {
+            "schema_version": "agentic-os-execution-fabric-worker-run/v1",
+            "task_id": task_id,
+            "attempt_id": attempt_id,
+            "worker_host": socket.gethostname(),
+            "status": "failed",
+            "started_at": started_at,
+            "finished_at": _utc_now(),
+            "execution_target": "los_fullsail_updater_controller",
+            "task_type": str(task.get("taskType") or ""),
+            "queue_name": str(task.get("queue") or ""),
+            "domain_worker": "los_fullsail_updater",
+            "error": {
+                "code": code,
+                "message": message,
+                "retryable": retryable,
+            },
+            "evidence": dict(evidence or {}),
+        }
+        _write_receipt(receipt_path, worker_receipt, durable=True)
         raise TaskExecutionError(
+            code,
+            message,
+            retryable=retryable,
+            receipt_path=str(receipt_path),
+        )
+
+    def bounded_text(value: Any) -> str:
+        if isinstance(value, bytes):
+            value = value.decode("utf-8", errors="replace")
+        return str(value or "")[-20000:]
+
+    if not job_id.startswith(job_kind + "-"):
+        fail(
             "fullsail_job_identity_mismatch",
             "FullSail task job ID does not match its declared job kind",
             retryable=False,
@@ -2848,12 +2895,11 @@ def _los_fullsail_updater_worker(
         / "los_fullsail_updater/scripts/fullsail_updater.py"
     )
     if not controller.is_file():
-        raise TaskExecutionError(
+        fail(
             "fullsail_controller_unavailable",
             "the installed FullSail Updater controller is unavailable",
             retryable=True,
         )
-    started_at = _utc_now()
     try:
         completed = subprocess.run(
             [
@@ -2872,26 +2918,40 @@ def _los_fullsail_updater_worker(
             timeout=FULLSAIL_CONTROLLER_TIMEOUT_SECONDS,
             check=False,
         )
-    except subprocess.TimeoutExpired:
-        raise TaskExecutionError(
+    except subprocess.TimeoutExpired as exc:
+        fail(
             "fullsail_controller_timeout",
             "the FullSail controller exceeded its bounded execution window; inspect its durable ledger",
             retryable=False,
-        ) from None
+            evidence={
+                "timeout_seconds": FULLSAIL_CONTROLLER_TIMEOUT_SECONDS,
+                "stdout": bounded_text(exc.stdout),
+                "stderr": bounded_text(exc.stderr),
+            },
+        )
     if completed.returncode:
-        raise TaskExecutionError(
+        fail(
             "fullsail_controller_failed",
             f"the FullSail controller exited {completed.returncode}; inspect its durable ledger",
             retryable=False,
+            evidence={
+                "exit_code": completed.returncode,
+                "stdout": bounded_text(completed.stdout),
+                "stderr": bounded_text(completed.stderr),
+            },
         )
     try:
         receipt = json.loads(completed.stdout)
     except json.JSONDecodeError:
-        raise TaskExecutionError(
+        fail(
             "fullsail_controller_receipt_invalid",
             "the FullSail controller did not emit one valid JSON receipt",
             retryable=False,
-        ) from None
+            evidence={
+                "stdout": bounded_text(completed.stdout),
+                "stderr": bounded_text(completed.stderr),
+            },
+        )
     if (
         not isinstance(receipt, dict)
         or receipt.get("id") != job_id
@@ -2905,10 +2965,16 @@ def _los_fullsail_updater_worker(
             "waiting_approval",
         }
     ):
-        raise TaskExecutionError(
+        fail(
             "fullsail_controller_receipt_mismatch",
             "the FullSail controller receipt does not match the assigned job",
             retryable=False,
+            evidence={
+                "reported_id": receipt.get("id") if isinstance(receipt, dict) else None,
+                "reported_kind": receipt.get("kind") if isinstance(receipt, dict) else None,
+                "reported_status": receipt.get("status") if isinstance(receipt, dict) else None,
+                "stderr": bounded_text(completed.stderr),
+            },
         )
     controller_result = dict(receipt.get("result") or {})
     result = {
@@ -2935,12 +3001,6 @@ def _los_fullsail_updater_worker(
         "domain_worker": "los_fullsail_updater",
         "result": result,
     }
-    receipt_path = (
-        root
-        / "harness/shared_factory/06-runs-and-logs/execution-fabric/worker-runs"
-        / task_id
-        / f"{attempt_id}.json"
-    )
     _write_receipt(receipt_path, worker_receipt, durable=True)
     return {
         "result": result,

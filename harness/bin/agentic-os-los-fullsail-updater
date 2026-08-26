@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-ROOT="${AGENTIC_OS_ROOT:-/Users/genome/agentic_os}"
+ROOT="${AGENTIC_OS_ROOT:-$HOME/agentic_os}"
 SELF_NAME=${0##*/}
 OBJECT_ID=$(printf '%s\n' "${SELF_NAME#agentic-os-}" | tr '-' '_')
 DOMAIN=${OBJECT_ID%%_*}
@@ -13,4 +13,13 @@ if [ ! -f "$CONTROLLER" ]; then
   exit 1
 fi
 
-exec python3 "$CONTROLLER" --root "$ROOT" "$@"
+PYTHON="${AGENTIC_OS_PYTHON:-$HOME/Library/Application Support/AgenticOS/agentic-os-source/bin/python}"
+if [ ! -x "$PYTHON" ]; then
+  PYTHON=$(command -v python3 || true)
+fi
+if [ -z "$PYTHON" ] || [ ! -x "$PYTHON" ]; then
+  printf 'Agentic OS Python runtime not found.\n' >&2
+  exit 1
+fi
+
+exec "$PYTHON" "$CONTROLLER" --root "$ROOT" "$@"

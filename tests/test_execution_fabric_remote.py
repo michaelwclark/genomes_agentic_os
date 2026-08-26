@@ -1864,5 +1864,71 @@ def test_fullsail_worker_rejects_controller_reported_failure(
         }
     )
 
-    with pytest.raises(TaskExecutionError, match="receipt does not match"):
+    with pytest.raises(TaskExecutionError, match="receipt does not match") as failure:
         execute_assignment(root, assignment)
+
+    assert failure.value.receipt_path
+    worker_receipt = json.loads(Path(failure.value.receipt_path).read_text())
+    assert worker_receipt["status"] == "failed"
+    assert worker_receipt["error"]["code"] == "fullsail_controller_receipt_mismatch"
+    assert worker_receipt["evidence"] == {
+        "reported_id": "capture-20260826-0123abcd",
+        "reported_kind": "capture",
+        "reported_status": "failed",
+        "stderr": "",
+    }
+
+
+def test_fullsail_worker_retains_controller_failure_diagnostics(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        execution_fabric_remote,
+        "resolve_execution_fabric_host_id",
+        lambda *_args, **_kwargs: "bigmac",
+    )
+    root = _root(tmp_path, remote=False)
+    controller = (
+        root
+        / "lib/programs/domains/los/los_fullsail_updater/scripts/fullsail_updater.py"
+    )
+    controller.parent.mkdir(parents=True)
+    controller.write_text("# installed closed controller\n", encoding="utf-8")
+
+    def completed(command: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            command,
+            9,
+            stdout="partial controller output",
+            stderr="bounded controller failure",
+        )
+
+    monkeypatch.setattr(execution_fabric_remote.subprocess, "run", completed)
+    assignment = _assignment(3)
+    assignment["task"].update(
+        {
+            "queue": "los_fullsail",
+            "taskType": "los.fullsail_updater.job.v1",
+            "payload": {
+                "job_id": "capture-20260826-0123abcd",
+                "job_kind": "capture",
+            },
+        }
+    )
+
+    with pytest.raises(TaskExecutionError, match="exited 9") as failure:
+        execute_assignment(root, assignment)
+
+    assert failure.value.receipt_path
+    worker_receipt = json.loads(Path(failure.value.receipt_path).read_text())
+    assert worker_receipt["status"] == "failed"
+    assert worker_receipt["error"] == {
+        "code": "fullsail_controller_failed",
+        "message": "the FullSail controller exited 9; inspect its durable ledger",
+        "retryable": False,
+    }
+    assert worker_receipt["evidence"] == {
+        "exit_code": 9,
+        "stdout": "partial controller output",
+        "stderr": "bounded controller failure",
+    }
