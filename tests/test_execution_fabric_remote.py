@@ -1792,8 +1792,7 @@ def test_registered_fullsail_worker_invokes_only_installed_closed_controller(
 
     receipt = execute_assignment(root, assignment)
 
-    assert receipt == {
-        "ok": True,
+    assert receipt["result"] == {
         "kind": "los_fullsail_updater",
         "job_id": "capture-20260826-0123abcd",
         "job_kind": "capture",
@@ -1801,8 +1800,15 @@ def test_registered_fullsail_worker_invokes_only_installed_closed_controller(
         "manifest_sha256": None,
         "operation_count": None,
         "changed": True,
-        "effects": [],
     }
+    assert receipt["effects"] == []
+    assert len(receipt["artifacts"]) == 1
+    artifact = receipt["artifacts"][0]
+    assert artifact["name"] == "run-report.json"
+    assert artifact["contentType"] == "application/json"
+    worker_receipt = json.loads(Path(artifact["path"]).read_text())
+    assert worker_receipt["status"] == "succeeded"
+    assert worker_receipt["result"] == receipt["result"]
     assert observed["command"] == [
         sys.executable,
         str(controller),
@@ -1813,3 +1819,50 @@ def test_registered_fullsail_worker_invokes_only_installed_closed_controller(
         "capture-20260826-0123abcd",
     ]
     assert "shell" not in observed["kwargs"]
+
+
+def test_fullsail_worker_rejects_controller_reported_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        execution_fabric_remote,
+        "resolve_execution_fabric_host_id",
+        lambda *_args, **_kwargs: "bigmac",
+    )
+    root = _root(tmp_path, remote=False)
+    controller = (
+        root
+        / "lib/programs/domains/los/los_fullsail_updater/scripts/fullsail_updater.py"
+    )
+    controller.parent.mkdir(parents=True)
+    controller.write_text("# installed closed controller\n", encoding="utf-8")
+
+    def completed(command: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=json.dumps(
+                {
+                    "id": "capture-20260826-0123abcd",
+                    "kind": "capture",
+                    "status": "failed",
+                }
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr(execution_fabric_remote.subprocess, "run", completed)
+    assignment = _assignment(3)
+    assignment["task"].update(
+        {
+            "queue": "los_fullsail",
+            "taskType": "los.fullsail_updater.job.v1",
+            "payload": {
+                "job_id": "capture-20260826-0123abcd",
+                "job_kind": "capture",
+            },
+        }
+    )
+
+    with pytest.raises(TaskExecutionError, match="receipt does not match"):
+        execute_assignment(root, assignment)

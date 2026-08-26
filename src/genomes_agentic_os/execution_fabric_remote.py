@@ -2813,9 +2813,12 @@ def _validate_domain_worker_result(
     return normalized
 
 
+FULLSAIL_CONTROLLER_TIMEOUT_SECONDS = 3600
+
+
 def _los_fullsail_updater_worker(
     root: Path,
-    _assignment: Mapping[str, Any],
+    assignment: Mapping[str, Any],
     task: Mapping[str, Any],
     _route: Mapping[str, Any],
 ) -> dict[str, Any]:
@@ -2827,6 +2830,8 @@ def _los_fullsail_updater_worker(
     cannot accept or materialize an arbitrary command.
     """
     payload = dict(task.get("payload") or {})
+    task_id = str(task.get("id") or "")
+    attempt_id = str(assignment.get("attemptId") or "")
     job_id = str(payload["job_id"])
     job_kind = str(payload["job_kind"])
     if not job_id.startswith(job_kind + "-"):
@@ -2848,6 +2853,7 @@ def _los_fullsail_updater_worker(
             "the installed FullSail Updater controller is unavailable",
             retryable=True,
         )
+    started_at = _utc_now()
     try:
         completed = subprocess.run(
             [
@@ -2863,7 +2869,7 @@ def _los_fullsail_updater_worker(
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            timeout=3600,
+            timeout=FULLSAIL_CONTROLLER_TIMEOUT_SECONDS,
             check=False,
         )
     except subprocess.TimeoutExpired:
@@ -2897,7 +2903,6 @@ def _los_fullsail_updater_worker(
             "waiting_dependency",
             "waiting_vpn",
             "waiting_approval",
-            "failed",
         }
     ):
         raise TaskExecutionError(
@@ -2906,8 +2911,7 @@ def _los_fullsail_updater_worker(
             retryable=False,
         )
     controller_result = dict(receipt.get("result") or {})
-    return {
-        "ok": receipt["status"] != "failed",
+    result = {
         "kind": "los_fullsail_updater",
         "job_id": job_id,
         "job_kind": job_kind,
@@ -2916,7 +2920,38 @@ def _los_fullsail_updater_worker(
         or controller_result.get("manifest_sha256"),
         "operation_count": controller_result.get("operation_count"),
         "changed": controller_result.get("changed"),
+    }
+    worker_receipt = {
+        "schema_version": "agentic-os-execution-fabric-worker-run/v1",
+        "task_id": task_id,
+        "attempt_id": attempt_id,
+        "worker_host": socket.gethostname(),
+        "status": "succeeded",
+        "started_at": started_at,
+        "finished_at": _utc_now(),
+        "execution_target": "los_fullsail_updater_controller",
+        "task_type": str(task["taskType"]),
+        "queue_name": str(task["queue"]),
+        "domain_worker": "los_fullsail_updater",
+        "result": result,
+    }
+    receipt_path = (
+        root
+        / "harness/shared_factory/06-runs-and-logs/execution-fabric/worker-runs"
+        / task_id
+        / f"{attempt_id}.json"
+    )
+    _write_receipt(receipt_path, worker_receipt, durable=True)
+    return {
+        "result": result,
         "effects": [],
+        "artifacts": [
+            {
+                "path": str(receipt_path),
+                "name": "run-report.json",
+                "contentType": "application/json",
+            }
+        ],
     }
 
 

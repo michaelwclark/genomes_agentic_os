@@ -215,6 +215,31 @@ def test_effective_config_reports_source_fingerprint_and_canonical_dependencies(
     assert execution_fabric_remote._eligible_worker_queues(
         root, "genomesbox", ["pr_reviews"]
     ) == []
+    fullsail_pool = next(
+        pool
+        for pool in load_execution_fabric_config(root).value["execution_fabric"][
+            "worker_pools"
+        ]
+        if pool["id"] == "los_fullsail_workers"
+    )
+    assert (
+        fullsail_pool["lease"]["timeout_seconds"]
+        > execution_fabric_remote.FULLSAIL_CONTROLLER_TIMEOUT_SECONDS
+    )
+    fullsail_route = next(
+        route
+        for route in load_execution_fabric_config(root).value["execution_fabric"][
+            "task_routes"
+        ]
+        if route["task_type"] == "los.fullsail_updater.job.v1"
+    )
+    assert fullsail_route["execution"]["allowed_host_ids"] == ["bigmac"]
+    assert execution_fabric_remote._eligible_worker_queues(
+        root, "bigmac", ["los_fullsail"]
+    ) == ["los_fullsail"]
+    assert execution_fabric_remote._eligible_worker_queues(
+        root, "genomesbox", ["los_fullsail"]
+    ) == []
 
     _edit(root)
     second = execution_fabric_config_status(root)
