@@ -9,6 +9,42 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.8.3] - 2026-08-26
+
+### Fixed
+
+- Route runtime status through the same normalizing snapshot projection used
+  by runtime snapshot so a remote or remote_with_local_fallback transport no
+  longer crashes `format_runtime_snapshot()` with `KeyError: 'health'`, and
+  render an absent health/worker_pools/filters section as unknown instead of
+  raising (AGE-211).
+- Fix the runtime contract gate's double-escaped `\\.py$` regex so direct
+  Python runtime modules (for example `views.py`) are recognized as
+  runtime-path changes, and tighten the bare-file match to a complete
+  module-stem so keyword prefixes (`apiary.py`, `ruler.py`,
+  `serviceability.py`, `requester.py`) no longer false-block unrelated PRs
+  (AGE-205).
+- Project `harness/bin` through a managed, package-owned surface so
+  `install_docs`/`update apply` heals stale installed executables (for
+  example `agentic-os-policy-context`) instead of preserving whichever
+  binary the first projection wrote (AGE-200).
+- Require an unambiguous, canonical-config-derived repository selection
+  before Review Self invokes an external reviewer (#256).
+- Allow the initial opposing-model Review Self request for shared-factory PR
+  packets, discovered under both domain projects and
+  `harness/shared_factory` (#257).
+
+### Dependencies
+
+- helm 3.21.3 → 3.21.4 (#251).
+
+### Documentation
+
+- Backfill `docs/releases/0.8.0.md`, `0.8.1.md`, and `0.8.2.md` from
+  CHANGELOG.md, git history, and merged PR bodies, and correct stale CLI
+  package facts (command/module counts, the retired `cli.py` composition
+  root) in the install-and-quickstart and architecture guides (#259).
+
 ## [0.8.2] - 2026-08-18
 
 ### Fixed
