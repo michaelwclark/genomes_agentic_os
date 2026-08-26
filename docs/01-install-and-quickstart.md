@@ -84,7 +84,7 @@ usage: agentic-os [-h]
 Scaffold, validate, and operate an Agentic OS root.
 ```
 
-The full group list is 52 top-level commands across 23 `cli/` package
+The full group list is 70 top-level commands across 43 `cli/` package
 modules; see [17 · CLI Reference](17-cli-reference.md) for the current,
 regenerated breakdown grouped by module.
 
