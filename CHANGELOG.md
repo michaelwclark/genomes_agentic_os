@@ -34,16 +34,16 @@ All notable changes to this project are documented here. The format follows
   packets, discovered under both domain projects and
   `harness/shared_factory` (#257).
 
-### Dependencies
+### Added
 
-- helm 3.21.3 → 3.21.4 (#251).
-
-### Documentation
-
-- Backfill `docs/releases/0.8.0.md`, `0.8.1.md`, and `0.8.2.md` from
+- Add `docs/releases/0.8.0.md`, `0.8.1.md`, and `0.8.2.md`, backfilled from
   CHANGELOG.md, git history, and merged PR bodies, and correct stale CLI
   package facts (command/module counts, the retired `cli.py` composition
   root) in the install-and-quickstart and architecture guides (#259).
+
+### Dependencies
+
+- helm 3.21.3 → 3.21.4 (#251).
 
 ## [0.8.2] - 2026-08-18
 
