@@ -19,9 +19,7 @@ if [ -z "$PYTHON" ] || [ ! -x "$PYTHON" ]; then
   for candidate in \
     "$HOME/Library/Application Support/AgenticOS/development-delivery-runtime/bin/python" \
     "$HOME/Library/Application Support/AgenticOS/layout-v2-runtime/bin/python" \
-    "$HOME/Library/Application Support/AgenticOS/agentic-os-source/bin/python" \
-    "$HOME/Library/Application Support/AgenticOS/releases"/*/runtime/bin/python \
-    "$HOME/Library/Application Support/AgenticOS"/*/bin/python
+    "$HOME/Library/Application Support/AgenticOS/agentic-os-source/bin/python"
   do
     if [ -x "$candidate" ] && "$candidate" -c 'import genomes_agentic_os' >/dev/null 2>&1; then
       PYTHON="$candidate"
@@ -30,7 +28,26 @@ if [ -z "$PYTHON" ] || [ ! -x "$PYTHON" ]; then
   done
 fi
 if [ -z "$PYTHON" ]; then
-  PYTHON=$(command -v python3 || true)
+  RELEASES="$HOME/Library/Application Support/AgenticOS/releases"
+  if [ -d "$RELEASES" ]; then
+    OLD_IFS=$IFS
+    IFS='
+'
+    for candidate in $(ls -1dt "$RELEASES"/*/runtime/bin/python 2>/dev/null || true)
+    do
+      if [ -x "$candidate" ] && "$candidate" -c 'import genomes_agentic_os' >/dev/null 2>&1; then
+        PYTHON="$candidate"
+        break
+      fi
+    done
+    IFS=$OLD_IFS
+  fi
+fi
+if [ -z "$PYTHON" ]; then
+  candidate=$(command -v python3 || true)
+  if [ -n "$candidate" ] && [ -x "$candidate" ] && "$candidate" -c 'import genomes_agentic_os' >/dev/null 2>&1; then
+    PYTHON="$candidate"
+  fi
 fi
 if [ -z "$PYTHON" ] || [ ! -x "$PYTHON" ]; then
   printf 'Agentic OS Python runtime not found.\n' >&2

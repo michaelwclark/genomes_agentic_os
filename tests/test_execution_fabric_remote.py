@@ -1881,10 +1881,18 @@ def test_fullsail_worker_rejects_controller_reported_failure(
         "stdout": {
             "bytes": 74,
             "sha256": "d77699d51ffe75cd8eff08ac11668f3a976f1c6333fe4ec8ff481b0accc549de",
+            "text": json.dumps(
+                {
+                    "id": "capture-20260826-0123abcd",
+                    "kind": "capture",
+                    "status": "failed",
+                }
+            ),
         },
         "stderr": {
             "bytes": 0,
             "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "text": "",
         },
     }
 
@@ -1942,10 +1950,12 @@ def test_fullsail_worker_retains_controller_failure_diagnostics(
         "stdout": {
             "bytes": 25,
             "sha256": "4d377c0e66feca0f9833113bdac5e3d9d3e4b51e46e80a0c6b33cb173bd33f3e",
+            "text": "partial controller output",
         },
         "stderr": {
             "bytes": 26,
             "sha256": "ba6473f72c82b9d3959edd8b7d87d0ec4fd8b202b93ca31fd22bc8f2a2a636d7",
+            "text": "bounded controller failure",
         },
     }
 
@@ -1985,8 +1995,8 @@ def test_fullsail_worker_retains_timeout_fingerprints(
     assert receipt["evidence"]["timeout_seconds"] == 3600
     assert receipt["evidence"]["stdout"]["bytes"] == 7
     assert receipt["evidence"]["stderr"]["bytes"] == 12
-    assert "partial" not in json.dumps(receipt["evidence"])
-    assert "route detail" not in json.dumps(receipt["evidence"])
+    assert receipt["evidence"]["stdout"]["text"] == "partial"
+    assert receipt["evidence"]["stderr"]["text"] == "route detail"
 
 
 def test_fullsail_worker_marks_missing_controller_retryable(
@@ -2076,7 +2086,7 @@ def test_fullsail_worker_retains_invalid_receipt_fingerprint(
     assert receipt["error"]["code"] == "fullsail_controller_receipt_invalid"
     assert receipt["evidence"]["stdout"]["bytes"] == 8
     assert receipt["evidence"]["stderr"]["bytes"] == 15
-    assert "sensitive route" not in json.dumps(receipt["evidence"])
+    assert receipt["evidence"]["stderr"]["text"] == "sensitive route"
 
 
 def test_fullsail_worker_preserves_retryability_when_receipt_write_fails(
@@ -2103,5 +2113,5 @@ def test_fullsail_worker_preserves_retryability_when_receipt_write_fails(
         execute_assignment(root, assignment)
 
     assert failure.value.code == "fullsail_durable_receipt_unavailable"
-    assert failure.value.retryable is True
-    assert failure.value.receipt_path is None
+    assert failure.value.retryable is False
+    assert failure.value.receipt_path

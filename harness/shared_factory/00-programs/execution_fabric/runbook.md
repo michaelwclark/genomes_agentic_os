@@ -16,8 +16,8 @@
    `runtime config reload --expected-fingerprint <sha256> [--apply]`. Preserve
    the observer pre-read and server reload receipt; both current and candidate
    fingerprints are fenced before activation.
-6. Verify the `codex`, `claude`, `pr_reviews`, `los_environment`, and
-   `non_llm` queues and their worker pools in
+6. Verify the `codex`, `claude`, `pr_reviews`, `los_environment`,
+   `los_fullsail`, and `non_llm` queues and their worker pools in
    `agentic-os runtime snapshot --root <root>` and Command Center. Use
    `--queue codex --status queued`, `--json`, or `--output <receipt.json>` for
    focused and durable evidence.

@@ -35,6 +35,7 @@ from .execution_fabric_config import (
     load_execution_fabric_config,
     resolve_execution_fabric_host_id,
 )
+from .lifecycle import redact_text
 from .scaffold import expand_path
 
 
@@ -2875,8 +2876,9 @@ def _los_fullsail_updater_worker(
         except OSError as exc:
             raise TaskExecutionError(
                 "fullsail_durable_receipt_unavailable",
-                f"could not retain the FullSail failure receipt for {code}",
-                retryable=True,
+                f"could not retain the FullSail failure receipt for {code}: {message}",
+                retryable=retryable,
+                receipt_path=str(receipt_path),
             ) from exc
         raise TaskExecutionError(
             code,
@@ -2893,6 +2895,7 @@ def _los_fullsail_updater_worker(
         return {
             "bytes": len(raw),
             "sha256": sha256(raw).hexdigest(),
+            "text": redact_text(raw.decode("utf-8", errors="replace"))[-20000:],
         }
 
     def controller_output_evidence(stdout: Any, stderr: Any) -> dict[str, Any]:
