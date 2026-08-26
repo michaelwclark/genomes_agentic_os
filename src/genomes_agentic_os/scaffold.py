@@ -1215,6 +1215,78 @@ def ensure_schemas_dir(root: Path, result: ScaffoldResult) -> None:
         result.skipped.append(manifest_path)
 
 
+def ensure_harness_executables(root: Path, result: ScaffoldResult) -> None:
+    """Refresh package-owned ``harness/bin`` executables in place.
+
+    Installed roots previously kept whichever executable their first
+    projection wrote, so fixes shipped in later packages never reached
+    existing roots: the installed policy-context resolver stayed domain-only
+    after source restored shared-factory discovery (AGE-200). Unlike schemas
+    and control-plane configuration, ``harness/bin`` is not an operator-owned
+    surface — a divergent installed copy is a stale prior projection, so the
+    projection supersedes it in place instead of writing an inert ``.new``
+    conflict file. Update runs snapshot state before mutating and the backup
+    policy covers ``harness/bin/``; those are the recovery paths for a
+    superseded copy. ``package-manifest.yml`` records the readback receipt.
+    """
+    bin_source = harness_source_dir() / "bin"
+    if not bin_source.is_dir():
+        return
+    dest = harness_path(root, "bin")
+    ensure_dir(dest, result)
+    manifest_path = dest / "package-manifest.yml"
+    manifest_entries: list[dict[str, object]] = []
+    for item in sorted(bin_source.rglob("*")):
+        relative = item.relative_to(bin_source)
+        if "__pycache__" in relative.parts or item.name == ".DS_Store":
+            continue
+        if item.name.endswith((".pyc", ".pyo")):
+            continue
+        target = dest / relative
+        if item.is_dir():
+            ensure_dir(target, result)
+            continue
+        source_checksum = file_sha256(item)
+        if not target.exists():
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(item, target)
+            result.created.append(target)
+            status = "created"
+        elif file_sha256(target) == source_checksum:
+            result.skipped.append(target)
+            status = "current"
+        else:
+            shutil.copy2(item, target)
+            result.updated.append(target)
+            status = "refreshed"
+        manifest_entries.append(
+            {
+                "source": f"harness/bin/{relative.as_posix()}",
+                "destination": f"harness/bin/{relative.as_posix()}",
+                "source_checksum": source_checksum,
+                "observed_checksum": file_sha256(target),
+                "status": status,
+            }
+        )
+    desired_manifest = yaml.safe_dump(
+        {
+            "schema_version": 1,
+            "managed_by": "genomes-agentic-os package",
+            "ownership": "package",
+            "entries": manifest_entries,
+        },
+        sort_keys=False,
+    )
+    if not manifest_path.exists():
+        manifest_path.write_text(desired_manifest, encoding="utf-8")
+        result.created.append(manifest_path)
+    elif manifest_path.read_text(encoding="utf-8") != desired_manifest:
+        manifest_path.write_text(desired_manifest, encoding="utf-8")
+        result.updated.append(manifest_path)
+    else:
+        result.skipped.append(manifest_path)
+
+
 def ensure_report_engine_contract(root: Path, result: ScaffoldResult) -> None:
     """Install additive, empty first-class report registries.
 
@@ -1593,6 +1665,10 @@ def mirror_visible_capability_assets(root: Path) -> ScaffoldResult:
                         excluded=(Path("00-programs/auto_dev"),),
                     )
                 )
+            elif directory == "bin":
+                # Package-owned executables refresh in place (AGE-200);
+                # every other visible asset remains additive write-once.
+                ensure_harness_executables(root, result)
             else:
                 result.extend(copy_tree_missing(source, harness_path(root, directory)))
     return result
