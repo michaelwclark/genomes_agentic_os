@@ -10,8 +10,8 @@ import sys
 from pathlib import Path
 
 
-SERIALIZER_PATH = re.compile(r"(^|/)(?:serializers?|requests?)(?:/|[^/]*\.py$)", re.IGNORECASE)
-RUNTIME_PATH = re.compile(r"(^|/)(?:views?|api|services?|rules?|config(?:uration)?)(?:/|[^/]*\.py$)", re.IGNORECASE)
+SERIALIZER_PATH = re.compile(r"(^|/)(?:serializers?|requests?)(?:/|(?:[._-][^/]*)?\.py$)", re.IGNORECASE)
+RUNTIME_PATH = re.compile(r"(^|/)(?:views?|api|services?|rules?|config(?:uration)?)(?:/|(?:[._-][^/]*)?\.py$)", re.IGNORECASE)
 TEST_PATH = re.compile(r"(^|/)(?:tests?|test_)(?:/|[^/]*$)|(?:^|/)test_[^/]+\.py$", re.IGNORECASE)
 CONTRACT_CHANGE = re.compile(r"canonical|payload|serializer|request[_. ]data|rule|jq|configuration|template|transform", re.IGNORECASE)
 CONSUMER_INVENTORY = re.compile(r"consumer.{0,40}(?:inventory|matrix)|(?:inventory|matrix).{0,40}consumer", re.IGNORECASE)

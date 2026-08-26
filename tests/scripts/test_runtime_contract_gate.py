@@ -81,3 +81,33 @@ def test_direct_runtime_module_is_not_skipped_by_contract_gate():
     result = run(root)
     assert result.returncode == 1
     assert "consumer inventory" in result.stderr
+
+
+def test_keyword_prefix_collisions_do_not_trigger_contract_gate():
+    # views?/api/services?/rules?/config(uration)?/serializers?/requests? must
+    # match the complete bare-filename stem, not just a leading substring.
+    # Regression guard: apiary.py, ruler.py, serviceability.py, and
+    # requester.py are unrelated files whose names happen to start with a
+    # gate keyword; a contract-shaped change inside them must not be
+    # flagged.
+    for name in ("apiary.py", "ruler.py", "serviceability.py", "requester.py"):
+        root = repo()
+        (root / name).write_text(
+            "def canonical_payload():\n"
+            "    return {'product': {'product_code': 'x'}}\n"
+        )
+        result = run(root)
+        assert result.returncode == 0, f"{name} incorrectly blocked: {result.stderr}"
+
+
+def test_direct_runtime_module_with_separator_suffix_is_not_skipped_by_contract_gate():
+    # A keyword followed by a `_`/`-`/`.` separator (e.g. views_admin.py) is a
+    # legitimate direct runtime module and must still be caught.
+    root = repo()
+    (root / "views_admin.py").write_text(
+        "def canonical_payload():\n"
+        "    return {'product': {'product_code': 'x'}}\n"
+    )
+    result = run(root)
+    assert result.returncode == 1
+    assert "consumer inventory" in result.stderr
