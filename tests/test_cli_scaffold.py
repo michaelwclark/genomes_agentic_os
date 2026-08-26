@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.machinery
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -9,6 +11,7 @@ import shutil
 import subprocess
 import sys
 import tomllib
+import uuid
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
@@ -28,6 +31,7 @@ from genomes_agentic_os.scaffold import (
     PROJECT_CONFIG_FILES,
     ScaffoldResult,
     create_project_worktree,
+    harness_source_dir,
     install_docs,
     migrate_auto_dev_policy_directories,
 )
@@ -800,6 +804,71 @@ def test_execution_fabric_routing_blocks_upgrade_without_replacing_local_edits(
     assert "## Managed Execution Fabric" in repaired
     assert "## Stale execution wording" not in repaired
     assert "Local operator note that must survive upgrades." in repaired
+
+
+def test_install_docs_refreshes_stale_harness_executables_for_shared_factory_discovery(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    """AGE-200: package-owned harness/bin executables must refresh on update.
+
+    Installed roots kept whichever executable their first projection wrote, so
+    the shared-factory resolver fix shipped in later packages never reached
+    existing roots: the installed policy-context resolver stayed domain-only.
+    ``install_docs`` is the governed delivery path (``update apply`` extends
+    it) and must supersede stale package-owned executables in place.
+    """
+    root = tmp_path / "agentic_os"
+    assert main(["init", "--target", str(root)]) == 0
+    capsys.readouterr()
+
+    installed = harness(root) / "bin" / "agentic-os-policy-context"
+    packaged = harness_source_dir() / "bin" / "agentic-os-policy-context"
+    assert installed.read_text(encoding="utf-8") == packaged.read_text(encoding="utf-8")
+
+    stale = "#!/usr/bin/env python3\n# domain-only resolver from a pre-fix projection\n"
+    manifest = harness(root) / "bin" / "package-manifest.yml"
+    # Roots installed before executable manifests existed have no receipt.
+    manifest.unlink(missing_ok=True)
+    installed.write_text(stale, encoding="utf-8")
+
+    install_docs(root)
+
+    assert installed.read_text(encoding="utf-8") == packaged.read_text(encoding="utf-8")
+    assert os.access(installed, os.X_OK)
+    entries = yaml.safe_load(manifest.read_text(encoding="utf-8"))["entries"]
+    resolver_entry = next(
+        entry
+        for entry in entries
+        if entry["destination"] == "harness/bin/agentic-os-policy-context"
+    )
+    assert resolver_entry["status"] == "refreshed"
+    assert resolver_entry["observed_checksum"] == resolver_entry["source_checksum"]
+
+    # A manifested root with a stale executable refreshes on the next run too.
+    installed.write_text(stale, encoding="utf-8")
+    install_docs(root)
+    assert installed.read_text(encoding="utf-8") == packaged.read_text(encoding="utf-8")
+
+    # The refreshed executable is the externally observable contract: it must
+    # discover the canonical shared-factory project-profile layout.
+    name = f"projected_policy_context_{uuid.uuid4().hex}"
+    loader = importlib.machinery.SourceFileLoader(name, str(installed))
+    spec = importlib.util.spec_from_loader(name, loader)
+    assert spec is not None
+    module = importlib.util.module_from_spec(spec)
+    loader.exec_module(module)
+    fixture_root = tmp_path / "resolver_fixture_root"
+    profile = (
+        fixture_root
+        / "harness/shared_factory/02-projects/genomes_agentic_lib/config/development.yml"
+    )
+    profile.parent.mkdir(parents=True)
+    profile.write_text("version: 1\n", encoding="utf-8")
+    assert (
+        module.profile_path_for(fixture_root, "shared_factory", "genomes_agentic_lib")
+        == profile
+    )
 
 
 def test_validate_requires_self_improvement_surface(tmp_path: Path) -> None:
