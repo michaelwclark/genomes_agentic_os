@@ -544,6 +544,22 @@ def test_artifact_spool_retries_with_fresh_worker_session_grant(
     assert not spool.exists()
 
 
+def test_artifact_spool_rejects_missing_source(tmp_path: Path) -> None:
+    with pytest.raises(ExecutionFabricRemoteError, match="source is unavailable"):
+        _spool_artifact(
+            tmp_path,
+            task_id="task-one",
+            attempt_id="attempt-one",
+            path=tmp_path / "missing.json",
+            name="run-report.json",
+            content_type="application/json",
+            worker_id="worker-one",
+            workload_id="worker-bootstrap-one",
+            attempt_recovery_token="40000000-0000-4000-8000-000000000001",
+            error="store unavailable",
+        )
+
+
 def test_generic_worker_image_advertises_only_shipped_remote_handlers(
     tmp_path: Path,
 ) -> None:
@@ -1782,3 +1798,445 @@ def test_unregistered_los_domain_worker_fails_closed(tmp_path: Path) -> None:
     )
     with pytest.raises(TaskExecutionError, match="domain worker los_jira_action"):
         execute_assignment(root, assignment)
+
+
+def test_registered_fullsail_worker_invokes_only_installed_closed_controller(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        execution_fabric_remote,
+        "resolve_execution_fabric_host_id",
+        lambda *_args, **_kwargs: "bigmac",
+    )
+    root = _root(tmp_path, remote=False)
+    controller = (
+        root
+        / "lib/programs/domains/los/los_fullsail_updater/scripts/fullsail_updater.py"
+    )
+    controller.parent.mkdir(parents=True)
+    controller.write_text("# installed closed controller\n", encoding="utf-8")
+    observed: dict[str, Any] = {}
+
+    def completed(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        observed["command"] = command
+        observed["kwargs"] = kwargs
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=json.dumps(
+                {
+                    "id": "capture-20260826-0123abcd",
+                    "kind": "capture",
+                    "status": "completed",
+                    "result": {"changed": True},
+                }
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr(execution_fabric_remote.subprocess, "run", completed)
+    assignment = _assignment(3)
+    assignment["task"].update(
+        {
+            "queue": "los_fullsail",
+            "taskType": "los.fullsail_updater.job.v1",
+            "payload": {
+                "job_id": "capture-20260826-0123abcd",
+                "job_kind": "capture",
+            },
+        }
+    )
+
+    receipt = execute_assignment(root, assignment)
+
+    assert receipt["result"] == {
+        "kind": "los_fullsail_updater",
+        "job_id": "capture-20260826-0123abcd",
+        "job_kind": "capture",
+        "status": "completed",
+        "manifest_sha256": None,
+        "operation_count": None,
+        "changed": True,
+    }
+    assert receipt["effects"] == []
+    assert len(receipt["artifacts"]) == 1
+    artifact = receipt["artifacts"][0]
+    assert artifact["name"] == "run-report.json"
+    assert artifact["contentType"] == "application/json"
+    worker_receipt = json.loads(Path(artifact["path"]).read_text())
+    assert worker_receipt["status"] == "succeeded"
+    assert worker_receipt["result"] == receipt["result"]
+    assert observed["command"] == [
+        sys.executable,
+        str(controller),
+        "--root",
+        str(root),
+        "run-job",
+        "--job-id",
+        "capture-20260826-0123abcd",
+    ]
+    assert "shell" not in observed["kwargs"]
+
+
+def test_fullsail_worker_rejects_controller_reported_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        execution_fabric_remote,
+        "resolve_execution_fabric_host_id",
+        lambda *_args, **_kwargs: "bigmac",
+    )
+    root = _root(tmp_path, remote=False)
+    controller = (
+        root
+        / "lib/programs/domains/los/los_fullsail_updater/scripts/fullsail_updater.py"
+    )
+    controller.parent.mkdir(parents=True)
+    controller.write_text("# installed closed controller\n", encoding="utf-8")
+
+    def completed(command: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=json.dumps(
+                {
+                    "id": "capture-20260826-0123abcd",
+                    "kind": "capture",
+                    "status": "failed",
+                }
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr(execution_fabric_remote.subprocess, "run", completed)
+    assignment = _assignment(3)
+    assignment["task"].update(
+        {
+            "queue": "los_fullsail",
+            "taskType": "los.fullsail_updater.job.v1",
+            "payload": {
+                "job_id": "capture-20260826-0123abcd",
+                "job_kind": "capture",
+            },
+        }
+    )
+
+    with pytest.raises(TaskExecutionError, match="receipt does not match") as failure:
+        execute_assignment(root, assignment)
+
+    assert failure.value.receipt_path
+    worker_receipt = json.loads(Path(failure.value.receipt_path).read_text())
+    assert worker_receipt["status"] == "failed"
+    assert worker_receipt["error"]["code"] == "fullsail_controller_receipt_mismatch"
+    assert worker_receipt["job_id"] == "capture-20260826-0123abcd"
+    assert worker_receipt["job_kind"] == "capture"
+    assert worker_receipt["evidence"] == {
+        "reported_id": "capture-20260826-0123abcd",
+        "reported_kind": "capture",
+        "reported_status": "failed",
+        "reported_type": "dict",
+        "stdout": {
+            "bytes": 74,
+            "redacted": False,
+            "sha256": "d77699d51ffe75cd8eff08ac11668f3a976f1c6333fe4ec8ff481b0accc549de",
+            "text": json.dumps(
+                {
+                    "id": "capture-20260826-0123abcd",
+                    "kind": "capture",
+                    "status": "failed",
+                }
+            ),
+            "truncated": False,
+        },
+        "stderr": {
+            "bytes": 0,
+            "redacted": False,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "text": "",
+            "truncated": False,
+        },
+    }
+
+
+def test_fullsail_worker_retains_controller_failure_diagnostics(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        execution_fabric_remote,
+        "resolve_execution_fabric_host_id",
+        lambda *_args, **_kwargs: "bigmac",
+    )
+    root = _root(tmp_path, remote=False)
+    controller = (
+        root
+        / "lib/programs/domains/los/los_fullsail_updater/scripts/fullsail_updater.py"
+    )
+    controller.parent.mkdir(parents=True)
+    controller.write_text("# installed closed controller\n", encoding="utf-8")
+
+    def completed(command: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            command,
+            9,
+            stdout="partial controller output",
+            stderr="bounded controller failure",
+        )
+
+    monkeypatch.setattr(execution_fabric_remote.subprocess, "run", completed)
+    assignment = _assignment(3)
+    assignment["task"].update(
+        {
+            "queue": "los_fullsail",
+            "taskType": "los.fullsail_updater.job.v1",
+            "payload": {
+                "job_id": "capture-20260826-0123abcd",
+                "job_kind": "capture",
+            },
+        }
+    )
+
+    with pytest.raises(TaskExecutionError, match="exited 9") as failure:
+        execute_assignment(root, assignment)
+
+    assert failure.value.receipt_path
+    worker_receipt = json.loads(Path(failure.value.receipt_path).read_text())
+    assert worker_receipt["status"] == "failed"
+    assert worker_receipt["error"] == {
+        "code": "fullsail_controller_failed",
+        "message": "the FullSail controller exited 9; inspect its durable ledger",
+        "retryable": False,
+    }
+    assert worker_receipt["evidence"] == {
+        "exit_code": 9,
+        "stdout": {
+            "bytes": 25,
+            "redacted": False,
+            "sha256": "4d377c0e66feca0f9833113bdac5e3d9d3e4b51e46e80a0c6b33cb173bd33f3e",
+            "text": "partial controller output",
+            "truncated": False,
+        },
+        "stderr": {
+            "bytes": 26,
+            "redacted": False,
+            "sha256": "ba6473f72c82b9d3959edd8b7d87d0ec4fd8b202b93ca31fd22bc8f2a2a636d7",
+            "text": "bounded controller failure",
+            "truncated": False,
+        },
+    }
+
+
+def test_fullsail_worker_retains_timeout_fingerprints(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        execution_fabric_remote,
+        "resolve_execution_fabric_host_id",
+        lambda *_args, **_kwargs: "bigmac",
+    )
+    root = _root(tmp_path, remote=False)
+    controller = (
+        root
+        / "lib/programs/domains/los/los_fullsail_updater/scripts/fullsail_updater.py"
+    )
+    controller.parent.mkdir(parents=True)
+    controller.write_text("# installed closed controller\n", encoding="utf-8")
+
+    def timed_out(command: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        raise subprocess.TimeoutExpired(command, 3600, output=b"partial", stderr=b"route detail")
+
+    monkeypatch.setattr(execution_fabric_remote.subprocess, "run", timed_out)
+    assignment = _assignment(3)
+    assignment["task"].update(
+        {
+            "queue": "los_fullsail",
+            "taskType": "los.fullsail_updater.job.v1",
+            "payload": {
+                "job_id": "capture-20260826-0123abcd",
+                "job_kind": "capture",
+            },
+        }
+    )
+
+    with pytest.raises(TaskExecutionError, match="bounded execution window") as failure:
+        execute_assignment(root, assignment)
+
+    receipt = json.loads(Path(failure.value.receipt_path).read_text())
+    assert receipt["error"]["code"] == "fullsail_controller_timeout"
+    assert receipt["evidence"]["timeout_seconds"] == 3600
+    assert receipt["evidence"]["stdout"]["bytes"] == 7
+    assert receipt["evidence"]["stderr"]["bytes"] == 12
+    assert receipt["evidence"]["stdout"]["text"] == "partial"
+    assert receipt["evidence"]["stderr"]["text"] == "route detail"
+
+
+def test_fullsail_worker_marks_missing_controller_retryable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        execution_fabric_remote,
+        "resolve_execution_fabric_host_id",
+        lambda *_args, **_kwargs: "bigmac",
+    )
+    root = _root(tmp_path, remote=False)
+    assignment = _assignment(3)
+    assignment["task"].update(
+        {
+            "queue": "los_fullsail",
+            "taskType": "los.fullsail_updater.job.v1",
+            "payload": {
+                "job_id": "capture-20260826-0123abcd",
+                "job_kind": "capture",
+            },
+        }
+    )
+
+    with pytest.raises(TaskExecutionError, match="controller is unavailable") as failure:
+        execute_assignment(root, assignment)
+
+    assert failure.value.retryable is True
+    receipt = json.loads(Path(failure.value.receipt_path).read_text())
+    assert receipt["error"]["code"] == "fullsail_controller_unavailable"
+    assert receipt["job_id"] == "capture-20260826-0123abcd"
+    assert receipt["evidence"]["controller_relative_path"].startswith("lib/")
+
+
+def test_fullsail_worker_rejects_mismatched_job_identity_with_receipt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        execution_fabric_remote,
+        "resolve_execution_fabric_host_id",
+        lambda *_args, **_kwargs: "bigmac",
+    )
+    root = _root(tmp_path, remote=False)
+    assignment = _assignment(3)
+    assignment["task"].update(
+        {
+            "queue": "los_fullsail",
+            "taskType": "los.fullsail_updater.job.v1",
+            "payload": {
+                "job_id": "promote-20260826-0123abcd",
+                "job_kind": "capture",
+            },
+        }
+    )
+
+    with pytest.raises(TaskExecutionError, match="does not match") as failure:
+        execute_assignment(root, assignment)
+
+    receipt = json.loads(Path(failure.value.receipt_path).read_text())
+    assert receipt["error"]["code"] == "fullsail_job_identity_mismatch"
+    assert receipt["job_id"] == "promote-20260826-0123abcd"
+    assert receipt["job_kind"] == "capture"
+
+
+def test_fullsail_worker_retains_invalid_receipt_fingerprint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        execution_fabric_remote,
+        "resolve_execution_fabric_host_id",
+        lambda *_args, **_kwargs: "bigmac",
+    )
+    root = _root(tmp_path, remote=False)
+    controller = (
+        root
+        / "lib/programs/domains/los/los_fullsail_updater/scripts/fullsail_updater.py"
+    )
+    controller.parent.mkdir(parents=True)
+    controller.write_text("# installed closed controller\n", encoding="utf-8")
+    secret_tail = "token=abcdefghijklmnopqrstuvwx"
+    monkeypatch.setattr(
+        execution_fabric_remote.subprocess,
+        "run",
+        lambda command, **_kwargs: subprocess.CompletedProcess(
+            command, 0, stdout="not-json", stderr=secret_tail
+        ),
+    )
+    assignment = _assignment(3)
+    assignment["task"].update(
+        {
+            "queue": "los_fullsail",
+            "taskType": "los.fullsail_updater.job.v1",
+            "payload": {
+                "job_id": "capture-20260826-0123abcd",
+                "job_kind": "capture",
+            },
+        }
+    )
+
+    with pytest.raises(TaskExecutionError, match="valid JSON") as failure:
+        execute_assignment(root, assignment)
+
+    receipt = json.loads(Path(failure.value.receipt_path).read_text())
+    assert receipt["error"]["code"] == "fullsail_controller_receipt_invalid"
+    assert receipt["evidence"]["stdout"]["bytes"] == 8
+    assert receipt["evidence"]["stderr"]["bytes"] == len(secret_tail)
+    assert receipt["evidence"]["stderr"]["text"] == "[REDACTED]"
+    assert receipt["evidence"]["stderr"]["redacted"] is True
+
+
+def test_fullsail_worker_preserves_retryability_when_receipt_write_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        execution_fabric_remote,
+        "resolve_execution_fabric_host_id",
+        lambda *_args, **_kwargs: "bigmac",
+    )
+    root = _root(tmp_path, remote=False)
+    assignment = _assignment(3)
+    assignment["task"].update(
+        {
+            "queue": "los_fullsail",
+            "taskType": "los.fullsail_updater.job.v1",
+            "payload": {
+                "job_id": "promote-20260826-0123abcd",
+                "job_kind": "capture",
+            },
+        }
+    )
+
+    def unavailable(*_args: Any, **_kwargs: Any) -> None:
+        raise OSError("ledger unavailable")
+
+    monkeypatch.setattr(execution_fabric_remote, "_write_receipt", unavailable)
+    with pytest.raises(TaskExecutionError, match="could not retain") as failure:
+        execute_assignment(root, assignment)
+
+    assert failure.value.code == "fullsail_durable_receipt_unavailable"
+    assert failure.value.retryable is False
+    assert failure.value.receipt_path is None
+
+
+def test_fullsail_worker_preserves_retryable_receipt_write_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        execution_fabric_remote,
+        "resolve_execution_fabric_host_id",
+        lambda *_args, **_kwargs: "bigmac",
+    )
+    root = _root(tmp_path, remote=False)
+    assignment = _assignment(3)
+    assignment["task"].update(
+        {
+            "queue": "los_fullsail",
+            "taskType": "los.fullsail_updater.job.v1",
+            "payload": {
+                "job_id": "capture-20260826-0123abcd",
+                "job_kind": "capture",
+            },
+        }
+    )
+
+    def unavailable(*_args: Any, **_kwargs: Any) -> None:
+        raise OSError("ledger unavailable")
+
+    monkeypatch.setattr(execution_fabric_remote, "_write_receipt", unavailable)
+    with pytest.raises(TaskExecutionError, match="could not retain") as failure:
+        execute_assignment(root, assignment)
+
+    assert failure.value.code == "fullsail_durable_receipt_unavailable"
+    assert failure.value.retryable is True
+    assert failure.value.receipt_path is None

@@ -113,8 +113,8 @@ It is **off by default**. A fresh install uses the simple file-based queue, whic
 is fine for one person on one machine. Turn the bigger thing on when you actually
 have concurrency to manage, not before.
 
-Its five queues are `codex`, `claude`, `pr_reviews`, `los_environment` and
-`non_llm` — roughly, one per kind of worker.
+Its six queues are `codex`, `claude`, `pr_reviews`, `los_environment`,
+`los_fullsail`, and `non_llm` — roughly, one per kind of worker.
 
 ## Go deeper
 

@@ -2,6 +2,6 @@ apiVersion: v2
 name: genomes-agentic-os-worker
 description: Generic commandless Genomes Agentic OS Execution Fabric worker.
 type: application
-version: 0.8.3
-appVersion: "0.8.3"
+version: 0.9.0
+appVersion: "0.9.0"
 kubeVersion: ">=1.29.0-0"

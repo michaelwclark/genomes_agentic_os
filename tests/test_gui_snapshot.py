@@ -376,6 +376,7 @@ def test_command_center_snapshot_exposes_named_queue_and_worker_health(tmp_path:
         "claude",
         "pr_reviews",
         "los_environment",
+        "los_fullsail",
         "non_llm",
     }
     assert snapshot["runtime"]["task_count"] == 1

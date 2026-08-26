@@ -195,6 +195,25 @@ execution_fabric:
         - jira.labels.apply
         - jira.status.transition
         - agentic_os.alert.publish
+    - task_type: los.fullsail_updater.job.v1
+      queue: los_fullsail
+      scheduling_class: background
+      execution:
+        remote_allowed: true
+        target: domain_worker
+        required_capability: los.fullsail_updater
+        command_template: null
+        domain_worker: los_fullsail_updater
+        allowed_host_ids: [bigmac]
+      mutation_class: external_write
+      approval_class: policy_gated
+      payload:
+        additional_properties: false
+        required: [job_id, job_kind]
+        properties:
+          job_id: {type: string, pattern: "^(capture|promote)-[0-9]{8}-[a-f0-9]{8}$"}
+          job_kind: {type: string, enum: [capture, promote]}
+      allowed_effect_types: []
     - task_type: process
       queue: non_llm
       scheduling_class: background
@@ -267,6 +286,15 @@ execution_fabric:
       concurrency:
         max_running: 4
         max_queued: 500
+    - id: los_fullsail
+      enabled: true
+      worker_pool: los_fullsail_workers
+      accepted_task_types:
+        - los.fullsail_updater.job.v1
+      priority: 50
+      concurrency:
+        max_running: 1
+        max_queued: 2
     - id: non_llm
       enabled: true
       worker_pool: non_llm_workers
@@ -354,6 +382,25 @@ execution_fabric:
       retry:
         max_attempts: 8
         backoff_seconds: 60
+    - id: los_fullsail_workers
+      enabled: true
+      provider: non_llm
+      queues:
+        - los_fullsail
+      capabilities:
+        - los.fullsail_updater
+      capacity:
+        min_workers: 1
+        max_workers: 1
+        max_tasks_per_worker: 1
+      lease:
+        timeout_seconds: 3900
+        heartbeat_seconds: 30
+      retry:
+        # VPN waits and manifest approvals return to the domain ledger. Fabric
+        # never retries a tenant operation without a fresh controller attempt.
+        max_attempts: 1
+        backoff_seconds: 300
     - id: non_llm_workers
       enabled: true
       provider: non_llm

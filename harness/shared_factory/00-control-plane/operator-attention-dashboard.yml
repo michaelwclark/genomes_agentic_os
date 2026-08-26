@@ -27,6 +27,29 @@ required_fields:
   - attention_signals
   - actions
 contributors:
+  - id: los_fullsail_updater
+    title: LOS FullSail Updater
+    kind: automation
+    owner: domains/los
+    cadence: midnight_capture_1215_promotion_five_minute_drain_four_hour_wait_alert
+    notion_surface: morning_agentic_dashboard
+    source: lib/automations/domains/los/los_fullsail_updater/automation.md
+    summary_source: runtime/artifacts/los-fullsail-updater/state.db
+    attention_signals:
+      - JobA is waiting for the exact NFCU preprod VPN route
+      - JobB is waiting for the exact FullSail QA VPN route
+      - a non-empty exact transfer manifest is waiting for approval
+      - a dependency, capture, apply, or independent readback failed
+      - a Fabric admission or worker receipt is missing
+    actions:
+      - id: inspect_fullsail_updater_status
+        mode: local_state_and_receipts
+        guard: read-only ledger, generation, manifest, Fabric, and route inspection
+        approval: not required
+      - id: approve_fullsail_manifest
+        mode: exact_manifest_sha
+        guard: apply only the current hash-bound FullSail QA write set after target recapture
+        approval: explicit exact manifest approval required
   - id: watch_pr_quiet
     title: Quiet Pull Request Check Watcher
     kind: watcher

@@ -19,7 +19,9 @@
       },
       "required_capability": "pr_review",
       "domain_worker": "team_pr_ai_review",
-      "allowed_effect_types": ["notion.pr_review.update"]
+      "allowed_effect_types": [
+        "notion.pr_review.update"
+      ]
     },
     {
       "task_type": "los.environment.deployment.observed",
@@ -54,6 +56,17 @@
         "jira.status.transition",
         "agentic_os.alert.publish"
       ]
+    },
+    {
+      "task_type": "los.fullsail_updater.job.v1",
+      "queue": "los_fullsail",
+      "payload": {
+        "job_id": "capture-20260826-01234567",
+        "job_kind": "capture"
+      },
+      "required_capability": "los.fullsail_updater",
+      "domain_worker": "los_fullsail_updater",
+      "allowed_effect_types": []
     }
   ]
 }

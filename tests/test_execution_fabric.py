@@ -169,6 +169,7 @@ def test_runtime_snapshot_is_backend_neutral_and_projects_safe_task_fields(tmp_p
         "claude",
         "pr_reviews",
         "los_environment",
+        "los_fullsail",
         "non_llm",
     }
     assert snapshot["filters"]["matching_tasks"] == 1
@@ -423,8 +424,8 @@ def test_apply_imports_legacy_queue_reads_back_and_rolls_back(tmp_path: Path) ->
     assert applied["queue_mode"] == "execution_fabric"
     assert applied["mode_source"] == "explicit"
     assert applied["import_receipt"]["processed"] == 1
-    assert applied["metrics"]["queue_count"] == 5
-    assert applied["metrics"]["worker_pool_count"] == 5
+    assert applied["metrics"]["queue_count"] == 6
+    assert applied["metrics"]["worker_pool_count"] == 6
     assert applied["metrics"]["global_max_running"] == 6
     assert applied["metrics"]["reserved_interactive_slots"] == 1
     assert applied["metrics"]["max_interactive_running"] == 2
@@ -439,6 +440,7 @@ def test_apply_imports_legacy_queue_reads_back_and_rolls_back(tmp_path: Path) ->
             "claude",
             "pr_reviews",
             "los_environment",
+            "los_fullsail",
             "non_llm",
         }
         assert {row[0] for row in conn.execute("SELECT name FROM worker_pools")} == {
@@ -446,6 +448,7 @@ def test_apply_imports_legacy_queue_reads_back_and_rolls_back(tmp_path: Path) ->
             "claude_workers",
             "pr_reviewers",
             "los_environment_workers",
+            "los_fullsail_workers",
             "non_llm_workers",
         }
         assert conn.execute("SELECT queue_name FROM run_queue WHERE id = 'legacy-1'").fetchone()[0] == "non_llm"

@@ -41,6 +41,10 @@ describe("canonical policy", () => {
         title: "Review the change",
         notion_page_id: "00000000000000000000000000000001",
       },
+      "los.fullsail_updater.job.v1": {
+        job_id: "capture-20260826-12345678",
+        job_kind: "capture",
+      },
       "los.environment.deployment.observed": {
         environment: "beta",
         sha: "a".repeat(40),

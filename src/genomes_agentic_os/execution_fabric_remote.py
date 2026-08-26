@@ -35,6 +35,7 @@ from .execution_fabric_config import (
     load_execution_fabric_config,
     resolve_execution_fabric_host_id,
 )
+from .lifecycle import redact_text
 from .scaffold import expand_path
 
 
@@ -1318,6 +1319,10 @@ def _spool_artifact(
     error: str,
 ) -> dict[str, Any]:
     source = Path(path).expanduser().resolve()
+    if not source.is_file():
+        raise ExecutionFabricRemoteError(
+            f"artifact source is unavailable: {source.name}"
+        )
     digest, size_bytes = _artifact_file_identity(source)
     payload_path = _artifact_spool_payload_path(
         root,
@@ -2813,9 +2818,238 @@ def _validate_domain_worker_result(
     return normalized
 
 
+FULLSAIL_CONTROLLER_TIMEOUT_SECONDS = 3600
+
+
+def _los_fullsail_updater_worker(
+    root: Path,
+    assignment: Mapping[str, Any],
+    task: Mapping[str, Any],
+    _route: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Execute one closed FullSail controller job on its VPN-capable host.
+
+    The remote task carries identifiers only. The installed, source-owned
+    controller resolves every path, dependency, route, approval, manifest, and
+    environment operation from the local Agentic OS. This adapter deliberately
+    cannot accept or materialize an arbitrary command.
+    """
+    payload = dict(task.get("payload") or {})
+    task_id = str(task.get("id") or "")
+    attempt_id = str(assignment.get("attemptId") or "")
+    job_id = str(payload["job_id"])
+    job_kind = str(payload["job_kind"])
+    started_at = _utc_now()
+    receipt_path = (
+        root
+        / "harness/shared_factory/06-runs-and-logs/execution-fabric/worker-runs"
+        / task_id
+        / f"{attempt_id}.json"
+    )
+
+    def fail(
+        code: str,
+        message: str,
+        *,
+        retryable: bool,
+        evidence: Mapping[str, Any] | None = None,
+    ) -> None:
+        worker_receipt = {
+            "schema_version": "agentic-os-execution-fabric-worker-run/v1",
+            "task_id": task_id,
+            "attempt_id": attempt_id,
+            "worker_host": socket.gethostname(),
+            "status": "failed",
+            "started_at": started_at,
+            "finished_at": _utc_now(),
+            "execution_target": "los_fullsail_updater_controller",
+            "task_type": str(task.get("taskType") or ""),
+            "queue_name": str(task.get("queue") or ""),
+            "domain_worker": "los_fullsail_updater",
+            "job_id": job_id,
+            "job_kind": job_kind,
+            "error": {
+                "code": code,
+                "message": message,
+                "retryable": retryable,
+            },
+            "evidence": dict(evidence or {}),
+        }
+        try:
+            _write_receipt(receipt_path, worker_receipt, durable=True)
+        except OSError as exc:
+            raise TaskExecutionError(
+                "fullsail_durable_receipt_unavailable",
+                f"could not retain the FullSail failure receipt for {code}: {message}",
+                retryable=retryable,
+                receipt_path=str(receipt_path) if receipt_path.is_file() else None,
+            ) from exc
+        raise TaskExecutionError(
+            code,
+            message,
+            retryable=retryable,
+            receipt_path=str(receipt_path),
+        )
+
+    def output_fingerprint(value: Any) -> dict[str, Any]:
+        if isinstance(value, bytes):
+            raw = value
+        else:
+            raw = str(value or "").encode("utf-8", errors="replace")
+        raw_text = raw.decode("utf-8", errors="replace")
+        redacted_text = redact_text(raw_text)
+        return {
+            "bytes": len(raw),
+            "sha256": sha256(raw).hexdigest(),
+            "text": redacted_text[-20000:],
+            "truncated": len(redacted_text) > 20000,
+            "redacted": raw_text != redacted_text,
+        }
+
+    def controller_output_evidence(stdout: Any, stderr: Any) -> dict[str, Any]:
+        # Retain the last 20,000 redacted characters plus a digest of the full
+        # stream. The controller's local ledger remains the diagnostic source
+        # when the published tail is redacted or truncated.
+        return {
+            "stdout": output_fingerprint(stdout),
+            "stderr": output_fingerprint(stderr),
+        }
+
+    if not job_id.startswith(job_kind + "-"):
+        fail(
+            "fullsail_job_identity_mismatch",
+            "FullSail task job ID does not match its declared job kind",
+            retryable=False,
+        )
+    domain_slug = str(task.get("taskType") or "").partition(".")[0]
+    controller = (
+        root
+        / "lib/programs/domains"
+        / domain_slug
+        / "los_fullsail_updater/scripts/fullsail_updater.py"
+    )
+    if not controller.is_file():
+        fail(
+            "fullsail_controller_unavailable",
+            "the installed FullSail Updater controller is unavailable",
+            retryable=True,
+            evidence={"controller_relative_path": str(controller.relative_to(root))},
+        )
+    try:
+        completed = subprocess.run(
+            [
+                sys.executable,
+                str(controller),
+                "--root",
+                str(root),
+                "run-job",
+                "--job-id",
+                job_id,
+            ],
+            cwd=root,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=FULLSAIL_CONTROLLER_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        fail(
+            "fullsail_controller_timeout",
+            "the FullSail controller exceeded its bounded execution window; inspect its durable ledger",
+            retryable=False,
+            evidence={
+                "timeout_seconds": FULLSAIL_CONTROLLER_TIMEOUT_SECONDS,
+                **controller_output_evidence(exc.stdout, exc.stderr),
+            },
+        )
+    if completed.returncode:
+        fail(
+            "fullsail_controller_failed",
+            f"the FullSail controller exited {completed.returncode}; inspect its durable ledger",
+            retryable=False,
+            evidence={
+                "exit_code": completed.returncode,
+                **controller_output_evidence(completed.stdout, completed.stderr),
+            },
+        )
+    try:
+        receipt = json.loads(completed.stdout)
+    except json.JSONDecodeError:
+        fail(
+            "fullsail_controller_receipt_invalid",
+            "the FullSail controller did not emit one valid JSON receipt",
+            retryable=False,
+            evidence=controller_output_evidence(completed.stdout, completed.stderr),
+        )
+    if (
+        not isinstance(receipt, dict)
+        or receipt.get("id") != job_id
+        or receipt.get("kind") != job_kind
+        or str(receipt.get("status") or "")
+        not in {
+            "completed",
+            "skipped_no_changes",
+            "waiting_dependency",
+            "waiting_vpn",
+            "waiting_approval",
+        }
+    ):
+        fail(
+            "fullsail_controller_receipt_mismatch",
+            "the FullSail controller receipt does not match the assigned job",
+            retryable=False,
+            evidence={
+                "reported_id": receipt.get("id") if isinstance(receipt, dict) else None,
+                "reported_kind": receipt.get("kind") if isinstance(receipt, dict) else None,
+                "reported_status": receipt.get("status") if isinstance(receipt, dict) else None,
+                "reported_type": type(receipt).__name__,
+                **controller_output_evidence(completed.stdout, completed.stderr),
+            },
+        )
+    controller_result = dict(receipt.get("result") or {})
+    result = {
+        "kind": "los_fullsail_updater",
+        "job_id": job_id,
+        "job_kind": job_kind,
+        "status": receipt["status"],
+        "manifest_sha256": receipt.get("manifest_sha256")
+        or controller_result.get("manifest_sha256"),
+        "operation_count": controller_result.get("operation_count"),
+        "changed": controller_result.get("changed"),
+    }
+    worker_receipt = {
+        "schema_version": "agentic-os-execution-fabric-worker-run/v1",
+        "task_id": task_id,
+        "attempt_id": attempt_id,
+        "worker_host": socket.gethostname(),
+        "status": "succeeded",
+        "started_at": started_at,
+        "finished_at": _utc_now(),
+        "execution_target": "los_fullsail_updater_controller",
+        "task_type": str(task["taskType"]),
+        "queue_name": str(task["queue"]),
+        "domain_worker": "los_fullsail_updater",
+        "result": result,
+    }
+    _write_receipt(receipt_path, worker_receipt, durable=True)
+    return {
+        "result": result,
+        "effects": [],
+        "artifacts": [
+            {
+                "path": str(receipt_path),
+                "name": "run-report.json",
+                "contentType": "application/json",
+            }
+        ],
+    }
+
+
 register_domain_worker("codex_task", _codex_task_worker)
 register_domain_worker("claude_task", _claude_task_worker)
 register_domain_worker("team_pr_ai_review", _team_pr_ai_review_worker)
+register_domain_worker("los_fullsail_updater", _los_fullsail_updater_worker)
 
 
 def execute_assignment(root: str | Path, assignment: Mapping[str, Any]) -> dict[str, Any]:
@@ -3083,7 +3317,7 @@ class RemoteFabricWorker:
                         )
                         completed += 1
                     except TaskExecutionError as exc:
-                        if exc.receipt_path:
+                        if exc.receipt_path and Path(exc.receipt_path).is_file():
                             _publish_or_spool(
                                 self.client,
                                 self.root,

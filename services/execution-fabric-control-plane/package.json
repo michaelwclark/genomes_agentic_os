@@ -1,6 +1,6 @@
 {
   "name": "@genomes-agentic-os/execution-fabric-control-plane",
-  "version": "0.8.3",
+  "version": "0.9.0",
   "private": true,
   "description": "Portable execution-fabric control plane with PostgreSQL truth and BullMQ delivery",
   "type": "module",
