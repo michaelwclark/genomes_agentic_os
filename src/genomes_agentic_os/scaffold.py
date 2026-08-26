@@ -3712,16 +3712,18 @@ def project_config_file_content(
                         "require_write_readback": True,
                         "linear": {
                             "workspace": "genomes",
-                            "team": "Clarks Consulting",
-                            "team_id": "2225b211-a962-4392-98ef-b2e78a26669f",
-                            "project": "Genomes Agentic OS",
-                            "project_id": "5812f46f-f7a5-4518-8a59-593aaa45f418",
+                            "team": "Agentic OS",
+                            "team_id": "0f317b8b-5249-4757-98fa-ccddc174b108",
+                            "project": "Rubicon: Kernel and Control Plane",
+                            "project_id": "7cc2034f-ec14-4279-93da-f35a18a9aeec",
                             "statuses": {
                                 "groomed": "Todo",
                                 "developing": "In Progress",
                                 "ready_for_merge": "In Progress",
                                 "delivered": "Done",
-                                "blocked": "Blocked",
+                                # The Agentic OS team defines no "Blocked" state;
+                                # blocked work parks in Todo.
+                                "blocked": "Todo",
                             },
                         },
                     },
@@ -4020,8 +4022,8 @@ def project_config_file_content(
         linear_target = (
             {
                 "workspace": "genomes",
-                "team_id": "2225b211-a962-4392-98ef-b2e78a26669f",
-                "project_id": "5812f46f-f7a5-4518-8a59-593aaa45f418",
+                "team_id": "0f317b8b-5249-4757-98fa-ccddc174b108",
+                "project_id": "7cc2034f-ec14-4279-93da-f35a18a9aeec",
             }
             if linear_enabled
             else {}
