@@ -108,6 +108,26 @@ def test_format_runtime_snapshot_degrades_gracefully_when_sections_are_absent() 
     assert "TASKS (0 of 0 matching)" in rendered
 
 
+def test_format_runtime_snapshot_flags_malformed_snapshot_instead_of_rendering_healthy_empty() -> None:
+    """AGE-211 follow-up: summary/queues/tasks are core data every real
+    producer supplies (build_remote_runtime_snapshot() included) — unlike
+    health/worker_pools/filters, they are never legitimately absent. If one
+    is missing anyway the snapshot itself is malformed, and the renderer must
+    say so explicitly rather than defaulting to zero/empty, which would
+    otherwise read as a healthy, empty system and mask the anomaly."""
+    malformed_snapshot = {
+        "captured_at": "2026-08-26T09:00:00Z",
+        "queue_mode": "execution_fabric",
+        "health": "healthy",
+    }
+
+    rendered = format_runtime_snapshot(malformed_snapshot)
+
+    assert "Health: healthy" in rendered
+    assert "Queued: 0" not in rendered
+    assert rendered.count("snapshot may be malformed") == 3  # summary, queues, tasks
+
+
 def test_runtime_snapshot_is_backend_neutral_and_projects_safe_task_fields(tmp_path: Path) -> None:
     root = _root(tmp_path)
     filesystem = build_runtime_snapshot(root, task_limit=10)

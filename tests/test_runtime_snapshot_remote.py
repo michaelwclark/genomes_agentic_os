@@ -92,9 +92,11 @@ def test_backend_neutral_snapshot_routes_remote_mode_through_the_service_project
         queue_name="codex",
         statuses=["queued"],
         task_limit=20,
+        task_id="task-waiting",
     )
 
     assert observed["limit"] == 20
+    assert observed["task_id"] == "task-waiting"
     assert snapshot["consistency"] == "remote_api_snapshot"
     assert snapshot["health"] == "healthy"
     assert snapshot["summary"]["done"] == 4

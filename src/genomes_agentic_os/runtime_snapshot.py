@@ -596,39 +596,50 @@ def build_runtime_snapshot(
     }
 
 
+_MALFORMED_SECTION_MARKER = "(section missing — snapshot may be malformed)"
+
+
 def format_runtime_snapshot(snapshot: dict[str, Any]) -> str:
     """Render the compact terminal view while JSON remains the machine contract.
 
-    A producer may return a partial snapshot shape (missing a top-level
-    section the normalizing build_runtime_snapshot() wrapper would otherwise
-    inject, such as when a caller bypasses it). Render those sections as
-    unknown/absent instead of raising KeyError — see AGE-211.
+    health/worker_pools/filters are metadata build_runtime_snapshot() injects
+    on top of a producer's payload; a caller that bypasses that wrapper can
+    legitimately omit them, so they render as unknown/absent — see AGE-211.
+    summary/queues/tasks, by contrast, are core data every real producer
+    always supplies (build_remote_runtime_snapshot() included). If one of
+    those is missing the snapshot itself is malformed, so say so explicitly
+    rather than defaulting to zero/empty — a zero-default there would read as
+    a healthy, empty system instead of surfacing the anomaly.
     """
-    summary = snapshot.get("summary") or {}
+    summary = snapshot.get("summary")
     lines = [
         f"Execution Fabric Snapshot  {snapshot.get('captured_at', 'unknown')}",
         f"Mode: {snapshot.get('queue_mode', 'unknown')}  Health: {snapshot.get('health', 'unknown')}",
-        (
+    ]
+    if summary is None:
+        lines.append(f"Queued: {_MALFORMED_SECTION_MARKER}")
+    else:
+        lines.append(
             f"Queued: {summary.get('queued', 0) + summary.get('approval_needed', 0)}  Running: {summary.get('running', 0)}  "
             f"Workers: {summary.get('active_workers', 0)}  Recent failed/dead: {summary.get('failed_last_hour', 0)}/{summary.get('dead_letter', 0)}  "
             f"Retrying: {summary.get('retrying', 0)} ({summary.get('delayed_retries', 0)} delayed)  "
             f"Oldest wait: {int(summary.get('oldest_wait_seconds', 0))}s"
-        ),
-        "",
-        "QUEUES",
-        "NAME             DEPTH  RUNNING  RETRY  DELAY  DEAD  HISTORY  LIMIT",
-    ]
-    queues = snapshot.get("queues") or []
-    for queue in queues:
-        lines.append(
-            f"{str(queue.get('queue_name') or '-')[:16]:16} "
-            f"{int(queue.get('depth') or 0):5}  {int(queue.get('running') or 0):7}  "
-            f"{int(queue.get('retrying') or 0):5}  {int(queue.get('delayed_retries') or 0):5}  "
-            f"{int(queue.get('dead_letter') or 0):4}  {int(queue.get('failed') or 0):7}  "
-            f"{int(queue.get('max_queued') or 0):5}"
         )
-    if not queues:
-        lines.append("(none)")
+    lines.extend(["", "QUEUES", "NAME             DEPTH  RUNNING  RETRY  DELAY  DEAD  HISTORY  LIMIT"])
+    queues = snapshot.get("queues")
+    if queues is None:
+        lines.append(_MALFORMED_SECTION_MARKER)
+    else:
+        for queue in queues:
+            lines.append(
+                f"{str(queue.get('queue_name') or '-')[:16]:16} "
+                f"{int(queue.get('depth') or 0):5}  {int(queue.get('running') or 0):7}  "
+                f"{int(queue.get('retrying') or 0):5}  {int(queue.get('delayed_retries') or 0):5}  "
+                f"{int(queue.get('dead_letter') or 0):4}  {int(queue.get('failed') or 0):7}  "
+                f"{int(queue.get('max_queued') or 0):5}"
+            )
+        if not queues:
+            lines.append("(none)")
     lines.extend(["", "WORKER POOLS", "NAME                 LIVE  ACTIVE  CAPACITY  PROVIDER"])
     worker_pools = snapshot.get("worker_pools")
     if worker_pools is None:
@@ -642,10 +653,14 @@ def format_runtime_snapshot(snapshot: dict[str, Any]) -> str:
             )
         if not worker_pools:
             lines.append("(filesystem-managed)")
-    tasks = snapshot.get("tasks") or []
+    tasks = snapshot.get("tasks")
     filters = snapshot.get("filters")
-    displayed_tasks = filters["displayed_tasks"] if filters else len(tasks)
-    matching_tasks = filters["matching_tasks"] if filters else len(tasks)
+    if tasks is None:
+        displayed_tasks = "unknown"
+        matching_tasks = "unknown"
+    else:
+        displayed_tasks = filters["displayed_tasks"] if filters else len(tasks)
+        matching_tasks = filters["matching_tasks"] if filters else len(tasks)
     lines.extend(
         [
             "",
@@ -653,15 +668,18 @@ def format_runtime_snapshot(snapshot: dict[str, Any]) -> str:
             "STATUS           QUEUE            TARGET          TASK ID",
         ]
     )
-    for task in tasks:
-        label = str(task.get("id") or "-")
-        lines.append(
-            f"{str(task.get('status') or '-')[:15]:15} "
-            f"{str(task.get('queue_name') or '-')[:16]:16} "
-            f"{str(task.get('execution_target') or '-')[:15]:15} {label[:64]}"
-        )
-    if not tasks:
-        lines.append("(none)")
+    if tasks is None:
+        lines.append(_MALFORMED_SECTION_MARKER)
+    else:
+        for task in tasks:
+            label = str(task.get("id") or "-")
+            lines.append(
+                f"{str(task.get('status') or '-')[:15]:15} "
+                f"{str(task.get('queue_name') or '-')[:16]:16} "
+                f"{str(task.get('execution_target') or '-')[:15]:15} {label[:64]}"
+            )
+        if not tasks:
+            lines.append("(none)")
     return "\n".join(lines)
 
 
