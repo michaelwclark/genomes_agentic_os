@@ -2813,9 +2813,117 @@ def _validate_domain_worker_result(
     return normalized
 
 
+def _los_fullsail_updater_worker(
+    root: Path,
+    _assignment: Mapping[str, Any],
+    task: Mapping[str, Any],
+    _route: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Execute one closed FullSail controller job on its VPN-capable host.
+
+    The remote task carries identifiers only. The installed, source-owned
+    controller resolves every path, dependency, route, approval, manifest, and
+    environment operation from the local Agentic OS. This adapter deliberately
+    cannot accept or materialize an arbitrary command.
+    """
+    payload = dict(task.get("payload") or {})
+    job_id = str(payload["job_id"])
+    job_kind = str(payload["job_kind"])
+    if not job_id.startswith(job_kind + "-"):
+        raise TaskExecutionError(
+            "fullsail_job_identity_mismatch",
+            "FullSail task job ID does not match its declared job kind",
+            retryable=False,
+        )
+    domain_slug = str(task.get("taskType") or "").partition(".")[0]
+    controller = (
+        root
+        / "lib/programs/domains"
+        / domain_slug
+        / "los_fullsail_updater/scripts/fullsail_updater.py"
+    )
+    if not controller.is_file():
+        raise TaskExecutionError(
+            "fullsail_controller_unavailable",
+            "the installed FullSail Updater controller is unavailable",
+            retryable=True,
+        )
+    try:
+        completed = subprocess.run(
+            [
+                sys.executable,
+                str(controller),
+                "--root",
+                str(root),
+                "run-job",
+                "--job-id",
+                job_id,
+            ],
+            cwd=root,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=3600,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        raise TaskExecutionError(
+            "fullsail_controller_timeout",
+            "the FullSail controller exceeded its bounded execution window; inspect its durable ledger",
+            retryable=False,
+        ) from None
+    if completed.returncode:
+        raise TaskExecutionError(
+            "fullsail_controller_failed",
+            f"the FullSail controller exited {completed.returncode}; inspect its durable ledger",
+            retryable=False,
+        )
+    try:
+        receipt = json.loads(completed.stdout)
+    except json.JSONDecodeError:
+        raise TaskExecutionError(
+            "fullsail_controller_receipt_invalid",
+            "the FullSail controller did not emit one valid JSON receipt",
+            retryable=False,
+        ) from None
+    if (
+        not isinstance(receipt, dict)
+        or receipt.get("id") != job_id
+        or receipt.get("kind") != job_kind
+        or str(receipt.get("status") or "")
+        not in {
+            "completed",
+            "skipped_no_changes",
+            "waiting_dependency",
+            "waiting_vpn",
+            "waiting_approval",
+            "failed",
+        }
+    ):
+        raise TaskExecutionError(
+            "fullsail_controller_receipt_mismatch",
+            "the FullSail controller receipt does not match the assigned job",
+            retryable=False,
+        )
+    controller_result = dict(receipt.get("result") or {})
+    return {
+        "ok": receipt["status"] != "failed",
+        "kind": "los_fullsail_updater",
+        "job_id": job_id,
+        "job_kind": job_kind,
+        "status": receipt["status"],
+        "manifest_sha256": receipt.get("manifest_sha256")
+        or controller_result.get("manifest_sha256"),
+        "operation_count": controller_result.get("operation_count"),
+        "changed": controller_result.get("changed"),
+        "effects": [],
+    }
+
+
 register_domain_worker("codex_task", _codex_task_worker)
 register_domain_worker("claude_task", _claude_task_worker)
 register_domain_worker("team_pr_ai_review", _team_pr_ai_review_worker)
+register_domain_worker("los_fullsail_updater", _los_fullsail_updater_worker)
 
 
 def execute_assignment(root: str | Path, assignment: Mapping[str, Any]) -> dict[str, Any]:

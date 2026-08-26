@@ -22,6 +22,14 @@ Execution Fabric is an optional shared OSProgram for named queues and bounded
 worker pools. It is installed into every Agentic OS root, but presence never
 activates it:
 
+Domain controllers that need host-local capability use a closed, commandless
+domain-worker route. For example, `los.fullsail_updater.job.v1` carries only a
+validated durable job ID and kind, is pinned to `bigmac` for operator VPN
+access, and invokes the installed FullSail controller. Dependency, route,
+manifest approval, and tenant readback remain owned by that domain controller;
+Fabric owns only admission, assignment, lease, attempt, and terminal execution
+receipts.
+
 ```toml
 enabled = false
 
@@ -50,8 +58,9 @@ contains:
   `remote_with_local_fallback`) and its
   control-plane URL/timeouts plus distinct submit, worker, observer, and admin
   token environment-variable names;
-- five bounded queue definitions for Codex, Claude, Team PR review, LOS
-  environment reconciliation, and host-local non-LLM work;
+- six bounded queue definitions for Codex, Claude, Team PR review, LOS
+  environment reconciliation, the host-pinned FullSail updater, and host-local
+  non-LLM work;
 - matching worker-pool definitions with worker, task, lease, and retry limits;
 - JSON Schemas for queue configuration, worker pools, and task envelopes;
 - routing, CRUD, runbook, testing, and rollback contracts.

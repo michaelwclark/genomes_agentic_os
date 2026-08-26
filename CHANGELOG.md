@@ -9,6 +9,15 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Add the closed `los.fullsail_updater.job.v1` Execution Fabric route, its
+  single-wide `los_fullsail` queue and worker pool, and bigmac host affinity so
+  the VPN-aware NFCU-to-FullSail controller can execute without admitting
+  arbitrary commands.
+- Add the installed FullSail updater command adapter and a governed four-hour
+  local notification policy for pending VPN or manifest-approval action.
+
 ## [0.8.2] - 2026-08-18
 
 ### Fixed

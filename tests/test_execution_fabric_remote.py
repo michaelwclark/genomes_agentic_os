@@ -1741,3 +1741,75 @@ def test_unregistered_los_domain_worker_fails_closed(tmp_path: Path) -> None:
     )
     with pytest.raises(TaskExecutionError, match="domain worker los_jira_action"):
         execute_assignment(root, assignment)
+
+
+def test_registered_fullsail_worker_invokes_only_installed_closed_controller(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        execution_fabric_remote,
+        "resolve_execution_fabric_host_id",
+        lambda *_args, **_kwargs: "bigmac",
+    )
+    root = _root(tmp_path, remote=False)
+    controller = (
+        root
+        / "lib/programs/domains/los/los_fullsail_updater/scripts/fullsail_updater.py"
+    )
+    controller.parent.mkdir(parents=True)
+    controller.write_text("# installed closed controller\n", encoding="utf-8")
+    observed: dict[str, Any] = {}
+
+    def completed(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        observed["command"] = command
+        observed["kwargs"] = kwargs
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=json.dumps(
+                {
+                    "id": "capture-20260826-0123abcd",
+                    "kind": "capture",
+                    "status": "completed",
+                    "result": {"changed": True},
+                }
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr(execution_fabric_remote.subprocess, "run", completed)
+    assignment = _assignment(3)
+    assignment["task"].update(
+        {
+            "queue": "los_fullsail",
+            "taskType": "los.fullsail_updater.job.v1",
+            "payload": {
+                "job_id": "capture-20260826-0123abcd",
+                "job_kind": "capture",
+            },
+        }
+    )
+
+    receipt = execute_assignment(root, assignment)
+
+    assert receipt == {
+        "ok": True,
+        "kind": "los_fullsail_updater",
+        "job_id": "capture-20260826-0123abcd",
+        "job_kind": "capture",
+        "status": "completed",
+        "manifest_sha256": None,
+        "operation_count": None,
+        "changed": True,
+        "effects": [],
+    }
+    assert observed["command"] == [
+        sys.executable,
+        str(controller),
+        "--root",
+        str(root),
+        "run-job",
+        "--job-id",
+        "capture-20260826-0123abcd",
+    ]
+    assert "shell" not in observed["kwargs"]

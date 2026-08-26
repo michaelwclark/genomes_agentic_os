@@ -40,8 +40,8 @@
         "agentic_os.alert.publish"
       ]
     },
-    {
-      "task_type": "los.jira.action.execute",
+      {
+        "task_type": "los.jira.action.execute",
       "queue": "los_environment",
       "payload": {
         "action_id": "action-123",
@@ -52,8 +52,19 @@
       "allowed_effect_types": [
         "jira.labels.apply",
         "jira.status.transition",
-        "agentic_os.alert.publish"
-      ]
-    }
-  ]
-}
+          "agentic_os.alert.publish"
+        ]
+      },
+      {
+        "task_type": "los.fullsail_updater.job.v1",
+        "queue": "los_fullsail",
+        "payload": {
+          "job_id": "capture-20260826-01234567",
+          "job_kind": "capture"
+        },
+        "required_capability": "los.fullsail_updater",
+        "domain_worker": "los_fullsail_updater",
+        "allowed_effect_types": []
+      }
+    ]
+  }

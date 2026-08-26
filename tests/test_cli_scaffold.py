@@ -542,6 +542,7 @@ def test_execution_fabric_program_installs_inactive_filesystem_default(tmp_path:
         "claude",
         "pr_reviews",
         "los_environment",
+        "los_fullsail",
         "non_llm",
     }
     assert {pool["provider"] for pool in instance_policy["worker_pools"]} == {

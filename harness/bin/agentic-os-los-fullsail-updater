@@ -1,0 +1,6 @@
+#!/bin/sh
+set -eu
+
+ROOT="${AGENTIC_OS_ROOT:-/Users/genome/agentic_os}"
+exec python3 "$ROOT/lib/programs/domains/los/los_fullsail_updater/scripts/fullsail_updater.py" \
+  --root "$ROOT" "$@"

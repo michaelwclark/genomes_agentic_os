@@ -61,6 +61,12 @@ sources:
     cooldown_seconds: 1800
     max_deliveries_per_hour: 4
     sound: Basso
+  automation.los_fullsail_updater:
+    enabled: true
+    min_level: warning
+    cooldown_seconds: 14400
+    max_deliveries_per_hour: 1
+    sound: Tink
   os.doctor:
     enabled: true
     min_level: critical
