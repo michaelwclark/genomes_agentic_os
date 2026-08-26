@@ -19,7 +19,6 @@ from ..execution_fabric_remote import (
     clear_personal_fallback,
     ExecutionFabricClient,
     RemoteFabricWorker,
-    build_remote_runtime_snapshot,
     materialize_approval_state,
     personal_fallback_status,
     probe_personal_fallback,
@@ -414,16 +413,15 @@ def handle_runtime_work(args: argparse.Namespace) -> int:
 
 
 def handle_runtime_status(args: argparse.Namespace) -> int:
+    # Route through the same normalizing projection `runtime snapshot` uses
+    # (build_runtime_snapshot already dispatches local vs. remote and injects
+    # the health/worker_pools/filters sections the renderer expects) instead
+    # of calling the remote client's raw payload builder directly — that
+    # bypass previously fed format_runtime_snapshot() an incomplete shape and
+    # crashed with KeyError: 'health' (AGE-211).
     settings = resolve_remote_settings(args.root, role="observer")
-    if settings.remote:
-        result = build_remote_runtime_snapshot(
-            args.root,
-            task_id=args.task_id,
-            limit=args.limit,
-            client=ExecutionFabricClient(settings),
-        )
-    else:
-        result = build_runtime_snapshot(args.root, task_limit=args.limit)
+    result = build_runtime_snapshot(args.root, task_limit=args.limit, task_id=args.task_id)
+    if not settings.remote:
         result["transport"] = settings.public()
         result["degraded_mode"] = True
     print(json.dumps(result, sort_keys=True) if args.json else format_runtime_snapshot(result))

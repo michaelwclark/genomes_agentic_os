@@ -365,6 +365,7 @@ def build_runtime_snapshot(
     queue_name: str | None = None,
     statuses: Iterable[str] = (),
     task_limit: int | None = 50,
+    task_id: str | None = None,
     now: datetime | None = None,
 ) -> dict[str, Any]:
     """Capture one read-only queue, worker, and task snapshot from the selected backend."""
@@ -379,7 +380,7 @@ def build_runtime_snapshot(
     remote_settings = resolve_remote_settings(os_root, role="observer")
     if remote_settings.remote:
         remote_limit = min(task_limit or 1000, 1000)
-        snapshot = build_remote_runtime_snapshot(os_root, limit=remote_limit)
+        snapshot = build_remote_runtime_snapshot(os_root, limit=remote_limit, task_id=task_id)
         all_remote_tasks = list(snapshot.get("tasks") or [])
         matching = _matching_tasks(
             all_remote_tasks,
@@ -596,22 +597,29 @@ def build_runtime_snapshot(
 
 
 def format_runtime_snapshot(snapshot: dict[str, Any]) -> str:
-    """Render the compact terminal view while JSON remains the machine contract."""
-    summary = snapshot["summary"]
+    """Render the compact terminal view while JSON remains the machine contract.
+
+    A producer may return a partial snapshot shape (missing a top-level
+    section the normalizing build_runtime_snapshot() wrapper would otherwise
+    inject, such as when a caller bypasses it). Render those sections as
+    unknown/absent instead of raising KeyError — see AGE-211.
+    """
+    summary = snapshot.get("summary") or {}
     lines = [
-        f"Execution Fabric Snapshot  {snapshot['captured_at']}",
-        f"Mode: {snapshot['queue_mode']}  Health: {snapshot['health']}",
+        f"Execution Fabric Snapshot  {snapshot.get('captured_at', 'unknown')}",
+        f"Mode: {snapshot.get('queue_mode', 'unknown')}  Health: {snapshot.get('health', 'unknown')}",
         (
-            f"Queued: {summary['queued'] + summary['approval_needed']}  Running: {summary['running']}  "
-            f"Workers: {summary['active_workers']}  Recent failed/dead: {summary['failed_last_hour']}/{summary['dead_letter']}  "
-            f"Retrying: {summary['retrying']} ({summary['delayed_retries']} delayed)  "
-            f"Oldest wait: {int(summary['oldest_wait_seconds'])}s"
+            f"Queued: {summary.get('queued', 0) + summary.get('approval_needed', 0)}  Running: {summary.get('running', 0)}  "
+            f"Workers: {summary.get('active_workers', 0)}  Recent failed/dead: {summary.get('failed_last_hour', 0)}/{summary.get('dead_letter', 0)}  "
+            f"Retrying: {summary.get('retrying', 0)} ({summary.get('delayed_retries', 0)} delayed)  "
+            f"Oldest wait: {int(summary.get('oldest_wait_seconds', 0))}s"
         ),
         "",
         "QUEUES",
         "NAME             DEPTH  RUNNING  RETRY  DELAY  DEAD  HISTORY  LIMIT",
     ]
-    for queue in snapshot["queues"]:
+    queues = snapshot.get("queues") or []
+    for queue in queues:
         lines.append(
             f"{str(queue.get('queue_name') or '-')[:16]:16} "
             f"{int(queue.get('depth') or 0):5}  {int(queue.get('running') or 0):7}  "
@@ -619,33 +627,40 @@ def format_runtime_snapshot(snapshot: dict[str, Any]) -> str:
             f"{int(queue.get('dead_letter') or 0):4}  {int(queue.get('failed') or 0):7}  "
             f"{int(queue.get('max_queued') or 0):5}"
         )
-    if not snapshot["queues"]:
+    if not queues:
         lines.append("(none)")
     lines.extend(["", "WORKER POOLS", "NAME                 LIVE  ACTIVE  CAPACITY  PROVIDER"])
-    for pool in snapshot["worker_pools"]:
-        lines.append(
-            f"{str(pool.get('name') or '-')[:20]:20} "
-            f"{int(pool.get('live_workers') or 0):4}  {int(pool.get('active_tasks') or 0):6}  "
-            f"{int(pool.get('max_concurrency') or 0):8}  {str(pool.get('provider') or '-')[:12]}"
-        )
-    if not snapshot["worker_pools"]:
-        lines.append("(filesystem-managed)")
-    filters = snapshot["filters"]
+    worker_pools = snapshot.get("worker_pools")
+    if worker_pools is None:
+        lines.append("(unknown)")
+    else:
+        for pool in worker_pools:
+            lines.append(
+                f"{str(pool.get('name') or '-')[:20]:20} "
+                f"{int(pool.get('live_workers') or 0):4}  {int(pool.get('active_tasks') or 0):6}  "
+                f"{int(pool.get('max_concurrency') or 0):8}  {str(pool.get('provider') or '-')[:12]}"
+            )
+        if not worker_pools:
+            lines.append("(filesystem-managed)")
+    tasks = snapshot.get("tasks") or []
+    filters = snapshot.get("filters")
+    displayed_tasks = filters["displayed_tasks"] if filters else len(tasks)
+    matching_tasks = filters["matching_tasks"] if filters else len(tasks)
     lines.extend(
         [
             "",
-            f"TASKS ({filters['displayed_tasks']} of {filters['matching_tasks']} matching)",
+            f"TASKS ({displayed_tasks} of {matching_tasks} matching)",
             "STATUS           QUEUE            TARGET          TASK ID",
         ]
     )
-    for task in snapshot["tasks"]:
+    for task in tasks:
         label = str(task.get("id") or "-")
         lines.append(
             f"{str(task.get('status') or '-')[:15]:15} "
             f"{str(task.get('queue_name') or '-')[:16]:16} "
             f"{str(task.get('execution_target') or '-')[:15]:15} {label[:64]}"
         )
-    if not snapshot["tasks"]:
+    if not tasks:
         lines.append("(none)")
     return "\n".join(lines)
 

@@ -78,6 +78,36 @@ def test_missing_selector_defaults_to_filesystem_and_dry_run_is_read_only(tmp_pa
     assert not Path(plan["state_db"]).exists()
 
 
+def test_format_runtime_snapshot_degrades_gracefully_when_sections_are_absent() -> None:
+    """AGE-211 regression: a producer that returns a raw/partial snapshot shape
+    (missing top-level sections the local build_runtime_snapshot() wrapper
+    normally injects, such as health, worker_pools, and filters) must still
+    render instead of raising KeyError."""
+    partial_snapshot = {
+        "captured_at": "2026-08-26T07:00:00Z",
+        "queue_mode": "execution_fabric",
+        "summary": {
+            "queued": 0,
+            "approval_needed": 0,
+            "running": 0,
+            "active_workers": 0,
+            "failed_last_hour": 0,
+            "dead_letter": 0,
+            "retrying": 0,
+            "delayed_retries": 0,
+            "oldest_wait_seconds": 0,
+        },
+        "queues": [],
+        "tasks": [],
+    }
+
+    rendered = format_runtime_snapshot(partial_snapshot)
+
+    assert "Health: unknown" in rendered
+    assert "(unknown)" in rendered
+    assert "TASKS (0 of 0 matching)" in rendered
+
+
 def test_runtime_snapshot_is_backend_neutral_and_projects_safe_task_fields(tmp_path: Path) -> None:
     root = _root(tmp_path)
     filesystem = build_runtime_snapshot(root, task_limit=10)

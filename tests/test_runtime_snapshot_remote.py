@@ -41,8 +41,9 @@ def test_backend_neutral_snapshot_routes_remote_mode_through_the_service_project
     monkeypatch.setenv("TEST_FABRIC_OBSERVER_TOKEN", "not-a-real-observer-token")
     observed: dict[str, int] = {}
 
-    def fake_remote_snapshot(_root, *, limit):
+    def fake_remote_snapshot(_root, *, limit, task_id=None):
         observed["limit"] = limit
+        observed["task_id"] = task_id
         return {
             "schema_version": "agentic-os-runtime-snapshot/v1",
             "captured_at": "2026-07-24T18:00:00Z",
