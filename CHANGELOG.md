@@ -18,6 +18,12 @@ All notable changes to this project are documented here. The format follows
 - Add the installed FullSail updater command adapter and a governed four-hour
   local notification policy for pending VPN or manifest-approval action.
 
+### Fixed
+
+- Keep active Execution Fabric attempts alive when an opportunistic spare-slot
+  claim hits a transport timeout, while continuing to fail closed on API
+  fencing and on claim failures when no attempt is active.
+
 ## [0.8.3] - 2026-08-26
 
 ### Fixed

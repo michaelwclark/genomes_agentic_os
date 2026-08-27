@@ -3362,17 +3362,25 @@ class RemoteFabricWorker:
                 capacity = self.max_concurrency - len(active)
                 remaining = None if max_tasks is None else max_tasks - submitted
                 if capacity > 0 and (remaining is None or remaining > 0):
-                    assignment = self.client.claim(
-                        worker_id=self.worker_id,
-                        registration_token=registration_token,
-                        queues=self.queues,
-                        capabilities=self.capabilities,
-                        wait_ms=(
-                            self.client.settings.long_poll_seconds * 1000
-                            if not active
-                            else 0
-                        ),
-                    )
+                    try:
+                        assignment = self.client.claim(
+                            worker_id=self.worker_id,
+                            registration_token=registration_token,
+                            queues=self.queues,
+                            capabilities=self.capabilities,
+                            wait_ms=(
+                                self.client.settings.long_poll_seconds * 1000
+                                if not active
+                                else 0
+                            ),
+                        )
+                    except ExecutionFabricApiError:
+                        raise
+                    except ExecutionFabricRemoteError:
+                        if not active:
+                            raise
+                        time.sleep(0.05)
+                        continue
                     if assignment:
                         future = pool.submit(self.executor, self.root, assignment)
                         active[future] = assignment

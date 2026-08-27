@@ -9,6 +9,7 @@ from pathlib import Path
 import shlex
 import subprocess
 import sys
+from threading import Event
 from typing import Any
 from urllib.error import HTTPError
 
@@ -664,6 +665,53 @@ def test_worker_registers_heartbeats_and_completes_multiple_assignments(tmp_path
 
     assert client.registrations[0]["maxConcurrency"] == 2
     assert client.heartbeats
+    assert {attempt_id for attempt_id, _ in client.completed} == {
+        _assignment(1)["attemptId"],
+        _assignment(2)["attemptId"],
+    }
+    assert result["completed"] == 2
+    assert result["failed"] == 0
+
+
+def test_worker_keeps_active_attempt_alive_when_spare_claim_times_out(
+    tmp_path: Path,
+) -> None:
+    release = Event()
+
+    class SpareClaimTimeoutClient(FakeClient):
+        def __init__(self) -> None:
+            super().__init__([_assignment(1), _assignment(2)])
+            self.claim_calls = 0
+
+        def claim(self, **kwargs):
+            self.claim_calls += 1
+            if self.claim_calls == 1:
+                return super().claim(**kwargs)
+            if self.claim_calls == 2:
+                assert kwargs["wait_ms"] == 0
+                release.set()
+                raise ExecutionFabricRemoteError("spare claim timed out")
+            return super().claim(**kwargs)
+
+    client = SpareClaimTimeoutClient()
+
+    def executor(root, assignment):
+        assert release.wait(timeout=1)
+        return {"result": {"task": assignment["task"]["id"]}, "effects": []}
+
+    result = RemoteFabricWorker(
+        client,  # type: ignore[arg-type]
+        root=tmp_path,
+        worker_id="worker-one",
+        bootstrap_id="worker-bootstrap-one",
+        host_id="bigmac",
+        queues=["non_llm"],
+        max_concurrency=2,
+        heartbeat_seconds=1,
+        executor=executor,
+    ).work(max_tasks=2)
+
+    assert client.claim_calls >= 3
     assert {attempt_id for attempt_id, _ in client.completed} == {
         _assignment(1)["attemptId"],
         _assignment(2)["attemptId"],
