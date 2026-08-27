@@ -34,6 +34,22 @@ Multi-repository projects use `repository.catalog` plus
 `selection_required: true`; each run receipts the chosen repository and refuses
 to infer it from ticket wording.
 
+## Tracker content decides readiness
+
+Jira and Linear workflow status is advisory metadata. Read the live ticket and
+evaluate its problem, intended outcome, scope, acceptance behavior,
+dependencies, and validation expectations. When that content is sufficient for
+safe implementation, record the item as content-ready and continue even if the
+provider status remains `Requirements`, `Requirements Gathering`, or an
+equivalent pre-development label. A status transition or grooming approval is
+not required merely to start development.
+
+If the content is incomplete, use Grooming to resolve the gaps from source
+truth and project policy. Stop only for a concrete missing decision, unsafe
+ambiguity, dependency, authority, access, or approval. Report the exact owner
+action; never report the status label itself as the blocker or attention
+request.
+
 ## Effective policy gate
 
 Before implementation or review, inspect the dynamic 1-N Markdown bundles:
@@ -55,7 +71,7 @@ five nested Auto-Dev planes into
 
 | Gate | Ready when | If not ready |
 | --- | --- | --- |
-| Tracker | live item, correct project/team, observable acceptance, no duplicate ownership | groom through Spec Engine or fix tracker state |
+| Tracker | live item, correct project/team, content-ready acceptance, no duplicate ownership; workflow status is advisory | groom missing content through Spec Engine; never block on the status label alone |
 | Repository | configured source exists; exact remote base resolves | repair project config/access; never substitute a branch |
 | Evidence | relevant project/domain context receipt exists, including an explicit `no_context` | investigate the missing questions |
 | Environment | when behavior is environment-scoped, deployed version authority is known | run Detective; do not analyze a default branch as deployed truth |
