@@ -9,6 +9,12 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- Keep applied runtime supervisor ticks responsive by dispatching the run queue
+  through a governed detached long-run receipt instead of waiting for a queued
+  task to finish.
+
 ### Added
 
 - Add the closed `los.fullsail_updater.job.v1` Execution Fabric route, its

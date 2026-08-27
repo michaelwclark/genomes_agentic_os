@@ -62,10 +62,80 @@ def test_supervise_apply_runs_the_tick(tmp_path: Path, monkeypatch: pytest.Monke
             "external_effect": "stubbed local test dispatch",
         },
     )
+    monkeypatch.setattr(
+        supervisor,
+        "start_run",
+        lambda *_args, **_kwargs: {
+            "id": "supervisor-run-queue-dispatch",
+            "run_dir": str(root / "async-runs/supervisor-run-queue-dispatch"),
+        },
+    )
     report = supervise_tick(root, dry_run=False)
     assert report["dry_run"] is False
     assert report["ok"] is True
     assert main(["runtime", "supervise", "--root", str(root), "--apply"]) == 0
+
+
+def test_supervisor_applied_run_queue_dispatch_is_detached(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _fresh_root(tmp_path)
+    captured: dict[str, object] = {}
+
+    def fake_start_run(start_root: Path, **kwargs: object) -> dict[str, str]:
+        captured["root"] = start_root
+        captured.update(kwargs)
+        return {"id": "detached-run", "run_dir": "/tmp/detached-run"}
+
+    monkeypatch.setattr(supervisor, "start_run", fake_start_run)
+    monkeypatch.setattr(
+        supervisor,
+        "runtime_run_batch",
+        lambda *_args, **_kwargs: pytest.fail("applied supervisor dispatch must not wait on runtime_run_batch"),
+    )
+
+    result = supervisor._dispatch_run_queue(root, dry_run=False)
+
+    assert result == {
+        "ok": True,
+        "status": "dispatched",
+        "run_id": "detached-run",
+        "run_dir": "/tmp/detached-run",
+    }
+    assert captured["root"] == root.resolve()
+    assert captured["kind"] == "command"
+    assert captured["work_dir"] == str(root.resolve())
+    assert captured["command"] == [
+        sys.executable,
+        "-m",
+        "genomes_agentic_os.cli",
+        "runtime",
+        "run-next",
+        "--root",
+        str(root.resolve()),
+        "--apply",
+    ]
+
+
+def test_supervisor_dry_run_queue_preview_stays_synchronous(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _fresh_root(tmp_path)
+    expected = {"ok": True, "status": "dry_run"}
+    monkeypatch.setattr(
+        supervisor,
+        "runtime_run_batch",
+        lambda preview_root, *, dry_run: expected
+        if preview_root == root and dry_run
+        else pytest.fail("unexpected queue preview arguments"),
+    )
+    monkeypatch.setattr(
+        supervisor,
+        "start_run",
+        lambda *_args, **_kwargs: pytest.fail("dry-run must not start a detached run"),
+    )
+
+    assert supervisor._dispatch_run_queue(root, dry_run=True) is expected
 
 
 def test_schedule_producer_materializes_provider_route_before_fabric_enqueue(tmp_path: Path) -> None:
