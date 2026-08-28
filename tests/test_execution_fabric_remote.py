@@ -1617,6 +1617,63 @@ def test_team_pr_helper_receipt_wrapper_accepts_only_current_or_legacy_shape(
     assert empty_canonical.value.code == "invalid_team_pr_helper_receipt"
 
 
+@pytest.mark.parametrize("outcome", ["findings", "clean"])
+def test_team_pr_helper_receipt_wrapper_age214_dead_letter_shape_is_accepted(
+    tmp_path: Path, outcome: str
+) -> None:
+    """Regression pin for AGE-214.
+
+    AGE-214 was filed against 10 real ``pr_reviews`` task-level dead-letters
+    (queue snapshot cross-joined by task_id against
+    ``harness/shared_factory/06-runs-and-logs/execution-fabric/worker-runs/
+    <task_id>/*.json``) that all failed with "Team PR review helper receipt
+    wrapper is inconsistent", raised from this validator. Pulling the actual
+    wrapper bodies for all 10 (not just 2-3) showed every one used the
+    *current* versioned shape this function already accepts —
+    ``{"status": "succeeded", "outcome": <review outcome>, ...}`` — not an
+    unhandled third shape.
+
+    Root cause: all 10 finished between 2026-07-28 and 2026-08-13T22:45Z,
+    processed by a worker running validator logic that predated PR #225/#226
+    (merged 2026-08-13T20:33Z/21:27:30Z UTC). That older validator compared
+    ``helper_status`` directly against ``canonical.get("outcome")`` with no
+    awareness of a separate ``outcome`` field, so a compliant
+    status="succeeded" wrapper always failed
+    ``helper_status != canonical.get("outcome")``. PR #225/#226 (and the
+    return-value fix in PR #228) already fixed this before any of these 10
+    tasks' code path would run again; the currently installed runtime
+    (verified: release 0.9.0-7b111f5) already contains the fix, and the fabric's
+    own `pr_reviews` run-report history shows zero fresh occurrences of this
+    error from 2026-08-14 through 2026-08-27. This test pins that already-fixed
+    behavior against regression using the two review outcomes actually
+    observed across the 10 dead-lettered receipts (``findings`` and
+    ``clean``); it does not change any runtime behavior. The remaining work
+    for AGE-214 is an admin-authenticated operator replay of the 10 stale
+    dead-letters (RULES.md-gated, outside source-code scope), not a code fix.
+    """
+
+    canonical = {"outcome": outcome}
+    receipt_hash = sha256(
+        json.dumps(
+            canonical, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        ).encode("utf-8")
+    ).hexdigest()
+
+    assert (
+        execution_fabric_remote._validate_team_pr_helper_receipt_wrapper(
+            {
+                "status": "succeeded",
+                "outcome": outcome,
+                "receipt_sha256": receipt_hash,
+            },
+            canonical,
+            receipt_hash,
+            receipt_path=tmp_path / "receipt.json",
+        )
+        == outcome
+    )
+
+
 def test_team_pr_changed_head_helper_receipt_produces_no_projection_effect(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
