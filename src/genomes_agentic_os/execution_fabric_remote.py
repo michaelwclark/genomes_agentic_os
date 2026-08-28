@@ -70,6 +70,18 @@ class ExecutionFabricApiError(ExecutionFabricRemoteError):
         super().__init__(f"Execution Fabric API {status} {code}: {message}")
 
 
+class ExecutionFabricTransportError(ExecutionFabricRemoteError):
+    """A request never reached (or never returned from) the control plane.
+
+    Raised only for network/timeout/OS-level failures (``URLError``,
+    ``TimeoutError``, ``OSError``) with no HTTP response at all. Distinct
+    from other ``ExecutionFabricRemoteError`` cases -- such as a malformed or
+    non-object JSON body on an otherwise successful response -- so callers
+    can treat genuine connectivity failures as retryable without also
+    swallowing protocol or data corruption.
+    """
+
+
 class TaskExecutionError(ExecutionFabricRemoteError):
     """A classified assignment failure suitable for the durable run ledger."""
 
@@ -727,7 +739,7 @@ class ExecutionFabricClient:
             ) from None
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
             reason = getattr(exc, "reason", exc)
-            raise ExecutionFabricRemoteError(
+            raise ExecutionFabricTransportError(
                 f"Execution Fabric request failed for {method} {path}: {reason}"
             ) from None
         if status == 204:
@@ -3397,7 +3409,7 @@ class RemoteFabricWorker:
                         )
                     except ExecutionFabricApiError:
                         raise
-                    except ExecutionFabricRemoteError:
+                    except ExecutionFabricTransportError:
                         if not active:
                             raise
                         time.sleep(0.05)
