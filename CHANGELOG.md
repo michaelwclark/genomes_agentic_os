@@ -17,13 +17,36 @@ All notable changes to this project are documented here. The format follows
   arbitrary commands.
 - Add the installed FullSail updater command adapter and a governed four-hour
   local notification policy for pending VPN or manifest-approval action.
+
+## [0.10.0] - 2026-08-28
+
+### Added
+
 - Add `agentic-os runtime dead-letter replay --task-id <uuid> --actor <actor> [--apply]`,
   the first local CLI path to the fabric's admin-authenticated
   `/api/v1/admin/tasks/:taskId/requeue` route. Dry-run by default; `--apply`
   requeues one failed, dead-lettered, or cancelled task with an idempotent
   operator receipt written under
   `harness/shared_factory/06-runs-and-logs/execution-fabric/dead-letter-replays/`
-  (AGE-212).
+  (#271). This is the CLI verb AGE-212 needed; AGE-212 itself remains in
+  progress, with the incident's dead-letter drain still pending an operator
+  admin token.
+- Pin the AGE-214 acceptance shape for `_validate_team_pr_helper_receipt_wrapper`
+  in `execution_fabric_remote.py` as a regression test after pulling the real
+  wrapper JSON for all 10 affected dead-lettered `pr_reviews` tasks and finding
+  no live defect (#270).
+
+### Fixed
+
+- Move `genomes_agentic_os` Linear seeds in `development.yml` and
+  `spec-engine.yml` from the Clarks Consulting/CC Linear team to the
+  dedicated Agentic OS/AGE team so tracker workflow-state lookups resolve
+  against the team that actually owns this project's issues (AGE-205, #265).
+
+### Dependencies
+
+- `@vitejs/plugin-react` 6.0.5 → 6.1.0 (#258).
+- `@types/react-dom` 19.2.4 → 19.2.5 (#269).
 
 ## [0.8.3] - 2026-08-26
 
