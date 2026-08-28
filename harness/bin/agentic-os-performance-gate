@@ -14,7 +14,7 @@ RISK_PATH = re.compile(
     r"(^|/)(?:views?|serializers?|api|services?|managers?|selectors?|queries?|models?)(?:/|\.py$)",
     re.IGNORECASE,
 )
-TEST_PATH = re.compile(r"(^|/)(?:tests?|test_)(?:/|[^/]*$)|(?:^|/)test_[^/]+\.py$", re.IGNORECASE)
+TEST_PATH = re.compile(r"(^|/)tests?(?:/|(?:[._-][^/]*)?\.py$)", re.IGNORECASE)
 QUERY_BUDGET = re.compile(
     r"assertNumQueries|django_assert_num_queries|CaptureQueriesContext|query_count|assert_queries",
     re.IGNORECASE,
