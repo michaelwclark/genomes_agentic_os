@@ -70,6 +70,18 @@ class ExecutionFabricApiError(ExecutionFabricRemoteError):
         super().__init__(f"Execution Fabric API {status} {code}: {message}")
 
 
+class ExecutionFabricTransportError(ExecutionFabricRemoteError):
+    """A request never reached (or never returned from) the control plane.
+
+    Raised only for network/timeout/OS-level failures (``URLError``,
+    ``TimeoutError``, ``OSError``) with no HTTP response at all. Distinct
+    from other ``ExecutionFabricRemoteError`` cases -- such as a malformed or
+    non-object JSON body on an otherwise successful response -- so callers
+    can treat genuine connectivity failures as retryable without also
+    swallowing protocol or data corruption.
+    """
+
+
 class TaskExecutionError(ExecutionFabricRemoteError):
     """A classified assignment failure suitable for the durable run ledger."""
 
@@ -727,7 +739,7 @@ class ExecutionFabricClient:
             ) from None
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
             reason = getattr(exc, "reason", exc)
-            raise ExecutionFabricRemoteError(
+            raise ExecutionFabricTransportError(
                 f"Execution Fabric request failed for {method} {path}: {reason}"
             ) from None
         if status == 204:
@@ -3383,17 +3395,25 @@ class RemoteFabricWorker:
                 capacity = self.max_concurrency - len(active)
                 remaining = None if max_tasks is None else max_tasks - submitted
                 if capacity > 0 and (remaining is None or remaining > 0):
-                    assignment = self.client.claim(
-                        worker_id=self.worker_id,
-                        registration_token=registration_token,
-                        queues=self.queues,
-                        capabilities=self.capabilities,
-                        wait_ms=(
-                            self.client.settings.long_poll_seconds * 1000
-                            if not active
-                            else 0
-                        ),
-                    )
+                    try:
+                        assignment = self.client.claim(
+                            worker_id=self.worker_id,
+                            registration_token=registration_token,
+                            queues=self.queues,
+                            capabilities=self.capabilities,
+                            wait_ms=(
+                                self.client.settings.long_poll_seconds * 1000
+                                if not active
+                                else 0
+                            ),
+                        )
+                    except ExecutionFabricApiError:
+                        raise
+                    except ExecutionFabricTransportError:
+                        if not active:
+                            raise
+                        time.sleep(0.05)
+                        continue
                     if assignment:
                         future = pool.submit(self.executor, self.root, assignment)
                         active[future] = assignment

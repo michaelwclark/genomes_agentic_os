@@ -9,6 +9,16 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- Keep active Execution Fabric attempts alive when an opportunistic spare-slot
+  claim hits a transport timeout, while continuing to fail closed on API
+  fencing and on claim failures when no attempt is active. Only genuine
+  transport failures (network/timeout/OS-level, now raised as the distinct
+  `ExecutionFabricTransportError`) are treated as non-terminal; malformed or
+  corrupted control-plane responses (`ExecutionFabricRemoteError`) still
+  propagate instead of being silently retried.
+
 ## [0.10.0] - 2026-08-28
 
 ### Added
