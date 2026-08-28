@@ -9,30 +9,37 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-08-28
+
 ### Fixed
 
-- Keep applied runtime supervisor ticks responsive by dispatching the run queue
-  through a governed detached long-run receipt instead of waiting for a queued
-  task to finish. The detached dispatch honors `long_run`'s own wall-clock
-  budget default (or an operator-configured one) instead of a hardcoded
-  15-minute cap, so a legitimately long queue item is no longer silently
-  killed.
+- Tighten the runtime contract gate's `TEST_PATH` separator boundary so
+  production modules named like `testimonial.py` or `testing_utils.py` no
+  longer prefix-match the test-file exemption and silently bypass
+  runtime-risk classification. The redundant second `test_*.py` alternation
+  is removed as covered by the boundary form
+  ([AGE-213](https://linear.app/agenticoslinear/issue/AGE-213), #275).
 - Keep active Execution Fabric attempts alive when an opportunistic spare-slot
   claim hits a transport timeout, while continuing to fail closed on API
   fencing and on claim failures when no attempt is active. Only genuine
   transport failures (network/timeout/OS-level, now raised as the distinct
   `ExecutionFabricTransportError`) are treated as non-terminal; malformed or
   corrupted control-plane responses (`ExecutionFabricRemoteError`) still
-  propagate instead of being silently retried.
+  propagate instead of being silently retried (#266).
+- Keep applied runtime supervisor ticks responsive by dispatching the run queue
+  through a governed detached long-run receipt instead of waiting for a queued
+  task to finish. The detached dispatch honors `long_run`'s own wall-clock
+  budget default (or an operator-configured one) instead of a hardcoded
+  15-minute cap, so a legitimately long queue item is no longer silently
+  killed (#267).
 
 ### Added
 
-- Add the closed `los.fullsail_updater.job.v1` Execution Fabric route, its
-  single-wide `los_fullsail` queue and worker pool, and bigmac host affinity so
-  the VPN-aware NFCU-to-FullSail controller can execute without admitting
-  arbitrary commands.
-- Add the installed FullSail updater command adapter and a governed four-hour
-  local notification policy for pending VPN or manifest-approval action.
+- Backfill the missing `docs/releases/0.9.0.md` release notes and relabel the
+  CHANGELOG's `[0.9.0]` section content, which had remained mislabeled under
+  `[Unreleased]` even after `0.10.0` shipped (#274).
+- Regenerate the stale `agentic-os --help` quickstart transcript to match the
+  current CLI surface (#274).
 
 ## [0.10.0] - 2026-08-28
 
