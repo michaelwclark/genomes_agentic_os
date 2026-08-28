@@ -87,13 +87,24 @@ def _dispatch_run_queue(root: str | Path, *, dry_run: bool) -> dict[str, Any]:
         label="runtime supervisor run-queue dispatch",
         kind="command",
         work_dir=str(os_root),
-        budgets={"wall_clock_minutes": 15, "no_progress_minutes": 15},
+        # No budgets override here on purpose. Detaching this dispatch into
+        # start_run is what keeps the supervisor tick responsive, so the
+        # queue item's own runtime no longer needs to be capped at the old
+        # 15-minute tick cadence -- long_run's wall-clock budget is a hard
+        # SIGTERM->SIGKILL process-group kill, not a soft warning, and
+        # killing a legitimately long queue item here would trade tick
+        # starvation for silent forced termination of the exact work this
+        # dispatch exists to accommodate. Let long_run._effective_budgets
+        # apply the operator's harness/config/long-running-execution.yml
+        # budgets.wall_clock_minutes if configured, falling back to the
+        # module's own 60-minute default otherwise.
+        budgets=None,
     )
     return {
         "ok": True,
         "status": "dispatched",
-        "run_id": state.get("id"),
-        "run_dir": state.get("run_dir"),
+        "run_id": state["id"],
+        "run_dir": state["run_dir"],
     }
 
 

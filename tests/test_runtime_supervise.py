@@ -9,7 +9,7 @@ import time
 import pytest
 import yaml
 
-from genomes_agentic_os import runtime_ops, supervisor
+from genomes_agentic_os import long_run, runtime_ops, supervisor
 from genomes_agentic_os.cli import main
 from genomes_agentic_os.runtime_backend import apply_queue_mode, runtime_queue_items
 from genomes_agentic_os.runtime_ops import runtime_doctor, runtime_run_latest_by_ref, runtime_run_next
@@ -115,6 +115,71 @@ def test_supervisor_applied_run_queue_dispatch_is_detached(
         str(root.resolve()),
         "--apply",
     ]
+
+
+def test_supervisor_applied_dispatch_does_not_hardcode_a_short_wall_clock_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A detached run-queue dispatch must not be killed at the old 15-minute
+    tick cadence.
+
+    ``long_run.py`` enforces ``wall_clock_minutes`` as a hard
+    SIGTERM->SIGKILL process-group kill (not a warning), and tick
+    responsiveness no longer depends on this task's runtime once dispatch is
+    detached -- that is this PR's whole point. Regression pin for the
+    triple-corroborated Copilot + independent-review + codex finding on
+    ``supervisor.py:91``: the dispatch must defer to ``long_run``'s own
+    default (60 min) or an operator-configured budget, never a hardcoded
+    15-minute override.
+    """
+    root = _fresh_root(tmp_path)
+    captured: dict[str, object] = {}
+
+    def fake_start_run(_start_root: Path, **kwargs: object) -> dict[str, str]:
+        captured.update(kwargs)
+        return {"id": "detached-run", "run_dir": "/tmp/detached-run"}
+
+    monkeypatch.setattr(supervisor, "start_run", fake_start_run)
+
+    supervisor._dispatch_run_queue(root, dry_run=False)
+
+    supplied_budgets = captured.get("budgets") or {}
+    effective = long_run._effective_budgets(root, supplied_budgets)
+    assert effective["wall_clock_minutes"] >= 60, (
+        "detached run-queue dispatch must honor long_run's own wall-clock "
+        "default (60 min) as a floor, or an operator-configured budget -- "
+        f"not the old 15-minute tick cadence; got {effective['wall_clock_minutes']}"
+    )
+
+
+def test_supervisor_applied_dispatch_honors_a_configured_wall_clock_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Positive pin: an operator-configured wall-clock budget in
+    ``harness/config/long-running-execution.yml`` still reaches the detached
+    run-queue dispatch, since dropping the hardcoded 15-minute override must
+    not also drop the ability to configure a deliberate cap.
+    """
+    root = _fresh_root(tmp_path)
+    config_path = root / "harness/config/long-running-execution.yml"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        yaml.safe_dump({"long_running_execution": {"budgets": {"wall_clock_minutes": 45}}}),
+        encoding="utf-8",
+    )
+    captured: dict[str, object] = {}
+
+    def fake_start_run(_start_root: Path, **kwargs: object) -> dict[str, str]:
+        captured.update(kwargs)
+        return {"id": "detached-run", "run_dir": "/tmp/detached-run"}
+
+    monkeypatch.setattr(supervisor, "start_run", fake_start_run)
+
+    supervisor._dispatch_run_queue(root, dry_run=False)
+
+    supplied_budgets = captured.get("budgets") or {}
+    effective = long_run._effective_budgets(root, supplied_budgets)
+    assert effective["wall_clock_minutes"] == 45
 
 
 def test_supervisor_dry_run_queue_preview_stays_synchronous(
