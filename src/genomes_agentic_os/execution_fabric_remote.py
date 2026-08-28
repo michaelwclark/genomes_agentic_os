@@ -950,6 +950,27 @@ class ExecutionFabricClient:
             },
         )
 
+    def requeue_task(
+        self,
+        *,
+        task_id: str,
+        actor: str,
+        idempotency_key: str,
+    ) -> dict[str, Any]:
+        """Replay one failed, dead-lettered, or cancelled task back to queued.
+
+        Admin-authenticated, idempotent, current-epoch-fenced per RULES.md
+        ("replay only through an idempotent, admin-authenticated,
+        current-epoch operator receipt"). The server fences on leadership and
+        the current fabric epoch internally; this client only needs to name
+        the target, the actor, and the idempotency key.
+        """
+        return self._request(
+            "POST",
+            f"/api/v1/admin/tasks/{task_id}/requeue",
+            {"actor": actor, "idempotencyKey": idempotency_key},
+        )
+
     def publish_reliability_observation(
         self,
         observation: Mapping[str, Any],
