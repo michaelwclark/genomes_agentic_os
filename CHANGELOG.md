@@ -17,8 +17,8 @@ All notable changes to this project are documented here. The format follows
   arbitrary commands.
 - Add the installed FullSail updater command adapter and a governed four-hour
   local notification policy for pending VPN or manifest-approval action.
-- Add `agentic-os runtime dead-letter replay --task-id <uuid> --actor <actor>
-  [--apply]`, the first local CLI path to the fabric's admin-authenticated
+- Add `agentic-os runtime dead-letter replay --task-id <uuid> --actor <actor> [--apply]`,
+  the first local CLI path to the fabric's admin-authenticated
   `/api/v1/admin/tasks/:taskId/requeue` route. Dry-run by default; `--apply`
   requeues one failed, dead-lettered, or cancelled task with an idempotent
   operator receipt written under
