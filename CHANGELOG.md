@@ -46,7 +46,7 @@ All notable changes to this project are documented here. The format follows
 ### Dependencies
 
 - `@vitejs/plugin-react` 6.0.5 → 6.1.0 (#258).
-- `@types/react-dom` → 19.2.5 (#269).
+- `@types/react-dom` 19.2.4 → 19.2.5 (#269).
 
 ## [0.8.3] - 2026-08-26
 
