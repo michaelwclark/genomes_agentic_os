@@ -9,15 +9,6 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
-### Added
-
-- Add the closed `los.fullsail_updater.job.v1` Execution Fabric route, its
-  single-wide `los_fullsail` queue and worker pool, and bigmac host affinity so
-  the VPN-aware NFCU-to-FullSail controller can execute without admitting
-  arbitrary commands.
-- Add the installed FullSail updater command adapter and a governed four-hour
-  local notification policy for pending VPN or manifest-approval action.
-
 ### Fixed
 
 - Keep active Execution Fabric attempts alive when an opportunistic spare-slot
@@ -57,6 +48,17 @@ All notable changes to this project are documented here. The format follows
 
 - `@vitejs/plugin-react` 6.0.5 → 6.1.0 (#258).
 - `@types/react-dom` 19.2.4 → 19.2.5 (#269).
+
+## [0.9.0] - 2026-08-26
+
+### Added
+
+- Add the closed `los.fullsail_updater.job.v1` Execution Fabric route, its
+  single-wide `los_fullsail` queue and worker pool, and bigmac host affinity so
+  the VPN-aware NFCU-to-FullSail controller can execute without admitting
+  arbitrary commands.
+- Add the installed FullSail updater command adapter and a governed four-hour
+  local notification policy for pending VPN or manifest-approval action.
 
 ## [0.8.3] - 2026-08-26
 
