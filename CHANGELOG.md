@@ -28,7 +28,9 @@ All notable changes to this project are documented here. The format follows
   requeues one failed, dead-lettered, or cancelled task with an idempotent
   operator receipt written under
   `harness/shared_factory/06-runs-and-logs/execution-fabric/dead-letter-replays/`
-  (AGE-212, #271).
+  (#271). This is the CLI verb AGE-212 needed; AGE-212 itself remains in
+  progress, with the incident's dead-letter drain still pending an operator
+  admin token.
 - Pin the AGE-214 acceptance shape for `_validate_team_pr_helper_receipt_wrapper`
   in `execution_fabric_remote.py` as a regression test after pulling the real
   wrapper JSON for all 10 affected dead-lettered `pr_reviews` tasks and finding
