@@ -2497,6 +2497,91 @@ def test_cli_dead_letter_replay_apply_requeues_task_and_writes_receipt(
     assert on_disk["actor"] == "operator@example.com"
 
 
+def test_cli_dead_letter_replay_fails_cleanly_without_admin_token(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Opposing-review gap on PR #271: every other --apply test sets the admin
+    token env var. The admin token is the one credential confirmed
+    unreachable at the operator level in production right now (root-owned
+    Docker secret, no env var or _FILE mount anywhere reachable), so "run
+    --apply without the token" is the operator's most likely first real
+    experience of this verb. Pin that it (a) fails with a non-zero exit,
+    (b) names the exact configured env var rather than throwing an opaque
+    error, (c) performs no admin mutation, and (d) writes no receipt file --
+    and that dry-run, which never resolves the admin credential, is
+    unaffected by the token being absent.
+    """
+    root = _root(tmp_path, remote=True)
+    monkeypatch.setenv("TEST_FABRIC_TOKEN", "observer-token")
+    monkeypatch.delenv("TEST_ADMIN_TOKEN", raising=False)
+    monkeypatch.delenv("TEST_ADMIN_TOKEN_FILE", raising=False)
+    task_id = "77777777-7777-4777-8777-777777777777"
+
+    monkeypatch.setattr(
+        ExecutionFabricClient,
+        "get_task",
+        lambda self, task_id_arg: {
+            "id": task_id_arg,
+            "queue": "pr_reviews",
+            "status": "dead_lettered",
+        },
+    )
+
+    def fail_if_called(*_args: Any, **_kwargs: Any) -> None:
+        raise AssertionError(
+            "admin API must not be called when the admin token is absent"
+        )
+
+    monkeypatch.setattr(ExecutionFabricClient, "requeue_task", fail_if_called)
+
+    # Dry-run never resolves the admin credential -- must still succeed with
+    # the token completely absent from the environment.
+    dry_run_exit_code = main(
+        [
+            "runtime",
+            "dead-letter",
+            "replay",
+            "--root",
+            str(root),
+            "--task-id",
+            task_id,
+            "--actor",
+            "operator@example.com",
+            "--json",
+        ]
+    )
+    dry_run_rendered = json.loads(capsys.readouterr().out)
+    assert dry_run_exit_code == 0
+    assert dry_run_rendered["dry_run"] is True
+    assert dry_run_rendered["ready"] is True
+
+    # --apply must fail cleanly: non-zero exit, the exact env var named,
+    # no mutation attempted, and no receipt written.
+    receipts_dir = (
+        root
+        / "harness/shared_factory/06-runs-and-logs/execution-fabric/dead-letter-replays"
+    )
+    apply_exit_code = main(
+        [
+            "runtime",
+            "dead-letter",
+            "replay",
+            "--root",
+            str(root),
+            "--task-id",
+            task_id,
+            "--actor",
+            "operator@example.com",
+            "--apply",
+        ]
+    )
+    apply_stderr = capsys.readouterr().err
+
+    assert apply_exit_code == 2
+    assert "TEST_ADMIN_TOKEN" in apply_stderr
+    assert not receipts_dir.exists()
+
+
 def test_cli_dead_letter_replay_apply_rejects_non_replayable_status(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
