@@ -12,7 +12,7 @@ from pathlib import Path
 MIGRATION_PATH = re.compile(r"(^|/)migrations?/[^/]+\.py$", re.IGNORECASE)
 CONFIG_REWRITE = re.compile(r"reload|configuration|config|rules?|jq|transform|tenant|fixture|backfill|persist", re.IGNORECASE)
 CONFIG_CONTENT = re.compile(r"JQConfiguration|\.jq|transformer|feature[_ -]?flag|tenant[_ -]?(?:config|template)|rules?\s*=", re.IGNORECASE)
-TEST_PATH = re.compile(r"(^|/)(?:tests?|test_)(?:/|[^/]*$)|(?:^|/)test_[^/]+\.py$", re.IGNORECASE)
+TEST_PATH = re.compile(r"(^|/)tests?(?:/|(?:[._-][^/]*)?\.py$)", re.IGNORECASE)
 COMPILE_EVIDENCE = re.compile(r"jq\.compile|compile\s*\(|JQException|undefined", re.IGNORECASE)
 COMPOSITION_EVIDENCE = re.compile(r"compos|co-dependent|dependency|all\s+six|closure|every\s+dependent", re.IGNORECASE)
 PRESERVE_EVIDENCE = re.compile(r"custom|tenant|drift|preserv|non[- ]?destruct|do not overwrite|audit", re.IGNORECASE)
