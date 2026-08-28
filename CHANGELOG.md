@@ -17,6 +17,13 @@ All notable changes to this project are documented here. The format follows
   budget default (or an operator-configured one) instead of a hardcoded
   15-minute cap, so a legitimately long queue item is no longer silently
   killed.
+- Keep active Execution Fabric attempts alive when an opportunistic spare-slot
+  claim hits a transport timeout, while continuing to fail closed on API
+  fencing and on claim failures when no attempt is active. Only genuine
+  transport failures (network/timeout/OS-level, now raised as the distinct
+  `ExecutionFabricTransportError`) are treated as non-terminal; malformed or
+  corrupted control-plane responses (`ExecutionFabricRemoteError`) still
+  propagate instead of being silently retried.
 
 ### Added
 
