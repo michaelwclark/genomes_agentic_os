@@ -11,6 +11,12 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- Keep applied runtime supervisor ticks responsive by dispatching the run queue
+  through a governed detached long-run receipt instead of waiting for a queued
+  task to finish. The detached dispatch honors `long_run`'s own wall-clock
+  budget default (or an operator-configured one) instead of a hardcoded
+  15-minute cap, so a legitimately long queue item is no longer silently
+  killed.
 - Keep active Execution Fabric attempts alive when an opportunistic spare-slot
   claim hits a transport timeout, while continuing to fail closed on API
   fencing and on claim failures when no attempt is active. Only genuine
@@ -18,6 +24,15 @@ All notable changes to this project are documented here. The format follows
   `ExecutionFabricTransportError`) are treated as non-terminal; malformed or
   corrupted control-plane responses (`ExecutionFabricRemoteError`) still
   propagate instead of being silently retried.
+
+### Added
+
+- Add the closed `los.fullsail_updater.job.v1` Execution Fabric route, its
+  single-wide `los_fullsail` queue and worker pool, and bigmac host affinity so
+  the VPN-aware NFCU-to-FullSail controller can execute without admitting
+  arbitrary commands.
+- Add the installed FullSail updater command adapter and a governed four-hour
+  local notification policy for pending VPN or manifest-approval action.
 
 ## [0.10.0] - 2026-08-28
 

@@ -23,11 +23,13 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
+import sys
 from typing import Any, Callable
 
 import yaml
 
 from .event_graph import process_due
+from .long_run import start_run
 from .runtime_ops import (
     heartbeat_list,
     heartbeat_run,
@@ -54,13 +56,56 @@ def _summarize(result: dict[str, Any]) -> dict[str, Any]:
     summary: dict[str, Any] = {}
     if not isinstance(result, dict):
         return summary
-    for key in ("ok", "status", "dry_run"):
+    for key in ("ok", "status", "dry_run", "run_id", "run_dir"):
         if key in result:
             summary[key] = result[key]
     for key, value in result.items():
         if isinstance(value, list):
             summary[f"{key}_count"] = len(value)
     return summary
+
+
+def _dispatch_run_queue(root: str | Path, *, dry_run: bool) -> dict[str, Any]:
+    """Preview synchronously or dispatch one applied queue item asynchronously."""
+
+    if dry_run:
+        return runtime_run_batch(root, dry_run=True)
+
+    os_root = Path(root).expanduser().resolve()
+    state = start_run(
+        os_root,
+        command=[
+            sys.executable,
+            "-m",
+            "genomes_agentic_os.cli",
+            "runtime",
+            "run-next",
+            "--root",
+            str(os_root),
+            "--apply",
+        ],
+        label="runtime supervisor run-queue dispatch",
+        kind="command",
+        work_dir=str(os_root),
+        # No budgets override here on purpose. Detaching this dispatch into
+        # start_run is what keeps the supervisor tick responsive, so the
+        # queue item's own runtime no longer needs to be capped at the old
+        # 15-minute tick cadence -- long_run's wall-clock budget is a hard
+        # SIGTERM->SIGKILL process-group kill, not a soft warning, and
+        # killing a legitimately long queue item here would trade tick
+        # starvation for silent forced termination of the exact work this
+        # dispatch exists to accommodate. Let long_run._effective_budgets
+        # apply the operator's harness/config/long-running-execution.yml
+        # budgets.wall_clock_minutes if configured, falling back to the
+        # module's own 60-minute default otherwise.
+        budgets=None,
+    )
+    return {
+        "ok": True,
+        "status": "dispatched",
+        "run_id": state["id"],
+        "run_dir": state["run_dir"],
+    }
 
 
 def supervise_tick(root: str | Path, *, dry_run: bool = True) -> dict[str, Any]:
@@ -99,7 +144,7 @@ def supervise_tick(root: str | Path, *, dry_run: bool = True) -> dict[str, Any]:
     _run("watch_sources", lambda: run_due_watch_sources(root, dry_run=dry_run))
     _run("events", lambda: process_due(root, dry_run=dry_run))
     _run("priority_run_queue", _priority_run_queue)
-    _run("run_queue", lambda: runtime_run_batch(root, dry_run=dry_run))
+    _run("run_queue", lambda: _dispatch_run_queue(root, dry_run=dry_run))
     _run(
         "state_backup",
         lambda: backup_state_database(
