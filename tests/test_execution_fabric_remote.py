@@ -1617,6 +1617,63 @@ def test_team_pr_helper_receipt_wrapper_accepts_only_current_or_legacy_shape(
     assert empty_canonical.value.code == "invalid_team_pr_helper_receipt"
 
 
+@pytest.mark.parametrize("outcome", ["findings", "clean"])
+def test_team_pr_helper_receipt_wrapper_age214_dead_letter_shape_is_accepted(
+    tmp_path: Path, outcome: str
+) -> None:
+    """Regression pin for AGE-214.
+
+    AGE-214 was filed against 10 real ``pr_reviews`` task-level dead-letters
+    (queue snapshot cross-joined by task_id against
+    ``harness/shared_factory/06-runs-and-logs/execution-fabric/worker-runs/
+    <task_id>/*.json``) that all failed with "Team PR review helper receipt
+    wrapper is inconsistent", raised from this validator. Pulling the actual
+    wrapper bodies for all 10 (not just 2-3) showed every one used the
+    *current* versioned shape this function already accepts —
+    ``{"status": "succeeded", "outcome": <review outcome>, ...}`` — not an
+    unhandled third shape.
+
+    Root cause: all 10 finished between 2026-07-28 and 2026-08-13T22:45Z,
+    processed by a worker running validator logic that predated PR #225/#226
+    (merged 2026-08-13T20:33Z/21:27:30Z UTC). That older validator compared
+    ``helper_status`` directly against ``canonical.get("outcome")`` with no
+    awareness of a separate ``outcome`` field, so a compliant
+    status="succeeded" wrapper always failed
+    ``helper_status != canonical.get("outcome")``. PR #225/#226 (and the
+    return-value fix in PR #228) already fixed this before any of these 10
+    tasks' code path would run again; the currently installed runtime
+    (verified: release 0.9.0-7b111f5) already contains the fix, and the fabric's
+    own `pr_reviews` run-report history shows zero fresh occurrences of this
+    error from 2026-08-14 through 2026-08-27. This test pins that already-fixed
+    behavior against regression using the two review outcomes actually
+    observed across the 10 dead-lettered receipts (``findings`` and
+    ``clean``); it does not change any runtime behavior. The remaining work
+    for AGE-214 is an admin-authenticated operator replay of the 10 stale
+    dead-letters (RULES.md-gated, outside source-code scope), not a code fix.
+    """
+
+    canonical = {"outcome": outcome}
+    receipt_hash = sha256(
+        json.dumps(
+            canonical, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        ).encode("utf-8")
+    ).hexdigest()
+
+    assert (
+        execution_fabric_remote._validate_team_pr_helper_receipt_wrapper(
+            {
+                "status": "succeeded",
+                "outcome": outcome,
+                "receipt_sha256": receipt_hash,
+            },
+            canonical,
+            receipt_hash,
+            receipt_path=tmp_path / "receipt.json",
+        )
+        == outcome
+    )
+
+
 def test_team_pr_changed_head_helper_receipt_produces_no_projection_effect(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -2240,3 +2297,385 @@ def test_fullsail_worker_preserves_retryable_receipt_write_failure(
     assert failure.value.code == "fullsail_durable_receipt_unavailable"
     assert failure.value.retryable is True
     assert failure.value.receipt_path is None
+
+
+# AGE-212 follow-up (Project Rubicon lane A1): no local CLI verb exists to
+# replay a dead-lettered task through the fabric's admin-authenticated
+# `/api/v1/admin/tasks/:taskId/requeue` route (confirmed against the real
+# compiled control-plane route table on genomesbox, not guessed). RULES.md
+# requires replay to happen "only through an idempotent, admin-authenticated,
+# current-epoch operator receipt" -- this covers the client-level contract for
+# that route.
+def test_client_sends_dead_letter_task_requeue(tmp_path: Path) -> None:
+    root = _root(tmp_path)
+    requests = []
+
+    def transport(request, timeout):
+        requests.append(request)
+        return Response(
+            {
+                "id": "11111111-1111-4111-8111-111111111111",
+                "idempotency_key": "dead-letter-replay:task-one",
+                "action": "task.requeue",
+                "target_type": "task",
+                "target_id": "task-one",
+                "actor": "operator@example.com",
+                "fabric_epoch": 7,
+                "status": "succeeded",
+                "before_state": {"status": "dead_lettered"},
+                "after_state": {"status": "queued"},
+            }
+        )
+
+    client = ExecutionFabricClient.from_root(
+        root,
+        role="admin",
+        environ={"TEST_ADMIN_TOKEN": "admin-secret"},
+        transport=transport,
+    )
+    result = client.requeue_task(
+        task_id="task-one",
+        actor="operator@example.com",
+        idempotency_key="dead-letter-replay:task-one",
+    )
+
+    request = requests[0]
+    assert request.full_url.endswith("/api/v1/admin/tasks/task-one/requeue")
+    assert request.method == "POST"
+    assert request.headers["Authorization"] == "Bearer admin-secret"
+    assert json.loads(request.data) == {
+        "actor": "operator@example.com",
+        "idempotencyKey": "dead-letter-replay:task-one",
+    }
+    assert result["after_state"] == {"status": "queued"}
+
+
+def test_cli_dead_letter_replay_dry_run_reports_plan_without_admin_call(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = _root(tmp_path, remote=True)
+    monkeypatch.setenv("TEST_FABRIC_TOKEN", "observer-token")
+    task_id = "22222222-2222-4222-8222-222222222222"
+
+    def fake_get_task(self, task_id_arg: str) -> dict[str, Any]:
+        assert task_id_arg == task_id
+        return {"id": task_id, "queue": "pr_reviews", "status": "dead_lettered"}
+
+    admin_calls: list[Any] = []
+
+    def fail_if_called(*_args: Any, **_kwargs: Any) -> None:
+        admin_calls.append(True)
+        raise AssertionError("admin API must not be called in dry-run mode")
+
+    monkeypatch.setattr(ExecutionFabricClient, "get_task", fake_get_task)
+    monkeypatch.setattr(ExecutionFabricClient, "requeue_task", fail_if_called)
+
+    exit_code = main(
+        [
+            "runtime",
+            "dead-letter",
+            "replay",
+            "--root",
+            str(root),
+            "--task-id",
+            task_id,
+            "--actor",
+            "operator@example.com",
+            "--json",
+        ]
+    )
+    rendered = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert admin_calls == []
+    assert rendered["dry_run"] is True
+    assert rendered["applied"] is False
+    assert rendered["ready"] is True
+    assert rendered["current_status"] == "dead_lettered"
+    assert rendered["idempotency_key"] == f"dead-letter-replay:{task_id}"
+
+
+def test_cli_dead_letter_replay_dry_run_blocks_non_replayable_status(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = _root(tmp_path, remote=True)
+    monkeypatch.setenv("TEST_FABRIC_TOKEN", "observer-token")
+    task_id = "33333333-3333-4333-8333-333333333333"
+
+    monkeypatch.setattr(
+        ExecutionFabricClient,
+        "get_task",
+        lambda self, task_id_arg: {"id": task_id_arg, "queue": "pr_reviews", "status": "queued"},
+    )
+
+    exit_code = main(
+        [
+            "runtime",
+            "dead-letter",
+            "replay",
+            "--root",
+            str(root),
+            "--task-id",
+            task_id,
+            "--actor",
+            "operator@example.com",
+            "--json",
+        ]
+    )
+    rendered = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 1
+    assert rendered["ready"] is False
+    assert "queued" in rendered["blockers"][0]
+
+
+def test_cli_dead_letter_replay_apply_requeues_task_and_writes_receipt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = _root(tmp_path, remote=True)
+    monkeypatch.setenv("TEST_FABRIC_TOKEN", "observer-token")
+    monkeypatch.setenv("TEST_ADMIN_TOKEN", "admin-secret")
+    task_id = "44444444-4444-4444-8444-444444444444"
+
+    get_task_calls: list[str] = []
+
+    def fake_get_task(self, task_id_arg: str) -> dict[str, Any]:
+        get_task_calls.append(task_id_arg)
+        status = "dead_lettered" if len(get_task_calls) == 1 else "queued"
+        return {"id": task_id_arg, "queue": "pr_reviews", "status": status}
+
+    requeue_calls: list[dict[str, Any]] = []
+
+    def fake_requeue_task(self, *, task_id: str, actor: str, idempotency_key: str) -> dict[str, Any]:
+        requeue_calls.append(
+            {"task_id": task_id, "actor": actor, "idempotency_key": idempotency_key}
+        )
+        return {
+            "id": "receipt-one",
+            "action": "task.requeue",
+            "status": "succeeded",
+            "before_state": {"status": "dead_lettered"},
+            "after_state": {"status": "queued"},
+        }
+
+    monkeypatch.setattr(ExecutionFabricClient, "get_task", fake_get_task)
+    monkeypatch.setattr(ExecutionFabricClient, "requeue_task", fake_requeue_task)
+
+    exit_code = main(
+        [
+            "runtime",
+            "dead-letter",
+            "replay",
+            "--root",
+            str(root),
+            "--task-id",
+            task_id,
+            "--actor",
+            "operator@example.com",
+            "--apply",
+            "--json",
+        ]
+    )
+    rendered = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert requeue_calls == [
+        {
+            "task_id": task_id,
+            "actor": "operator@example.com",
+            "idempotency_key": f"dead-letter-replay:{task_id}",
+        }
+    ]
+    assert get_task_calls == [task_id, task_id]
+    assert rendered["applied"] is True
+    assert rendered["readback_status"] == "queued"
+    assert rendered["operator_receipt"]["after_state"] == {"status": "queued"}
+    receipt_path = Path(rendered["receipt_path"])
+    assert receipt_path.exists()
+    on_disk = json.loads(receipt_path.read_text(encoding="utf-8"))
+    assert on_disk["task_id"] == task_id
+    assert on_disk["actor"] == "operator@example.com"
+
+
+def test_cli_dead_letter_replay_fails_cleanly_without_admin_token(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Opposing-review gap on PR #271: every other --apply test sets the admin
+    token env var. The admin token is the one credential confirmed
+    unreachable at the operator level in production right now (root-owned
+    Docker secret, no env var or _FILE mount anywhere reachable), so "run
+    --apply without the token" is the operator's most likely first real
+    experience of this verb. Pin that it (a) fails with a non-zero exit,
+    (b) names the exact configured env var rather than throwing an opaque
+    error, (c) performs no admin mutation, and (d) writes no receipt file --
+    and that dry-run, which never resolves the admin credential, is
+    unaffected by the token being absent.
+    """
+    root = _root(tmp_path, remote=True)
+    monkeypatch.setenv("TEST_FABRIC_TOKEN", "observer-token")
+    monkeypatch.delenv("TEST_ADMIN_TOKEN", raising=False)
+    monkeypatch.delenv("TEST_ADMIN_TOKEN_FILE", raising=False)
+    task_id = "77777777-7777-4777-8777-777777777777"
+
+    monkeypatch.setattr(
+        ExecutionFabricClient,
+        "get_task",
+        lambda self, task_id_arg: {
+            "id": task_id_arg,
+            "queue": "pr_reviews",
+            "status": "dead_lettered",
+        },
+    )
+
+    def fail_if_called(*_args: Any, **_kwargs: Any) -> None:
+        raise AssertionError(
+            "admin API must not be called when the admin token is absent"
+        )
+
+    monkeypatch.setattr(ExecutionFabricClient, "requeue_task", fail_if_called)
+
+    # Dry-run never resolves the admin credential -- must still succeed with
+    # the token completely absent from the environment.
+    dry_run_exit_code = main(
+        [
+            "runtime",
+            "dead-letter",
+            "replay",
+            "--root",
+            str(root),
+            "--task-id",
+            task_id,
+            "--actor",
+            "operator@example.com",
+            "--json",
+        ]
+    )
+    dry_run_rendered = json.loads(capsys.readouterr().out)
+    assert dry_run_exit_code == 0
+    assert dry_run_rendered["dry_run"] is True
+    assert dry_run_rendered["ready"] is True
+
+    # --apply must fail cleanly: non-zero exit, the exact env var named,
+    # no mutation attempted, and no receipt written.
+    receipts_dir = (
+        root
+        / "harness/shared_factory/06-runs-and-logs/execution-fabric/dead-letter-replays"
+    )
+    apply_exit_code = main(
+        [
+            "runtime",
+            "dead-letter",
+            "replay",
+            "--root",
+            str(root),
+            "--task-id",
+            task_id,
+            "--actor",
+            "operator@example.com",
+            "--apply",
+        ]
+    )
+    apply_stderr = capsys.readouterr().err
+
+    assert apply_exit_code == 2
+    assert "TEST_ADMIN_TOKEN" in apply_stderr
+    assert not receipts_dir.exists()
+
+
+def test_cli_dead_letter_replay_apply_rejects_non_replayable_status(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = _root(tmp_path, remote=True)
+    monkeypatch.setenv("TEST_FABRIC_TOKEN", "observer-token")
+    monkeypatch.setenv("TEST_ADMIN_TOKEN", "admin-secret")
+    task_id = "55555555-5555-4555-8555-555555555555"
+
+    monkeypatch.setattr(
+        ExecutionFabricClient,
+        "get_task",
+        lambda self, task_id_arg: {"id": task_id_arg, "queue": "pr_reviews", "status": "running"},
+    )
+
+    def fail_if_called(*_args: Any, **_kwargs: Any) -> None:
+        raise AssertionError("admin API must not be called for a non-replayable task")
+
+    monkeypatch.setattr(ExecutionFabricClient, "requeue_task", fail_if_called)
+
+    exit_code = main(
+        [
+            "runtime",
+            "dead-letter",
+            "replay",
+            "--root",
+            str(root),
+            "--task-id",
+            task_id,
+            "--actor",
+            "operator@example.com",
+            "--apply",
+        ]
+    )
+
+    # main() catches ExecutionFabricConfigError (a ValueError) and converts it
+    # to a printed error + exit code 2, the same contract as every other
+    # local-validation failure in this CLI (e.g. bad --rotation-id).
+    assert exit_code == 2
+    assert "running" in capsys.readouterr().err
+
+
+def test_cli_dead_letter_replay_rejects_non_uuid_task_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = _root(tmp_path, remote=True)
+    monkeypatch.setenv("TEST_FABRIC_TOKEN", "observer-token")
+
+    def fail_if_called(*_args: Any, **_kwargs: Any) -> None:
+        raise AssertionError("no client call should happen before --task-id validation")
+
+    monkeypatch.setattr(ExecutionFabricClient, "get_task", fail_if_called)
+
+    exit_code = main(
+        [
+            "runtime",
+            "dead-letter",
+            "replay",
+            "--root",
+            str(root),
+            "--task-id",
+            "not-a-uuid",
+            "--actor",
+            "operator@example.com",
+        ]
+    )
+
+    assert exit_code == 2
+    assert "--task-id must be a UUID" in capsys.readouterr().err
+
+
+def test_cli_dead_letter_replay_rejects_empty_actor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = _root(tmp_path, remote=True)
+    monkeypatch.setenv("TEST_FABRIC_TOKEN", "observer-token")
+
+    def fail_if_called(*_args: Any, **_kwargs: Any) -> None:
+        raise AssertionError("no client call should happen before --actor validation")
+
+    monkeypatch.setattr(ExecutionFabricClient, "get_task", fail_if_called)
+
+    exit_code = main(
+        [
+            "runtime",
+            "dead-letter",
+            "replay",
+            "--root",
+            str(root),
+            "--task-id",
+            "66666666-6666-4666-8666-666666666666",
+            "--actor",
+            "   ",
+        ]
+    )
+
+    assert exit_code == 2
+    assert "--actor is required" in capsys.readouterr().err
