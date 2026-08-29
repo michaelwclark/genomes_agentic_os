@@ -201,6 +201,18 @@ agentic-os runtime fallback activate --reason maintenance --root ~/agentic_os --
 agentic-os runtime fallback failback --root ~/agentic_os --apply --json
 ```
 
+Failback first validates and forwards every safely queued
+`remote-compatible` task from the local durable ledger. Remote admission uses
+the registered task route's closed payload schema and the original idempotency
+key; local queue wrapper fields are not sent to the control plane. Each local
+task becomes terminal only after a remote task receipt is persisted. A running,
+approval-pending, malformed, or rejected task leaves the fallback latch active
+so the operator can resolve it without losing or duplicating work. Run failback
+without `--apply` to inspect the exact replay plan without changing either
+ledger or the latch. Applied submissions and applied failback share one lock,
+so work cannot enter the local ledger between the replay snapshot and latch
+clearance.
+
 This mode makes no automatic split-brain or zero-data-loss claim. It is for a
 personal harness: genomesbox owns the shared ledger when healthy, while bigmac
 can continue its own automations locally during an outage. Alerts use the

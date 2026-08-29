@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import fcntl
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 import json
 import os
@@ -40,7 +41,10 @@ from genomes_agentic_os.execution_fabric_remote import (
     probe_personal_fallback,
     _spool_artifact,
 )
+from genomes_agentic_os.runtime_backend import runtime_queue_items
 from genomes_agentic_os.runtime_ops import runtime_init
+from genomes_agentic_os.state import db as state_db
+from genomes_agentic_os.state import queue as state_queue
 
 
 SOURCE_ROOT = Path(__file__).parents[1]
@@ -96,6 +100,64 @@ class Response:
 
     def close(self) -> None:
         return None
+
+
+def _submit_local_team_pr(root: Path, key: str, *, pull_request: int) -> None:
+    assert (
+        main(
+            [
+                "runtime",
+                "submit",
+                "--root",
+                str(root),
+                "--namespace",
+                "agentic_os",
+                "--queue",
+                "pr_reviews",
+                "--task-type",
+                "los.team_pr.ai_review.v1",
+                "--idempotency-key",
+                key,
+                "--payload-json",
+                json.dumps(
+                    {
+                        "repository": "example/repo",
+                        "pull_request": pull_request,
+                        "pull_request_url": f"https://github.com/example/repo/pull/{pull_request}",
+                        "expected_head_sha": "a" * 40,
+                        "base_branch": "develop",
+                        "source_key": f"github-pr-{pull_request}",
+                        "title": "Review example",
+                        "notion_page_id": "b" * 32,
+                        "author_identity": "github:example",
+                        "review_mode": "review_no_merge",
+                    }
+                ),
+                "--capability",
+                "team_pr_review",
+                "--apply",
+                "--json",
+            ]
+        )
+        == 0
+    )
+
+
+def _enable_local_execution_fabric(root: Path) -> None:
+    assert (
+        main(
+            [
+                "runtime",
+                "queue-mode",
+                "apply",
+                "execution_fabric",
+                "--root",
+                str(root),
+                "--apply",
+            ]
+        )
+        == 0
+    )
 
 
 def test_remote_settings_fail_closed_without_token_or_safe_transport(tmp_path: Path) -> None:
@@ -213,6 +275,198 @@ def test_personal_fallback_manual_activation_and_failback_guard(
     with pytest.raises(ExecutionFabricRemoteError, match="readiness is not proven"):
         clear_personal_fallback(root, dry_run=False)
     assert personal_fallback_status(root)["status"] == "active"
+
+
+def test_personal_failback_forwards_local_tasks_with_closed_route_payload(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    root = _fallback_root(tmp_path)
+    _enable_local_execution_fabric(root)
+    activate_personal_fallback(root, dry_run=False, reason="test")
+    _submit_local_team_pr(root, "team-pr-review-one", pull_request=42)
+    capsys.readouterr()
+    requests = []
+
+    def transport(request, timeout):
+        requests.append((request, timeout))
+        return Response(
+            {
+                "admitted": True,
+                "task": {"id": "11111111-1111-4111-8111-111111111111"},
+            },
+            status=201,
+        )
+
+    monkeypatch.setattr(
+        "genomes_agentic_os.execution_fabric_remote._primary_ready",
+        lambda _url, _timeout: (True, None),
+    )
+    result = clear_personal_fallback(
+        root,
+        dry_run=False,
+        environ={"TEST_SUBMIT_TOKEN": "secret"},
+        transport=transport,
+    )
+
+    assert result["status"] == "standby"
+    assert result["replay"]["forwarded_count"] == 1
+    request, timeout = requests[0]
+    admitted = json.loads(request.data)
+    assert request.full_url.endswith("/api/v1/tasks")
+    assert timeout == 3
+    assert admitted["namespace"] == "agentic_os"
+    assert admitted["idempotencyKey"] == "team-pr-review-one"
+    assert admitted["requiredCapabilities"] == ["team_pr_review"]
+    assert admitted["payload"] == {
+        "repository": "example/repo",
+        "pull_request": 42,
+        "pull_request_url": "https://github.com/example/repo/pull/42",
+        "expected_head_sha": "a" * 40,
+        "base_branch": "develop",
+        "source_key": "github-pr-42",
+        "title": "Review example",
+        "notion_page_id": "b" * 32,
+        "author_identity": "github:example",
+        "review_mode": "review_no_merge",
+    }
+    queued = {item["id"]: item for item in runtime_queue_items(root)}
+    assert queued["team-pr-review-one"]["status"] == "done"
+    assert queued["team-pr-review-one"]["fallback_forwarding_receipt"] == {
+        "remote_task_id": "11111111-1111-4111-8111-111111111111",
+        "admitted": True,
+        "forwarded_at": queued["team-pr-review-one"]["fallback_forwarding_receipt"][
+            "forwarded_at"
+        ],
+    }
+
+
+def test_personal_failback_dry_run_preserves_queue_and_latch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    root = _fallback_root(tmp_path)
+    _enable_local_execution_fabric(root)
+    activate_personal_fallback(root, dry_run=False, reason="test")
+    _submit_local_team_pr(root, "team-pr-review-dry-run", pull_request=43)
+    capsys.readouterr()
+    monkeypatch.setattr(
+        "genomes_agentic_os.execution_fabric_remote._primary_ready",
+        lambda _url, _timeout: (True, None),
+    )
+
+    result = clear_personal_fallback(root, dry_run=True, environ={})
+
+    assert result["replay"]["status"] == "planned"
+    assert result["replay"]["candidate_count"] == 1
+    assert personal_fallback_status(root)["status"] == "active"
+    queued = {item["id"]: item for item in runtime_queue_items(root)}
+    assert queued["team-pr-review-dry-run"]["status"] == "queued"
+
+
+def test_personal_failback_keeps_latch_when_replay_partially_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    root = _fallback_root(tmp_path)
+    _enable_local_execution_fabric(root)
+    activate_personal_fallback(root, dry_run=False, reason="test")
+    _submit_local_team_pr(root, "team-pr-review-first", pull_request=44)
+    _submit_local_team_pr(root, "team-pr-review-second", pull_request=45)
+    capsys.readouterr()
+    calls = 0
+
+    def transport(_request, _timeout):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise TimeoutError("control plane unavailable")
+        return Response(
+            {
+                "admitted": False,
+                "task": {"id": "22222222-2222-4222-8222-222222222222"},
+            },
+            status=200,
+        )
+
+    monkeypatch.setattr(
+        "genomes_agentic_os.execution_fabric_remote._primary_ready",
+        lambda _url, _timeout: (True, None),
+    )
+
+    with pytest.raises(ExecutionFabricTransportError, match="request failed"):
+        clear_personal_fallback(
+            root,
+            dry_run=False,
+            environ={"TEST_SUBMIT_TOKEN": "secret"},
+            transport=transport,
+        )
+
+    assert personal_fallback_status(root)["status"] == "active"
+    queued = {item["id"]: item for item in runtime_queue_items(root)}
+    assert queued["team-pr-review-first"]["status"] == "done"
+    assert queued["team-pr-review-first"]["fallback_forwarding_receipt"]["admitted"] is False
+    assert queued["team-pr-review-second"]["status"] == "queued"
+
+
+def test_personal_failback_refuses_uncertain_running_local_task(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    root = _fallback_root(tmp_path)
+    _enable_local_execution_fabric(root)
+    activate_personal_fallback(root, dry_run=False, reason="test")
+    _submit_local_team_pr(root, "team-pr-review-running", pull_request=46)
+    capsys.readouterr()
+    conn = state_db.connect(state_db.default_db_path(root))
+    try:
+        state_queue.update_status(conn, "team-pr-review-running", "running")
+    finally:
+        conn.close()
+    monkeypatch.setattr(
+        "genomes_agentic_os.execution_fabric_remote._primary_ready",
+        lambda _url, _timeout: (True, None),
+    )
+
+    with pytest.raises(ExecutionFabricRemoteError, match="not safely queued"):
+        clear_personal_fallback(
+            root,
+            dry_run=False,
+            environ={"TEST_SUBMIT_TOKEN": "secret"},
+        )
+
+    assert personal_fallback_status(root)["status"] == "active"
+    queued = {item["id"]: item for item in runtime_queue_items(root)}
+    assert queued["team-pr-review-running"]["status"] == "running"
+
+
+def test_local_fallback_submit_uses_failback_serialization_guard(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    root = _fallback_root(tmp_path)
+    activate_personal_fallback(root, dry_run=False, reason="test")
+    guarded_roots = []
+
+    @contextmanager
+    def guard(guarded_root):
+        guarded_roots.append(Path(guarded_root))
+        yield
+
+    monkeypatch.setattr(
+        "genomes_agentic_os.cli.runtime.personal_fallback_submission_guard",
+        guard,
+    )
+
+    _submit_local_team_pr(root, "team-pr-review-guarded", pull_request=47)
+    capsys.readouterr()
+
+    assert guarded_roots == [root]
 
 
 def test_client_sends_bearer_auth_and_exact_v1_contract(tmp_path: Path) -> None:
