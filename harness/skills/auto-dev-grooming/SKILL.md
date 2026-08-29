@@ -6,6 +6,10 @@ description: Groom rough product or engineering work into a source-backed, imple
 # Auto-Dev Grooming
 
 1. Read live tracker/source truth and preserve the user's original intent.
+   Treat Jira and Linear status as advisory metadata. If the existing problem,
+   outcome, scope, acceptance behavior, dependencies, and validation
+   expectations already make the item buildable, record it as content-ready
+   and hand it forward without waiting for a `Requirements` status change.
 2. Reuse the canonical Spec/work item. Discover existing capabilities before
    classifying the request as extend, create-under-existing, or create-new.
 3. Use Detective for uncertain causes. Write problem, outcomes, scenarios,
@@ -16,4 +20,5 @@ description: Groom rough product or engineering work into a source-backed, imple
    children to Auto-Dev Readiness.
 
 Grooming ends with a buildable source of truth or one exact blocking question.
+The tracker workflow label is never that question.
 It does not create a worktree or write code.
