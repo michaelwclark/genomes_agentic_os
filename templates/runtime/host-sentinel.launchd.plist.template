@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  launchd agent template for the off-box host sentinel (host_agentic_os_health
+  program). Renders one plist per watched host. Placeholders ({{...}}) are
+  substituted at install time; do not hand-edit the rendered copy in
+  ~/Library/LaunchAgents -- re-render and re-bootstrap instead.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.genome.agentic-os.host-sentinel.{{HOST}}</string>
+  <key>ProgramArguments</key>
+  <!--
+    Run via `/bin/zsh -lc` (login shell) so ~/.zshenv/~/.zshrc are sourced and
+    the ssh-agent/keys from the interactive login environment are present.
+    launchd does not source the shell profile on its own, and this sentinel's
+    entire job is an ssh probe, so it needs that environment to authenticate.
+  -->
+  <array>
+    <string>/bin/zsh</string>
+    <string>-lc</string>
+    <string>{{PYTHON}} {{OS_ROOT}}/harness/bin/agentic-os-host-sentinel --root {{OS_ROOT}} --host {{HOST}}</string>
+  </array>
+  <key>StartInterval</key>
+  <integer>300</integer>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>{{OS_ROOT}}/harness/shared_factory/06-runs-and-logs/host-sentinel/{{HOST}}.launchd.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>{{OS_ROOT}}/harness/shared_factory/06-runs-and-logs/host-sentinel/{{HOST}}.launchd.err.log</string>
+  <key>ProcessType</key>
+  <string>Background</string>
+</dict>
+</plist>

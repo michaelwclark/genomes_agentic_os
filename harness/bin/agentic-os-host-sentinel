@@ -1,0 +1,112 @@
+#!/usr/bin/env python3
+"""Off-box sentinel: probe another host over SSH and alert on reboot/outage.
+
+Independent of the Agentic OS runtime/queue by design -- the host this checks
+may be the thing that is down, so this stays stdlib-only Python with exactly
+one ssh subprocess per run and no dependency on any service it would also be
+alerting about.
+
+    agentic-os-host-sentinel --root ~/agentic_os --host <server-host>
+    agentic-os-host-sentinel --root ~/agentic_os --host <server-host> --dry-run
+
+Intended to run every 5 minutes under launchd; see
+templates/runtime/host-sentinel.launchd.plist.template.
+
+Owned by the host_agentic_os_health OSProgram.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+_SRC = Path(__file__).resolve().parents[2] / "src"
+if _SRC.is_dir() and str(_SRC) not in sys.path:
+    sys.path.insert(0, str(_SRC))
+
+try:
+    from genomes_agentic_os.host_sentinel import (  # noqa: E402
+        SentinelConfig,
+        notify_via_agentic_os_notify,
+        run_sentinel,
+        run_ssh_probe,
+        utc_now,
+    )
+except ModuleNotFoundError:  # pragma: no cover - install drift
+    sys.stderr.write(
+        "agentic-os-host-sentinel: cannot import genomes_agentic_os.host_sentinel.\n"
+        "Run from the source checkout or reinstall the package.\n"
+    )
+    raise SystemExit(2)
+
+
+def parse_args(argv=None):
+    parser = argparse.ArgumentParser(
+        prog="agentic-os-host-sentinel",
+        description="Probe a host over SSH and alert on reboot/unreachable/persistent problems.",
+    )
+    parser.add_argument("--root", required=True, help="Agentic OS root (state, receipts, and the notify wrapper live under it)")
+    parser.add_argument("--host", required=True, help="Stable host name used for state/receipt files and alert titles")
+    parser.add_argument("--ssh-target", default=None, help="ssh destination, if different from --host (default: --host)")
+    parser.add_argument("--connect-timeout", type=int, default=10, help="ssh ConnectTimeout in seconds (default: 10)")
+    parser.add_argument("--unreachable-threshold", type=int, default=2, help="Consecutive failed probes before alerting unreachable (default: 2)")
+    parser.add_argument("--persist-threshold", type=int, default=2, help="Consecutive checks a problem must persist before alerting (default: 2)")
+    parser.add_argument("--dry-run", action="store_true", help="Print would-be notifications; write no state, call no notifier")
+    return parser.parse_args(argv)
+
+
+def main(argv=None) -> int:
+    args = parse_args(argv)
+    root = Path(args.root).expanduser()
+
+    if args.connect_timeout < 1 or args.unreachable_threshold < 1 or args.persist_threshold < 1:
+        sys.stderr.write("agentic-os-host-sentinel: --connect-timeout/--unreachable-threshold/--persist-threshold must be >= 1\n")
+        return 2
+
+    config = SentinelConfig(
+        root=root,
+        host=args.host,
+        ssh_target=args.ssh_target or args.host,
+        connect_timeout=args.connect_timeout,
+        unreachable_threshold=args.unreachable_threshold,
+        persist_threshold=args.persist_threshold,
+        dry_run=args.dry_run,
+    )
+    state_dir = root / "harness" / "shared_factory" / "06-runs-and-logs" / "host-sentinel"
+
+    result = run_sentinel(
+        config,
+        ssh_runner=run_ssh_probe,
+        notifier=notify_via_agentic_os_notify,
+        clock=utc_now,
+        state_dir=state_dir,
+    )
+
+    if args.dry_run:
+        print(
+            json.dumps(
+                {
+                    "dry_run": True,
+                    "host": args.host,
+                    "probe": result.probe.as_dict(),
+                    "notifications": [n.as_dict() for n in result.notifications],
+                },
+                indent=2,
+            )
+        )
+        return 0
+
+    status = "reachable" if result.probe.reachable else "unreachable"
+    print(
+        f"[host-sentinel] host={args.host} status={status} "
+        f"notifications={len(result.notifications)} state={state_dir / (args.host + '.state.json')}"
+    )
+    for note in result.notifications:
+        print(f"    {note.level}: {note.title}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
