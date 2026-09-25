@@ -16,6 +16,8 @@ const payloadPropertySchema = z
   .object({
     type: z.enum(["string", "integer", "boolean"]),
     pattern: z.string().max(512).optional(),
+    minimum: z.number().int().optional(),
+    maximum: z.number().int().optional(),
     enum: z.array(z.union([z.string(), z.number().int(), z.boolean()])).min(1).optional(),
   })
   .strict();
@@ -811,6 +813,26 @@ export class PolicyManager {
         throw new PolicyError(
           "payload_rejected",
           `task type ${route.task_type} payload field ${name} is not an allowed value`,
+        );
+      }
+      if (
+        rule.minimum !== undefined &&
+        typeof value === "number" &&
+        value < rule.minimum
+      ) {
+        throw new PolicyError(
+          "payload_rejected",
+          `task type ${route.task_type} payload field ${name} must be at least ${rule.minimum}`,
+        );
+      }
+      if (
+        rule.maximum !== undefined &&
+        typeof value === "number" &&
+        value > rule.maximum
+      ) {
+        throw new PolicyError(
+          "payload_rejected",
+          `task type ${route.task_type} payload field ${name} must be at most ${rule.maximum}`,
         );
       }
     }
