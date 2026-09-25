@@ -6,8 +6,8 @@ may be the thing that is down, so this stays stdlib-only Python with exactly
 one ssh subprocess per run and no dependency on any service it would also be
 alerting about.
 
-    agentic-os-host-sentinel --root ~/agentic_os --host genomesbox
-    agentic-os-host-sentinel --root ~/agentic_os --host genomesbox --dry-run
+    agentic-os-host-sentinel --root ~/agentic_os --host <server-host>
+    agentic-os-host-sentinel --root ~/agentic_os --host <server-host> --dry-run
 
 Intended to run every 5 minutes under launchd; see
 templates/runtime/host-sentinel.launchd.plist.template.

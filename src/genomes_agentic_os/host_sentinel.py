@@ -1,6 +1,6 @@
 """Off-box sentinel that watches another host for outages and unclean reboots.
 
-genomesbox died uncleanly twice within 24 hours (2026-09-21, 2026-09-22, down
+A primary server host died uncleanly twice within 24 hours (2026-09-21, 2026-09-22, down
 ~4h45m) and nobody was alerted -- systemd units stayed failed for ~19h after
 the reboot before anyone noticed. The existing tools do not cover this gap:
 
