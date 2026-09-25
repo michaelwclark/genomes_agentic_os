@@ -25,6 +25,7 @@ describe("canonical policy", () => {
       "llm.codex": {
         work_item_id: "cc-357",
         instruction_ref: "work-items/cc-357/instruction.md",
+        timeout_seconds: 3600,
       },
       "llm.claude": {
         work_item_id: "cc-357",
@@ -88,6 +89,22 @@ describe("canonical policy", () => {
         requiredCapabilities: [],
       }),
     ).toThrow(/requires payload field author_identity/);
+
+    for (const [timeout, message] of [
+      [59, /must be at least 60/],
+      [10801, /must be at most 10800/],
+    ] as const) {
+      expect(() =>
+        policy.normalizeAdmission({
+          namespace: "test",
+          queue: "codex",
+          taskType: "llm.codex",
+          idempotencyKey: `codex:timeout:${timeout}`,
+          payload: { ...payloads["llm.codex"], timeout_seconds: timeout },
+          requiredCapabilities: [],
+        }),
+      ).toThrow(message);
+    }
   });
 
   it("publishes stable provenance and policy-derived defaults", () => {
