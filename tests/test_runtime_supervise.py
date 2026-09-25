@@ -220,6 +220,7 @@ def test_schedule_producer_materializes_provider_route_before_fabric_enqueue(tmp
             "execution_target": "script",
             "supervisor_priority": True,
             "command": str(wrapper),
+            "interim_timeout_sec": 3600,
             "next_due_at": "2000-01-01T00:00:00Z",
             "last_queued_at": None,
         }
@@ -235,6 +236,7 @@ def test_schedule_producer_materializes_provider_route_before_fabric_enqueue(tmp
     assert queued["worker_pool"] == "codex_workers"
     assert queued["priority"] == 100
     assert queued["provider_inferred_from_command"] is True
+    assert queued["timeout_seconds"] == 3600
 
 
 def test_schedule_dry_run_does_not_persist_execution_fabric_items(tmp_path: Path) -> None:

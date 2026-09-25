@@ -1457,6 +1457,8 @@ def _schedule_run_due_locked(os_root: Path, *, dry_run: bool, mode: str) -> dict
             or (isinstance(schedule.get("supervisor"), dict) and schedule["supervisor"].get("priority_dispatch"))
             else 0,
         }
+        if schedule.get("interim_timeout_sec") is not None:
+            item["timeout_seconds"] = int(schedule["interim_timeout_sec"])
         item = _prepare_queue_item(os_root, item)
         if dry_run:
             written_item = item
