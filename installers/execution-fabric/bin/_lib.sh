@@ -179,14 +179,14 @@ fabric_notify() {
       [ -z "$notifier_python" ] || break
     done
     if [ -n "$notifier_python" ]; then
-      "$notifier_python" "$notifier" \
+      AGENTIC_OS_ROOT="$FABRIC_OS_ROOT" "$notifier_python" "$notifier" \
         --source runtime.execution_fabric.health \
         --level "$level" \
         --title "$title" \
         --message "$message" \
         --dedupe-key "$dedupe" || true
     else
-      "$notifier" \
+      AGENTIC_OS_ROOT="$FABRIC_OS_ROOT" "$notifier" \
         --source runtime.execution_fabric.health \
         --level "$level" \
         --title "$title" \
