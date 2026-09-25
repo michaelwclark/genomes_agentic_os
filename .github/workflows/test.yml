@@ -144,14 +144,14 @@ jobs:
         run: |
           docker run -d --name fabric-postgres -e POSTGRES_USER=fabric -e POSTGRES_PASSWORD=fabric -e POSTGRES_DB=execution_fabric -p 5432:5432 postgres:17-alpine
           docker run -d --name fabric-valkey -p 6379:6379 valkey/valkey:8-alpine
-          docker run -d --name fabric-minio -e MINIO_ROOT_USER=fabricminio -e MINIO_ROOT_PASSWORD=fabricminiosecret -p 9000:9000 minio/minio:latest server /data
+          docker run -d --name fabric-minio -e MINIO_ROOT_USER=fabricminio -e MINIO_ROOT_PASSWORD=fabricminiosecret -p 9000:9000 pgsty/silo:RELEASE.2026-09-16T00-00-00Z server /data
           for _ in $(seq 1 30); do
             docker exec fabric-postgres pg_isready -U fabric -d execution_fabric &&
               curl -fsS http://127.0.0.1:9000/minio/health/ready &&
               break
             sleep 2
           done
-          docker run --rm --network host --entrypoint /bin/sh minio/mc:latest -ec \
+          docker run --rm --network host --entrypoint /bin/sh pgsty/mc:RELEASE.2026-09-16T00-00-00Z -ec \
             'mc alias set fabric http://127.0.0.1:9000 fabricminio fabricminiosecret &&
              mc mb --ignore-existing fabric/execution-fabric-artifacts'
       - name: Run delivery, ledger, and artifact integration tests
@@ -205,8 +205,8 @@ jobs:
         env:
           FABRIC_POSTGRES_IMAGE: postgres:17-alpine
           FABRIC_VALKEY_IMAGE: valkey/valkey:8-alpine
-          FABRIC_MINIO_IMAGE: minio/minio:latest
-          FABRIC_MINIO_CLIENT_IMAGE: minio/mc:latest
+          FABRIC_MINIO_IMAGE: pgsty/silo:RELEASE.2026-09-16T00-00-00Z
+          FABRIC_MINIO_CLIENT_IMAGE: pgsty/mc:RELEASE.2026-09-16T00-00-00Z
           FABRIC_CONTROL_PLANE_IMAGE: ghcr.io/example/control@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
           FABRIC_TAILSCALE_IP: 100.64.0.2
           FABRIC_PRIMARY_HOST_ID: genomesbox
