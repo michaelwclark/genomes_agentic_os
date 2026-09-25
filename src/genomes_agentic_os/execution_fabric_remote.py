@@ -542,6 +542,16 @@ def validate_task_route(
             raise ValueError(
                 f"task type {task_type!r} payload field {name!r} is not allowed"
             )
+        minimum = rule.get("minimum")
+        if minimum is not None and isinstance(value, int) and value < int(minimum):
+            raise ValueError(
+                f"task type {task_type!r} payload field {name!r} must be at least {minimum}"
+            )
+        maximum = rule.get("maximum")
+        if maximum is not None and isinstance(value, int) and value > int(maximum):
+            raise ValueError(
+                f"task type {task_type!r} payload field {name!r} must be at most {maximum}"
+            )
         pattern = rule.get("pattern")
         if pattern and (
             not isinstance(value, str) or re.fullmatch(str(pattern), value) is None
@@ -1795,7 +1805,10 @@ def _portable_harness_worker(
         "domain_worker": f"{harness}_task",
         "instruction_ref": instruction_ref,
         "work_item_id": str(payload["work_item_id"]),
-        "timeout_seconds": 1800,
+        "timeout_seconds": max(
+            60,
+            min(int(payload.get("timeout_seconds", 1800)), 10800),
+        ),
     }
     return _run_prepared_worker_item(os_root, assignment, item, effects=[])
 
