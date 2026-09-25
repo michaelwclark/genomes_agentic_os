@@ -2674,10 +2674,15 @@ def test_los_security_automation_assets_define_closed_remote_routes() -> None:
     assert "reconcile-los-security-schedules.py" in linux_activation
 
 
-def test_los_security_schedule_reconciler_is_dry_run_by_default() -> None:
+def test_los_security_schedule_reconciler_is_dry_run_by_default(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     reconcile_path = INSTALLERS / "bin/reconcile-los-security-schedules.py"
     reconcile = reconcile_path.read_text(encoding="utf-8")
     assert 'parser.add_argument("--apply", action="store_true")' in reconcile
+    assert 'default=os.environ.get("FABRIC_API_TOKEN_FILE")' in reconcile
     assert '"status": "would-reconcile"' in reconcile
     assert '"/api/v1/snapshots/schedules?limit=200"' in reconcile
     assert 'f"/api/v1/admin/schedules/{item[\'id\']}"' in reconcile
@@ -2699,3 +2704,57 @@ def test_los_security_schedule_reconciler_is_dry_run_by_default() -> None:
     )
     assert plan[0]["body"]["nextOccurrenceAt"] == existing_next
     assert plan[1]["body"]["nextOccurrenceAt"] == "2026-09-25T21:10:00.000Z"
+
+    admin_file = tmp_path / "admin-token"
+    observer_file = tmp_path / "observer-token"
+    admin_file.write_text("a" * 32, encoding="utf-8")
+    observer_file.write_text("o" * 32, encoding="utf-8")
+    calls: list[tuple[str, str, str]] = []
+    snapshots = 0
+
+    def request(
+        _base: str,
+        token: str,
+        path: str,
+        *,
+        method: str = "GET",
+        body: dict | None = None,
+    ) -> dict:
+        nonlocal snapshots
+        calls.append((token, path, method))
+        if path.startswith("/api/v1/snapshots/schedules"):
+            snapshots += 1
+            if snapshots == 1:
+                return {"schedules": []}
+            return {
+                "schedules": [
+                    {"id": schedule["id"], "enabled": True}
+                    for schedule in schedules
+                ]
+            }
+        assert body is not None
+        return {}
+
+    monkeypatch.setattr(module, "_request", request)
+    assert module.main(
+        [
+            "--apply",
+            "--api-base",
+            "http://100.64.0.2:3180",
+            "--admin-token-file",
+            str(admin_file),
+            "--observer-token-file",
+            str(observer_file),
+            "--manifest",
+            str(DEPLOY / "los-security-schedules.json"),
+        ]
+    ) == 0
+    capsys.readouterr()
+    assert calls[0] == (
+        "o" * 32,
+        "/api/v1/snapshots/schedules?limit=200",
+        "GET",
+    )
+    assert calls[-1] == calls[0]
+    assert len([call for call in calls if call[2] == "PUT"]) == 3
+    assert all(call[0] == "a" * 32 for call in calls if call[2] == "PUT")
