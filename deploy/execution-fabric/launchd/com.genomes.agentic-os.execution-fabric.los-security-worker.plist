@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.genomes.agentic-os.execution-fabric.los-security-worker</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>__INSTALL_ROOT__/bin/los-security-worker.sh</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>FABRIC_RUNTIME_ENV_FILE</key>
+    <string>__RUNTIME_ENV__</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>15</integer>
+  <key>SoftResourceLimits</key>
+  <dict>
+    <key>NumberOfFiles</key>
+    <integer>8192</integer>
+  </dict>
+  <key>HardResourceLimits</key>
+  <dict>
+    <key>NumberOfFiles</key>
+    <integer>65536</integer>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>__STATE_DIR__/logs/los-security-worker.log</string>
+  <key>StandardErrorPath</key>
+  <string>__STATE_DIR__/logs/los-security-worker.error.log</string>
+</dict>
+</plist>

@@ -1,0 +1,62 @@
+{
+  "schemaVersion": "agentic-os-execution-fabric-schedule-manifest/v1",
+  "schedules": [
+    {
+      "id": "los_engineering_security_scan",
+      "namespace": "los_engineering",
+      "queue": "codex",
+      "taskType": "llm.codex",
+      "payload": {
+        "work_item_id": "los_engineering_security_scan",
+        "instruction_ref": "domains/los/04-automations/engineering/security_scan/prompt.md",
+        "timeout_seconds": 3600
+      },
+      "requiredCapabilities": [
+        "codex.task"
+      ],
+      "priority": 60,
+      "maxAttempts": 3,
+      "intervalSeconds": 3600,
+      "initialDelaySeconds": 300,
+      "enabled": true
+    },
+    {
+      "id": "los_engineering_dependabot_remediation",
+      "namespace": "los_engineering",
+      "queue": "codex",
+      "taskType": "llm.codex",
+      "payload": {
+        "work_item_id": "los_engineering_dependabot_remediation",
+        "instruction_ref": "domains/los/04-automations/engineering/dependabot_remediation/prompt.md",
+        "timeout_seconds": 5400
+      },
+      "requiredCapabilities": [
+        "codex.task"
+      ],
+      "priority": 60,
+      "maxAttempts": 3,
+      "intervalSeconds": 7200,
+      "initialDelaySeconds": 600,
+      "enabled": true
+    },
+    {
+      "id": "los_engineering_ai_automation_pr_merge",
+      "namespace": "los_engineering",
+      "queue": "codex",
+      "taskType": "llm.codex",
+      "payload": {
+        "work_item_id": "los_engineering_ai_automation_pr_merge",
+        "instruction_ref": "domains/los/04-automations/engineering/ai_automation_pr_merge/prompt.md",
+        "timeout_seconds": 5400
+      },
+      "requiredCapabilities": [
+        "codex.task"
+      ],
+      "priority": 50,
+      "maxAttempts": 3,
+      "intervalSeconds": 14400,
+      "initialDelaySeconds": 900,
+      "enabled": true
+    }
+  ]
+}

@@ -349,6 +349,34 @@ def test_task_route_rejects_unknown_or_mismatched_queue_work(tmp_path: Path) -> 
         validate_task_route(root, "non_llm", "llm.codex")
 
 
+def test_codex_route_enforces_bounded_execution_timeout(tmp_path: Path) -> None:
+    root = _root(tmp_path, remote=False)
+    payload = {
+        "work_item_id": "los-security",
+        "instruction_ref": "domains/los/security.md",
+        "timeout_seconds": 3600,
+    }
+    assert validate_task_route(
+        root, "codex", "llm.codex", payload=payload, remote=True
+    )["required_capability"] == "codex.task"
+    with pytest.raises(ValueError, match="at least 60"):
+        validate_task_route(
+            root,
+            "codex",
+            "llm.codex",
+            payload={**payload, "timeout_seconds": 59},
+            remote=True,
+        )
+    with pytest.raises(ValueError, match="at most 10800"):
+        validate_task_route(
+            root,
+            "codex",
+            "llm.codex",
+            payload={**payload, "timeout_seconds": 10801},
+            remote=True,
+        )
+
+
 def test_route_approval_class_materializes_to_run_queue_state() -> None:
     assert materialize_approval_state("not_required") == "not_required"
     assert materialize_approval_state("policy_gated") == "approved"
@@ -2260,6 +2288,55 @@ def test_fullsail_worker_marks_missing_controller_retryable(
     assert receipt["error"]["code"] == "fullsail_controller_unavailable"
     assert receipt["job_id"] == "capture-20260826-0123abcd"
     assert receipt["evidence"]["controller_relative_path"].startswith("lib/")
+
+
+@pytest.mark.parametrize(
+    ("requested_timeout", "expected_timeout"),
+    [(5, 60), (3600, 3600), (99999, 10800)],
+)
+def test_portable_codex_worker_honors_bounded_payload_timeout(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    requested_timeout: int,
+    expected_timeout: int,
+) -> None:
+    root = _root(tmp_path, remote=False)
+    instruction = root / "work-items/security-canary.md"
+    instruction.parent.mkdir(parents=True)
+    instruction.write_text("read-only security canary\n", encoding="utf-8")
+    captured: dict[str, Any] = {}
+
+    def capture(
+        _root_path: Path,
+        _assignment: dict[str, Any],
+        item: dict[str, Any],
+        *,
+        effects: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        captured.update(item)
+        assert effects == []
+        return {"result": {"status": "succeeded"}, "effects": [], "artifacts": []}
+
+    monkeypatch.setattr(execution_fabric_remote, "_run_prepared_worker_item", capture)
+    result = execution_fabric_remote._codex_task_worker(
+        root,
+        {"attemptId": "attempt-1"},
+        {
+            "id": "task-1",
+            "queue": "codex",
+            "taskType": "llm.codex",
+            "payload": {
+                "work_item_id": "los-security-canary",
+                "instruction_ref": "work-items/security-canary.md",
+                "timeout_seconds": requested_timeout,
+            },
+        },
+        {"approval_class": "policy_gated", "mutation_class": "internal_write"},
+    )
+
+    assert result["result"]["status"] == "succeeded"
+    assert captured["timeout_seconds"] == expected_timeout
+    assert captured["domain_worker"] == "codex_task"
 
 
 def test_fullsail_worker_rejects_mismatched_job_identity_with_receipt(
