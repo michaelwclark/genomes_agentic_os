@@ -98,7 +98,8 @@ readback. Set `FABRIC_LOS_SECURITY_SCHEDULES_ENABLED=true` on the primary only
 when the installed Agentic OS contains the referenced LOS automation prompts;
 Linux activation will then reconcile the manifest after the scheduler starts.
 The reconciler uses `FABRIC_API_BASE` and the protected
-`FABRIC_ADMIN_TOKEN_FILE`; it never embeds or prints the token.
+`FABRIC_ADMIN_TOKEN_FILE` for writes plus `FABRIC_API_TOKEN_FILE` for observer
+snapshots; it never embeds or prints either token.
 
 ## Independent witness installer
 

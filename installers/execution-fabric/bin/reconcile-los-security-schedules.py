@@ -70,11 +70,27 @@ def _load_manifest(path: Path) -> list[dict[str, Any]]:
         payload = schedule.get("payload")
         if not isinstance(payload, dict) or not payload.get("instruction_ref"):
             raise ValueError(f"schedule {schedule_id} requires an instruction_ref")
+        timeout_seconds = payload.get("timeout_seconds")
+        if (
+            not isinstance(timeout_seconds, int)
+            or isinstance(timeout_seconds, bool)
+            or not 60 <= timeout_seconds <= 10800
+        ):
+            raise ValueError(
+                f"schedule {schedule_id} requires a 60-10800 second timeout"
+            )
         for field in ("intervalSeconds", "initialDelaySeconds"):
             value = schedule.get(field)
             if not isinstance(value, int) or value < 1:
                 raise ValueError(f"schedule {schedule_id} has invalid {field}")
     return schedules
+
+
+def _read_token(path_value: str, label: str) -> str:
+    token = Path(path_value).expanduser().read_text(encoding="utf-8").strip()
+    if len(token) < 32 or any(char.isspace() for char in token):
+        raise ValueError(f"{label} token file must contain one scoped token")
+    return token
 
 
 def _plan(
@@ -104,17 +120,20 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--admin-token-file", default=os.environ.get("FABRIC_ADMIN_TOKEN_FILE")
     )
+    parser.add_argument(
+        "--observer-token-file", default=os.environ.get("FABRIC_API_TOKEN_FILE")
+    )
     parser.add_argument("--manifest", required=True, type=Path)
     args = parser.parse_args(argv)
-    if not args.api_base or not args.admin_token_file:
-        parser.error("--api-base and --admin-token-file are required")
-    token_path = Path(args.admin_token_file).expanduser()
-    token = token_path.read_text(encoding="utf-8").strip()
-    if len(token) < 32 or any(char.isspace() for char in token):
-        raise ValueError("admin token file must contain one scoped token")
+    if not args.api_base or not args.admin_token_file or not args.observer_token_file:
+        parser.error(
+            "--api-base, --admin-token-file, and --observer-token-file are required"
+        )
+    admin_token = _read_token(args.admin_token_file, "admin")
+    observer_token = _read_token(args.observer_token_file, "observer")
     schedules = _load_manifest(args.manifest)
     snapshot = _request(
-        args.api_base, token, "/api/v1/snapshots/schedules?limit=200"
+        args.api_base, observer_token, "/api/v1/snapshots/schedules?limit=200"
     )
     plan = _plan(schedules, list(snapshot.get("schedules") or []), datetime.now(timezone.utc))
     if not args.apply:
@@ -131,13 +150,13 @@ def main(argv: list[str] | None = None) -> int:
     for item in plan:
         _request(
             args.api_base,
-            token,
+            admin_token,
             f"/api/v1/admin/schedules/{item['id']}",
             method="PUT",
             body=item["body"],
         )
     readback = _request(
-        args.api_base, token, "/api/v1/snapshots/schedules?limit=200"
+        args.api_base, observer_token, "/api/v1/snapshots/schedules?limit=200"
     )
     expected = {item["id"] for item in plan}
     observed = {
