@@ -114,6 +114,20 @@ on container tmpfs rather than stored as a plaintext operator file.
 `runtime.env` uses `FABRIC_POSTGRES_REPLICATION_PORT=35432` by default on both
 hosts. This is the Tailscale-bound host port, not PostgreSQL's internal
 container port. Keep the replication pgpass entry aligned when overriding it.
+
+Both `secrets/postgres-pgpass` and `secrets/postgres-failback-pgpass` must be
+mode `0400`, root-owned, files. `libpq` refuses any pgpass file that is
+group- or world-accessible ("password file has group or world access") and
+silently falls back to no password, which then fails auth. The primary
+pgpass line must use `*` for the database field —
+`postgres:5432:*:<user>:<password>` — not the application database name:
+`bin/backup-health.sh` restore verification runs `createdb`/`dropdb` against
+the maintenance database and a unique scratch restore database, and a
+database-scoped pgpass entry does not match either. `bin/backup-health.sh`
+fails fast with a clear message before invoking `docker compose` if
+`$FABRIC_SECRETS_DIR/postgres-pgpass` is present and readable by group or
+other.
+
 Replication slots follow the target role: `genomesbox_fabric` feeds the
 configured primary host while it is being rebuilt as a failback target, and
 `bigmac_fabric` feeds the configured standby host. Failback creates the former
@@ -147,6 +161,34 @@ The activators run the complete `bin/preflight.sh` role check before the first
 Successful activation is idempotent: systemd starts already-active units
 without restarting them, and the macOS activator skips labels already loaded in
 the user launchd domain.
+
+### Recovery after an unclean host reboot
+
+`genomes-agentic-os-execution-fabric-primary.service` is `Type=oneshot` and
+now carries `Restart=on-failure` with `RestartSec=60s`, bounded by
+`StartLimitIntervalSec=2h`/`StartLimitBurst=12` on the `[Unit]` section. A
+primary that fails at boot (for example because the standalone witness or the
+execution-fabric API was not yet ready) retries on its own instead of staying
+failed indefinitely.
+
+To check recovery status after a host reboot:
+
+```sh
+systemctl status genomes-agentic-os-execution-fabric-primary
+docker inspect <gateway-container> -f '{{json .NetworkSettings.Networks}}'
+```
+
+The unit is `Type=oneshot` with `RemainAfterExit=yes`, so a healthy primary
+shows `active (exited)`, not `active (running)` — that is the expected
+steady state, not a sign of failure. Treat `failed` (or a unit stuck
+restarting inside the `StartLimitIntervalSec=2h` window) as unhealthy. The
+gateway container's network settings should be a non-empty JSON object; an
+empty `{}` means the container never joined the fabric network and the unit
+needs manual attention:
+
+```sh
+sudo systemctl restart genomes-agentic-os-execution-fabric-primary
+```
 
 `install-*.sh --enable` remains an explicit install-and-activate convenience
 and delegates to the same activator. Re-running the installer for the same
