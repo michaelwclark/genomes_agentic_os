@@ -1569,6 +1569,81 @@ def test_systemd_units_cover_primary_observer_watchdog_and_backups() -> None:
     assert '--profile standalone-primary' in primary_runner
 
 
+def test_primary_unit_self_restarts_after_an_unclean_boot_failure() -> None:
+    primary = (
+        DEPLOY / "systemd" / "genomes-agentic-os-execution-fabric-primary.service"
+    ).read_text(encoding="utf-8")
+    unit_section, service_section = primary.split("[Service]", maxsplit=1)
+    assert "StartLimitIntervalSec=2h" in unit_section
+    assert "StartLimitBurst=12" in unit_section
+    assert "Restart=on-failure" in service_section
+    assert "RestartSec=60s" in service_section
+    # Type=oneshot with RemainAfterExit=yes still permits Restart=on-failure
+    # on systemd >=244; both directives must stay present together.
+    assert "Type=oneshot" in service_section
+    assert "RemainAfterExit=yes" in service_section
+
+
+def test_backup_health_runs_the_primary_and_backup_profiles_together() -> None:
+    script = (INSTALLERS / "bin" / "backup-health.sh").read_text(encoding="utf-8")
+    assert "--profile primary --profile backup run --rm" in script
+
+
+def test_backup_health_refuses_a_group_or_world_readable_pgpass(
+    tmp_path: Path,
+) -> None:
+    script = (INSTALLERS / "bin" / "backup-health.sh").read_text(encoding="utf-8")
+    assert "FABRIC_SECRETS_DIR" in script
+    assert "postgres-pgpass" in script
+    assert "-perm /077" in script
+
+    if sys.platform != "linux":
+        pytest.skip("GNU find -perm /077 semantics required")
+
+    secrets_dir = tmp_path / "secrets"
+    secrets_dir.mkdir()
+    pgpass = secrets_dir / "postgres-pgpass"
+    pgpass.write_text("postgres:5432:*:fabric:secret\n", encoding="utf-8")
+    pgpass.chmod(0o644)
+
+    guard_start = script.index('if [ -n "${FABRIC_SECRETS_DIR:-}" ]; then')
+    guard_end = script.index("run_id=")
+    guard = "set -eu\n" + script[guard_start:guard_end]
+    result = subprocess.run(
+        ["sh", "-c", guard],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "FABRIC_SECRETS_DIR": str(secrets_dir)},
+    )
+    assert result.returncode == 78
+    assert "group/world accessible" in result.stderr
+
+    pgpass.chmod(0o400)
+    passed = subprocess.run(
+        ["sh", "-c", guard],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "FABRIC_SECRETS_DIR": str(secrets_dir)},
+    )
+    assert passed.returncode == 0, passed.stderr
+
+
+def test_fabric_notify_scopes_the_alerts_config_lookup_to_fabric_os_root() -> None:
+    library = (INSTALLERS / "bin" / "_lib.sh").read_text(encoding="utf-8")
+    assert 'AGENTIC_OS_ROOT="$FABRIC_OS_ROOT" "$notifier_python" "$notifier"' in library
+    assert 'AGENTIC_OS_ROOT="$FABRIC_OS_ROOT" "$notifier"' in library
+
+    dispatcher = (INSTALLERS / "bin" / "dispatch-alarms.sh").read_text(
+        encoding="utf-8"
+    )
+    assert (
+        'AGENTIC_OS_ROOT="$FABRIC_OS_ROOT" "$FABRIC_WORKER_PYTHON" "$notifier"'
+        in dispatcher
+    )
+
+
 def test_standalone_primary_runner_bootstraps_once_then_waits_before_primary(
     tmp_path: Path,
 ) -> None:
