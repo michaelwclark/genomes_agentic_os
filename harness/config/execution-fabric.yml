@@ -89,6 +89,7 @@ execution_fabric:
         properties:
           work_item_id: {type: string, pattern: "^[a-zA-Z0-9._:-]{1,128}$"}
           instruction_ref: {type: string, pattern: "^[a-zA-Z0-9_./:-]{1,512}$"}
+          timeout_seconds: {type: integer, minimum: 60, maximum: 10800}
       allowed_effect_types: []
     - task_type: llm.claude
       queue: claude

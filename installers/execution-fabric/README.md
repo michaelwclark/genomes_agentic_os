@@ -79,6 +79,27 @@ separate alarm-dispatcher token. The current `pr_reviewers` policy requires the
 host worker to claim both review slots, and its runtime endpoint is the signed
 gateway rather than the primary API address used by the fallback probe.
 
+## LOS security-remediation schedules
+
+The optional LOS security lane is split across the two authoritative roles. On
+bigmac, set `FABRIC_LOS_SECURITY_WORKER_ENABLED=true` only after provisioning
+the exact `bigmac-los-security-automation-1` server-side bootstrap entry and
+its scoped `FABRIC_LOS_SECURITY_WORKER_TOKEN_FILE`. macOS activation then
+preflights and starts a separate queue-`codex`, capability-`codex.task` worker
+with concurrency 1. Its launchd definition raises only that job's file limit so
+the Codex harness can load the installed skill catalog without inheriting
+launchd's 256-file soft limit.
+
+On genomesbox, `deploy/los-security-schedules.json` is the canonical manifest
+for the hourly security scan, two-hour Dependabot remediation, and four-hour AI
+Automation PR merge. `bin/reconcile-los-security-schedules.py` is read-only by
+default; pass `--apply` to upsert the manifest and verify enabled scheduler
+readback. Set `FABRIC_LOS_SECURITY_SCHEDULES_ENABLED=true` on the primary only
+when the installed Agentic OS contains the referenced LOS automation prompts;
+Linux activation will then reconcile the manifest after the scheduler starts.
+The reconciler uses `FABRIC_API_BASE` and the protected
+`FABRIC_ADMIN_TOKEN_FILE`; it never embeds or prints the token.
+
 ## Independent witness installer
 
 The provider-neutral witness uses its own focused installer and canonical
