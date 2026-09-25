@@ -237,6 +237,25 @@ def test_schedule_producer_materializes_provider_route_before_fabric_enqueue(tmp
     assert queued["provider_inferred_from_command"] is True
 
 
+def test_schedule_dry_run_does_not_persist_execution_fabric_items(tmp_path: Path) -> None:
+    root = _fresh_root(tmp_path)
+    apply_queue_mode(root, "execution_fabric", dry_run=False)
+    before = runtime_queue_items(root)
+
+    planned = runtime_ops.schedule_run_due(root, dry_run=True)
+
+    assert planned["status"] == "dry-run"
+    assert planned["queued"]
+    assert all(item["status"] == "dry-run" and item["created"] is False for item in planned["queued"])
+    assert runtime_queue_items(root) == before
+
+    applied = runtime_ops.schedule_run_due(root, dry_run=False)
+
+    assert applied["status"] == "queued"
+    assert all(item["status"] == "queued" and item["created"] is True for item in applied["queued"])
+    assert len(runtime_queue_items(root)) == len(applied["queued"])
+
+
 def test_runtime_dispatches_watch_source_poll_command(tmp_path: Path, capsys) -> None:
     root = _fresh_root(tmp_path)
     assert (
