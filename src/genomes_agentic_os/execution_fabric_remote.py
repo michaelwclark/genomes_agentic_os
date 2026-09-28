@@ -55,6 +55,11 @@ DEFAULT_TRANSPORT = {
     },
 }
 FALLBACK_STATE_SCHEMA = "agentic-os-execution-fabric-fallback/v1"
+LEGACY_LOS_SECURITY_TIMEOUT_SECONDS = {
+    "los_engineering_security_scan": 3600,
+    "los_engineering_dependabot_remediation": 5400,
+    "los_engineering_ai_automation_pr_merge": 5400,
+}
 
 
 class ExecutionFabricRemoteError(RuntimeError):
@@ -1793,6 +1798,7 @@ def _portable_harness_worker(
             retryable=False,
         )
     target = f"{harness}_harness"
+    work_item_id = str(payload["work_item_id"])
     item = {
         "id": str(task.get("id") or ""),
         "kind": "domain_worker",
@@ -1804,10 +1810,18 @@ def _portable_harness_worker(
         "mutation_class": str(route["mutation_class"]),
         "domain_worker": f"{harness}_task",
         "instruction_ref": instruction_ref,
-        "work_item_id": str(payload["work_item_id"]),
+        "work_item_id": work_item_id,
         "timeout_seconds": max(
             60,
-            min(int(payload.get("timeout_seconds", 1800)), 10800),
+            min(
+                int(
+                    payload.get(
+                        "timeout_seconds",
+                        LEGACY_LOS_SECURITY_TIMEOUT_SECONDS.get(work_item_id, 1800),
+                    )
+                ),
+                10800,
+            ),
         ),
     }
     return _run_prepared_worker_item(os_root, assignment, item, effects=[])

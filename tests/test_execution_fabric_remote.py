@@ -2342,13 +2342,21 @@ def test_fullsail_worker_marks_missing_controller_retryable(
 
 
 @pytest.mark.parametrize(
-    ("requested_timeout", "expected_timeout"),
-    [(5, 60), (3600, 3600), (99999, 10800)],
+    ("work_item_id", "requested_timeout", "expected_timeout"),
+    [
+        ("los-security-canary", 5, 60),
+        ("los-security-canary", 3600, 3600),
+        ("los-security-canary", 99999, 10800),
+        ("los_engineering_security_scan", None, 3600),
+        ("los_engineering_dependabot_remediation", None, 5400),
+        ("los_engineering_ai_automation_pr_merge", None, 5400),
+    ],
 )
 def test_portable_codex_worker_honors_bounded_payload_timeout(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    requested_timeout: int,
+    work_item_id: str,
+    requested_timeout: int | None,
     expected_timeout: int,
 ) -> None:
     root = _root(tmp_path, remote=False)
@@ -2369,6 +2377,12 @@ def test_portable_codex_worker_honors_bounded_payload_timeout(
         return {"result": {"status": "succeeded"}, "effects": [], "artifacts": []}
 
     monkeypatch.setattr(execution_fabric_remote, "_run_prepared_worker_item", capture)
+    payload: dict[str, Any] = {
+        "work_item_id": work_item_id,
+        "instruction_ref": "work-items/security-canary.md",
+    }
+    if requested_timeout is not None:
+        payload["timeout_seconds"] = requested_timeout
     result = execution_fabric_remote._codex_task_worker(
         root,
         {"attemptId": "attempt-1"},
@@ -2376,11 +2390,7 @@ def test_portable_codex_worker_honors_bounded_payload_timeout(
             "id": "task-1",
             "queue": "codex",
             "taskType": "llm.codex",
-            "payload": {
-                "work_item_id": "los-security-canary",
-                "instruction_ref": "work-items/security-canary.md",
-                "timeout_seconds": requested_timeout,
-            },
+            "payload": payload,
         },
         {"approval_class": "policy_gated", "mutation_class": "internal_write"},
     )
