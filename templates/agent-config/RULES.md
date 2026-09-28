@@ -35,6 +35,21 @@ Record local constraints, approval gates, safety boundaries, coding rules, and o
   receipt-backed run and resume it after fresh availability evidence; do not
   create repeated failure attempts.
 
+## Repository Visibility Boundary
+
+- Treat repositories whose names begin with `genomes_agentic` under Genome's
+  personal GitHub ownership as private operator infrastructure that Lenders
+  Cooperative contributors cannot access.
+- LOS repository pull requests, issues, comments, and documentation must not
+  name, link to, or depend on those private repositories. An LOS change must be
+  understandable, buildable, testable, and operable using team-accessible LOS
+  repositories, trackers, and documentation alone.
+- Pull requests in Genome's private Agentic repositories may reference
+  team-accessible LOS functionality when useful, but the corresponding Agentic
+  rule, workflow, automation, or artifact must be scoped under the LOS domain,
+  project, or program. Never model a private Agentic repository as an LOS
+  runtime or delivery dependency.
+
 ## Notification Rules
 
 - Treat local notifications as an attention budget, not a progress stream.
