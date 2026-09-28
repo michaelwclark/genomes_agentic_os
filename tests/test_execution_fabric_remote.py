@@ -803,6 +803,91 @@ def test_worker_retries_idle_long_poll_timeout_without_reregistering(
     assert result["failed"] == 0
 
 
+def test_worker_preserves_session_during_transient_leadership_fence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class LeadershipRecoveryClient(FakeClient):
+        def __init__(self) -> None:
+            super().__init__([_assignment(1)])
+            self.heartbeat_calls = 0
+            self.claim_calls = 0
+
+        def heartbeat(
+            self,
+            worker_id,
+            registration_token,
+            active_attempt_ids,
+            artifact_spool_health=None,
+        ):
+            self.heartbeat_calls += 1
+            if self.heartbeat_calls == 1:
+                raise ExecutionFabricApiError(
+                    503,
+                    "leadership_fenced",
+                    "leadership proof expired before witness renewal",
+                )
+            return super().heartbeat(
+                worker_id,
+                registration_token,
+                active_attempt_ids,
+                artifact_spool_health,
+            )
+
+        def claim(self, **kwargs):
+            self.claim_calls += 1
+            if self.claim_calls == 1:
+                raise ExecutionFabricApiError(
+                    503,
+                    "leadership_unavailable",
+                    "leader resolution failed",
+                )
+            return super().claim(**kwargs)
+
+    monkeypatch.setattr(execution_fabric_remote.time, "sleep", lambda _seconds: None)
+    client = LeadershipRecoveryClient()
+
+    result = RemoteFabricWorker(
+        client,  # type: ignore[arg-type]
+        root=tmp_path,
+        worker_id="worker-one",
+        bootstrap_id="worker-bootstrap-one",
+        host_id="bigmac",
+        queues=["non_llm"],
+        heartbeat_seconds=1,
+        executor=lambda _root, assignment: {
+            "result": {"task": assignment["task"]["id"]},
+            "effects": [],
+        },
+    ).work(max_tasks=1)
+
+    assert len(client.registrations) == 1
+    assert client.heartbeat_calls >= 2
+    assert client.claim_calls == 2
+    assert result["completed"] == 1
+    assert result["failed"] == 0
+
+
+def test_worker_propagates_non_leadership_api_unavailability(tmp_path: Path) -> None:
+    class PolicyUnavailableClient(FakeClient):
+        def claim(self, **kwargs):
+            raise ExecutionFabricApiError(503, "config_invalid", "policy drift")
+
+    client = PolicyUnavailableClient([])
+    with pytest.raises(ExecutionFabricApiError, match="policy drift"):
+        RemoteFabricWorker(
+            client,  # type: ignore[arg-type]
+            root=tmp_path,
+            worker_id="worker-one",
+            bootstrap_id="worker-bootstrap-one",
+            host_id="bigmac",
+            queues=["non_llm"],
+            heartbeat_seconds=1,
+            executor=lambda _root, _assignment: {"result": {}, "effects": []},
+        ).work(max_tasks=1)
+
+    assert len(client.registrations) == 1
+
+
 def test_worker_propagates_protocol_corruption_on_spare_claim(
     tmp_path: Path,
 ) -> None:

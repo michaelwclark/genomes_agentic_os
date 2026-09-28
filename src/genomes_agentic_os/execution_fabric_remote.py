@@ -87,6 +87,25 @@ class ExecutionFabricTransportError(ExecutionFabricRemoteError):
     """
 
 
+_TRANSIENT_LEADERSHIP_API_ERRORS = {
+    (503, "leadership_fenced"),
+    (503, "leadership_unavailable"),
+}
+
+
+def _is_transient_leadership_api_error(exc: ExecutionFabricApiError) -> bool:
+    """Return true only for a witnessed leader's temporary unavailability.
+
+    The gateway and control plane use distinct 503 codes while leadership is
+    being re-verified.  Keeping the registered session alive for those two
+    responses prevents a service-manager restart from fencing an otherwise
+    healthy in-flight attempt.  Other API failures remain terminal so worker,
+    credential, policy, and protocol fencing still fail closed.
+    """
+
+    return (exc.status, exc.code) in _TRANSIENT_LEADERSHIP_API_ERRORS
+
+
 class TaskExecutionError(ExecutionFabricRemoteError):
     """A classified assignment failure suitable for the durable run ledger."""
 
@@ -3326,12 +3345,22 @@ class RemoteFabricWorker:
                             spool_retry["health"]
                         )
                         last_spool_drain = now
-                    self.client.heartbeat(
-                        self.worker_id,
-                        registration_token,
-                        [str(row["attemptId"]) for row in active.values()],
-                        artifact_spool_health=spool_health,
-                    )
+                    try:
+                        self.client.heartbeat(
+                            self.worker_id,
+                            registration_token,
+                            [str(row["attemptId"]) for row in active.values()],
+                            artifact_spool_health=spool_health,
+                        )
+                    except ExecutionFabricApiError as exc:
+                        if not _is_transient_leadership_api_error(exc):
+                            raise
+                        # Leadership renewal is fail-closed on the server.  Do
+                        # not replace this worker session while the witnessed
+                        # leader is briefly unavailable; a new registration
+                        # would fence any active attempt owned by this one.
+                        time.sleep(min(float(self.heartbeat_seconds), 5.0))
+                        continue
                     record_health(
                         "online",
                         [str(row["attemptId"]) for row in active.values()],
@@ -3434,8 +3463,11 @@ class RemoteFabricWorker:
                                 else 0
                             ),
                         )
-                    except ExecutionFabricApiError:
-                        raise
+                    except ExecutionFabricApiError as exc:
+                        if not _is_transient_leadership_api_error(exc):
+                            raise
+                        time.sleep(min(float(self.heartbeat_seconds), 5.0))
+                        continue
                     except ExecutionFabricTransportError:
                         # A long-poll can lose its response at the transport
                         # boundary even though the registered worker remains
