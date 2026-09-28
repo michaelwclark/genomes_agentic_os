@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+from types import SimpleNamespace
 
 import yaml
 
@@ -120,7 +121,7 @@ def test_host_worker_routes_client_through_explicit_gateway(
     monkeypatch.setattr(worker, "prepare_root", lambda _root: None)
     monkeypatch.setattr(worker, "validate_worker_routes", lambda *_args: [])
 
-    settings = object()
+    settings = SimpleNamespace(remote=True)
 
     def resolve(root: Path, *, role: str, endpoint_override: str) -> object:
         observed.update(
@@ -150,6 +151,41 @@ def test_host_worker_routes_client_through_explicit_gateway(
         "role": "worker",
         "endpoint_override": gateway,
         "client_settings": settings,
+    }
+
+
+def test_worker_waits_in_process_for_manual_failback(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    monkeypatch.setenv("FABRIC_WORKER_ID", "worker-one")
+    monkeypatch.setenv("FABRIC_WORKER_HEARTBEAT_SECONDS", "1")
+    active = SimpleNamespace(
+        remote=False,
+        mode="remote_with_local_fallback",
+        fallback_active=True,
+    )
+    remote = SimpleNamespace(
+        remote=True,
+        mode="remote_with_local_fallback",
+        fallback_active=False,
+    )
+    states = iter([active, remote])
+    sleeps: list[int] = []
+    monkeypatch.setattr(
+        worker,
+        "resolve_remote_settings",
+        lambda *_args, **_kwargs: next(states),
+    )
+    monkeypatch.setattr(worker.time, "sleep", sleeps.append)
+
+    assert worker.wait_for_remote_settings(tmp_path) is remote
+    assert sleeps == [1]
+    assert json.loads(capsys.readouterr().out) == {
+        "reason": "personal_fallback_active",
+        "status": "standby",
+        "worker_id": "worker-one",
     }
 
 

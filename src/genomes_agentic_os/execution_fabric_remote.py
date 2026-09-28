@@ -3423,8 +3423,15 @@ class RemoteFabricWorker:
                     except ExecutionFabricApiError:
                         raise
                     except ExecutionFabricTransportError:
-                        if not active:
-                            raise
+                        # A long-poll can lose its response at the transport
+                        # boundary even though the registered worker remains
+                        # healthy.  Exiting here causes the service manager to
+                        # register a new worker session; if the old long-poll
+                        # claimed work at the same instant, that re-registration
+                        # fences the live attempt and can dead-letter scheduled
+                        # work without ever invoking its executor.  Keep the
+                        # same session and let the normal heartbeat boundary
+                        # decide whether the control plane is actually gone.
                         time.sleep(0.05)
                         continue
                     if assignment:

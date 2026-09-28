@@ -752,6 +752,57 @@ def test_worker_keeps_active_attempt_alive_when_spare_claim_times_out(
     assert result["failed"] == 0
 
 
+def test_worker_retries_idle_long_poll_timeout_without_reregistering(
+    tmp_path: Path,
+) -> None:
+    class IdleClaimTimeoutClient(FakeClient):
+        def __init__(self) -> None:
+            super().__init__([_assignment(1)])
+            self.settings = RemoteFabricSettings(
+                mode="remote",
+                control_plane_url="https://fabric.example.ts.net",
+                request_timeout_seconds=5,
+                long_poll_seconds=20,
+                auth_token_env="TOKEN",
+                auth_token="secret",
+            )
+            self.claim_calls = 0
+
+        def claim(self, **kwargs):
+            self.claim_calls += 1
+            assert kwargs["wait_ms"] == 20_000
+            if self.claim_calls == 1:
+                raise ExecutionFabricTransportError(
+                    "Execution Fabric request failed for POST "
+                    "/api/v1/assignments/claim: timed out"
+                )
+            return super().claim(**kwargs)
+
+    client = IdleClaimTimeoutClient()
+
+    result = RemoteFabricWorker(
+        client,  # type: ignore[arg-type]
+        root=tmp_path,
+        worker_id="worker-one",
+        bootstrap_id="worker-bootstrap-one",
+        host_id="bigmac",
+        queues=["non_llm"],
+        heartbeat_seconds=1,
+        executor=lambda _root, assignment: {
+            "result": {"task": assignment["task"]["id"]},
+            "effects": [],
+        },
+    ).work(max_tasks=1)
+
+    assert client.claim_calls == 2
+    assert len(client.registrations) == 1
+    assert [attempt_id for attempt_id, _ in client.completed] == [
+        _assignment(1)["attemptId"]
+    ]
+    assert result["completed"] == 1
+    assert result["failed"] == 0
+
+
 def test_worker_propagates_protocol_corruption_on_spare_claim(
     tmp_path: Path,
 ) -> None:
