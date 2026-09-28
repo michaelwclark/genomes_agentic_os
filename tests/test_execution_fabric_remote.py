@@ -811,6 +811,7 @@ def test_worker_preserves_session_during_transient_leadership_fence(
             super().__init__([_assignment(1)])
             self.heartbeat_calls = 0
             self.claim_calls = 0
+            self.complete_calls = 0
 
         def heartbeat(
             self,
@@ -843,6 +844,16 @@ def test_worker_preserves_session_during_transient_leadership_fence(
                 )
             return super().claim(**kwargs)
 
+        def complete_attempt(self, attempt_id, **kwargs):
+            self.complete_calls += 1
+            if self.complete_calls == 1:
+                raise ExecutionFabricApiError(
+                    503,
+                    "leadership_fenced",
+                    "leadership proof expired before witness renewal",
+                )
+            return super().complete_attempt(attempt_id, **kwargs)
+
     monkeypatch.setattr(execution_fabric_remote.time, "sleep", lambda _seconds: None)
     client = LeadershipRecoveryClient()
 
@@ -863,6 +874,10 @@ def test_worker_preserves_session_during_transient_leadership_fence(
     assert len(client.registrations) == 1
     assert client.heartbeat_calls >= 2
     assert client.claim_calls == 2
+    assert client.complete_calls == 2
+    assert [attempt_id for attempt_id, _ in client.completed] == [
+        _assignment(1)["attemptId"]
+    ]
     assert result["completed"] == 1
     assert result["failed"] == 0
 

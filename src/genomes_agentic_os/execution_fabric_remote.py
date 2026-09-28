@@ -3405,6 +3405,16 @@ class RemoteFabricWorker:
                             effects=outcome.get("effects") or [],
                         )
                         completed += 1
+                    except ExecutionFabricApiError as exc:
+                        if not _is_transient_leadership_api_error(exc):
+                            raise
+                        # The leadership guard rejects the mutation before it
+                        # reaches the ledger, so retaining the completed future
+                        # and replaying its terminal delivery after renewal is
+                        # safe.  Keep the attempt attached to this session.
+                        active[future] = assignment
+                        time.sleep(min(float(self.heartbeat_seconds), 5.0))
+                        continue
                     except TaskExecutionError as exc:
                         if exc.receipt_path and Path(exc.receipt_path).is_file():
                             _publish_or_spool(
@@ -3425,26 +3435,40 @@ class RemoteFabricWorker:
                                 ),
                                 fabric_epoch=int(assignment["fabricEpoch"]),
                             )
-                        self.client.fail_attempt(
-                            str(assignment["attemptId"]),
-                            worker_id=self.worker_id,
-                            lease_token=str(assignment["leaseToken"]),
-                            fabric_epoch=int(assignment["fabricEpoch"]),
-                            error_code=exc.code,
-                            error_summary=exc.summary,
-                            retryable=exc.retryable,
-                        )
+                        try:
+                            self.client.fail_attempt(
+                                str(assignment["attemptId"]),
+                                worker_id=self.worker_id,
+                                lease_token=str(assignment["leaseToken"]),
+                                fabric_epoch=int(assignment["fabricEpoch"]),
+                                error_code=exc.code,
+                                error_summary=exc.summary,
+                                retryable=exc.retryable,
+                            )
+                        except ExecutionFabricApiError as api_exc:
+                            if not _is_transient_leadership_api_error(api_exc):
+                                raise
+                            active[future] = assignment
+                            time.sleep(min(float(self.heartbeat_seconds), 5.0))
+                            continue
                         failed += 1
                     except Exception as exc:  # pragma: no cover - defensive worker boundary
-                        self.client.fail_attempt(
-                            str(assignment["attemptId"]),
-                            worker_id=self.worker_id,
-                            lease_token=str(assignment["leaseToken"]),
-                            fabric_epoch=int(assignment["fabricEpoch"]),
-                            error_code="worker_internal_error",
-                            error_summary=type(exc).__name__,
-                            retryable=False,
-                        )
+                        try:
+                            self.client.fail_attempt(
+                                str(assignment["attemptId"]),
+                                worker_id=self.worker_id,
+                                lease_token=str(assignment["leaseToken"]),
+                                fabric_epoch=int(assignment["fabricEpoch"]),
+                                error_code="worker_internal_error",
+                                error_summary=type(exc).__name__,
+                                retryable=False,
+                            )
+                        except ExecutionFabricApiError as api_exc:
+                            if not _is_transient_leadership_api_error(api_exc):
+                                raise
+                            active[future] = assignment
+                            time.sleep(min(float(self.heartbeat_seconds), 5.0))
+                            continue
                         failed += 1
                 if max_tasks is not None and completed + failed >= max_tasks:
                     break
