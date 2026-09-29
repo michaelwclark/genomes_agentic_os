@@ -8,11 +8,10 @@ ROOT = Path(__file__).resolve().parents[1]
 class RepositoryVisibilityBoundaryTests(unittest.TestCase):
     def test_boundary_is_present_on_authoring_surfaces(self):
         expected = (
-            "genomes_agentic",
-            "private",
-            "LOS",
+            "personal or operator-private repositories",
+            "organization",
             "name, link to, or depend",
-            "LOS domain",
+            "owning domain",
             "runtime or delivery dependenc",
         )
         surfaces = (
@@ -31,4 +30,4 @@ class RepositoryVisibilityBoundaryTests(unittest.TestCase):
         tools = (ROOT / "harness/TOOLS.md").read_text(encoding="utf-8")
 
         self.assertIn("external-output-sanitization", tools)
-        self.assertIn("private `genomes_agentic*` repositories", tools)
+        self.assertIn("personal or operator-private repositories", tools)

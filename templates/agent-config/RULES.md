@@ -37,18 +37,17 @@ Record local constraints, approval gates, safety boundaries, coding rules, and o
 
 ## Repository Visibility Boundary
 
-- Treat repositories whose names begin with `genomes_agentic` under Genome's
-  personal GitHub ownership as private operator infrastructure that Lenders
-  Cooperative contributors cannot access.
-- LOS repository pull requests, issues, comments, and documentation must not
-  name, link to, or depend on those private repositories. An LOS change must be
-  understandable, buildable, testable, and operable using team-accessible LOS
-  repositories, trackers, and documentation alone.
-- Pull requests in Genome's private Agentic repositories may reference
-  team-accessible LOS functionality when useful, but the corresponding Agentic
-  rule, workflow, automation, or artifact must be scoped under the LOS domain,
-  project, or program. Never model a private Agentic repository as an LOS
-  runtime or delivery dependency.
+- Treat personal or operator-private repositories as unavailable to
+  contributors who only have access to an organization's shared repositories.
+- Organization repository pull requests, issues, comments, and documentation
+  must not name, link to, or depend on personal or operator-private
+  repositories. A shared change must be understandable, buildable, testable,
+  and operable using team-accessible repositories, trackers, and documentation
+  alone.
+- Private automation repositories may reference team-accessible functionality
+  when useful, but the corresponding rule, workflow, automation, or artifact
+  must be scoped under the owning domain, project, or program. Never model a
+  personal repository as an organization runtime or delivery dependency.
 
 ## Notification Rules
 
