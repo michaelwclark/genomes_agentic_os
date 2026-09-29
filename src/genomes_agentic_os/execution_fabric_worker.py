@@ -129,6 +129,47 @@ def healthcheck(root: Path) -> int:
     return 0 if value.get("status") == "online" and age_seconds <= max_age else 1
 
 
+def wait_for_remote_settings(root: Path):
+    """Hold a host worker in-process while personal fallback owns execution.
+
+    The launch service is intentionally persistent.  Exiting while fallback is
+    active makes launchd immediately restart and re-evaluate the same state,
+    producing an unbounded crash loop.  Manual failback is already required by
+    policy, so keep one quiet process and resume remote registration once that
+    state is cleared.
+    """
+    logged_standby = False
+    while True:
+        settings = resolve_remote_settings(
+            root,
+            role="worker",
+            endpoint_override=os.environ.get("FABRIC_API_BASE"),
+        )
+        if settings.remote:
+            return settings
+        if not (
+            settings.mode == "remote_with_local_fallback"
+            and settings.fallback_active
+        ):
+            return settings
+        if not logged_standby:
+            print(
+                json.dumps(
+                    {
+                        "status": "standby",
+                        "reason": "personal_fallback_active",
+                        "worker_id": _required("FABRIC_WORKER_ID"),
+                    },
+                    sort_keys=True,
+                ),
+                flush=True,
+            )
+            logged_standby = True
+        time.sleep(
+            max(1, int(os.environ.get("FABRIC_WORKER_HEARTBEAT_SECONDS", "15")))
+        )
+
+
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     root = Path(os.environ.get("AGENTIC_OS_ROOT", "/var/lib/agentic-os")).resolve()
@@ -144,11 +185,7 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({"status": "valid", "routes": routes}, sort_keys=True))
         return 0
     prepare_root(root)
-    settings = resolve_remote_settings(
-        root,
-        role="worker",
-        endpoint_override=os.environ.get("FABRIC_API_BASE"),
-    )
+    settings = wait_for_remote_settings(root)
     queues = _csv("FABRIC_WORKER_ACCEPTED_QUEUES")
     capabilities = _csv("FABRIC_WORKER_CAPABILITIES")
     validate_worker_routes(root, queues, capabilities)

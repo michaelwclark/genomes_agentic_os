@@ -60,4 +60,18 @@ for unit in $units; do
   systemctl start "$unit"
 done
 
+if [ "${FABRIC_LOS_SECURITY_SCHEDULES_ENABLED:-false}" = true ]; then
+  schedule_reconciler="$script_dir/bin/reconcile-los-security-schedules.py"
+  schedule_manifest=${FABRIC_LOS_SECURITY_SCHEDULES_MANIFEST:-$script_dir/../deploy/los-security-schedules.json}
+  [ -x "$schedule_reconciler" ] || {
+    echo "installed LOS security schedule reconciler is unavailable: $schedule_reconciler" >&2
+    exit 69
+  }
+  [ -r "$schedule_manifest" ] || {
+    echo "installed LOS security schedule manifest is unavailable: $schedule_manifest" >&2
+    exit 69
+  }
+  "$schedule_reconciler" --apply --manifest "$schedule_manifest"
+fi
+
 echo "Execution Fabric Linux services are active"

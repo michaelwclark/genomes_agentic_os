@@ -109,7 +109,7 @@ writers:
     cutover_issue: AGE-155
   maintenance:
     owner: os_health
-    paths: [src/genomes_agentic_os/docker_reclaim.py, src/genomes_agentic_os/documentation_upkeep.py, src/genomes_agentic_os/work_item_archive.py]
+    paths: [harness/bin/agentic-os-host-sentinel, src/genomes_agentic_os/docker_reclaim.py, src/genomes_agentic_os/documentation_upkeep.py, src/genomes_agentic_os/host_sentinel.py, src/genomes_agentic_os/work_item_archive.py]
     model_keys: [maintenance_run]
     replacement: run_evidence_writer
     cutover_issue: AGE-155
@@ -227,7 +227,7 @@ models:
     collection: maintenance_runs
     classification: durable_evidence
     payload_mode: document
-    source_patterns: ["**/06-runs-and-logs/run-queue-prune/*", "**/06-runs-and-logs/migrations/**/*", "**/06-runs-and-logs/docker-reclaim/**/*"]
+    source_patterns: ["**/06-runs-and-logs/run-queue-prune/*", "**/06-runs-and-logs/migrations/**/*", "**/06-runs-and-logs/docker-reclaim/**/*", "**/06-runs-and-logs/host-sentinel/*"]
     indexes: [[host_id, occurred_at], [operation, occurred_at], [status, occurred_at], [content_sha256]]
     redaction_profile: operational
     max_payload_bytes: 1048576

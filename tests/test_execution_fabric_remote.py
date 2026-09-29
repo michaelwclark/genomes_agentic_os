@@ -9,6 +9,7 @@ from pathlib import Path
 import shlex
 import subprocess
 import sys
+from threading import Event
 from typing import Any
 from urllib.error import HTTPError
 
@@ -24,6 +25,7 @@ from genomes_agentic_os.execution_fabric_remote import (
     ExecutionFabricApiError,
     ExecutionFabricClient,
     ExecutionFabricRemoteError,
+    ExecutionFabricTransportError,
     RemoteFabricSettings,
     RemoteFabricWorker,
     TaskExecutionError,
@@ -345,6 +347,34 @@ def test_task_route_rejects_unknown_or_mismatched_queue_work(tmp_path: Path) -> 
         validate_task_route(root, "made_up", "script")
     with pytest.raises(ValueError, match="not accepted"):
         validate_task_route(root, "non_llm", "llm.codex")
+
+
+def test_codex_route_enforces_bounded_execution_timeout(tmp_path: Path) -> None:
+    root = _root(tmp_path, remote=False)
+    payload = {
+        "work_item_id": "los-security",
+        "instruction_ref": "domains/los/security.md",
+        "timeout_seconds": 3600,
+    }
+    assert validate_task_route(
+        root, "codex", "llm.codex", payload=payload, remote=True
+    )["required_capability"] == "codex.task"
+    with pytest.raises(ValueError, match="at least 60"):
+        validate_task_route(
+            root,
+            "codex",
+            "llm.codex",
+            payload={**payload, "timeout_seconds": 59},
+            remote=True,
+        )
+    with pytest.raises(ValueError, match="at most 10800"):
+        validate_task_route(
+            root,
+            "codex",
+            "llm.codex",
+            payload={**payload, "timeout_seconds": 10801},
+            remote=True,
+        )
 
 
 def test_route_approval_class_materializes_to_run_queue_state() -> None:
@@ -670,6 +700,260 @@ def test_worker_registers_heartbeats_and_completes_multiple_assignments(tmp_path
     }
     assert result["completed"] == 2
     assert result["failed"] == 0
+
+
+def test_worker_keeps_active_attempt_alive_when_spare_claim_times_out(
+    tmp_path: Path,
+) -> None:
+    release = Event()
+
+    class SpareClaimTimeoutClient(FakeClient):
+        def __init__(self) -> None:
+            super().__init__([_assignment(1), _assignment(2)])
+            self.claim_calls = 0
+
+        def claim(self, **kwargs):
+            self.claim_calls += 1
+            if self.claim_calls == 1:
+                return super().claim(**kwargs)
+            if self.claim_calls == 2:
+                assert kwargs["wait_ms"] == 0
+                release.set()
+                raise ExecutionFabricTransportError(
+                    "Execution Fabric request failed for POST "
+                    "/api/v1/assignments/claim: timed out"
+                )
+            return super().claim(**kwargs)
+
+    client = SpareClaimTimeoutClient()
+
+    def executor(root, assignment):
+        assert release.wait(timeout=1)
+        return {"result": {"task": assignment["task"]["id"]}, "effects": []}
+
+    result = RemoteFabricWorker(
+        client,  # type: ignore[arg-type]
+        root=tmp_path,
+        worker_id="worker-one",
+        bootstrap_id="worker-bootstrap-one",
+        host_id="bigmac",
+        queues=["non_llm"],
+        max_concurrency=2,
+        heartbeat_seconds=1,
+        executor=executor,
+    ).work(max_tasks=2)
+
+    assert client.claim_calls >= 3
+    assert {attempt_id for attempt_id, _ in client.completed} == {
+        _assignment(1)["attemptId"],
+        _assignment(2)["attemptId"],
+    }
+    assert result["completed"] == 2
+    assert result["failed"] == 0
+
+
+def test_worker_retries_idle_long_poll_timeout_without_reregistering(
+    tmp_path: Path,
+) -> None:
+    class IdleClaimTimeoutClient(FakeClient):
+        def __init__(self) -> None:
+            super().__init__([_assignment(1)])
+            self.settings = RemoteFabricSettings(
+                mode="remote",
+                control_plane_url="https://fabric.example.ts.net",
+                request_timeout_seconds=5,
+                long_poll_seconds=20,
+                auth_token_env="TOKEN",
+                auth_token="secret",
+            )
+            self.claim_calls = 0
+
+        def claim(self, **kwargs):
+            self.claim_calls += 1
+            assert kwargs["wait_ms"] == 20_000
+            if self.claim_calls == 1:
+                raise ExecutionFabricTransportError(
+                    "Execution Fabric request failed for POST "
+                    "/api/v1/assignments/claim: timed out"
+                )
+            return super().claim(**kwargs)
+
+    client = IdleClaimTimeoutClient()
+
+    result = RemoteFabricWorker(
+        client,  # type: ignore[arg-type]
+        root=tmp_path,
+        worker_id="worker-one",
+        bootstrap_id="worker-bootstrap-one",
+        host_id="bigmac",
+        queues=["non_llm"],
+        heartbeat_seconds=1,
+        executor=lambda _root, assignment: {
+            "result": {"task": assignment["task"]["id"]},
+            "effects": [],
+        },
+    ).work(max_tasks=1)
+
+    assert client.claim_calls == 2
+    assert len(client.registrations) == 1
+    assert [attempt_id for attempt_id, _ in client.completed] == [
+        _assignment(1)["attemptId"]
+    ]
+    assert result["completed"] == 1
+    assert result["failed"] == 0
+
+
+def test_worker_preserves_session_during_transient_leadership_fence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class LeadershipRecoveryClient(FakeClient):
+        def __init__(self) -> None:
+            super().__init__([_assignment(1)])
+            self.heartbeat_calls = 0
+            self.claim_calls = 0
+            self.complete_calls = 0
+
+        def heartbeat(
+            self,
+            worker_id,
+            registration_token,
+            active_attempt_ids,
+            artifact_spool_health=None,
+        ):
+            self.heartbeat_calls += 1
+            if self.heartbeat_calls == 1:
+                raise ExecutionFabricApiError(
+                    503,
+                    "leadership_fenced",
+                    "leadership proof expired before witness renewal",
+                )
+            return super().heartbeat(
+                worker_id,
+                registration_token,
+                active_attempt_ids,
+                artifact_spool_health,
+            )
+
+        def claim(self, **kwargs):
+            self.claim_calls += 1
+            if self.claim_calls == 1:
+                raise ExecutionFabricApiError(
+                    503,
+                    "leadership_unavailable",
+                    "leader resolution failed",
+                )
+            return super().claim(**kwargs)
+
+        def complete_attempt(self, attempt_id, **kwargs):
+            self.complete_calls += 1
+            if self.complete_calls == 1:
+                raise ExecutionFabricApiError(
+                    503,
+                    "leadership_fenced",
+                    "leadership proof expired before witness renewal",
+                )
+            return super().complete_attempt(attempt_id, **kwargs)
+
+    monkeypatch.setattr(execution_fabric_remote.time, "sleep", lambda _seconds: None)
+    client = LeadershipRecoveryClient()
+
+    result = RemoteFabricWorker(
+        client,  # type: ignore[arg-type]
+        root=tmp_path,
+        worker_id="worker-one",
+        bootstrap_id="worker-bootstrap-one",
+        host_id="bigmac",
+        queues=["non_llm"],
+        heartbeat_seconds=1,
+        executor=lambda _root, assignment: {
+            "result": {"task": assignment["task"]["id"]},
+            "effects": [],
+        },
+    ).work(max_tasks=1)
+
+    assert len(client.registrations) == 1
+    assert client.heartbeat_calls >= 2
+    assert client.claim_calls == 2
+    assert client.complete_calls == 2
+    assert [attempt_id for attempt_id, _ in client.completed] == [
+        _assignment(1)["attemptId"]
+    ]
+    assert result["completed"] == 1
+    assert result["failed"] == 0
+
+
+def test_worker_propagates_non_leadership_api_unavailability(tmp_path: Path) -> None:
+    class PolicyUnavailableClient(FakeClient):
+        def claim(self, **kwargs):
+            raise ExecutionFabricApiError(503, "config_invalid", "policy drift")
+
+    client = PolicyUnavailableClient([])
+    with pytest.raises(ExecutionFabricApiError, match="policy drift"):
+        RemoteFabricWorker(
+            client,  # type: ignore[arg-type]
+            root=tmp_path,
+            worker_id="worker-one",
+            bootstrap_id="worker-bootstrap-one",
+            host_id="bigmac",
+            queues=["non_llm"],
+            heartbeat_seconds=1,
+            executor=lambda _root, _assignment: {"result": {}, "effects": []},
+        ).work(max_tasks=1)
+
+    assert len(client.registrations) == 1
+
+
+def test_worker_propagates_protocol_corruption_on_spare_claim(
+    tmp_path: Path,
+) -> None:
+    """A malformed/non-object JSON response from a spare-slot claim is
+    protocol corruption, not a transport failure. It must surface -- not be
+    silently retried forever -- even while an active attempt is in flight.
+
+    Regression for a finding on PR #266: the original fix caught the whole
+    ExecutionFabricRemoteError base class, which also matches the plain
+    ExecutionFabricRemoteError that ``_json_object`` raises for invalid or
+    non-object JSON on an otherwise successful (2xx) response.
+    """
+    release = Event()
+
+    class ProtocolCorruptionClient(FakeClient):
+        def __init__(self) -> None:
+            super().__init__([_assignment(1)])
+            self.claim_calls = 0
+
+        def claim(self, **kwargs):
+            self.claim_calls += 1
+            if self.claim_calls == 1:
+                return super().claim(**kwargs)
+            if self.claim_calls == 2:
+                assert kwargs["wait_ms"] == 0
+                release.set()
+                raise ExecutionFabricRemoteError(
+                    "Execution Fabric returned invalid JSON"
+                )
+            return super().claim(**kwargs)  # pragma: no cover - guards against a retry loop
+
+    client = ProtocolCorruptionClient()
+
+    def executor(root, assignment):
+        assert release.wait(timeout=1)
+        return {"result": {"task": assignment["task"]["id"]}, "effects": []}
+
+    with pytest.raises(ExecutionFabricRemoteError, match="invalid JSON"):
+        RemoteFabricWorker(
+            client,  # type: ignore[arg-type]
+            root=tmp_path,
+            worker_id="worker-one",
+            bootstrap_id="worker-bootstrap-one",
+            host_id="bigmac",
+            queues=["non_llm"],
+            max_concurrency=2,
+            heartbeat_seconds=1,
+            executor=executor,
+        ).work(max_tasks=2)
+
+    assert client.claim_calls == 2
 
 
 def test_worker_classifies_and_reports_failure(tmp_path: Path) -> None:
@@ -2155,6 +2439,65 @@ def test_fullsail_worker_marks_missing_controller_retryable(
     assert receipt["error"]["code"] == "fullsail_controller_unavailable"
     assert receipt["job_id"] == "capture-20260826-0123abcd"
     assert receipt["evidence"]["controller_relative_path"].startswith("lib/")
+
+
+@pytest.mark.parametrize(
+    ("work_item_id", "requested_timeout", "expected_timeout"),
+    [
+        ("los-security-canary", 5, 60),
+        ("los-security-canary", 3600, 3600),
+        ("los-security-canary", 99999, 10800),
+        ("los_engineering_security_scan", None, 3600),
+        ("los_engineering_dependabot_remediation", None, 5400),
+        ("los_engineering_ai_automation_pr_merge", None, 5400),
+    ],
+)
+def test_portable_codex_worker_honors_bounded_payload_timeout(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    work_item_id: str,
+    requested_timeout: int | None,
+    expected_timeout: int,
+) -> None:
+    root = _root(tmp_path, remote=False)
+    instruction = root / "work-items/security-canary.md"
+    instruction.parent.mkdir(parents=True)
+    instruction.write_text("read-only security canary\n", encoding="utf-8")
+    captured: dict[str, Any] = {}
+
+    def capture(
+        _root_path: Path,
+        _assignment: dict[str, Any],
+        item: dict[str, Any],
+        *,
+        effects: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        captured.update(item)
+        assert effects == []
+        return {"result": {"status": "succeeded"}, "effects": [], "artifacts": []}
+
+    monkeypatch.setattr(execution_fabric_remote, "_run_prepared_worker_item", capture)
+    payload: dict[str, Any] = {
+        "work_item_id": work_item_id,
+        "instruction_ref": "work-items/security-canary.md",
+    }
+    if requested_timeout is not None:
+        payload["timeout_seconds"] = requested_timeout
+    result = execution_fabric_remote._codex_task_worker(
+        root,
+        {"attemptId": "attempt-1"},
+        {
+            "id": "task-1",
+            "queue": "codex",
+            "taskType": "llm.codex",
+            "payload": payload,
+        },
+        {"approval_class": "policy_gated", "mutation_class": "internal_write"},
+    )
+
+    assert result["result"]["status"] == "succeeded"
+    assert captured["timeout_seconds"] == expected_timeout
+    assert captured["domain_worker"] == "codex_task"
 
 
 def test_fullsail_worker_rejects_mismatched_job_identity_with_receipt(
