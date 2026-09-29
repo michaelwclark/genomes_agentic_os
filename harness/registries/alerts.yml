@@ -82,3 +82,9 @@ sources:
     cooldown_seconds: 1800
     max_deliveries_per_hour: 4
     sound: Basso
+  runtime.host_sentinel:
+    enabled: true
+    min_level: info
+    cooldown_seconds: 900
+    bypass_rate_limit_levels: [critical]
+    sound: Basso

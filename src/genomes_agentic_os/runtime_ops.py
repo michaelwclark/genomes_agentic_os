@@ -1457,12 +1457,18 @@ def _schedule_run_due_locked(os_root: Path, *, dry_run: bool, mode: str) -> dict
             or (isinstance(schedule.get("supervisor"), dict) and schedule["supervisor"].get("priority_dispatch"))
             else 0,
         }
+        if schedule.get("interim_timeout_sec") is not None:
+            item["timeout_seconds"] = int(schedule["interim_timeout_sec"])
         item = _prepare_queue_item(os_root, item)
-        if mode == EXECUTION_FABRIC_MODE:
+        if dry_run:
+            written_item = item
+            created = False
+        elif mode == EXECUTION_FABRIC_MODE:
             queue_path, written_item, created = _append_execution_fabric_item(os_root, item)
+            queue_changed = True
         else:
             written_item, created = _append_queue_item_to_queue(queue, item)
-        queue_changed = True
+            queue_changed = True
         queued.append({**written_item, "created": created})
         if not dry_run:
             schedule["last_queued_at"] = _iso(now)

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+import importlib.util
 import json
 import os
 import plistlib
@@ -1569,6 +1571,81 @@ def test_systemd_units_cover_primary_observer_watchdog_and_backups() -> None:
     assert '--profile standalone-primary' in primary_runner
 
 
+def test_primary_unit_self_restarts_after_an_unclean_boot_failure() -> None:
+    primary = (
+        DEPLOY / "systemd" / "genomes-agentic-os-execution-fabric-primary.service"
+    ).read_text(encoding="utf-8")
+    unit_section, service_section = primary.split("[Service]", maxsplit=1)
+    assert "StartLimitIntervalSec=2h" in unit_section
+    assert "StartLimitBurst=12" in unit_section
+    assert "Restart=on-failure" in service_section
+    assert "RestartSec=60s" in service_section
+    # Type=oneshot with RemainAfterExit=yes still permits Restart=on-failure
+    # on systemd >=244; both directives must stay present together.
+    assert "Type=oneshot" in service_section
+    assert "RemainAfterExit=yes" in service_section
+
+
+def test_backup_health_runs_the_primary_and_backup_profiles_together() -> None:
+    script = (INSTALLERS / "bin" / "backup-health.sh").read_text(encoding="utf-8")
+    assert "--profile primary --profile backup run --rm" in script
+
+
+def test_backup_health_refuses_a_group_or_world_readable_pgpass(
+    tmp_path: Path,
+) -> None:
+    script = (INSTALLERS / "bin" / "backup-health.sh").read_text(encoding="utf-8")
+    assert "FABRIC_SECRETS_DIR" in script
+    assert "postgres-pgpass" in script
+    assert "-perm /077" in script
+
+    if sys.platform != "linux":
+        pytest.skip("GNU find -perm /077 semantics required")
+
+    secrets_dir = tmp_path / "secrets"
+    secrets_dir.mkdir()
+    pgpass = secrets_dir / "postgres-pgpass"
+    pgpass.write_text("postgres:5432:*:fabric:secret\n", encoding="utf-8")
+    pgpass.chmod(0o644)
+
+    guard_start = script.index('if [ -n "${FABRIC_SECRETS_DIR:-}" ]; then')
+    guard_end = script.index("run_id=")
+    guard = "set -eu\n" + script[guard_start:guard_end]
+    result = subprocess.run(
+        ["sh", "-c", guard],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "FABRIC_SECRETS_DIR": str(secrets_dir)},
+    )
+    assert result.returncode == 78
+    assert "group/world accessible" in result.stderr
+
+    pgpass.chmod(0o400)
+    passed = subprocess.run(
+        ["sh", "-c", guard],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "FABRIC_SECRETS_DIR": str(secrets_dir)},
+    )
+    assert passed.returncode == 0, passed.stderr
+
+
+def test_fabric_notify_scopes_the_alerts_config_lookup_to_fabric_os_root() -> None:
+    library = (INSTALLERS / "bin" / "_lib.sh").read_text(encoding="utf-8")
+    assert 'AGENTIC_OS_ROOT="$FABRIC_OS_ROOT" "$notifier_python" "$notifier"' in library
+    assert 'AGENTIC_OS_ROOT="$FABRIC_OS_ROOT" "$notifier"' in library
+
+    dispatcher = (INSTALLERS / "bin" / "dispatch-alarms.sh").read_text(
+        encoding="utf-8"
+    )
+    assert (
+        'AGENTIC_OS_ROOT="$FABRIC_OS_ROOT" "$FABRIC_WORKER_PYTHON" "$notifier"'
+        in dispatcher
+    )
+
+
 def test_standalone_primary_runner_bootstraps_once_then_waits_before_primary(
     tmp_path: Path,
 ) -> None:
@@ -2603,3 +2680,156 @@ def test_standalone_primary_is_explicit_non_ha_and_uses_installed_canonical_moun
     assert "standalone-primary policy maintenance must run on its exact primary host" in rotation
     assert "FABRIC_POLICY_OVERRIDE_WINDOW_START" in rotation
     assert "FABRIC_POLICY_OVERRIDE_WINDOW_END" in rotation
+
+
+def test_los_security_automation_assets_define_closed_remote_routes() -> None:
+    manifest = json.loads(
+        (DEPLOY / "los-security-schedules.json").read_text(encoding="utf-8")
+    )
+    assert manifest["schemaVersion"] == (
+        "agentic-os-execution-fabric-schedule-manifest/v1"
+    )
+    schedules = {item["id"]: item for item in manifest["schedules"]}
+    assert set(schedules) == {
+        "los_engineering_security_scan",
+        "los_engineering_dependabot_remediation",
+        "los_engineering_ai_automation_pr_merge",
+    }
+    expected = {
+        "los_engineering_security_scan": (3600, 3600),
+        "los_engineering_dependabot_remediation": (7200, 5400),
+        "los_engineering_ai_automation_pr_merge": (14400, 5400),
+    }
+    for schedule_id, schedule in schedules.items():
+        interval, timeout = expected[schedule_id]
+        assert schedule["queue"] == "codex"
+        assert schedule["taskType"] == "llm.codex"
+        assert schedule["requiredCapabilities"] == ["codex.task"]
+        assert schedule["enabled"] is True
+        assert schedule["intervalSeconds"] == interval
+        assert schedule["payload"]["timeout_seconds"] == timeout
+        assert schedule["payload"]["instruction_ref"].startswith(
+            "domains/los/04-automations/engineering/"
+        )
+        assert schedule["payload"]["instruction_ref"].endswith("/prompt.md")
+
+    plist_path = (
+        DEPLOY
+        / "launchd"
+        / "com.genomes.agentic-os.execution-fabric.los-security-worker.plist"
+    )
+    with plist_path.open("rb") as handle:
+        plist = plistlib.load(handle)
+    assert plist["Label"].endswith(".los-security-worker")
+    assert plist["ProgramArguments"] == [
+        "__INSTALL_ROOT__/bin/los-security-worker.sh"
+    ]
+    assert plist["EnvironmentVariables"]["FABRIC_RUNTIME_ENV_FILE"] == (
+        "__RUNTIME_ENV__"
+    )
+    assert plist["SoftResourceLimits"]["NumberOfFiles"] == 8192
+    assert plist["HardResourceLimits"]["NumberOfFiles"] == 65536
+
+    runtime_env = (DEPLOY / "runtime.env.example").read_text(encoding="utf-8")
+    assert "FABRIC_LOS_SECURITY_WORKER_ENABLED=false" in runtime_env
+    assert "FABRIC_LOS_SECURITY_WORKER_CAPABILITIES=codex.task" in runtime_env
+    assert "FABRIC_LOS_SECURITY_SCHEDULES_ENABLED=false" in runtime_env
+    worker = (INSTALLERS / "bin/los-security-worker.sh").read_text(
+        encoding="utf-8"
+    )
+    assert "FABRIC_LOS_SECURITY_WORKER_TOKEN_FILE" in worker
+    assert "FABRIC_WORKER_ROOT_MODE=installed_host" in worker
+    assert 'exec "$worker"' in worker
+    mac_activation = (INSTALLERS / "activate-macos.sh").read_text(encoding="utf-8")
+    assert "los-security-worker.sh\" --preflight" in mac_activation
+    linux_activation = (INSTALLERS / "activate-linux.sh").read_text(
+        encoding="utf-8"
+    )
+    assert "FABRIC_LOS_SECURITY_SCHEDULES_ENABLED" in linux_activation
+    assert "reconcile-los-security-schedules.py" in linux_activation
+
+
+def test_los_security_schedule_reconciler_is_dry_run_by_default(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    reconcile_path = INSTALLERS / "bin/reconcile-los-security-schedules.py"
+    reconcile = reconcile_path.read_text(encoding="utf-8")
+    assert 'parser.add_argument("--apply", action="store_true")' in reconcile
+    assert 'default=os.environ.get("FABRIC_API_TOKEN_FILE")' in reconcile
+    assert '"status": "would-reconcile"' in reconcile
+    assert '"/api/v1/snapshots/schedules?limit=200"' in reconcile
+    assert 'f"/api/v1/admin/schedules/{item[\'id\']}"' in reconcile
+    assert "missing = sorted(expected - observed)" in reconcile
+
+    spec = importlib.util.spec_from_file_location(
+        "reconcile_los_security_schedules", reconcile_path
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    schedules = module._load_manifest(DEPLOY / "los-security-schedules.json")
+    now = datetime(2026, 9, 25, 21, 0, tzinfo=timezone.utc)
+    existing_next = "2026-09-25T22:00:00.000Z"
+    plan = module._plan(
+        schedules,
+        [{"id": schedules[0]["id"], "nextOccurrenceAt": existing_next}],
+        now,
+    )
+    assert plan[0]["body"]["nextOccurrenceAt"] == existing_next
+    assert plan[1]["body"]["nextOccurrenceAt"] == "2026-09-25T21:10:00.000Z"
+
+    admin_file = tmp_path / "admin-token"
+    observer_file = tmp_path / "observer-token"
+    admin_file.write_text("a" * 32, encoding="utf-8")
+    observer_file.write_text("o" * 32, encoding="utf-8")
+    calls: list[tuple[str, str, str]] = []
+    snapshots = 0
+
+    def request(
+        _base: str,
+        token: str,
+        path: str,
+        *,
+        method: str = "GET",
+        body: dict | None = None,
+    ) -> dict:
+        nonlocal snapshots
+        calls.append((token, path, method))
+        if path.startswith("/api/v1/snapshots/schedules"):
+            snapshots += 1
+            if snapshots == 1:
+                return {"schedules": []}
+            return {
+                "schedules": [
+                    {"id": schedule["id"], "enabled": True}
+                    for schedule in schedules
+                ]
+            }
+        assert body is not None
+        return {}
+
+    monkeypatch.setattr(module, "_request", request)
+    assert module.main(
+        [
+            "--apply",
+            "--api-base",
+            "http://100.64.0.2:3180",
+            "--admin-token-file",
+            str(admin_file),
+            "--observer-token-file",
+            str(observer_file),
+            "--manifest",
+            str(DEPLOY / "los-security-schedules.json"),
+        ]
+    ) == 0
+    capsys.readouterr()
+    assert calls[0] == (
+        "o" * 32,
+        "/api/v1/snapshots/schedules?limit=200",
+        "GET",
+    )
+    assert calls[-1] == calls[0]
+    assert len([call for call in calls if call[2] == "PUT"]) == 3
+    assert all(call[0] == "a" * 32 for call in calls if call[2] == "PUT")

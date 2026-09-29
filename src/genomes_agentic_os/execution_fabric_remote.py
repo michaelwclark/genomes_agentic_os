@@ -58,6 +58,11 @@ DEFAULT_TRANSPORT = {
     },
 }
 FALLBACK_STATE_SCHEMA = "agentic-os-execution-fabric-fallback/v1"
+LEGACY_LOS_SECURITY_TIMEOUT_SECONDS = {
+    "los_engineering_security_scan": 3600,
+    "los_engineering_dependabot_remediation": 5400,
+    "los_engineering_ai_automation_pr_merge": 5400,
+}
 
 
 class ExecutionFabricRemoteError(RuntimeError):
@@ -83,6 +88,25 @@ class ExecutionFabricTransportError(ExecutionFabricRemoteError):
     can treat genuine connectivity failures as retryable without also
     swallowing protocol or data corruption.
     """
+
+
+_TRANSIENT_LEADERSHIP_API_ERRORS = {
+    (503, "leadership_fenced"),
+    (503, "leadership_unavailable"),
+}
+
+
+def _is_transient_leadership_api_error(exc: ExecutionFabricApiError) -> bool:
+    """Return true only for a witnessed leader's temporary unavailability.
+
+    The gateway and control plane use distinct 503 codes while leadership is
+    being re-verified.  Keeping the registered session alive for those two
+    responses prevents a service-manager restart from fencing an otherwise
+    healthy in-flight attempt.  Other API failures remain terminal so worker,
+    credential, policy, and protocol fencing still fail closed.
+    """
+
+    return (exc.status, exc.code) in _TRANSIENT_LEADERSHIP_API_ERRORS
 
 
 class TaskExecutionError(ExecutionFabricRemoteError):
@@ -818,6 +842,16 @@ def validate_task_route(
         if "enum" in rule and value not in list(rule["enum"]):
             raise ValueError(
                 f"task type {task_type!r} payload field {name!r} is not allowed"
+            )
+        minimum = rule.get("minimum")
+        if minimum is not None and isinstance(value, int) and value < int(minimum):
+            raise ValueError(
+                f"task type {task_type!r} payload field {name!r} must be at least {minimum}"
+            )
+        maximum = rule.get("maximum")
+        if maximum is not None and isinstance(value, int) and value > int(maximum):
+            raise ValueError(
+                f"task type {task_type!r} payload field {name!r} must be at most {maximum}"
             )
         pattern = rule.get("pattern")
         if pattern and (
@@ -2060,6 +2094,7 @@ def _portable_harness_worker(
             retryable=False,
         )
     target = f"{harness}_harness"
+    work_item_id = str(payload["work_item_id"])
     item = {
         "id": str(task.get("id") or ""),
         "kind": "domain_worker",
@@ -2071,8 +2106,19 @@ def _portable_harness_worker(
         "mutation_class": str(route["mutation_class"]),
         "domain_worker": f"{harness}_task",
         "instruction_ref": instruction_ref,
-        "work_item_id": str(payload["work_item_id"]),
-        "timeout_seconds": 1800,
+        "work_item_id": work_item_id,
+        "timeout_seconds": max(
+            60,
+            min(
+                int(
+                    payload.get(
+                        "timeout_seconds",
+                        LEGACY_LOS_SECURITY_TIMEOUT_SECONDS.get(work_item_id, 1800),
+                    )
+                ),
+                10800,
+            ),
+        ),
     }
     return _run_prepared_worker_item(os_root, assignment, item, effects=[])
 
@@ -3576,12 +3622,22 @@ class RemoteFabricWorker:
                             spool_retry["health"]
                         )
                         last_spool_drain = now
-                    self.client.heartbeat(
-                        self.worker_id,
-                        registration_token,
-                        [str(row["attemptId"]) for row in active.values()],
-                        artifact_spool_health=spool_health,
-                    )
+                    try:
+                        self.client.heartbeat(
+                            self.worker_id,
+                            registration_token,
+                            [str(row["attemptId"]) for row in active.values()],
+                            artifact_spool_health=spool_health,
+                        )
+                    except ExecutionFabricApiError as exc:
+                        if not _is_transient_leadership_api_error(exc):
+                            raise
+                        # Leadership renewal is fail-closed on the server.  Do
+                        # not replace this worker session while the witnessed
+                        # leader is briefly unavailable; a new registration
+                        # would fence any active attempt owned by this one.
+                        time.sleep(min(float(self.heartbeat_seconds), 5.0))
+                        continue
                     record_health(
                         "online",
                         [str(row["attemptId"]) for row in active.values()],
@@ -3626,6 +3682,16 @@ class RemoteFabricWorker:
                             effects=outcome.get("effects") or [],
                         )
                         completed += 1
+                    except ExecutionFabricApiError as exc:
+                        if not _is_transient_leadership_api_error(exc):
+                            raise
+                        # The leadership guard rejects the mutation before it
+                        # reaches the ledger, so retaining the completed future
+                        # and replaying its terminal delivery after renewal is
+                        # safe.  Keep the attempt attached to this session.
+                        active[future] = assignment
+                        time.sleep(min(float(self.heartbeat_seconds), 5.0))
+                        continue
                     except TaskExecutionError as exc:
                         if exc.receipt_path and Path(exc.receipt_path).is_file():
                             _publish_or_spool(
@@ -3646,26 +3712,40 @@ class RemoteFabricWorker:
                                 ),
                                 fabric_epoch=int(assignment["fabricEpoch"]),
                             )
-                        self.client.fail_attempt(
-                            str(assignment["attemptId"]),
-                            worker_id=self.worker_id,
-                            lease_token=str(assignment["leaseToken"]),
-                            fabric_epoch=int(assignment["fabricEpoch"]),
-                            error_code=exc.code,
-                            error_summary=exc.summary,
-                            retryable=exc.retryable,
-                        )
+                        try:
+                            self.client.fail_attempt(
+                                str(assignment["attemptId"]),
+                                worker_id=self.worker_id,
+                                lease_token=str(assignment["leaseToken"]),
+                                fabric_epoch=int(assignment["fabricEpoch"]),
+                                error_code=exc.code,
+                                error_summary=exc.summary,
+                                retryable=exc.retryable,
+                            )
+                        except ExecutionFabricApiError as api_exc:
+                            if not _is_transient_leadership_api_error(api_exc):
+                                raise
+                            active[future] = assignment
+                            time.sleep(min(float(self.heartbeat_seconds), 5.0))
+                            continue
                         failed += 1
                     except Exception as exc:  # pragma: no cover - defensive worker boundary
-                        self.client.fail_attempt(
-                            str(assignment["attemptId"]),
-                            worker_id=self.worker_id,
-                            lease_token=str(assignment["leaseToken"]),
-                            fabric_epoch=int(assignment["fabricEpoch"]),
-                            error_code="worker_internal_error",
-                            error_summary=type(exc).__name__,
-                            retryable=False,
-                        )
+                        try:
+                            self.client.fail_attempt(
+                                str(assignment["attemptId"]),
+                                worker_id=self.worker_id,
+                                lease_token=str(assignment["leaseToken"]),
+                                fabric_epoch=int(assignment["fabricEpoch"]),
+                                error_code="worker_internal_error",
+                                error_summary=type(exc).__name__,
+                                retryable=False,
+                            )
+                        except ExecutionFabricApiError as api_exc:
+                            if not _is_transient_leadership_api_error(api_exc):
+                                raise
+                            active[future] = assignment
+                            time.sleep(min(float(self.heartbeat_seconds), 5.0))
+                            continue
                         failed += 1
                 if max_tasks is not None and completed + failed >= max_tasks:
                     break
@@ -3684,11 +3764,21 @@ class RemoteFabricWorker:
                                 else 0
                             ),
                         )
-                    except ExecutionFabricApiError:
-                        raise
-                    except ExecutionFabricTransportError:
-                        if not active:
+                    except ExecutionFabricApiError as exc:
+                        if not _is_transient_leadership_api_error(exc):
                             raise
+                        time.sleep(min(float(self.heartbeat_seconds), 5.0))
+                        continue
+                    except ExecutionFabricTransportError:
+                        # A long-poll can lose its response at the transport
+                        # boundary even though the registered worker remains
+                        # healthy.  Exiting here causes the service manager to
+                        # register a new worker session; if the old long-poll
+                        # claimed work at the same instant, that re-registration
+                        # fences the live attempt and can dead-letter scheduled
+                        # work without ever invoking its executor.  Keep the
+                        # same session and let the normal heartbeat boundary
+                        # decide whether the control plane is actually gone.
                         time.sleep(0.05)
                         continue
                     if assignment:

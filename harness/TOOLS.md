@@ -195,7 +195,7 @@ Registry-confirmed active Composio routes: `notion`, `agent_mail`, `confluence`,
 
 | Rule | Use When | Source |
 | --- | --- | --- |
-| `external-output-sanitization` | Jira, GitHub, Slack, and work email outputs must omit local filesystem, OS-internal, Mac-only, and Genome's Notion references; small Jira support docs are included directly when practical. | `RULES.md` |
+| `external-output-sanitization` | Jira, GitHub, Slack, and work email outputs omit private/local references; organization GitHub output must not name, link to, or depend on personal or operator-private repositories. | `RULES.md` |
 
 ## When To Use What
 

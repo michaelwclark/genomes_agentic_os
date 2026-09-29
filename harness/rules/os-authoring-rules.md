@@ -86,6 +86,19 @@ skill doc, program descriptor, and active work item needed for the current task.
 Do not load the full operating manual, every historical work item, every command,
 every skill, or large logs unless the route requires that evidence.
 
+## Repository Visibility Boundary
+
+- Treat personal or operator-private repositories as unavailable to
+  contributors who only have access to an organization's shared repositories.
+- Organization repository pull requests, issues, comments, and documentation
+  must not name, link to, or depend on personal or operator-private
+  repositories. Keep every shared delivery self-contained in team-accessible
+  repositories, trackers, and documentation.
+- Private automation pull requests may reference team-accessible functionality,
+  but their rules, workflows, automations, and artifacts must be routed to the
+  owning domain, project, or program. They must not become organization runtime
+  or delivery dependencies.
+
 ## Program Work
 
 Use `/create-program` or `agentic-os program create` for reusable shared OS

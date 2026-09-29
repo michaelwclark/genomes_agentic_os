@@ -3,6 +3,8 @@ Description=Genomes Agentic OS Execution Fabric primary
 Requires=docker.service
 After=docker.service network-online.target tailscaled.service
 Wants=network-online.target
+StartLimitIntervalSec=2h
+StartLimitBurst=12
 
 [Service]
 Type=oneshot
@@ -13,6 +15,8 @@ ExecStartPre=/opt/genomes-agentic-os/execution-fabric/current/installers/bin/pre
 ExecStart=/opt/genomes-agentic-os/execution-fabric/current/installers/bin/run-primary.sh start
 ExecStartPost=/opt/genomes-agentic-os/execution-fabric/current/installers/bin/wait-ready.sh
 ExecStop=/opt/genomes-agentic-os/execution-fabric/current/installers/bin/run-primary.sh stop
+Restart=on-failure
+RestartSec=60s
 TimeoutStartSec=180
 TimeoutStopSec=90
 

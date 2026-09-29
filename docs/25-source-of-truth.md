@@ -124,6 +124,14 @@ Before writing to Linear, Jira, GitHub, Slack, or email:
 - remove local absolute paths,
 - remove private Genome Notion URLs,
 - remove token-shaped values and env secrets,
+- treat personal or operator-private repositories as unavailable to
+  contributors who only have access to an organization's shared repositories,
+- require organization pull requests, issues, comments, and documentation to
+  not name, link to, or depend on those private repositories,
+- allow private automation pull requests to reference team-accessible
+  functionality only when the behavior is scoped to the owning domain,
+  project, or program and is not an organization runtime or delivery
+  dependency,
 - prefer public issue keys, PR URLs, commit hashes, artifact names, or
   repo-relative paths,
 - include the newest verified receipt, not an old report.
