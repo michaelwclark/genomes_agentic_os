@@ -17,12 +17,13 @@ class TrackerContentReadinessPolicyTest(unittest.TestCase):
         )
         readiness = _read("harness/skills/auto-dev-readiness/SKILL.md")
 
-        for text in (rules, general, readiness):
-            self.assertIn("Jira", text)
-            self.assertIn("Linear", text)
-            self.assertIn("advisory", text)
-            self.assertTrue("content-ready" in text or "content_ready" in text)
-            self.assertTrue("status label" in text or "workflow label" in text)
+        for name, text in (("rules", rules), ("general", general), ("readiness", readiness)):
+            with self.subTest(document=name):
+                self.assertIn("Jira", text)
+                self.assertIn("Linear", text)
+                self.assertIn("advisory", text)
+                self.assertRegex(text, r"content[-_]ready")
+                self.assertRegex(text, r"(?:status|workflow) label")
 
     def test_installed_rule_template_preserves_content_based_readiness(self) -> None:
         template = _read("templates/agent-config/RULES.md")

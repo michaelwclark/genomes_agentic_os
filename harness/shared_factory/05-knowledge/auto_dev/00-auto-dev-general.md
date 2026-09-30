@@ -27,8 +27,8 @@ identity and state.
 For Jira and Linear, read the live ticket before deciding readiness. Status is
 advisory metadata. Evaluate the actual problem, intended outcome, scope,
 acceptance behavior, dependencies, and validation expectations. When that
-content is sufficient for safe implementation, record `content_ready=true` (or
-the owning receipt's equivalent) and continue Auto-Dev even when the status is
+content is sufficient for safe implementation, record the item as content-ready
+in the owning receipt and continue Auto-Dev even when the status is
 `Requirements`, `Requirements Gathering`, or another pre-development label.
 Do not require a provider status transition or approval simply to start work.
 

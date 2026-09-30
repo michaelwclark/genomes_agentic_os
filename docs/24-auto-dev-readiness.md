@@ -71,7 +71,7 @@ five nested Auto-Dev planes into
 
 | Gate | Ready when | If not ready |
 | --- | --- | --- |
-| Tracker | live item, correct project/team, content-ready acceptance, no duplicate ownership; workflow status is advisory | groom missing content through Spec Engine; never block on the status label alone |
+| Tracker | live item, correct project/team, clear acceptance behavior and sufficient implementation content, no duplicate ownership; workflow status is advisory | groom missing content through Spec Engine; never block on the status label alone |
 | Repository | configured source exists; exact remote base resolves | repair project config/access; never substitute a branch |
 | Evidence | relevant project/domain context receipt exists, including an explicit `no_context` | investigate the missing questions |
 | Environment | when behavior is environment-scoped, deployed version authority is known | run Detective; do not analyze a default branch as deployed truth |
