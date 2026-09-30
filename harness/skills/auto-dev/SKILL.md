@@ -42,6 +42,15 @@ but non-blocking when its receipt records that the reviewer was unavailable.
 
 ## Route by intent
 
+Tracker status does not decide whether Auto-Dev may start. For both Jira and
+Linear, inspect the live item's problem, outcome, scope, acceptance behavior,
+dependencies, and validation expectations. If that content is sufficient,
+treat `Requirements`, `Requirements Gathering`, and equivalent labels as stale
+metadata, record the item as content-ready, and proceed without waiting for a
+provider status transition. If content is genuinely incomplete, groom it and
+stop only for one concrete missing decision or other real gate; never block or
+request attention for the status label itself.
+
 - Uncertain cause, reported bug, failed QA, log, alert, or RCA: start with
   `$auto-dev-detective`.
 - Jira, Linear, Notion, Confluence, GitHub, Slack, RCA, report, PR body, review,
@@ -116,6 +125,8 @@ fingerprint and report later drift.
 
 ## Hard gates
 
+- A Jira or Linear workflow label is not a hard gate. Readiness is determined
+  from the ticket's content and concrete delivery dependencies.
 - Multi-repository projects require an explicit repository id.
 - Ticket/release authority selects the base branch; pass `--base-branch` rather
   than changing project defaults for one run.

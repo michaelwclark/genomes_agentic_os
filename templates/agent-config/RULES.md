@@ -29,6 +29,11 @@ Record local constraints, approval gates, safety boundaries, coding rules, and o
   back every external write.
 - Development/review workflows must load the effective development, QA, and
   gitflow Markdown policy planes and record their source list/fingerprint.
+- Jira and Linear workflow status is advisory. Auto-Dev must inspect the live
+  ticket and treat sufficient problem, outcome, scope, acceptance behavior,
+  dependencies, and validation expectations as content-ready even when the
+  status is `Requirements` or an equivalent label. Block only on a concrete
+  missing decision or real dependency; never on the status label itself.
 - Environment-scoped investigation must identify the deployed version before
   choosing code. Read-only investigation never authorizes mutation. When VPN,
   environment, authentication, or a provider is unavailable, pause one
