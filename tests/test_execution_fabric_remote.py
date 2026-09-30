@@ -342,6 +342,44 @@ def test_personal_failback_forwards_local_tasks_with_closed_route_payload(
     }
 
 
+def test_personal_failback_excludes_local_claim_during_remote_admission(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    root = _fallback_root(tmp_path)
+    _enable_local_execution_fabric(root)
+    activate_personal_fallback(root, dry_run=False, reason="test")
+    _submit_local_team_pr(root, "team-pr-review-race", pull_request=48)
+    capsys.readouterr()
+    claimant = state_db.connect(state_db.default_db_path(root))
+    claimant.execute("PRAGMA busy_timeout = 0")
+
+    def transport(_request, _timeout):
+        # The committed reservation excludes a concurrent worker without
+        # holding the whole SQLite database locked across the remote call.
+        assert state_queue.claim_next(claimant, worker_id="competing-local-worker") is None
+        assert state_queue.get(claimant, "team-pr-review-race")["status"] == "blocked"
+        return Response({"admitted": True, "task": {"id": "remote-race"}}, status=201)
+
+    monkeypatch.setattr(
+        "genomes_agentic_os.execution_fabric_remote._primary_ready",
+        lambda _url, _timeout: (True, None),
+    )
+    try:
+        result = clear_personal_fallback(
+            root,
+            dry_run=False,
+            environ={"TEST_SUBMIT_TOKEN": "secret"},
+            transport=transport,
+        )
+        assert result["replay"]["forwarded_count"] == 1
+        assert state_queue.claim_next(claimant, worker_id="competing-local-worker") is None
+        assert state_queue.get(claimant, "team-pr-review-race")["status"] == "done"
+    finally:
+        claimant.close()
+
+
 def test_personal_failback_dry_run_preserves_queue_and_latch(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -364,6 +402,41 @@ def test_personal_failback_dry_run_preserves_queue_and_latch(
     assert personal_fallback_status(root)["status"] == "active"
     queued = {item["id"]: item for item in runtime_queue_items(root)}
     assert queued["team-pr-review-dry-run"]["status"] == "queued"
+
+
+def test_personal_failback_rechecks_claim_after_replay_snapshot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    root = _fallback_root(tmp_path)
+    _enable_local_execution_fabric(root)
+    activate_personal_fallback(root, dry_run=False, reason="test")
+    _submit_local_team_pr(root, "team-pr-review-claimed", pull_request=49)
+    capsys.readouterr()
+    original_client = ExecutionFabricClient
+
+    def client_after_local_claim(*args, **kwargs):
+        conn = state_db.connect(state_db.default_db_path(root))
+        try:
+            assert state_queue.claim_next(conn, worker_id="earlier-local-worker") is not None
+        finally:
+            conn.close()
+        return original_client(*args, **kwargs)
+
+    def no_remote_admission(_request, _timeout):
+        pytest.fail("a task claimed since the snapshot must not be remotely admitted")
+
+    monkeypatch.setattr(execution_fabric_remote, "ExecutionFabricClient", client_after_local_claim)
+    monkeypatch.setattr(execution_fabric_remote, "_primary_ready", lambda *_: (True, None))
+    with pytest.raises(ExecutionFabricRemoteError, match="no longer safely queued"):
+        clear_personal_fallback(
+            root,
+            dry_run=False,
+            environ={"TEST_SUBMIT_TOKEN": "secret"},
+            transport=no_remote_admission,
+        )
+    assert personal_fallback_status(root)["status"] == "active"
 
 
 def test_personal_failback_keeps_latch_when_replay_partially_fails(
@@ -409,7 +482,31 @@ def test_personal_failback_keeps_latch_when_replay_partially_fails(
     queued = {item["id"]: item for item in runtime_queue_items(root)}
     assert queued["team-pr-review-first"]["status"] == "done"
     assert queued["team-pr-review-first"]["fallback_forwarding_receipt"]["admitted"] is False
-    assert queued["team-pr-review-second"]["status"] == "queued"
+    assert queued["team-pr-review-second"]["status"] == "blocked"
+    conn = state_db.connect(state_db.default_db_path(root))
+    try:
+        assert state_queue.claim_next(conn, worker_id="after-uncertain-response") is None
+    finally:
+        conn.close()
+
+    retried = []
+
+    def retry_transport(request, _timeout):
+        retried.append(json.loads(request.data)["idempotencyKey"])
+        return Response({"admitted": False, "task": {"id": "remote-second"}})
+
+    retry = clear_personal_fallback(
+        root,
+        dry_run=False,
+        environ={"TEST_SUBMIT_TOKEN": "secret"},
+        transport=retry_transport,
+    )
+    assert retry["replay"]["forwarded_count"] == 1
+    assert retried == ["team-pr-review-second"]
+    assert personal_fallback_status(root)["status"] == "standby"
+    queued = {item["id"]: item for item in runtime_queue_items(root)}
+    assert queued["team-pr-review-second"]["status"] == "done"
+    assert queued["team-pr-review-second"].get("blocked_reason") is None
 
 
 def test_personal_failback_refuses_uncertain_running_local_task(

@@ -212,6 +212,12 @@ without `--apply` to inspect the exact replay plan without changing either
 ledger or the latch. Applied submissions and applied failback share one lock,
 so work cannot enter the local ledger between the replay snapshot and latch
 clearance.
+Before remote admission, failback durably reserves each candidate with status
+`blocked` and reason `fallback-forwarding-awaiting-remote-receipt`. Local
+workers cannot claim that reservation, including after a process exit or an
+uncertain remote response. Repeat failback to retry these reservations with
+their original idempotency keys; successful remote readback completes them and
+clears the temporary block. No SQLite write lock is held across network calls.
 
 This mode makes no automatic split-brain or zero-data-loss claim. It is for a
 personal harness: genomesbox owns the shared ledger when healthy, while bigmac

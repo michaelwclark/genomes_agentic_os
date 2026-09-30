@@ -22,6 +22,7 @@ import re
 import shlex
 import sys
 import socket
+import sqlite3
 import subprocess
 import tempfile
 import time
@@ -58,6 +59,7 @@ DEFAULT_TRANSPORT = {
     },
 }
 FALLBACK_STATE_SCHEMA = "agentic-os-execution-fabric-fallback/v1"
+FALLBACK_FORWARDING_BLOCKER = "fallback-forwarding-awaiting-remote-receipt"
 LEGACY_LOS_SECURITY_TIMEOUT_SECONDS = {
     "los_engineering_security_scan": 3600,
     "los_engineering_dependabot_remediation": 5400,
@@ -538,9 +540,11 @@ def _local_fallback_candidates(root: str | Path) -> list[dict[str, Any]]:
             """
             SELECT * FROM run_queue
             WHERE kind = 'remote-compatible'
-              AND status IN ('queued', 'approval-needed', 'running')
+              AND (status IN ('queued', 'approval-needed', 'running')
+                   OR (status = 'blocked' AND blocked_reason = ?))
             ORDER BY created_at, id
-            """
+            """,
+            (FALLBACK_FORWARDING_BLOCKER,),
         ).fetchall()
     finally:
         conn.close()
@@ -635,38 +639,35 @@ def _remote_task_from_local_candidate(
 
 
 def _record_local_forwarding_receipt(
-    root: str | Path,
+    conn: sqlite3.Connection,
     item_id: str,
     *,
     remote_task_id: str,
     admitted: bool,
 ) -> None:
-    db_path = state_db.default_db_path(root)
-    conn = state_db.connect(db_path)
-    try:
-        with state_db.transaction(conn):
-            current = state_queue.get(conn, item_id)
-            if current is None:
-                raise ExecutionFabricRemoteError(
-                    f"local fallback task {item_id!r} disappeared before receipt persistence"
-                )
-            if current["status"] not in {"queued", "approval-needed"}:
-                raise ExecutionFabricRemoteError(
-                    f"local fallback task {item_id!r} changed state before forwarding: {current['status']}"
-                )
-            payload = dict(current.get("payload") or {})
-            payload["fallback_forwarding_receipt"] = {
-                "remote_task_id": remote_task_id,
-                "admitted": admitted,
-                "forwarded_at": _utc_now(),
-            }
-            conn.execute(
-                "UPDATE run_queue SET payload_json = ? WHERE id = ?",
-                (json.dumps(payload, sort_keys=True), item_id),
-            )
-            state_queue.complete(conn, item_id, status="done")
-    finally:
-        conn.close()
+    current = state_queue.get(conn, item_id)
+    if current is None or not _is_forwarding_reservation(current):
+        raise ExecutionFabricRemoteError(
+            f"local fallback task {item_id!r} lost its forwarding reservation"
+        )
+    payload = dict(current.get("payload") or {})
+    payload["fallback_forwarding_receipt"] = {
+        "remote_task_id": remote_task_id,
+        "admitted": admitted,
+        "forwarded_at": _utc_now(),
+    }
+    conn.execute(
+        "UPDATE run_queue SET payload_json = ?, blocked_reason = NULL WHERE id = ?",
+        (json.dumps(payload, sort_keys=True), item_id),
+    )
+    state_queue.complete(conn, item_id, status="done")
+
+
+def _is_forwarding_reservation(item: Mapping[str, Any]) -> bool:
+    return (
+        item.get("status") == "blocked"
+        and item.get("blocked_reason") == FALLBACK_FORWARDING_BLOCKER
+    )
 
 
 def replay_local_fallback_tasks(
@@ -680,7 +681,7 @@ def replay_local_fallback_tasks(
     unsafe = [
         str(item.get("id"))
         for item in candidates
-        if item.get("status") != "queued"
+        if item.get("status") != "queued" and not _is_forwarding_reservation(item)
     ]
     if unsafe:
         raise ExecutionFabricRemoteError(
@@ -714,25 +715,49 @@ def replay_local_fallback_tasks(
     )
     forwarded: list[dict[str, Any]] = []
     for candidate in planned:
-        result = client.admit_task(candidate["task"])
-        remote_task = result.get("task") if isinstance(result.get("task"), Mapping) else {}
-        remote_task_id = str(
-            remote_task.get("id")
-            or result.get("taskId")
-            or result.get("id")
-            or ""
-        )
-        if not remote_task_id:
-            raise ExecutionFabricRemoteError(
-                f"remote admission for local task {candidate['local_task_id']!r} returned no task receipt"
+        conn = state_db.connect(state_db.default_db_path(root))
+        try:
+            # Persist a non-claimable reservation before crossing the remote
+            # boundary. An uncertain response or process exit must never make
+            # remotely admitted work eligible for local execution again.
+            with state_db.transaction(conn):
+                current = state_queue.get(conn, candidate["local_task_id"])
+                if current is None or (
+                    current["status"] != "queued"
+                    and not _is_forwarding_reservation(current)
+                ):
+                    raise ExecutionFabricRemoteError(
+                        f"local fallback task {candidate['local_task_id']!r} is no longer safely queued"
+                    )
+                task = _remote_task_from_local_candidate(root, current)
+                state_queue.update_status(
+                    conn,
+                    candidate["local_task_id"],
+                    "blocked",
+                    blocked_reason=FALLBACK_FORWARDING_BLOCKER,
+                )
+            result = client.admit_task(task)
+            remote_task = result.get("task") if isinstance(result.get("task"), Mapping) else {}
+            remote_task_id = str(
+                remote_task.get("id")
+                or result.get("taskId")
+                or result.get("id")
+                or ""
             )
-        admitted = bool(result.get("admitted", True))
-        _record_local_forwarding_receipt(
-            root,
-            candidate["local_task_id"],
-            remote_task_id=remote_task_id,
-            admitted=admitted,
-        )
+            if not remote_task_id:
+                raise ExecutionFabricRemoteError(
+                    f"remote admission for local task {candidate['local_task_id']!r} returned no task receipt"
+                )
+            admitted = bool(result.get("admitted", True))
+            with state_db.transaction(conn):
+                _record_local_forwarding_receipt(
+                    conn,
+                    candidate["local_task_id"],
+                    remote_task_id=remote_task_id,
+                    admitted=admitted,
+                )
+        finally:
+            conn.close()
         forwarded.append(
             {
                 "local_task_id": candidate["local_task_id"],
