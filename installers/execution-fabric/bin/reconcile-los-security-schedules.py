@@ -16,6 +16,16 @@ from urllib.request import Request, urlopen
 
 
 IDENTIFIER = re.compile(r"^[a-zA-Z0-9._:-]{1,128}$")
+EXPECTED_TASK_TYPES = {
+    "los_engineering_security_scan": "los.security.scan.remediation.v1",
+    "los_engineering_dependabot_remediation": (
+        "los.security.dependabot.remediation.v1"
+    ),
+    "los_engineering_ai_automation_pr_merge": (
+        "los.security.ai_automation_pr_merge.v1"
+    ),
+}
+CANONICAL_REPOSITORY = "Lenders-Cooperative/los-app-los-django"
 
 
 def _iso(value: datetime) -> str:
@@ -65,11 +75,25 @@ def _load_manifest(path: Path) -> list[dict[str, Any]]:
         if not IDENTIFIER.fullmatch(schedule_id) or schedule_id in ids:
             raise ValueError(f"invalid or duplicate schedule id: {schedule_id}")
         ids.add(schedule_id)
-        if schedule.get("queue") != "codex" or schedule.get("taskType") != "llm.codex":
-            raise ValueError(f"schedule {schedule_id} must use the codex llm route")
+        expected_task_type = EXPECTED_TASK_TYPES.get(schedule_id)
+        if expected_task_type is None:
+            raise ValueError(f"unsupported LOS security schedule id: {schedule_id}")
+        if (
+            schedule.get("queue") != "codex"
+            or schedule.get("taskType") != expected_task_type
+        ):
+            raise ValueError(
+                f"schedule {schedule_id} must use typed route {expected_task_type}"
+            )
         payload = schedule.get("payload")
         if not isinstance(payload, dict) or not payload.get("instruction_ref"):
             raise ValueError(f"schedule {schedule_id} requires an instruction_ref")
+        if payload.get("repository") != CANONICAL_REPOSITORY:
+            raise ValueError(
+                f"schedule {schedule_id} must target {CANONICAL_REPOSITORY}"
+            )
+        if payload.get("base_branch") != "develop":
+            raise ValueError(f"schedule {schedule_id} must target develop")
         timeout_seconds = payload.get("timeout_seconds")
         if (
             not isinstance(timeout_seconds, int)

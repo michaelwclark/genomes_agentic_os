@@ -91,6 +91,96 @@ execution_fabric:
           instruction_ref: {type: string, pattern: "^[a-zA-Z0-9_./:-]{1,512}$"}
           timeout_seconds: {type: integer, minimum: 60, maximum: 10800}
       allowed_effect_types: []
+    - task_type: los.security.scan.remediation.v1
+      queue: codex
+      scheduling_class: background
+      execution:
+        remote_allowed: true
+        target: domain_worker
+        required_capability: codex.task
+        command_template: null
+        domain_worker: codex_task
+        allowed_host_ids: [bigmac]
+      mutation_class: external_write
+      approval_class: policy_gated
+      payload:
+        additional_properties: false
+        required: [work_item_id, instruction_ref, repository, base_branch]
+        properties:
+          work_item_id: {type: string, enum: [los_engineering_security_scan]}
+          instruction_ref: {type: string, enum: [domains/los/04-automations/engineering/security_scan/prompt.md]}
+          repository: {type: string, enum: [Lenders-Cooperative/los-app-los-django]}
+          base_branch: {type: string, enum: [develop]}
+          timeout_seconds: {type: integer, minimum: 60, maximum: 10800}
+      allowed_effect_types:
+        - github.branch.write
+        - github.pull_request.write
+        - github.issue.comment
+        - github.label.apply
+        - github.check.rerun
+        - jira.issue.update
+        - notion.security_automation.update
+        - slack.message.send
+    - task_type: los.security.dependabot.remediation.v1
+      queue: codex
+      scheduling_class: background
+      execution:
+        remote_allowed: true
+        target: domain_worker
+        required_capability: codex.task
+        command_template: null
+        domain_worker: codex_task
+        allowed_host_ids: [bigmac]
+      mutation_class: external_write
+      approval_class: policy_gated
+      payload:
+        additional_properties: false
+        required: [work_item_id, instruction_ref, repository, base_branch]
+        properties:
+          work_item_id: {type: string, enum: [los_engineering_dependabot_remediation]}
+          instruction_ref: {type: string, enum: [domains/los/04-automations/engineering/dependabot_remediation/prompt.md]}
+          repository: {type: string, enum: [Lenders-Cooperative/los-app-los-django]}
+          base_branch: {type: string, enum: [develop]}
+          timeout_seconds: {type: integer, minimum: 60, maximum: 10800}
+      allowed_effect_types:
+        - github.branch.write
+        - github.pull_request.write
+        - github.issue.comment
+        - github.label.apply
+        - github.check.rerun
+        - jira.issue.update
+        - notion.security_automation.update
+        - slack.message.send
+    - task_type: los.security.ai_automation_pr_merge.v1
+      queue: codex
+      scheduling_class: background
+      execution:
+        remote_allowed: true
+        target: domain_worker
+        required_capability: codex.task
+        command_template: null
+        domain_worker: codex_task
+        allowed_host_ids: [bigmac]
+      mutation_class: external_write
+      approval_class: policy_gated
+      payload:
+        additional_properties: false
+        required: [work_item_id, instruction_ref, repository, base_branch]
+        properties:
+          work_item_id: {type: string, enum: [los_engineering_ai_automation_pr_merge]}
+          instruction_ref: {type: string, enum: [domains/los/04-automations/engineering/ai_automation_pr_merge/prompt.md]}
+          repository: {type: string, enum: [Lenders-Cooperative/los-app-los-django]}
+          base_branch: {type: string, enum: [develop]}
+          timeout_seconds: {type: integer, minimum: 60, maximum: 10800}
+      allowed_effect_types:
+        - github.branch.write
+        - github.pull_request.write
+        - github.pull_request.merge
+        - github.issue.comment
+        - github.label.apply
+        - github.check.rerun
+        - jira.issue.update
+        - notion.security_automation.update
     - task_type: llm.claude
       queue: claude
       scheduling_class: interactive
@@ -255,6 +345,9 @@ execution_fabric:
       worker_pool: codex_workers
       accepted_task_types:
         - llm.codex
+        - los.security.scan.remediation.v1
+        - los.security.dependabot.remediation.v1
+        - los.security.ai_automation_pr_merge.v1
       priority: 50
       concurrency:
         max_running: 2

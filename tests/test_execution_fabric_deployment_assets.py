@@ -2696,18 +2696,34 @@ def test_los_security_automation_assets_define_closed_remote_routes() -> None:
         "los_engineering_ai_automation_pr_merge",
     }
     expected = {
-        "los_engineering_security_scan": (3600, 3600),
-        "los_engineering_dependabot_remediation": (7200, 5400),
-        "los_engineering_ai_automation_pr_merge": (14400, 5400),
+        "los_engineering_security_scan": (
+            "los.security.scan.remediation.v1",
+            3600,
+            3600,
+        ),
+        "los_engineering_dependabot_remediation": (
+            "los.security.dependabot.remediation.v1",
+            7200,
+            5400,
+        ),
+        "los_engineering_ai_automation_pr_merge": (
+            "los.security.ai_automation_pr_merge.v1",
+            14400,
+            5400,
+        ),
     }
     for schedule_id, schedule in schedules.items():
-        interval, timeout = expected[schedule_id]
+        task_type, interval, timeout = expected[schedule_id]
         assert schedule["queue"] == "codex"
-        assert schedule["taskType"] == "llm.codex"
+        assert schedule["taskType"] == task_type
         assert schedule["requiredCapabilities"] == ["codex.task"]
         assert schedule["enabled"] is True
         assert schedule["intervalSeconds"] == interval
         assert schedule["payload"]["timeout_seconds"] == timeout
+        assert schedule["payload"]["repository"] == (
+            "Lenders-Cooperative/los-app-los-django"
+        )
+        assert schedule["payload"]["base_branch"] == "develop"
         assert schedule["payload"]["instruction_ref"].startswith(
             "domains/los/04-automations/engineering/"
         )
