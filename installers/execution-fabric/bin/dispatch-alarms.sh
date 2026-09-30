@@ -45,7 +45,7 @@ jq -c '.alarms[]?' "$response" | while IFS= read -r alarm; do
   # resolve launchd's system interpreter.  Run it through the immutable
   # Fabric runtime so its declared dependencies (including PyYAML) are always
   # available on the headless BigMac client plane.
-  if [ -x "$notifier" ] && "$FABRIC_WORKER_PYTHON" "$notifier" \
+  if [ -x "$notifier" ] && AGENTIC_OS_ROOT="$FABRIC_OS_ROOT" "$FABRIC_WORKER_PYTHON" "$notifier" \
     --source runtime.execution_fabric.health \
     --level "$severity" \
     --title "Execution Fabric needs attention" \

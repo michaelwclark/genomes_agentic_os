@@ -73,13 +73,17 @@ agentic-os --help
 usage: agentic-os [-h]
                   {init,domain,profile,room,project,workflow,program,
                    instance-program,host,automation,automation-control,ps,
-                   run-log,thread,end-chat,finalize,cleanup-thread,archive,
-                   route,context,here,conversation-reports,cockpit,customer,
-                   update,license,backup,fleet,metrics,config,doc-config,
-                   hook,notion,notion-org,runtime,heartbeat,schedule,
-                   run-queue,integration,doctor,migrate,plan,
-                   self-improvement,connected-system,watch-source,event,
-                   chain,state,validate,docs,capability,adaptive-routing} ...
+                   run-log,thread,end-chat,finalize,cleanup-thread,
+                   archive,route,context,here,conversation-reports,
+                   cockpit,gui,customer,update,license,backup,fleet,
+                   metrics,config,doc-config,hook,notion,notion-org,
+                   runtime,heartbeat,schedule,run-queue,integration,
+                   doctor,migrate,plan,self-improvement,connected-system,
+                   watch-source,event,chain,state,validate,docs,
+                   capability,adaptive-routing,spec,resource-graph,
+                   resource,report,activity,rules,operator-resource,
+                   resource-registry,develop,auto-dev,library,work,naming,
+                   long-run,artifacts,detective,work-item-archive} ...
 
 Scaffold, validate, and operate an Agentic OS root.
 ```

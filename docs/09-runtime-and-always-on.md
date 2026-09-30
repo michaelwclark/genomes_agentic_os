@@ -71,7 +71,11 @@ the **supervisor** plus an **external scheduler**:
 - **`agentic-os runtime supervise`** runs *one tick* across the whole surface, in
   order — heartbeats → schedules → watch-sources → events → run-queue — then a
   read-only health check. Dry-run by default; `--apply` commits. Steps are
-  **isolated**: one failing subsystem never aborts the tick.
+  **isolated**: one failing subsystem never aborts the tick. Applied run-queue
+  dispatch starts a governed detached `runtime run-next --apply` run and returns
+  its run ID and artifact directory immediately, so a long task cannot block the
+  supervisor's external cadence. Dry-run queue previews remain synchronous and
+  deterministic.
 - **`installers/install-scheduler.sh`** installs a **launchd agent** (macOS) or a
   **crontab line** (other platforms) that calls `runtime supervise --apply` on a
   cadence (default 15 min). It is dry-run by default and **not auto-installed** —

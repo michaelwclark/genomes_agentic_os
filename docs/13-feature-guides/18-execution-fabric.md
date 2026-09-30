@@ -598,6 +598,33 @@ An operator requeue preserves the task's monotonic attempt counter so its next
 run receives a new run number; it clears terminal delivery/error state but never
 reuses a prior `fabric_runs(task_id, run_number)` identity.
 
+The CLI exposes that operator requeue directly:
+
+```bash
+agentic-os runtime dead-letter replay \
+  --root ~/agentic_os --task-id <uuid> --actor <you>
+agentic-os runtime dead-letter replay \
+  --root ~/agentic_os --task-id <uuid> --actor <you> --apply
+```
+
+The first invocation is a dry-run: it reads the task through the observer
+role and reports whether it is currently `failed`, `dead_lettered`, or
+`cancelled` -- the only statuses an operator requeue accepts. `--apply`
+resolves the distinct admin credential (`admin_token_env` in
+`harness/config/execution-fabric.yml`, or its `_FILE` variant) and calls the
+remote control-plane's admin-authenticated requeue route with a default
+`dead-letter-replay:<task-id>` idempotency key, so a repeated call against
+the same task safely dedupes instead of double-mutating. Without that
+credential present, `--apply` fails closed with exit code 2 and names the
+missing environment variable in the error; it never falls through to an
+unhandled error, and it performs no mutation and writes no receipt. Every
+successful `--apply` writes a durable receipt under
+`harness/shared_factory/06-runs-and-logs/execution-fabric/dead-letter-replays/`.
+
+There is no bulk dead-letter operation and no purge: the control-plane's admin
+API accepts a per-task replay only, so each dead-lettered task is requeued and
+receipted individually.
+
 ## Rollback
 
 Rollback is also dry-run-first:

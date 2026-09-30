@@ -40,6 +40,20 @@ Record local constraints, approval gates, safety boundaries, coding rules, and o
   receipt-backed run and resume it after fresh availability evidence; do not
   create repeated failure attempts.
 
+## Repository Visibility Boundary
+
+- Treat personal or operator-private repositories as unavailable to
+  contributors who only have access to an organization's shared repositories.
+- Organization repository pull requests, issues, comments, and documentation
+  must not name, link to, or depend on personal or operator-private
+  repositories. A shared change must be understandable, buildable, testable,
+  and operable using team-accessible repositories, trackers, and documentation
+  alone.
+- Private automation repositories may reference team-accessible functionality
+  when useful, but the corresponding rule, workflow, automation, or artifact
+  must be scoped under the owning domain, project, or program. Never model a
+  personal repository as an organization runtime or delivery dependency.
+
 ## Notification Rules
 
 - Treat local notifications as an attention budget, not a progress stream.

@@ -1541,7 +1541,10 @@ def test_runtime_init_and_dry_run_paths_are_file_backed(tmp_path: Path) -> None:
     assert main(["heartbeat", "run", "granola_recent_notes_sync", "--root", str(root), "--dry-run"]) == 0
     assert list((shared_factory(root) / "06-runs-and-logs" / "heartbeats").glob("*granola_recent_notes_sync.yml"))
     assert main(["schedule", "create", "weekly_runtime_doctor", "--root", str(root), "--cadence", "weekly"]) == 0
+    queue_path = shared_factory(root) / "00-control-plane" / "run-queue.yml"
+    queue_before_dry_run = queue_path.read_text(encoding="utf-8")
     assert main(["schedule", "run-due", "--root", str(root), "--dry-run"]) == 0
+    assert queue_path.read_text(encoding="utf-8") == queue_before_dry_run
     assert main(["integration", "list", "--root", str(root)]) == 0
     assert main(["integration", "setup", "granola", "--root", str(root), "--dry-run"]) == 0
     assert main(["integration", "doctor", "granola", "--root", str(root)]) == 0

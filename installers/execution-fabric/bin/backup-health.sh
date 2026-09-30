@@ -22,11 +22,19 @@ expected_receipt="${FABRIC_RUNTIME_STATE_DIR%/}/backup-health.json"
   exit 77
 }
 
+if [ -n "${FABRIC_SECRETS_DIR:-}" ]; then
+  pgpass_file="$FABRIC_SECRETS_DIR/postgres-pgpass"
+  if [ -e "$pgpass_file" ] && [ -n "$(find "$pgpass_file" -perm /077 2>/dev/null)" ]; then
+    echo "postgres-pgpass secret must not be group/world accessible (mode 0400/0600 required): $pgpass_file" >&2
+    exit 78
+  fi
+fi
+
 run_id="backup-$(date -u +%Y%m%dT%H%M%SZ)-$$"
 docker compose \
   --env-file "$FABRIC_RUNTIME_ENV_FILE" \
   -f "$FABRIC_DEPLOYMENT_DIR/compose.genomesbox.yml" \
-  --profile backup run --rm \
+  --profile primary --profile backup run --rm \
   -e "FABRIC_BACKUP_RUN_ID=$run_id" \
   postgres-backup
 

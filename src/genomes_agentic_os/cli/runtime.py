@@ -666,6 +666,103 @@ def handle_execution_fabric_config_reload(args: argparse.Namespace) -> int:
     return 0
 
 
+REPLAYABLE_TASK_STATUSES = {"failed", "dead_lettered", "cancelled"}
+
+
+def _write_dead_letter_replay_receipt(root: str, payload: dict) -> Path:
+    receipt_root = (
+        Path(root).expanduser().resolve()
+        / "harness/shared_factory/06-runs-and-logs/execution-fabric/dead-letter-replays"
+    )
+    receipt_root.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    destination = receipt_root / f"{stamp}-{payload['task_id']}.json"
+    temporary = destination.with_name(f".{destination.name}.{uuid4().hex}.tmp")
+    temporary.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    os.replace(temporary, destination)
+    return destination
+
+
+def handle_execution_fabric_dead_letter_replay(args: argparse.Namespace) -> int:
+    task_id = str(args.task_id or "").strip()
+    try:
+        UUID(task_id)
+    except ValueError as error:
+        raise ExecutionFabricConfigError("--task-id must be a UUID") from error
+    actor = str(args.actor or "").strip()
+    if not actor:
+        raise ExecutionFabricConfigError(
+            "--actor is required to replay a dead-lettered task"
+        )
+    idempotency_key = (
+        str(args.idempotency_key or "").strip() or f"dead-letter-replay:{task_id}"
+    )
+    observer = ExecutionFabricClient.from_root(args.root, role="observer")
+    before_task = observer.get_task(task_id)
+    current_status = str(before_task.get("status") or "")
+    ready = current_status in REPLAYABLE_TASK_STATUSES
+    plan = {
+        "action": "runtime.execution-fabric.dead-letter.replay",
+        "root": str(Path(args.root).expanduser().resolve()),
+        "task_id": task_id,
+        "queue_name": before_task.get("queue"),
+        "actor": actor,
+        "idempotency_key": idempotency_key,
+        "current_status": current_status,
+        "dry_run": not args.apply,
+        "applied": False,
+    }
+    if not args.apply:
+        _print_structured(
+            {
+                **plan,
+                "ready": ready,
+                "blockers": (
+                    []
+                    if ready
+                    else [
+                        f"task {task_id} is in status '{current_status}', not one "
+                        f"of {sorted(REPLAYABLE_TASK_STATUSES)}"
+                    ]
+                ),
+            },
+            json_output=args.json,
+        )
+        return 0 if ready else 1
+    if not ready:
+        raise ExecutionFabricConfigError(
+            f"task {task_id} is in status '{current_status}'; only "
+            f"{sorted(REPLAYABLE_TASK_STATUSES)} tasks can be replayed"
+        )
+    admin_settings = resolve_remote_settings(args.root, role="admin")
+    operator_receipt = ExecutionFabricClient(admin_settings).requeue_task(
+        task_id=task_id,
+        actor=actor,
+        idempotency_key=idempotency_key,
+    )
+    readback = observer.get_task(task_id)
+    receipt = {
+        **plan,
+        "schema_version": "agentic-os-execution-fabric-dead-letter-replay/v1",
+        "dry_run": False,
+        "applied": True,
+        "operator_receipt": operator_receipt,
+        "readback_status": readback.get("status"),
+        "recorded_at": datetime.now(timezone.utc)
+        .isoformat()
+        .replace("+00:00", "Z"),
+    }
+    receipt_path = _write_dead_letter_replay_receipt(args.root, receipt)
+    _print_structured(
+        {**receipt, "receipt_path": str(receipt_path)},
+        json_output=args.json,
+    )
+    return 0
+
+
 def handle_execution_fabric_config_validate(args: argparse.Namespace) -> int:
     try:
         result = execution_fabric_config_status(args.root)
@@ -1140,6 +1237,35 @@ def register(subparsers) -> None:
     _add_safe_mutation_mode(fabric_config_reload_parser)
     _add_json_arg(fabric_config_reload_parser)
     fabric_config_reload_parser.set_defaults(handler=handle_execution_fabric_config_reload)
+    dead_letter_parser = runtime_subparsers.add_parser(
+        "dead-letter",
+        help="Replay one dead-lettered, failed, or cancelled Execution Fabric task through the admin API.",
+    )
+    dead_letter_subparsers = dead_letter_parser.add_subparsers(
+        dest="execution_fabric_dead_letter_command",
+        required=True,
+    )
+    dead_letter_replay_parser = dead_letter_subparsers.add_parser(
+        "replay",
+        help=(
+            "Plan by default; pass --apply to admin-authenticated-requeue one task "
+            "back to queued with a durable operator receipt."
+        ),
+    )
+    dead_letter_replay_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    dead_letter_replay_parser.add_argument("--task-id", required=True, help="UUID of the task to replay.")
+    dead_letter_replay_parser.add_argument(
+        "--actor",
+        required=True,
+        help="Operator identity recorded on the durable receipt (RULES.md admin-authenticated operator receipt).",
+    )
+    dead_letter_replay_parser.add_argument(
+        "--idempotency-key",
+        help="Defaults to a stable 'dead-letter-replay:<task-id>' key so repeat calls are safely idempotent.",
+    )
+    _add_safe_mutation_mode(dead_letter_replay_parser)
+    _add_json_arg(dead_letter_replay_parser)
+    dead_letter_replay_parser.set_defaults(handler=handle_execution_fabric_dead_letter_replay)
     runtime_prune_parser = runtime_subparsers.add_parser("prune", help="Prune stale run-queue items and old run-queue backups.")
     _add_run_queue_prune_args(runtime_prune_parser)
     runtime_prune_parser.set_defaults(handler=handle_run_queue_prune)

@@ -111,3 +111,60 @@ def test_direct_runtime_module_with_separator_suffix_is_not_skipped_by_contract_
     result = run(root)
     assert result.returncode == 1
     assert "consumer inventory" in result.stderr
+
+
+def test_test_prefix_collisions_are_not_exempted_from_contract_gate():
+    # AGE-213: TEST_PATH's `(?:tests?|test_)(?:/|[^/]*$)` alternation prefix-
+    # matched ANY basename starting with test/tests, so a production module
+    # such as testimonial.py or testing_utils.py living inside a runtime-risk
+    # directory (services/, config/) was misclassified as a test file and
+    # silently excluded from risk_files -- the gate PASSED a real, unproven
+    # runtime contract change. Regression guard: both collision names must
+    # still be classified as risk and BLOCKED, not exempted.
+    cases = ("los/services/testimonial.py", "los/config/testing_utils.py")
+    for path in cases:
+        root = repo()
+        target = root / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(
+            "def canonical_payload():\n"
+            "    return {'product': {'product_code': 'x'}}\n"
+        )
+        result = run(root)
+        assert result.returncode == 1, (
+            f"{path} incorrectly exempted as a test path: {result.stdout}"
+        )
+        assert "consumer inventory" in result.stderr, result.stderr
+
+
+def test_test_directory_and_test_prefixed_files_remain_recognized_as_real_tests():
+    # Positive pin: the AGE-213 boundary tightening must not regress the
+    # legitimate tests/ directory and test_*.py exemptions used to satisfy
+    # the "real consumer regression tests" requirement.
+    for path in ("tests/services/test_contract.py", "test_foo.py"):
+        root = repo()
+        (root / "views.py").write_text(
+            "def canonical_payload():\n"
+            "    return {'product': {'product_code': 'x'}}\n"
+        )
+        target = root / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("def test_something():\n    assert True\n")
+        result = run(root)
+        assert "real consumer regression tests" not in result.stderr, result.stderr
+
+
+def test_bare_serializers_file_triggers_the_contract_gate():
+    # AGE-213 coverage nit: the existing serializer test only exercises
+    # los/requests/api/serializers.py, matched via the requests/ directory
+    # boundary. Pin the bare repo-root serializers.py stem match
+    # independently so the SERIALIZER_PATH bare-file branch is not only
+    # exercised incidentally.
+    root = repo()
+    (root / "serializers.py").write_text(
+        "def canonical_payload():\n"
+        "    return {'product': {'product_code': 'x'}}\n"
+    )
+    result = run(root)
+    assert result.returncode == 1
+    assert "consumer inventory" in result.stderr
