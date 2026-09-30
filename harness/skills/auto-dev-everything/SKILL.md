@@ -15,6 +15,11 @@ Propagation is only its lower-level compatibility recorder/legacy alias and
 does not add another Auto-Dev stage.
 
 1. Route to the exact domain/project and read the live tracker item.
+   Judge readiness from the item's problem, outcome, scope, acceptance
+   behavior, dependencies, and validation expectations. Jira/Linear
+   `Requirements`, `Requirements Gathering`, and equivalent workflow labels
+   are advisory only; when the content is sufficient, record content-ready and
+   continue. Never stop or request attention for the label itself.
 2. Start or resume with `agentic-os auto-dev everything <domain> <project>
    <ticket> --apply`. Read the resulting work item `autodev.json`.
 3. Resolve `auto_dev`, `environment_access`, `dev_standards`, `qa_gates`, and

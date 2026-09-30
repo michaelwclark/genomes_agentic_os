@@ -5,6 +5,18 @@
   second SDLC state machine.
 - Match intent implicitly. A bug investigation routes to Detective and artifact
   authorship routes to Create Artifacts even if Auto-Dev is not named.
+- Jira and Linear workflow status is advisory metadata, never a standalone
+  readiness gate. Read the live item and judge its actual problem statement,
+  intended outcome, scope, acceptance behavior, dependencies, and validation
+  expectations. When those are sufficient to implement safely, record the item
+  as content-ready and continue Auto-Dev even when its provider status is
+  `Requirements`, `Requirements Gathering`, or an equivalent pre-development
+  label. Do not require a status transition or approval merely to begin work.
+- If ticket content is incomplete, groom it and continue when the missing
+  details can be resolved from source truth and project policy. Block only on a
+  concrete missing decision, unsafe ambiguity, dependency, authority, access,
+  or approval, and name the exact owner action. Never report the workflow label
+  itself as the blocker or attention request.
 - Every workflow has one manual command/skill, a program/sub-workflow route, a
   trigger-adapter contract, and durable receipts.
 - Load the effective root/domain/project/invocation bundle for all five nested
