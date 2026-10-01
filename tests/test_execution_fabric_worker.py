@@ -211,7 +211,7 @@ def test_healthcheck_uses_current_worker_receipt_and_heartbeat_age(
     assert worker.healthcheck(tmp_path) == 1
 
 
-def test_worker_image_route_smoke_accepts_shipped_generic_handler(
+def test_worker_image_route_smoke_accepts_all_shipped_codex_task_routes(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -229,5 +229,20 @@ def test_worker_image_route_smoke_accepts_shipped_generic_handler(
             "domain_worker": "codex_task",
             "queue": "codex",
             "task_type": "llm.codex",
-        }
+        },
+        {
+            "domain_worker": "codex_task",
+            "queue": "codex",
+            "task_type": "los.security.scan.remediation.v1",
+        },
+        {
+            "domain_worker": "codex_task",
+            "queue": "codex",
+            "task_type": "los.security.dependabot.remediation.v1",
+        },
+        {
+            "domain_worker": "codex_task",
+            "queue": "codex",
+            "task_type": "los.security.ai_automation_pr_merge.v1",
+        },
     ]
