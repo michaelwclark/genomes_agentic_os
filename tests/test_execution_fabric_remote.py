@@ -590,7 +590,7 @@ def test_artifact_spool_rejects_missing_source(tmp_path: Path) -> None:
         )
 
 
-def test_generic_worker_image_advertises_only_shipped_remote_handlers(
+def test_codex_worker_advertises_generic_and_typed_shipped_remote_handlers(
     tmp_path: Path,
 ) -> None:
     root = _root(tmp_path, remote=False)
@@ -599,7 +599,22 @@ def test_generic_worker_image_advertises_only_shipped_remote_handlers(
             "queue": "codex",
             "task_type": "llm.codex",
             "domain_worker": "codex_task",
-        }
+        },
+        {
+            "queue": "codex",
+            "task_type": "los.security.scan.remediation.v1",
+            "domain_worker": "codex_task",
+        },
+        {
+            "queue": "codex",
+            "task_type": "los.security.dependabot.remediation.v1",
+            "domain_worker": "codex_task",
+        },
+        {
+            "queue": "codex",
+            "task_type": "los.security.ai_automation_pr_merge.v1",
+            "domain_worker": "codex_task",
+        },
     ]
     with pytest.raises(ValueError, match="no shipped remote handler"):
         validate_worker_routes(
@@ -2498,6 +2513,63 @@ def test_portable_codex_worker_honors_bounded_payload_timeout(
     assert result["result"]["status"] == "succeeded"
     assert captured["timeout_seconds"] == expected_timeout
     assert captured["domain_worker"] == "codex_task"
+
+
+def test_portable_codex_worker_carries_closed_security_authority(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _root(tmp_path, remote=False)
+    instruction = root / "domains/los/04-automations/engineering/security_scan/prompt.md"
+    instruction.parent.mkdir(parents=True)
+    instruction.write_text("security remediation\n", encoding="utf-8")
+    captured: dict[str, Any] = {}
+
+    def capture(
+        _root_path: Path,
+        _assignment: dict[str, Any],
+        item: dict[str, Any],
+        *,
+        effects: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        captured.update(item)
+        assert effects == []
+        return {"result": {"status": "succeeded"}, "effects": [], "artifacts": []}
+
+    monkeypatch.setattr(execution_fabric_remote, "_run_prepared_worker_item", capture)
+    result = execution_fabric_remote._codex_task_worker(
+        root,
+        {"attemptId": "attempt-1"},
+        {
+            "id": "task-1",
+            "queue": "codex",
+            "taskType": "los.security.scan.remediation.v1",
+            "payload": {
+                "work_item_id": "los_engineering_security_scan",
+                "instruction_ref": (
+                    "domains/los/04-automations/engineering/security_scan/prompt.md"
+                ),
+                "repository": "Lenders-Cooperative/los-app-los-django",
+                "base_branch": "develop",
+                "timeout_seconds": 3600,
+            },
+        },
+        {
+            "approval_class": "policy_gated",
+            "mutation_class": "external_write",
+            "allowed_effect_types": [
+                "github.pull_request.write",
+                "jira.issue.update",
+            ],
+        },
+    )
+
+    assert result["result"]["status"] == "succeeded"
+    assert captured["repository"] == "Lenders-Cooperative/los-app-los-django"
+    assert captured["base_branch"] == "develop"
+    assert captured["allowed_effect_types"] == [
+        "github.pull_request.write",
+        "jira.issue.update",
+    ]
 
 
 def test_fullsail_worker_rejects_mismatched_job_identity_with_receipt(
