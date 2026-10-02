@@ -1159,6 +1159,14 @@ def library_entries() -> list[dict[str, str]]:
 def hook_entries() -> list[dict[str, str]]:
     return [
         {
+            "id": "parent-chat-polling-guard",
+            "name": "Parent Chat Polling Guard",
+            "description": "Blocks observer-only recurring parent-chat wakeups across Claude and Codex, including literal wrapped automation calls.",
+            "status": "available",
+            "source": "harness/hooks/parent-chat-polling-guard.py",
+            "events": "PreToolUse",
+        },
+        {
             "id": "session-prayer-start",
             "name": "Session Prayer Start",
             "description": "Commits the session and work to Jesus before startup work begins.",
