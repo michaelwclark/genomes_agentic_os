@@ -63,3 +63,41 @@ current only after the following are independently read back:
 
 Until then, this document intentionally describes the boundary and the
 verification gate rather than planned behavior as deployed behavior.
+
+## Atomic outbox building block (AGE-153, implementation in progress)
+
+The provider-neutral `run_evidence.outbox.FilesystemOutbox` is a local recovery
+buffer. It is not connected to production writers; the asynchronous ingress,
+configuration binding, transport deadlines and full acceptance validation remain
+part of AGE-153. Existing writer behavior is unchanged.
+
+- `put(record)` returns a durable envelope key only after a private atomic file
+  write, file fsync and directory fsync. An exception is not an acknowledgement.
+- Explicit `OutboxPolicy` bounds count, bytes, individual envelopes, replay batch,
+  lease duration and retry budget. One item slot and one maximum-sized record
+  are reserved for atomic updates. Quarantine and interrupted temporary files
+  consume the same quota; full or busy storage raises a visible typed error.
+- Replay claims use unique fencing tokens and expiring leases. Provider I/O
+  occurs after releasing the local lock. Expired workers cannot retire another
+  worker's claim. Restarted workers can replay previously durable records.
+- Replay persists through `RunLogStore`, reads back identity and content through
+  that same port, and only then removes the local envelope. Failed writes or
+  mismatched readback retain evidence, use capped backoff and eventually
+  quarantine. The error code never includes raw provider diagnostics.
+- Original timestamps, host, correlation, work/run identity and payload metadata
+  stay in the frozen envelope. Corrupt envelopes fail visibly and are preserved
+  for operator recovery; automated corrupt-file quarantine is still outstanding.
+- `status()` reports count, bytes, pending/claimed/quarantined items, interrupted
+  temporary files and oldest age. Nothing prunes retained evidence automatically.
+
+Use only an owned local directory with cooperative writers. Network filesystems,
+malicious local file replacement, arbitrary blocked provider calls, automatic
+poison-file recovery and end-to-end producer latency are not validated by this
+building block. No live outbox or datastore is needed for its tests.
+
+Run `tests/test_run_evidence_outbox.py` with a fresh item-owned pytest temporary
+root. It covers restart, process exit, duplicate persistence, lease fencing,
+concurrent-process quota enforcement, readback mismatch, backoff/quarantine,
+fsync failures, serialization, capacity and private file permissions. Existing
+port and MongoDB adapter conformance tests remain adjacent regression coverage;
+a live disposable MongoDB profile is a separate opt-in gate.
