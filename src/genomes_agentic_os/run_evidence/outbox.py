@@ -269,7 +269,11 @@ class FilesystemOutbox:
                 readback = store.get(claim.record.model_key, result["id"])
                 expected = claim.record.normalized()
                 code = "readback_mismatch"
-                fields = ("model_key", "host_id", "source", "occurred_at", "schema_version", "classification", "payload", "content_hash")
+                fields = (
+                    "model_key", "host_id", "source", "occurred_at", "schema_version",
+                    "classification", "payload", "payload_metadata", "content_hash",
+                    "correlation_id", "run_id", "work_item_id",
+                )
                 if readback is None or any(readback.get(field) != expected[field] for field in fields):
                     raise OutboxError("provider readback mismatch")
             except Exception:

@@ -262,3 +262,18 @@ def test_nan_timestamp_fails_before_durable_write(tmp_path):
     with pytest.raises(OutboxError):
         outbox.put(record(), now=float("nan"))
     assert outbox.status()["count"] == 0
+
+
+@pytest.mark.parametrize("field", ["payload_metadata", "correlation_id", "run_id", "work_item_id"])
+def test_readback_must_preserve_correlation_and_payload_metadata(tmp_path, field):
+    outbox = box(tmp_path)
+    outbox.put(record(payload_metadata={"format": "json"}))
+    provider = store()
+    real_get = provider.get
+    def altered(model, identity):
+        result = real_get(model, identity)
+        result[field] = None
+        return result
+    provider.get = altered
+    assert outbox.replay(provider) == {"persisted": 0, "retry": 1}
+    assert outbox.status()["pending"] == 1
