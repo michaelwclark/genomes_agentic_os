@@ -1,0 +1,143 @@
+#!/usr/bin/env python3
+"""Read-only, live Jira implementation-claim gate. Never mutates an issue."""
+
+from __future__ import annotations
+
+import argparse
+from datetime import datetime, timezone
+import json
+import re
+import subprocess
+import sys
+
+
+class ClaimError(RuntimeError):
+    """A bounded failure safe to include in a local receipt."""
+
+
+def run_acli(argv: list[str]) -> str:
+    try:
+        result = subprocess.run(
+            ["acli", "jira", *argv], capture_output=True, text=True, timeout=30
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise ClaimError(
+            "Jira live read unavailable; implementation is blocked"
+        ) from exc
+    if result.returncode:
+        # Provider output can contain credentials or unrelated issue content.
+        raise ClaimError("Jira live read failed; implementation is blocked")
+    return result.stdout
+
+
+def verify_claim(
+    ticket: str,
+    site: str,
+    account_id: str,
+    developer_field: str,
+    fix_version: str | None = None,
+    *,
+    reader=run_acli,
+) -> dict:
+    if not re.fullmatch(r"[A-Z][A-Z0-9_]*-[1-9][0-9]*", ticket):
+        raise ClaimError("An exact Jira issue key is required")
+    if (
+        not site.strip()
+        or not account_id.strip()
+        or not re.fullmatch(r"customfield_[0-9]+", developer_field)
+    ):
+        raise ClaimError(
+            "Verified site, account ID, and Developer field ID are required"
+        )
+    auth = reader(["auth", "status"])
+    match = re.search(r"^\s*Site:\s*(\S+)\s*$", auth, re.MULTILINE)
+    if not match or match.group(1).lower() != site.lower():
+        raise ClaimError("Jira authenticated site does not match the requested site")
+    try:
+        issue = json.loads(
+            reader(["workitem", "view", ticket, "--fields", "*all", "--json"])
+        )
+    except (json.JSONDecodeError, TypeError) as exc:
+        raise ClaimError("Jira readback is not valid JSON") from exc
+    if not isinstance(issue, dict) or issue.get("key") != ticket:
+        raise ClaimError("Jira readback does not match the requested ticket")
+    fields = issue.get("fields")
+    if not isinstance(fields, dict):
+        raise ClaimError("Jira readback has no fields")
+    assignee = fields.get("assignee")
+    developer = fields.get(developer_field)
+    status = fields.get("status")
+    versions = fields.get("fixVersions")
+    problems = []
+    if not isinstance(assignee, dict) or assignee.get("accountId") != account_id:
+        problems.append("Assignee must match the required account")
+    people = developer if isinstance(developer, list) else [developer]
+    if not any(
+        isinstance(person, dict) and person.get("accountId") == account_id
+        for person in people
+    ):
+        problems.append("Developer must include the required account")
+    if not isinstance(status, dict) or status.get("name") != "In Progress":
+        problems.append("Status must be In Progress")
+    names = (
+        [v.get("name") for v in versions if isinstance(v, dict) and v.get("name")]
+        if isinstance(versions, list)
+        else []
+    )
+    if not names or (fix_version is not None and fix_version not in names):
+        problems.append(
+            "Fix Version must include the requested release"
+            if fix_version
+            else "Fix Version is required"
+        )
+    if problems:
+        raise ClaimError("; ".join(problems))
+    return {
+        "schema": "jira-implementation-claim/v1",
+        "status": "passed",
+        "ticket": ticket,
+        "site": site,
+        "assignee_account_id": account_id,
+        "developer_account_id": account_id,
+        "developer_field": developer_field,
+        "workflow_status": "In Progress",
+        "fix_versions": names,
+        "verified_at": datetime.now(timezone.utc).isoformat(),
+        "source": "live_acli_readback",
+    }
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--ticket", required=True)
+    parser.add_argument("--site", required=True)
+    parser.add_argument("--account-id", required=True)
+    parser.add_argument("--developer-field", required=True)
+    parser.add_argument("--fix-version")
+    args = parser.parse_args()
+    try:
+        result = verify_claim(
+            args.ticket,
+            args.site,
+            args.account_id,
+            args.developer_field,
+            args.fix_version,
+        )
+    except ClaimError as exc:
+        print(
+            json.dumps(
+                {
+                    "schema": "jira-implementation-claim/v1",
+                    "status": "blocked",
+                    "ticket": args.ticket,
+                    "reason": str(exc),
+                }
+            )
+        )
+        return 2
+    print(json.dumps(result, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

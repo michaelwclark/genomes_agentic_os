@@ -14,7 +14,11 @@ state packet.
    expectations. Workflow status is advisory: when the content is sufficient,
    record the item as content-ready and continue even if the status is
    `Requirements`, `Requirements Gathering`, or an equivalent label. Do not
-   require a provider status transition or approval merely to start delivery.
+   require a provider status transition or approval merely to investigate or plan.
+   Content-ready is not implementation-claimed: project-required Assignee,
+   Developer, workflow, and release fields must be written and read back before
+   source edits or implementation delegation. Do not wait for extra permission
+   when the user's implementation request already authorizes those updates.
 3. Resolve tracker truth, acceptance criteria, repository, and ticket-derived
    base branch. For environment defects, consume the Detective version receipt.
 4. Explain dev, QA, and gitflow policy; add invocation overlays when needed.
@@ -29,6 +33,14 @@ state packet.
    `--repository`; release/hotfix work passes `--base-branch`.
 6. Inspect the created work item, exact remote base SHA, and isolated worktree.
 7. Write a plan that names behavior, risks, validation, and artifact outputs.
+   Before completing readiness for LOS Jira implementation, claim the issue:
+   Assignee and Developer must both be Michael Clark, status must be `In Progress`,
+   and Fix Version must include the requested release. Resolve account/field IDs
+   from the domain identity registry and live provider, not display-name guesses.
+   Run `harness/bin/agentic-os-jira-claim-check` with `--ticket`, `--site`,
+   `--account-id`, `--developer-field`, and `--fix-version` when specified. Retain
+   its JSON receipt. Exit 2 blocks source edits; partial writes or a provider
+   failure are not an exception. A local planned receipt cannot replace this check.
 8. After the work is verified, create a typed
    `development-stage-evidence/v1` JSON receipt and record
    `worktree_ready -> planned`:

@@ -2,6 +2,20 @@ version: 1
 enabled: true
 tracker:
   primary: linear
+  # Jira projects configure a live, read-only pre-edit claim gate. Required for
+  # LOS Jira: both planned and implementing transitions fail if it is absent.
+  # authority: your-site.atlassian.net
+  # implementation_gate:
+  #   - python3
+  #   - ~/agentic_os/harness/bin/agentic-os-jira-claim-check
+  #   - --ticket
+  #   - '{ticket}'
+  #   - --site
+  #   - your-site.atlassian.net
+  #   - --account-id
+  #   - verified-account-id
+  #   - --developer-field
+  #   - customfield_12345
 repository:
   root: /absolute/path/to/canonical/repository
   base_branch: main

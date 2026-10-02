@@ -16,7 +16,13 @@ transition or a metadata-only approval.
 If the content is incomplete, route through Grooming and continue when source
 truth and project policy resolve the gaps. Block only on one concrete missing
 decision or another real delivery gate. The provider status label itself is
-never a blocker or attention request.
+never a product-readiness blocker or attention request. This does not waive
+implementation bookkeeping: before source edits or worker dispatch, perform and
+read back the project's required owner, Developer, workflow, and release updates.
+For LOS Jira, the live claim must show Michael Clark as Assignee and Developer,
+`In Progress`, and the requested Fix Version. Content-ready and
+implementation-claimed are separate decisions. Failed or partial claim updates
+block source edits even when the acceptance criteria are sufficient.
 
 ## Inputs
 

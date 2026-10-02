@@ -9,7 +9,15 @@ Operate only the selected task worktree and pinned policy receipt.
 
 1. Read `develop status`, task state, plan, effective policies, and repo-local
    instructions. Confirm state is `planned` or resume `implementing`.
-2. Transition to `implementing` with the plan/worktree receipt.
+2. Before the first source edit, test edit, implementation command, or worker
+   dispatch, verify the live implementation claim. For LOS Jira, invoke
+   `harness/bin/agentic-os-jira-claim-check` with the exact
+   ticket, site, account ID, Developer field ID, and requested Fix Version.
+   Require Assignee and Developer to be Michael Clark and status `In Progress`.
+   Run again after a resume; an old receipt, local `planned` state, or content
+   readiness does not prove the live claim. Apply already-authorized tracker
+   updates and read them back; if the gate fails, stop source edits and record
+   the exact blocker. Transition to `implementing` with the plan/worktree receipt.
 3. Make the smallest cohesive change. Preserve framework, tenancy, security,
    migration, API, UI, and compatibility requirements from policy.
 4. Run the required static/unit/integration/end-to-end layers. Classify code
