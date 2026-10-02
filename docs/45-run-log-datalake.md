@@ -67,8 +67,8 @@ verification gate rather than planned behavior as deployed behavior.
 ## Atomic outbox building block (AGE-153, implementation in progress)
 
 The provider-neutral `run_evidence.outbox.FilesystemOutbox` is a local recovery
-buffer. It is not connected to production writers; the asynchronous ingress,
-configuration binding, transport deadlines and full acceptance validation remain
+buffer. It is not connected to production writers. A configurable asynchronous
+ingress building block is described below; full acceptance validation remains
 part of AGE-153. Existing writer behavior is unchanged.
 
 - `put(record)` returns a durable envelope key only after a private atomic file
@@ -85,14 +85,16 @@ part of AGE-153. Existing writer behavior is unchanged.
   mismatched readback retain evidence, use capped backoff and eventually
   quarantine. The error code never includes raw provider diagnostics.
 - Original timestamps, host, correlation, work/run identity and payload metadata
-  stay in the frozen envelope. Corrupt envelopes fail visibly and are preserved
-  for operator recovery; automated corrupt-file quarantine is still outstanding.
+  stay in the frozen envelope. Replay atomically renames corrupt envelopes to
+  unique quota-counted quarantine files and preserves their exact bytes. A
+  poison record cannot block healthy replay. Filesystem permission and I/O
+  failures remain visible errors, not malformed-data classifications.
 - `status()` reports count, bytes, pending/claimed/quarantined items, interrupted
   temporary files and oldest age. Nothing prunes retained evidence automatically.
 
 Use only an owned local directory with cooperative writers. Network filesystems,
-malicious local file replacement, arbitrary blocked provider calls, automatic
-poison-file recovery and end-to-end producer latency are not validated by this
+malicious local file replacement, arbitrary blocked provider calls and end-to-end
+production producer latency are not validated by this
 building block. No live outbox or datastore is needed for its tests.
 
 Run `tests/test_run_evidence_outbox.py` with a fresh item-owned pytest temporary
@@ -101,3 +103,53 @@ concurrent-process quota enforcement, readback mismatch, backoff/quarantine,
 fsync failures, serialization, capacity and private file permissions. Existing
 port and MongoDB adapter conformance tests remain adjacent regression coverage;
 a live disposable MongoDB profile is a separate opt-in gate.
+
+## Bounded ingress building block (AGE-153, implementation in progress)
+
+Inject the application-facing `EvidenceWriter` port into producers.
+`build_evidence_writer(root, store, host_ids=...)` binds the canonical ingress
+configuration to an injected `RunLogStore` and starts one worker. It does not
+cut over existing writers, schedule replay or alter live installation state.
+
+Submission validates the model, schema, classification and locally supplied
+host set, freezes mutable input and enqueues without datastore I/O. One bounded
+batch runs in the background. The MongoDB adapter owns a total PyMongo deadline
+covering the batch and its readbacks. A partial or uncertain result sends the
+whole batch through idempotent durable fallback.
+
+| Returned status | Meaning | Caller action |
+| --- | --- | --- |
+| `queued` | Accepted in memory; not durable and vulnerable to process exit | Retain source evidence until completion when durability is required |
+| `persisted` | Provider write and matching readback completed | Receipt reports durable |
+| `outboxed` | Atomic local envelope and directory fsync completed | Receipt reports durable; explicit replay may later recover it |
+| `dropped` | Local fallback failed, including capacity or permission failure | Receipt reports non-durable and a sanitized error code; caller must handle loss |
+| `IngressError` | Validation failed or configured rejection applies | Nothing was accepted |
+
+Queue saturation, absent ingress and closed ingress use the configured
+`overflow_policy`: `outbox` performs local durable fallback; `reject` raises
+without accepting. Local fsync is synchronous and operating-system I/O can
+stall. No hard wall-clock bound for a stalled filesystem is claimed.
+
+The canonical `ingress` configuration controls queue capacity, batch size,
+flush interval, write timeout, overflow policy, maximum record bytes, outbox
+items and outbox bytes. Older configuration remains readable by existing
+consumers, but constructing the new writer requires explicit overflow and
+outbox bounds; missing bounds fail with an actionable configuration error.
+
+`close(timeout_seconds=...)` wakes a partial batch and waits to the caller's
+finite deadline. Its `drained` and `pending` fields distinguish completion
+from a timed-out shutdown. It cannot forcibly cancel a nonconforming injected
+provider. Do not interpret a timed-out close as a durable acknowledgement.
+
+`status()` exposes bounded counters, queue/in-flight sizes, batch latency,
+last successful write and outbox count/bytes/age/quarantine. Explicit
+`replay(limit=...)` applies the provider deadline and records replay/retry
+counts. Corrupt envelopes remain retained for operator recovery; there is no
+implicit deletion of dead letters.
+
+Use `tests/test_run_evidence_ingress.py` alongside the outbox and store tests.
+These exercise healthy batching, frozen payloads, blocked-provider producer
+latency, saturation, partial write recovery, shutdown, invalid input, local
+storage failure, readback mismatch and bounded single-worker stress. Source
+fixtures and the isolated in-memory package smoke do not establish real MongoDB
+deadline behavior, production acceptance or writer cutover.
