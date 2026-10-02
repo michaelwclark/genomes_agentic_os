@@ -9,7 +9,8 @@ target, and reports a bounded receipt back to the control plane.
 from __future__ import annotations
 
 from concurrent.futures import Future, ThreadPoolExecutor
-from dataclasses import dataclass, field
+from contextlib import contextmanager
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 import fcntl
 from hashlib import sha256
@@ -21,10 +22,11 @@ import re
 import shlex
 import sys
 import socket
+import sqlite3
 import subprocess
 import tempfile
 import time
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Iterator, Mapping
 import urllib.error
 import urllib.request
 from urllib.parse import urlsplit
@@ -37,6 +39,8 @@ from .execution_fabric_config import (
 )
 from .lifecycle import redact_text
 from .scaffold import expand_path
+from .state import db as state_db
+from .state import queue as state_queue
 
 
 REMOTE_SNAPSHOT_SCHEMA = "agentic-os-runtime-snapshot/v1"
@@ -55,6 +59,7 @@ DEFAULT_TRANSPORT = {
     },
 }
 FALLBACK_STATE_SCHEMA = "agentic-os-execution-fabric-fallback/v1"
+FALLBACK_FORWARDING_BLOCKER = "fallback-forwarding-awaiting-remote-receipt"
 LEGACY_LOS_SECURITY_TIMEOUT_SECONDS = {
     "los_engineering_security_scan": 3600,
     "los_engineering_dependabot_remediation": 5400,
@@ -199,6 +204,7 @@ def resolve_remote_settings(
     role: str = "observer",
     host_alias: str | None = None,
     endpoint_override: str | None = None,
+    allow_active_fallback_credentials: bool = False,
 ) -> RemoteFabricSettings:
     """Resolve canonical transport/auth policy and an optional governed endpoint."""
     environment = os.environ if environ is None else environ
@@ -247,8 +253,10 @@ def resolve_remote_settings(
     if mode in {"remote", "remote_with_local_fallback"}:
         configured_url = str(transport.get("control_plane_url") or "")
         url = _validate_remote_url(endpoint_override or configured_url)
-    if mode == "remote" or (
-        mode == "remote_with_local_fallback" and not fallback_active
+    if (
+        mode == "remote"
+        or (mode == "remote_with_local_fallback" and not fallback_active)
+        or (mode == "remote_with_local_fallback" and allow_active_fallback_credentials)
     ):
         token = str(environment.get(token_env) or "").strip()
         token_file = str(environment.get(f"{token_env}_FILE") or "").strip()
@@ -303,6 +311,20 @@ def _fallback_policy(root: str | Path) -> tuple[str, Path, int, int]:
         int(fallback["failure_threshold"]),
         int(transport["request_timeout_seconds"]),
     )
+
+
+@contextmanager
+def personal_fallback_submission_guard(root: str | Path) -> Iterator[None]:
+    """Serialize degraded admission with failback replay and latch clearance."""
+    _, state_path, _, _ = _fallback_policy(root)
+    lock_path = state_path.with_name(f"{state_path.name}.lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+", encoding="utf-8") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
 def _read_fallback_state(path: Path) -> dict[str, Any]:
@@ -441,7 +463,36 @@ def activate_personal_fallback(
     }
 
 
-def clear_personal_fallback(root: str | Path, *, dry_run: bool = True) -> dict[str, Any]:
+def clear_personal_fallback(
+    root: str | Path,
+    *,
+    dry_run: bool = True,
+    environ: Mapping[str, str] | None = None,
+    transport: Transport | None = None,
+) -> dict[str, Any]:
+    if dry_run:
+        return _clear_personal_fallback_locked(
+            root,
+            dry_run=True,
+            environ=environ,
+            transport=transport,
+        )
+    with personal_fallback_submission_guard(root):
+        return _clear_personal_fallback_locked(
+            root,
+            dry_run=False,
+            environ=environ,
+            transport=transport,
+        )
+
+
+def _clear_personal_fallback_locked(
+    root: str | Path,
+    *,
+    dry_run: bool,
+    environ: Mapping[str, str] | None,
+    transport: Transport | None,
+) -> dict[str, Any]:
     url, state_path, threshold, timeout = _fallback_policy(root)
     ready, error = _primary_ready(url, timeout)
     if not ready:
@@ -449,6 +500,12 @@ def clear_personal_fallback(root: str | Path, *, dry_run: bool = True) -> dict[s
             f"refusing failback because primary readiness is not proven: {error or 'unready'}"
         )
     before = _read_fallback_state(state_path)
+    replay = replay_local_fallback_tasks(
+        root,
+        dry_run=dry_run,
+        environ=environ,
+        transport=transport,
+    )
     now = _utc_now()
     after = {
         "schema_version": FALLBACK_STATE_SCHEMA,
@@ -467,8 +524,252 @@ def clear_personal_fallback(root: str | Path, *, dry_run: bool = True) -> dict[s
         "failure_threshold": threshold,
         "state_path": str(state_path),
         "manual_failback": True,
+        "replay": replay,
         "dry_run": dry_run,
         "applied": not dry_run,
+    }
+
+
+def _local_fallback_candidates(root: str | Path) -> list[dict[str, Any]]:
+    db_path = state_db.default_db_path(root)
+    if not db_path.is_file():
+        return []
+    conn = state_db.connect_readonly(db_path)
+    try:
+        rows = conn.execute(
+            """
+            SELECT * FROM run_queue
+            WHERE kind = 'remote-compatible'
+              AND (status IN ('queued', 'approval-needed', 'running')
+                   OR (status = 'blocked' AND blocked_reason = ?))
+            ORDER BY created_at, id
+            """,
+            (FALLBACK_FORWARDING_BLOCKER,),
+        ).fetchall()
+    finally:
+        conn.close()
+    candidates: list[dict[str, Any]] = []
+    for row in rows:
+        item = dict(row)
+        try:
+            payload = json.loads(str(item.pop("payload_json") or "{}"))
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise ExecutionFabricRemoteError(
+                f"local fallback task {item.get('id')!r} has invalid payload JSON"
+            ) from exc
+        if not isinstance(payload, dict):
+            raise ExecutionFabricRemoteError(
+                f"local fallback task {item.get('id')!r} payload must be an object"
+            )
+        item["payload"] = payload
+        candidates.append(item)
+    return candidates
+
+
+def _remote_task_from_local_candidate(
+    root: str | Path,
+    item: Mapping[str, Any],
+) -> dict[str, Any]:
+    payload = item.get("payload")
+    if not isinstance(payload, Mapping):
+        raise ExecutionFabricRemoteError(
+            f"local fallback task {item.get('id')!r} is missing its payload"
+        )
+    queue_name = str(item.get("queue_name") or "").strip()
+    task_type = str(payload.get("task_type") or "").strip()
+    if not queue_name or not task_type:
+        raise ExecutionFabricRemoteError(
+            f"local fallback task {item.get('id')!r} is missing queue or task type"
+        )
+    route = validate_task_route(root, queue_name, task_type)
+    allowed_fields = set(route["payload_fields"])
+    remote_payload = {
+        str(name): value
+        for name, value in payload.items()
+        if str(name) in allowed_fields
+    }
+    validate_task_route(
+        root,
+        queue_name,
+        task_type,
+        payload=remote_payload,
+        remote=True,
+    )
+
+    namespace = str(payload.get("_fabric_namespace") or "").strip()
+    if not namespace:
+        ref = str(item.get("ref") or "")
+        suffix = f":{task_type}"
+        if ref.endswith(suffix):
+            namespace = ref[: -len(suffix)]
+    if not namespace:
+        raise ExecutionFabricRemoteError(
+            f"local fallback task {item.get('id')!r} is missing its remote namespace"
+        )
+    raw_capabilities = payload.get("_fabric_required_capabilities")
+    if raw_capabilities is None:
+        required_capability = route.get("required_capability")
+        capabilities = [str(required_capability)] if required_capability else []
+    elif isinstance(raw_capabilities, list) and all(
+        isinstance(value, str) and value for value in raw_capabilities
+    ):
+        capabilities = list(dict.fromkeys(raw_capabilities))
+    else:
+        raise ExecutionFabricRemoteError(
+            f"local fallback task {item.get('id')!r} has invalid required capabilities"
+        )
+
+    task = {
+        "namespace": namespace,
+        "queue": queue_name,
+        "taskType": task_type,
+        "idempotencyKey": str(item.get("idempotency_key") or item.get("id") or ""),
+        "payload": remote_payload,
+        "requiredCapabilities": capabilities,
+        "priority": int(item.get("priority") or 0),
+        "maxAttempts": int(item.get("max_attempts") or 3),
+    }
+    if not task["idempotencyKey"]:
+        raise ExecutionFabricRemoteError(
+            f"local fallback task {item.get('id')!r} is missing its idempotency key"
+        )
+    if item.get("due_at"):
+        task["availableAt"] = str(item["due_at"])
+    return task
+
+
+def _record_local_forwarding_receipt(
+    conn: sqlite3.Connection,
+    item_id: str,
+    *,
+    remote_task_id: str,
+    admitted: bool,
+) -> None:
+    current = state_queue.get(conn, item_id)
+    if current is None or not _is_forwarding_reservation(current):
+        raise ExecutionFabricRemoteError(
+            f"local fallback task {item_id!r} lost its forwarding reservation"
+        )
+    payload = dict(current.get("payload") or {})
+    payload["fallback_forwarding_receipt"] = {
+        "remote_task_id": remote_task_id,
+        "admitted": admitted,
+        "forwarded_at": _utc_now(),
+    }
+    conn.execute(
+        "UPDATE run_queue SET payload_json = ?, blocked_reason = NULL WHERE id = ?",
+        (json.dumps(payload, sort_keys=True), item_id),
+    )
+    state_queue.complete(conn, item_id, status="done")
+
+
+def _is_forwarding_reservation(item: Mapping[str, Any]) -> bool:
+    return (
+        item.get("status") == "blocked"
+        and item.get("blocked_reason") == FALLBACK_FORWARDING_BLOCKER
+    )
+
+
+def replay_local_fallback_tasks(
+    root: str | Path,
+    *,
+    dry_run: bool = True,
+    environ: Mapping[str, str] | None = None,
+    transport: Transport | None = None,
+) -> dict[str, Any]:
+    candidates = _local_fallback_candidates(root)
+    unsafe = [
+        str(item.get("id"))
+        for item in candidates
+        if item.get("status") != "queued" and not _is_forwarding_reservation(item)
+    ]
+    if unsafe:
+        raise ExecutionFabricRemoteError(
+            "refusing failback while remote-compatible local tasks are not safely queued: "
+            + ", ".join(unsafe)
+        )
+    planned = [
+        {
+            "local_task_id": str(item["id"]),
+            "task": _remote_task_from_local_candidate(root, item),
+        }
+        for item in candidates
+    ]
+    if dry_run or not planned:
+        return {
+            "status": "planned" if dry_run else "not_required",
+            "candidate_count": len(planned),
+            "forwarded_count": 0,
+            "tasks": planned,
+        }
+
+    settings = resolve_remote_settings(
+        root,
+        environ=environ,
+        role="submit",
+        allow_active_fallback_credentials=True,
+    )
+    client = ExecutionFabricClient(
+        replace(settings, fallback_active=False),
+        transport=transport,
+    )
+    forwarded: list[dict[str, Any]] = []
+    for candidate in planned:
+        conn = state_db.connect(state_db.default_db_path(root))
+        try:
+            # Persist a non-claimable reservation before crossing the remote
+            # boundary. An uncertain response or process exit must never make
+            # remotely admitted work eligible for local execution again.
+            with state_db.transaction(conn):
+                current = state_queue.get(conn, candidate["local_task_id"])
+                if current is None or (
+                    current["status"] != "queued"
+                    and not _is_forwarding_reservation(current)
+                ):
+                    raise ExecutionFabricRemoteError(
+                        f"local fallback task {candidate['local_task_id']!r} is no longer safely queued"
+                    )
+                task = _remote_task_from_local_candidate(root, current)
+                state_queue.update_status(
+                    conn,
+                    candidate["local_task_id"],
+                    "blocked",
+                    blocked_reason=FALLBACK_FORWARDING_BLOCKER,
+                )
+            result = client.admit_task(task)
+            remote_task = result.get("task") if isinstance(result.get("task"), Mapping) else {}
+            remote_task_id = str(
+                remote_task.get("id")
+                or result.get("taskId")
+                or result.get("id")
+                or ""
+            )
+            if not remote_task_id:
+                raise ExecutionFabricRemoteError(
+                    f"remote admission for local task {candidate['local_task_id']!r} returned no task receipt"
+                )
+            admitted = bool(result.get("admitted", True))
+            with state_db.transaction(conn):
+                _record_local_forwarding_receipt(
+                    conn,
+                    candidate["local_task_id"],
+                    remote_task_id=remote_task_id,
+                    admitted=admitted,
+                )
+        finally:
+            conn.close()
+        forwarded.append(
+            {
+                "local_task_id": candidate["local_task_id"],
+                "remote_task_id": remote_task_id,
+                "admitted": admitted,
+            }
+        )
+    return {
+        "status": "forwarded",
+        "candidate_count": len(planned),
+        "forwarded_count": len(forwarded),
+        "tasks": forwarded,
     }
 
 
@@ -517,6 +818,8 @@ def validate_task_route(
     execution = dict(route.get("execution") or {})
     if remote and not execution.get("remote_allowed"):
         raise ValueError(f"task type {task_type!r} is local-only and cannot be remote")
+    payload_policy = dict(route.get("payload") or {})
+    properties = dict(payload_policy.get("properties") or {})
     if payload is None:
         return {
             "queue": queue_name,
@@ -531,10 +834,9 @@ def validate_task_route(
             "mutation_class": route["mutation_class"],
             "approval_class": route["approval_class"],
             "allowed_effect_types": list(route.get("allowed_effect_types") or []),
+            "payload_fields": sorted(str(name) for name in properties),
         }
     payload_value = dict(payload)
-    payload_policy = dict(route.get("payload") or {})
-    properties = dict(payload_policy.get("properties") or {})
     required = [str(value) for value in payload_policy.get("required") or []]
     missing = [name for name in required if name not in payload_value]
     if missing:
