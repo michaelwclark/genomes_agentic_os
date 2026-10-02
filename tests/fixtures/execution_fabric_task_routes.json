@@ -24,6 +24,75 @@
       ]
     },
     {
+      "task_type": "los.security.scan.remediation.v1",
+      "queue": "codex",
+      "payload": {
+        "work_item_id": "los_engineering_security_scan",
+        "instruction_ref": "domains/los/04-automations/engineering/security_scan/prompt.md",
+        "repository": "Lenders-Cooperative/los-app-los-django",
+        "base_branch": "develop",
+        "timeout_seconds": 3600
+      },
+      "required_capability": "codex.task",
+      "domain_worker": "codex_task",
+      "allowed_effect_types": [
+        "github.branch.write",
+        "github.pull_request.write",
+        "github.issue.comment",
+        "github.label.apply",
+        "github.check.rerun",
+        "jira.issue.update",
+        "notion.security_automation.update",
+        "slack.message.send"
+      ]
+    },
+    {
+      "task_type": "los.security.dependabot.remediation.v1",
+      "queue": "codex",
+      "payload": {
+        "work_item_id": "los_engineering_dependabot_remediation",
+        "instruction_ref": "domains/los/04-automations/engineering/dependabot_remediation/prompt.md",
+        "repository": "Lenders-Cooperative/los-app-los-django",
+        "base_branch": "develop",
+        "timeout_seconds": 5400
+      },
+      "required_capability": "codex.task",
+      "domain_worker": "codex_task",
+      "allowed_effect_types": [
+        "github.branch.write",
+        "github.pull_request.write",
+        "github.issue.comment",
+        "github.label.apply",
+        "github.check.rerun",
+        "jira.issue.update",
+        "notion.security_automation.update",
+        "slack.message.send"
+      ]
+    },
+    {
+      "task_type": "los.security.ai_automation_pr_merge.v1",
+      "queue": "codex",
+      "payload": {
+        "work_item_id": "los_engineering_ai_automation_pr_merge",
+        "instruction_ref": "domains/los/04-automations/engineering/ai_automation_pr_merge/prompt.md",
+        "repository": "Lenders-Cooperative/los-app-los-django",
+        "base_branch": "develop",
+        "timeout_seconds": 5400
+      },
+      "required_capability": "codex.task",
+      "domain_worker": "codex_task",
+      "allowed_effect_types": [
+        "github.branch.write",
+        "github.pull_request.write",
+        "github.pull_request.merge",
+        "github.issue.comment",
+        "github.label.apply",
+        "github.check.rerun",
+        "jira.issue.update",
+        "notion.security_automation.update"
+      ]
+    },
+    {
       "task_type": "los.environment.deployment.observed",
       "queue": "los_environment",
       "payload": {

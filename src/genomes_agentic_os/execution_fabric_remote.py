@@ -2129,6 +2129,7 @@ def _portable_harness_worker(
         "execution_target": target,
         "approval_state": materialize_approval_state(str(route["approval_class"])),
         "mutation_class": str(route["mutation_class"]),
+        "allowed_effect_types": list(route.get("allowed_effect_types") or []),
         "domain_worker": f"{harness}_task",
         "instruction_ref": instruction_ref,
         "work_item_id": work_item_id,
@@ -2145,6 +2146,9 @@ def _portable_harness_worker(
             ),
         ),
     }
+    for field in ("repository", "base_branch"):
+        if field in payload:
+            item[field] = str(payload[field])
     return _run_prepared_worker_item(os_root, assignment, item, effects=[])
 
 

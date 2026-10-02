@@ -31,6 +31,27 @@ describe("canonical policy", () => {
         work_item_id: "cc-357",
         instruction_ref: "work-items/cc-357/instruction.md",
       },
+      "los.security.scan.remediation.v1": {
+        work_item_id: "los_engineering_security_scan",
+        instruction_ref:
+          "domains/los/04-automations/engineering/security_scan/prompt.md",
+        repository: "Lenders-Cooperative/los-app-los-django",
+        base_branch: "develop",
+      },
+      "los.security.dependabot.remediation.v1": {
+        work_item_id: "los_engineering_dependabot_remediation",
+        instruction_ref:
+          "domains/los/04-automations/engineering/dependabot_remediation/prompt.md",
+        repository: "Lenders-Cooperative/los-app-los-django",
+        base_branch: "develop",
+      },
+      "los.security.ai_automation_pr_merge.v1": {
+        work_item_id: "los_engineering_ai_automation_pr_merge",
+        instruction_ref:
+          "domains/los/04-automations/engineering/ai_automation_pr_merge/prompt.md",
+        repository: "Lenders-Cooperative/los-app-los-django",
+        base_branch: "develop",
+      },
       "los.team_pr.ai_review.v1": {
         repository: "example/repository",
         pull_request: 42,

@@ -5,10 +5,12 @@
       "id": "los_engineering_security_scan",
       "namespace": "los_engineering",
       "queue": "codex",
-      "taskType": "llm.codex",
+      "taskType": "los.security.scan.remediation.v1",
       "payload": {
         "work_item_id": "los_engineering_security_scan",
         "instruction_ref": "domains/los/04-automations/engineering/security_scan/prompt.md",
+        "repository": "Lenders-Cooperative/los-app-los-django",
+        "base_branch": "develop",
         "timeout_seconds": 3600
       },
       "requiredCapabilities": [
@@ -24,10 +26,12 @@
       "id": "los_engineering_dependabot_remediation",
       "namespace": "los_engineering",
       "queue": "codex",
-      "taskType": "llm.codex",
+      "taskType": "los.security.dependabot.remediation.v1",
       "payload": {
         "work_item_id": "los_engineering_dependabot_remediation",
         "instruction_ref": "domains/los/04-automations/engineering/dependabot_remediation/prompt.md",
+        "repository": "Lenders-Cooperative/los-app-los-django",
+        "base_branch": "develop",
         "timeout_seconds": 5400
       },
       "requiredCapabilities": [
@@ -43,10 +47,12 @@
       "id": "los_engineering_ai_automation_pr_merge",
       "namespace": "los_engineering",
       "queue": "codex",
-      "taskType": "llm.codex",
+      "taskType": "los.security.ai_automation_pr_merge.v1",
       "payload": {
         "work_item_id": "los_engineering_ai_automation_pr_merge",
         "instruction_ref": "domains/los/04-automations/engineering/ai_automation_pr_merge/prompt.md",
+        "repository": "Lenders-Cooperative/los-app-los-django",
+        "base_branch": "develop",
         "timeout_seconds": 5400
       },
       "requiredCapabilities": [
