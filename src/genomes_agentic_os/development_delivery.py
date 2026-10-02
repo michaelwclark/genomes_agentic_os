@@ -1829,6 +1829,69 @@ def _sync_auto_dev_projection(task_state_path: Path) -> dict[str, Any] | None:
         return None
 
 
+def verify_implementation_claim(task: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Enforce the live project claim gate before admitting source edits.
+
+    Content readiness does not replace ownership/workflow bookkeeping. Read
+    the current operational gate even for a task with an older policy snapshot.
+    This can tighten admission, but cannot rewrite frozen engineering policy.
+    """
+    profile_ref = str(task.get("profile_source") or "").strip()
+    profile = _read_mapping(Path(profile_ref).expanduser()) if profile_ref else {}
+    tracker = profile.get("tracker") or {}
+    source = task.get("source") or {}
+    jira = tracker.get("primary") == "jira" or source.get("system") == "jira"
+    command = tracker.get("implementation_gate")
+    if command is None:
+        if jira and task.get("domain") == "los":
+            raise DevelopmentDeliveryError(
+                "LOS Jira implementation requires tracker.implementation_gate; "
+                "assign Assignee and Developer, transition In Progress, and verify live readback"
+            )
+        return None
+    if not jira or not isinstance(command, list) or not command or not all(
+        isinstance(item, str) and item.strip() for item in command
+    ):
+        raise DevelopmentDeliveryError("tracker.implementation_gate must be a Jira argv list")
+    ticket = str(task.get("ticket") or "")
+    argv = [os.path.expanduser(item.replace("{ticket}", ticket)) for item in command]
+    try:
+        result = subprocess.run(argv, capture_output=True, text=True, timeout=65)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise DevelopmentDeliveryError("live Jira implementation gate unavailable") from exc
+    if result.returncode:
+        raise DevelopmentDeliveryError(
+            "live Jira implementation gate blocked: verify Assignee, Developer, "
+            "In Progress, Fix Version, and provider access before coding"
+        )
+    try:
+        claim = json.loads(result.stdout)
+    except (json.JSONDecodeError, TypeError) as exc:
+        raise DevelopmentDeliveryError("live Jira claim receipt is invalid") from exc
+    if not isinstance(claim, dict) or not (
+        claim.get("schema") == "jira-implementation-claim/v1"
+        and claim.get("status") == "passed"
+        and claim.get("ticket") == ticket
+        and claim.get("source") == "live_acli_readback"
+        and claim.get("workflow_status") == "In Progress"
+        and claim.get("site") == tracker.get("authority")
+        and claim.get("assignee_account_id")
+        and claim.get("assignee_account_id") == claim.get("developer_account_id")
+        and isinstance(claim.get("fix_versions"), list)
+        and claim.get("fix_versions")
+        and claim.get("verified_at")
+    ):
+        raise DevelopmentDeliveryError("live Jira claim receipt does not prove this ticket")
+    try:
+        verified = datetime.fromisoformat(str(claim["verified_at"]).replace("Z", "+00:00"))
+        age = (datetime.now(timezone.utc) - verified).total_seconds()
+    except (ValueError, TypeError) as exc:
+        raise DevelopmentDeliveryError("live Jira claim timestamp is invalid") from exc
+    if not -5 <= age <= 90:
+        raise DevelopmentDeliveryError("live Jira claim receipt is stale")
+    return claim
+
+
 @dataclass
 class TaskState:
     path: Path
@@ -1859,12 +1922,18 @@ class TaskState:
             state = self.read()
             current = str(state["state"])
             if state.get("last_transition_key") == idempotency_key:
+                if target in {"planned", "implementing"}:
+                    verify_implementation_claim(state)
                 replayed = True
             else:
                 if not receipt.strip():
                     raise DevelopmentDeliveryError("every transition requires a receipt")
                 if not _legal_transition(current, target):
                     raise DevelopmentDeliveryError(f"illegal transition: {current} -> {target}")
+                if target in {"planned", "implementing"}:
+                    claim = verify_implementation_claim(state)
+                    if claim is not None:
+                        state["implementation_claim"] = claim
                 now = utc_now()
                 state.update({"state": target, "updated_at": now, "last_transition_key": idempotency_key})
                 receipt_row = {"state": target, "ref": receipt, "recorded_at": now}
@@ -10849,6 +10918,8 @@ def run_development_stage(
             raise DevelopmentDeliveryError(str(exc)) from exc
     current_name = str(current.get("state"))
     if current_name == end_name:
+        if normalized == "readiness":
+            verify_implementation_claim(current)
         current = persist_delivery_revision_metadata()
         _refresh_portfolio_state(state.path)
         _sync_auto_dev_projection(state.path)

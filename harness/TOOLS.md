@@ -61,6 +61,11 @@ the source of truth by themselves.
 
 ## Commands
 
+`harness/bin/agentic-os-jira-claim-check` is the read-only pre-edit Jira
+ownership, workflow, and Fix Version gate used by Auto-Dev Readiness and
+Implementation. It requires live provider readback; exit 2 blocks code edits.
+See `docs/46-jira-implementation-claim.md` in the source package.
+
 | Command | Use When | Notes |
 | --- | --- | --- |
 | `agentic-os library list/show` | Select a reusable object without scanning definition trees. | Reads the generated canonical registry. |
