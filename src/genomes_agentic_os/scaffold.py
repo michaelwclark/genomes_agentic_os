@@ -1974,6 +1974,19 @@ These root rules apply unless a narrower layer provides a stricter rule.
   the execution record. A trigger, health check, or process id alone does not
   prove that requested work ran.
 
+## Quiet Waiting And Polling
+
+- Routine PR, CI, test, job, or deployment polling belongs in a background
+  process or worker with durable state, not recurring model wakeups in the
+  parent conversation. Silent replies and notification suppression still
+  consume context. Do not create or reactivate a parent-chat heartbeat to
+  inspect watcher state; use one actionable or terminal event instead.
+- Follow `lib/rules/root/quiet-async-long-runs/RULES.md` and `watch-pr-quiet` for
+  monitoring. Ordinary reminders and substantive user-requested scheduled
+  work remain allowed. Do not replace a blocked polling heartbeat with a
+  cron workaround. The shared PreToolUse polling guard enforces the supported
+  direct and literal wrapped automation calls on Claude and Codex.
+
 ## Precedence
 
 Narrower rules override broader rules unless the broader rule is stricter for

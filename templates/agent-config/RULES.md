@@ -70,6 +70,17 @@ Record local constraints, approval gates, safety boundaries, coding rules, and o
 
 ## Managed Execution Rules
 
+- Routine PR, CI, test, job, or deployment polling belongs in a background
+  process or worker with durable state, not recurring model wakeups in the
+  parent conversation. Silent replies and notification suppression still
+  consume context. Do not create or reactivate a parent-chat heartbeat to
+  inspect watcher state; use one actionable or terminal event instead.
+- Follow `lib/rules/root/quiet-async-long-runs/RULES.md` and `watch-pr-quiet` for
+  monitoring. Ordinary reminders and substantive user-requested scheduled
+  work remain allowed. Do not replace a blocked polling heartbeat with a
+  cron workaround. The shared PreToolUse polling guard enforces the supported
+  direct and literal wrapped automation calls on Claude and Codex.
+
 - When Execution Fabric is enabled, admit managed workflow and automation work
   through its configured named queues. Folder counts, detached launches, and
   direct vendor queue writes are not concurrency controls.

@@ -1,18 +1,22 @@
 ---
 name: watch-pr-quiet
-description: Use when an agent needs to monitor GitHub pull request checks without repeatedly printing polling output into the conversation. Starts or uses a file-based PR watcher that writes status artifacts under a specified output folder, usually the task's durable artifact folder, and then the orchestrator inspects those files on a schedule.
+description: Monitor GitHub pull request checks with a bounded background watcher and terminal-event receipts, without periodic model wakeups or parent-chat status polling.
 ---
 
 # /watch-pr-quiet
 
 Use this skill whenever you need to watch GitHub PR checks, CI, or branch protection state over time.
 
-Do not repeatedly run `gh pr checks`, `gh run watch`, or long polling loops in the main conversation. Start the quiet watcher and inspect its files later.
+Do not repeatedly run `gh pr checks`, `gh run watch`, `gh pr view`, or any long
+polling loop in the main conversation. The deterministic bounded watcher or an
+isolated subagent owns waiting; the main task resumes only for a
+terminal/actionable event or an explicit user status request.
 
-The watcher reads pull-request metadata and workflow runs through the versioned
-`@genomes/github` port bridge. Configure `GENOMES_GITHUB_BRIDGE_COMMAND` with
-the reviewed bridge executable and provide `GITHUB_TOKEN` or `GH_TOKEN` in the
-watcher environment. The watcher never shells out to `gh` for provider reads.
+Periodic model wakeups solely to read status are forbidden. Silent heartbeats,
+reminders, and empty final responses still consume model tokens and parent-chat
+context. If terminal-event delivery is unavailable, record an artifact-only
+handoff; never use a heartbeat/reminder fallback. Approved substantive scheduled
+jobs remain allowed; a status-only poll is not one.
 
 ## Canonical Command
 
@@ -22,7 +26,8 @@ python3 "${AGENTIC_OS_ROOT:-$HOME/agentic_os}/harness/skills/watch-pr-quiet/scri
   --output-dir <OUTPUT_FOLDER> \
   --timeout-minutes <MINUTES> \
   --interval-minutes <MINUTES> \
-  [--expected-head-sha <FULL_SHA>] \
+  --expected-head-sha <FULL_SHA> \
+  --required-check <EXACT_CHECK_NAME> \
   [--required-check <EXACT_CHECK_NAME>] \
   [--repo owner/name]
 ```
@@ -32,12 +37,12 @@ For LOS work, prefer the Agentic OS work item artifact folder:
 ```bash
 python3 "${AGENTIC_OS_ROOT:-$HOME/agentic_os}/harness/skills/watch-pr-quiet/scripts/watch_pr_quiet.py" \
   --pr 12345 \
-  --repo thesummitgrp/los-app-los-django \
-  --output-dir <os-root>/domains/los/02-projects/los_app_los_django/work-items/<date>-<id>/artifacts/pr-watch \
+  --repo Lenders-Cooperative/los-app-los-django \
+  --output-dir /Users/genome/agentic_os/domains/los/02-projects/los_app_los_django/work-items/02-active/<id>/artifacts/pr-watch \
   --timeout-minutes 90 \
   --interval-minutes 5 \
   --expected-head-sha <FULL_SHA> \
-  --required-check "PR Smoke"
+  --required-check "pytest / Coverage"
 ```
 
 The script prints nothing. It writes:
@@ -48,31 +53,49 @@ The script prints nothing. It writes:
 
 ## Status Meanings
 
-- `success`: all current-head workflow runs passed
-- `failure`: at least one current-head workflow run failed, timed out, was cancelled, or requires action
+- `success`: the expected head matches and every named required check and
+  observed check/status context passed, with no missing required checks
+- `failure`: at least one observed check/status context failed, timed out, was cancelled, or requires action
 - `pending`: checks are queued, in progress, expected, or not yet observed
 - `timeout`: timeframe expired before a terminal pass/fail state
 - `error`: the watcher could not query GitHub or write artifacts
 
 ## Orchestrator Pattern
 
-1. Resolve and record the exact current PR head SHA before starting a
-   delivery-grade watch.
-2. Read the exact-head `check_run.name` values and name every required check
-   with repeatable `--required-check` arguments. These are job-context names,
-   not workflow display labels: use `Docs link policy` and `Python suite and
-   packaging`, not `Docs`, `Test`, or `Python suite`. `--min-checks` alone
-   cannot distinguish stale or unrelated checks.
+1. Resolve and record the exact PR head SHA before starting a delivery-grade watch.
+2. Name every required check with repeatable `--required-check` arguments.
 3. Put the watcher output in the task's durable artifact folder, not in `/tmp`.
-4. For a watch expected to exceed two minutes, start it through
-   `agentic-os long-run`; direct background processes and raw `nohup` are not
-   permitted.
-5. Schedule a heartbeat or reminder every 10 minutes to inspect `pr-<PR>-watch-state.json`.
-6. If `status` is `failure`, dispatch the applicable subagent with the state file path and PR number.
-7. If `status` is `success`, verify `sha`, `expected_head_sha`,
-   `head_matches_expected`, and `missing_required_checks` before updating the
-   task tracker.
-8. If `status` is `timeout` or `error`, inspect the summary file and decide whether to restart with a new timeframe.
+4. Start it through `agentic-os long-run`; raw `nohup` and direct background
+   processes are not permitted.
+5. Let the deterministic watcher or isolated subagent handle its bounded wait
+   and terminal-event delivery. Record the run id, expected head, required checks,
+   artifact path, owner, and event route. If that route is unavailable, record
+   an artifact-only handoff and stop the main turn; do not schedule a model
+   wakeup to inspect `pr-<PR>-watch-state.json`.
+6. On `failure`, inspect the exact failed job log before changing code.
+7. On `success`, verify `sha`, `expected_head_sha`, `head_matches_expected`, and
+   `missing_required_checks`, then perform one GitHub mergeability/review readback.
+8. On `timeout` or `error`, inspect the watcher summary before restarting.
+   Preserve existing pause/cancel controls and bounded wall-clock/resource
+   limits; user cancellation or a safety pause ends the wait.
+
+## Consumer Gate
+
+Starting the watcher creates active work; it does not create a completion
+receipt. A workflow may record CI success or `ready_for_merge` only after it
+consumes `pr-<PR>-watch-state.json` and proves all of the following:
+
+- `status` is exactly `success`;
+- `sha` equals `expected_head_sha` and `head_matches_expected` is true;
+- every required check was named before the watch began and has an explicit
+  success conclusion; and
+- `missing_required_checks` is empty.
+
+Treat `pending`, `running`, `timeout`, and `error` as nonterminal. Treat
+`failure` as a repair transition: inspect the failed job, classify it, repair
+or perform the single permitted infrastructure rerun, push when code changes,
+and start a new exact-head watch. Any push invalidates the earlier watcher
+receipt, including an earlier success.
 
 ## Governed Long-Run Start
 
@@ -89,14 +112,14 @@ agentic-os long-run start \
   --no-progress-minutes 125 \
   --max-log-mb 1 \
   --log-rotations 1 \
-  --preflight-check 'test -n "$GENOMES_GITHUB_BRIDGE_COMMAND" && test -n "${GITHUB_TOKEN:-${GH_TOKEN:-}}"' \
+  --preflight-check "gh pr view <PR_NUMBER> --repo <owner/name> --json headRefOid >/dev/null" \
   -- \
   python3 "${AGENTIC_OS_ROOT:-$HOME/agentic_os}/harness/skills/watch-pr-quiet/scripts/watch_pr_quiet.py" \
   --pr <PR_NUMBER> \
+  --repo <owner/name> \
   --output-dir <OUTPUT_FOLDER> \
   --timeout-minutes 120 \
   --interval-minutes 5 \
-  --repo <owner/name> \
   --expected-head-sha <FULL_SHA> \
   --required-check <EXACT_CHECK_NAME>
 ```
@@ -107,20 +130,10 @@ Record the PR number and output folder in the Agentic OS work item so future age
 
 - Prefer GitHub-hosted checks when local worktree tests are unavailable, broken, or too slow for the current loop.
 - Local targeted tests are still useful when they run cleanly; GitHub is the source of truth for final PR readiness.
-- A delivery-grade success claim requires `--expected-head-sha` and at least
-  one `--required-check`. A watch without those arguments is observational
-  only and must not be used as a terminal PR receipt.
-- Checks from a head observed before the expected SHA are ignored. After the
-  expected SHA is observed, any head change is terminal failure.
-- A named required check passes only with an explicit `success` conclusion;
-  `neutral` and `skipped` are not delivery-grade success.
-- When the exact-head check context has settled, supplied `--required-check`
-  values that are not emitted `check_run.name` values remain pending for one
-  additional settled poll. If the same labels remain absent on that bounded
-  confirmation poll, they fail with `invalid_required_checks` and the observed
-  check names in the state receipt; correct them and restart the watcher. This
-  grace prevents an eventually emitted downstream check from being rejected,
-  while still rejecting a stale workflow display label without waiting for the
-  full watch timeout.
+- A delivery-grade watcher requires `--expected-head-sha` and at least one
+  `--required-check`; an observational watcher cannot support a merge claim.
+- Never inspect GitHub while a watcher reports `pending` or `running` just to
+  check progress. An explicit user status request permits one bounded snapshot;
+  otherwise the terminal watcher receipt selects the next action.
 - Never paste full polling logs into chat. Reference the summary/state files instead.
 - Do not use this watcher for unrelated production monitoring. It is for PR check status only.

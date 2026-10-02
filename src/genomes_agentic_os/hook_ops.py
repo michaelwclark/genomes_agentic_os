@@ -20,6 +20,7 @@ HOOK_FILENAMES = (
     "conversation-auto-log.py",
     "context-mode-cache-heal.mjs",
     "work-item-routing-guard.py",
+    "parent-chat-polling-guard.py",
 )
 
 
@@ -171,6 +172,13 @@ def sync_codex_hooks(data: dict[str, Any], root: Path) -> bool:
     changed = replace_legacy_hook_commands(data, root, "codex")
     changed = ensure_hook_entry(
         data,
+        "PreToolUse",
+        hook_command(root, "parent-chat-polling-guard.py"),
+        matcher="*",
+        timeout=5,
+    ) or changed
+    changed = ensure_hook_entry(
+        data,
         "SessionStart",
         hook_command(root, "session-prayer-start.sh"),
         matcher="startup",
@@ -246,6 +254,13 @@ def sync_claude_hooks(data: dict[str, Any], root: Path) -> bool:
     changed = replace_legacy_hook_commands(data, root, "claude")
     changed = ensure_hook_entry(
         data,
+        "PreToolUse",
+        hook_command(root, "parent-chat-polling-guard.py"),
+        matcher="*",
+        timeout=5,
+    ) or changed
+    changed = ensure_hook_entry(
+        data,
         "SessionStart",
         hook_command(root, "session-prayer-start.sh"),
         matcher="startup",
@@ -311,6 +326,7 @@ def required_commands(root: Path, target: str) -> tuple[str, ...]:
             hook_command(root, "harness-emit-trace.sh", "codex"),
             hook_command(root, "conversation-auto-log.py"),
             hook_command(root, "work-item-routing-guard.py"),
+            hook_command(root, "parent-chat-polling-guard.py"),
             context_mode_command("codex", "sessionstart"),
             context_mode_command("codex", "stop"),
             context_mode_command("codex", "pretooluse"),
@@ -327,6 +343,7 @@ def required_commands(root: Path, target: str) -> tuple[str, ...]:
             hook_command(root, "conversation-auto-log.py"),
             hook_command(root, "context-mode-cache-heal.mjs"),
             hook_command(root, "work-item-routing-guard.py"),
+            hook_command(root, "parent-chat-polling-guard.py"),
             mempalace_command("session-start"),
             mempalace_command("stop"),
             mempalace_command("precompact"),
