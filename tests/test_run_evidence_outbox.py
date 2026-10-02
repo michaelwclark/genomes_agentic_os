@@ -53,6 +53,45 @@ def test_restart_replay_preserves_identity_metadata_and_durable_evidence(tmp_pat
     assert not (outbox.root / f"{key}.json").exists()
 
 
+@pytest.mark.parametrize("content", [b"{", b"[]", b"null", b"\xff", b'{"schema":"wrong"}'])
+def test_corrupt_envelope_cannot_block_healthy_replay_and_preserves_bytes(tmp_path, content):
+    outbox = box(tmp_path)
+    poison = outbox.root / ("0" * 64 + ".json")
+    poison.write_bytes(content)
+    outbox.put(record())
+    before = outbox.status()
+    assert before["corrupt"] == 1 and poison.exists()
+    assert outbox.replay(store(), limit=2) == {"persisted": 1, "retry": 0}
+    retained = list(outbox.root.glob("*.corrupt"))
+    assert len(retained) == 1 and retained[0].read_bytes() == content
+    assert not poison.exists()
+    after = outbox.status()
+    assert after["count"] == after["quarantined"] == after["corrupt"] == 1
+    assert after["bytes"] == len(content)
+
+
+def test_quarantine_does_not_overwrite_previous_poison_or_grow_quota(tmp_path):
+    outbox = box(tmp_path, max_items=3)
+    poison = outbox.root / ("0" * 64 + ".json")
+    poison.write_text("first")
+    assert outbox.claim() is None
+    poison.write_text("second")
+    assert outbox.claim() is None
+    assert sorted(p.read_text() for p in outbox.root.glob("*.corrupt")) == ["first", "second"]
+    with pytest.raises(OutboxFull):
+        outbox.put(record())
+
+
+def test_io_failure_is_not_misclassified_or_quarantined(tmp_path, monkeypatch):
+    outbox = box(tmp_path)
+    key = outbox.put(record())
+    monkeypatch.setattr(Path, "read_text", lambda *a, **k: (_ for _ in ()).throw(PermissionError()))
+    with pytest.raises(PermissionError):
+        outbox.claim()
+    assert (outbox.root / f"{key}.json").exists()
+    assert not list(outbox.root.glob("*.corrupt"))
+
+
 def test_duplicate_after_provider_success_before_ack_is_idempotent(tmp_path):
     outbox = box(tmp_path)
     key = outbox.put(record())
@@ -247,14 +286,15 @@ except (OutboxFull, OutboxBusy):
     assert outbox.status()["count"] == 1
 
 
-def test_corrupt_envelope_fails_visibly_and_is_preserved(tmp_path):
+def test_corrupt_envelope_is_quarantined_and_preserved(tmp_path):
     outbox = box(tmp_path)
     key = outbox.put(record())
     path = outbox.root / f"{key}.json"
     path.write_text('{"schema":"unsupported"}')
-    with pytest.raises(OutboxError, match="invalid outbox envelope"):
-        outbox.claim()
-    assert path.exists()
+    assert outbox.claim() is None
+    assert not path.exists()
+    assert outbox.status()["corrupt"] == 1
+    assert next(outbox.root.glob("*.corrupt")).read_text() == '{"schema":"unsupported"}'
 
 
 def test_nan_timestamp_fails_before_durable_write(tmp_path):

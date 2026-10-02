@@ -30,6 +30,10 @@ class OutboxFull(OutboxError):
     """The configured count or byte limit would be exceeded."""
 
 
+class InvalidEnvelope(OutboxError):
+    """Malformed retained data; distinct from an inaccessible filesystem."""
+
+
 class OutboxBusy(OutboxError):
     """Another local owner holds the lock; callers must not wait indefinitely."""
 
@@ -124,7 +128,7 @@ class FilesystemOutbox:
 
     def _read(self, path: Path) -> dict[str, Any]:
         if path.is_symlink() or path.stat().st_size > self.policy.max_record_bytes:
-            raise OutboxError("invalid envelope file")
+            raise InvalidEnvelope("invalid envelope file")
         try:
             value = json.loads(path.read_text(encoding="utf-8"))
             if value["schema"] != "run-evidence-outbox/v1" or value["state"] not in {"pending", "claimed", "quarantined"}:
@@ -145,8 +149,17 @@ class FilesystemOutbox:
             ):
                 raise ValueError
             return value
-        except (ValueError, KeyError, TypeError):
-            raise OutboxError("invalid outbox envelope; operator recovery required") from None
+        except (ValueError, KeyError, TypeError, RecursionError):
+            raise InvalidEnvelope("invalid outbox envelope; operator recovery required") from None
+
+    def _quarantine_corrupt(self, path: Path) -> None:
+        """Preserve exact bytes within the same quota; never overwrite a prior item."""
+        destination = self.root / f"{path.stem}.{uuid4().hex}.corrupt"
+        try:
+            os.rename(path, destination)
+            self._sync_directory()
+        except OSError:
+            raise OutboxError("corrupt envelope quarantine failed") from None
 
     @staticmethod
     def _key(document: dict[str, Any]) -> str:
@@ -215,7 +228,11 @@ class FilesystemOutbox:
             for path in sorted(self._files()):
                 if path.suffix != ".json":
                     continue  # Interrupted temporary writes are never replayed.
-                item = self._read(path)
+                try:
+                    item = self._read(path)
+                except InvalidEnvelope:
+                    self._quarantine_corrupt(path)
+                    continue
                 if item["state"] == "quarantined" or item["next_attempt_at"] > now:
                     continue
                 if item["state"] == "claimed" and item["lease_until"] > now:
@@ -288,12 +305,21 @@ class FilesystemOutbox:
         now = time.time() if now is None else now
         with self._locked():
             files = self._files()
-            items = [self._read(path) for path in files if path.suffix == ".json"]
+            items = []
+            corrupt = sum(path.suffix == ".corrupt" for path in files)
+            for path in files:
+                if path.suffix != ".json":
+                    continue
+                try:
+                    items.append(self._read(path))
+                except InvalidEnvelope:
+                    corrupt += 1  # Observation does not rename or erase evidence.
             return {
                 "count": len(files), "bytes": sum(path.stat().st_size for path in files),
                 "pending": sum(item["state"] == "pending" for item in items),
                 "claimed": sum(item["state"] == "claimed" for item in items),
-                "quarantined": sum(item["state"] == "quarantined" for item in items),
+                "quarantined": corrupt + sum(item["state"] == "quarantined" for item in items),
+                "corrupt": corrupt,
                 "temporary": sum(path.suffix == ".tmp" for path in files),
                 "oldest_age_seconds": max((max(0, now - item["created_at"]) for item in items), default=0),
             }

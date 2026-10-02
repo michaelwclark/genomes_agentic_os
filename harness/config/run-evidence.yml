@@ -17,6 +17,10 @@ ingress:
   batch_size: 100
   flush_interval_ms: 100
   write_timeout_ms: 250
+  overflow_policy: outbox
+  max_record_bytes: 1048576
+  max_outbox_items: 4097
+  max_outbox_bytes: 268435456
 
 host_registry:
   source: harness/config/hosts.yml
