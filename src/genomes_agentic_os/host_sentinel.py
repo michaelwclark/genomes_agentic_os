@@ -7,6 +7,8 @@ the reboot before anyone noticed. The existing tools do not cover this gap:
 * ``agentic-os-notify`` is the delivery seam, but nothing was watching the
   host to call it.
 * ``agentic-os-monitor`` is an interactive curses TUI, not a scheduled job.
+  Its disk thresholds do not protect unattended hosts. This sentinel also
+  probes root disk bytes/inodes and alerts on pressure or rapid consumption.
 * Host Auto-Doctor runs *on* the host it is checking, so a host that is fully
   down cannot run its own health report.
 
@@ -48,6 +50,9 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
+from .host_disk_trends import observe_disk_trend
+from .host_disk_response import capture_disk_diagnostics
+
 #: Fed to the remote host over stdin via ``ssh ... sh -s``. Never built from
 #: caller-supplied strings -- it is a fixed constant, so there is no shell
 #: injection surface no matter what ``--host``/``--ssh-target`` are.
@@ -58,6 +63,8 @@ join() {
 echo "boot_id=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null || true)"
 echo "uptime_s=$(awk '{printf "%d", $1}' /proc/uptime 2>/dev/null || true)"
 echo "prev_boot_last_ts=$(journalctl -b -1 -n 1 -o short-unix --no-pager 2>/dev/null | awk '{print $1}' || true)"
+LC_ALL=C df -Pk / 2>/dev/null | awk 'NR==2 {gsub(/%/, "", $5); printf "disk_total_bytes=%.0f\ndisk_available_bytes=%.0f\ndisk_pct=%s\n", $2*1024, $4*1024, $5}'
+LC_ALL=C df -Pi / 2>/dev/null | awk 'NR==2 {gsub(/%/, "", $5); print "inode_pct=" $5}'
 clean=0
 if journalctl -b -1 -n 80 -o cat --no-pager 2>/dev/null | grep -Eq \
   'Reached target shutdown\.target|Reached target System Shutdown|Journal stopped|System is powering down|System is rebooting'
@@ -122,6 +129,10 @@ class ProbeResult:
     failed_user: tuple[str, ...] = ()
     unhealthy_containers: tuple[str, ...] = ()
     error: str | None = None
+    disk_total_bytes: int | None = None
+    disk_available_bytes: int | None = None
+    disk_pct: int | None = None
+    inode_pct: int | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -134,6 +145,10 @@ class ProbeResult:
             "failed_user": list(self.failed_user),
             "unhealthy_containers": list(self.unhealthy_containers),
             "error": self.error,
+            "disk_total_bytes": self.disk_total_bytes,
+            "disk_available_bytes": self.disk_available_bytes,
+            "disk_pct": self.disk_pct,
+            "inode_pct": self.inode_pct,
         }
 
 
@@ -161,6 +176,10 @@ def parse_probe_output(stdout: str) -> ProbeResult:
         failed_system=_parse_list(fields.get("failed_system")),
         failed_user=_parse_list(fields.get("failed_user")),
         unhealthy_containers=_parse_list(fields.get("unhealthy_containers")),
+        disk_total_bytes=_parse_int(fields.get("disk_total_bytes")),
+        disk_available_bytes=_parse_int(fields.get("disk_available_bytes")),
+        disk_pct=_parse_int(fields.get("disk_pct")),
+        inode_pct=_parse_int(fields.get("inode_pct")),
     )
 
 
@@ -231,6 +250,10 @@ class SentinelConfig:
     unreachable_threshold: int = 2
     persist_threshold: int = 2
     dry_run: bool = False
+    disk_warn_pct: int = 85
+    disk_critical_pct: int = 95
+    disk_warn_free_bytes: int = 20 * 1024**3
+    disk_critical_free_bytes: int = 5 * 1024**3
 
 
 @dataclass
@@ -261,6 +284,14 @@ class SentinelState:
     unreachable_alerted: bool = False
     problem_streak: dict[str, int] = field(default_factory=dict)
     alerted_problems: list[str] = field(default_factory=list)
+    disk_sample_at: str | None = None
+    disk_available_bytes: int | None = None
+    disk_missing_streak: int = 0
+    disk_alert_level: str = ""
+    disk_alert_at: str | None = None
+    disk_trend_history: dict[str, Any] = field(default_factory=dict)
+    disk_trend: dict[str, Any] = field(default_factory=dict)
+    disk_response: dict[str, Any] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -270,6 +301,14 @@ class SentinelState:
             "unreachable_alerted": self.unreachable_alerted,
             "problem_streak": dict(self.problem_streak),
             "alerted_problems": list(self.alerted_problems),
+            "disk_sample_at": self.disk_sample_at,
+            "disk_available_bytes": self.disk_available_bytes,
+            "disk_missing_streak": self.disk_missing_streak,
+            "disk_alert_level": self.disk_alert_level,
+            "disk_alert_at": self.disk_alert_at,
+            "disk_trend_history": self.disk_trend_history,
+            "disk_trend": self.disk_trend,
+            "disk_response": self.disk_response,
         }
 
     @classmethod
@@ -281,6 +320,14 @@ class SentinelState:
             unreachable_alerted=bool(data.get("unreachable_alerted", False)),
             problem_streak={str(k): int(v) for k, v in (data.get("problem_streak") or {}).items()},
             alerted_problems=list(data.get("alerted_problems") or []),
+            disk_sample_at=data.get("disk_sample_at"),
+            disk_available_bytes=data.get("disk_available_bytes"),
+            disk_missing_streak=int(data.get("disk_missing_streak", 0) or 0),
+            disk_alert_level=str(data.get("disk_alert_level", "")),
+            disk_alert_at=data.get("disk_alert_at"),
+            disk_trend_history=dict(data.get("disk_trend_history") or {}),
+            disk_trend=dict(data.get("disk_trend") or {}),
+            disk_response=dict(data.get("disk_response") or {}),
         )
 
 
@@ -330,6 +377,8 @@ def write_receipt(
     probe: ProbeResult,
     notifications: Sequence[Notification],
     generated_at: str,
+    disk_trend: dict[str, Any] | None = None,
+    disk_response: dict[str, Any] | None = None,
 ) -> Path:
     state_dir.mkdir(parents=True, exist_ok=True)
     path = receipt_path(state_dir, host)
@@ -339,6 +388,8 @@ def write_receipt(
         "host": host,
         "probe": probe.as_dict(),
         "notifications": [n.as_dict() for n in notifications],
+        "disk_trend": disk_trend or {},
+        "disk_response": disk_response or {},
     }
     path.write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
     return path
@@ -488,6 +539,91 @@ def _handle_persistent_problems(config: SentinelConfig, state: SentinelState, pr
     return notifications
 
 
+def _handle_disk_pressure(
+    config: SentinelConfig, state: SentinelState, probe: ProbeResult, now: datetime
+) -> list[Notification]:
+    """Warn before exhaustion; escalate immediately and remind every 30 minutes.
+
+    The probe only reads root filesystem metadata. It never removes data or
+    stops services. Missing metrics cannot turn an existing incident healthy.
+    Growth uses adjacent samples only, avoiding estimates across long outages.
+    """
+    level = ""
+    reasons: list[str] = []
+
+    def flag(severity: str, reason: str) -> None:
+        nonlocal level
+        if not level or severity == "critical":
+            level = severity
+        reasons.append(reason)
+
+    total, available = probe.disk_total_bytes, probe.disk_available_bytes
+    bytes_valid = total is not None and total > 0 and available is not None and 0 <= available <= total
+    pct_valid = probe.disk_pct is not None and 0 <= probe.disk_pct <= 100
+    inode_valid = probe.inode_pct is not None and 0 <= probe.inode_pct <= 100
+    if pct_valid and probe.disk_pct >= config.disk_warn_pct:
+        flag("critical" if probe.disk_pct >= config.disk_critical_pct else "warning", f"root is {probe.disk_pct}% full")
+    if inode_valid and probe.inode_pct >= config.disk_warn_pct:
+        flag("critical" if probe.inode_pct >= config.disk_critical_pct else "warning", f"root inodes are {probe.inode_pct}% used")
+    if bytes_valid:
+        state.disk_trend_history, state.disk_trend = observe_disk_trend(
+            state.disk_trend_history, now=now.timestamp(), total=total, available=available,
+        )
+        if state.disk_trend["active"]:
+            rate = state.disk_trend["recent_percentage_points_per_day"]
+            remaining = state.disk_trend["projected_hours_to_exhaustion"]
+            if rate is None:
+                flag("warning", "previous growth incident awaiting fresh trend samples")
+            else:
+                baseline = state.disk_trend["baseline_bytes_per_day"]
+                baseline_text = f"{baseline / total * 100:.2f} points/day" if baseline is not None else "learning"
+                flag(state.disk_trend["level"], f"sustained growth {rate:.2f} capacity points/day; normal baseline {baseline_text}; projected exhaustion in {remaining / 24:.1f} days")
+        if available <= config.disk_warn_free_bytes:
+            flag("critical" if available <= config.disk_critical_free_bytes else "warning", f"only {available / 1024**3:.1f} GiB available")
+        previous = _parse_iso(state.disk_sample_at)
+        elapsed = (now - previous).total_seconds() if previous else 0
+        if 60 <= elapsed <= 1800 and state.disk_available_bytes is not None:
+            consumed = state.disk_available_bytes - available
+            rate = consumed / elapsed
+            if rate > 0:
+                remaining_hours = available / rate / 3600
+                if rate >= 2 * 1024**3 / 60 or (pct_valid and probe.disk_pct >= 70 and remaining_hours <= 6):
+                    flag("critical" if remaining_hours <= 1 else "warning", f"free space falling {rate * 60 / 1024**3:.2f} GiB/min; about {remaining_hours:.1f} hours remaining at this rate")
+        state.disk_sample_at = _iso(now)
+        state.disk_available_bytes = available
+    complete = bytes_valid and pct_valid and inode_valid
+    state.disk_missing_streak = 0 if complete else state.disk_missing_streak + 1
+    if not complete:
+        if state.disk_missing_streak >= config.persist_threshold:
+            flag("critical" if state.disk_alert_level == "critical" else "warning", "disk/inode telemetry missing or invalid")
+        if not level:
+            return []
+
+    if not level and state.disk_alert_level:
+        state.disk_alert_level = ""
+        state.disk_alert_at = _iso(now)
+        return [Notification("info", f"{config.host} disk pressure cleared", f"Root {probe.disk_pct}% used; {available / 1024**3:.1f} GiB available; inodes {probe.inode_pct}% used.", f"host-sentinel-{config.host}-disk-recovered")]
+    if not level:
+        return []
+    last_alert = _parse_iso(state.disk_alert_at)
+    if level == state.disk_alert_level and last_alert and (now - last_alert).total_seconds() < 1800:
+        return []
+    state.disk_alert_level = level
+    state.disk_alert_at = _iso(now)
+    return [Notification(level, f"{config.host} disk pressure", "; ".join(reasons) + ". Inspect disk writers and retention; no automatic deletion performed.", f"host-sentinel-{config.host}-disk-{level}")]
+
+
+def _bound_launchd_logs(state_dir: Path, host: str) -> None:
+    """Keep at most one 1 MiB archive per launchd stream between cycles."""
+    for stream in ("out", "err"):
+        path = state_dir / f"{host}.launchd.{stream}.log"
+        try:
+            if path.exists() and path.stat().st_size > 1024**2:
+                path.replace(path.with_suffix(".log.1"))
+        except OSError as exc:
+            sys.stderr.write(f"host-sentinel: cannot rotate {stream} log: {type(exc).__name__}\n")
+
+
 def run_sentinel(
     config: SentinelConfig,
     *,
@@ -495,6 +631,7 @@ def run_sentinel(
     notifier: Notifier,
     clock: Clock,
     state_dir: Path,
+    diagnostic_runner: SshRunner | None = None,
 ) -> RunResult:
     """One sentinel cycle: probe, compare against state, decide, notify, persist.
 
@@ -505,6 +642,7 @@ def run_sentinel(
     """
     state_dir.mkdir(parents=True, exist_ok=True)
     state = load_state(state_dir, config.host)
+    previous_disk_alert = (state.disk_alert_level, state.disk_alert_at)
     now = clock()
     now_iso = _iso(now)
 
@@ -529,24 +667,44 @@ def run_sentinel(
 
         notifications.extend(_handle_boot_change(config, state, probe, now))
         notifications.extend(_handle_persistent_problems(config, state, probe))
+        notifications.extend(_handle_disk_pressure(config, state, probe, now))
 
         state.last_seen_at = now_iso
 
     if not config.dry_run:
+        _bound_launchd_logs(state_dir, config.host)
         for note in notifications:
-            _deliver(notifier, config, note)
+            delivered = _deliver(notifier, config, note)
+            if not delivered and note.dedupe_key.startswith(f"host-sentinel-{config.host}-disk-"):
+                # Do not suppress a retry merely because delivery was attempted.
+                state.disk_alert_level, state.disk_alert_at = previous_disk_alert
+            if not delivered and note.dedupe_key == f"host-sentinel-{config.host}-unreachable":
+                state.unreachable_alerted = False
+        disk_incident = any(n.level in {"warning", "critical"} and n.dedupe_key.startswith(f"host-sentinel-{config.host}-disk-") for n in notifications)
+        last_capture = _parse_iso(state.disk_response.get("generated_at"))
+        if probe.reachable and disk_incident and diagnostic_runner is not None and (last_capture is None or (now - last_capture).total_seconds() >= 3600):
+            try:
+                state.disk_response = capture_disk_diagnostics(
+                    state_dir=state_dir, host=config.host, ssh_target=config.ssh_target,
+                    runner=diagnostic_runner, connect_timeout=config.connect_timeout,
+                    generated_at=now_iso,
+                )
+            except Exception as exc:  # Persist monitoring even if diagnostics fail.
+                state.disk_response = {"generated_at": now_iso, "status": "capture_failed", "error_type": type(exc).__name__}
         write_state_atomic(state_dir, config.host, state)
-        write_receipt(state_dir, config.host, probe, notifications, now_iso)
+        write_receipt(state_dir, config.host, probe, notifications, now_iso, state.disk_trend, state.disk_response)
 
     return RunResult(probe=probe, notifications=notifications, state=state, state_written=not config.dry_run)
 
 
-def _deliver(notifier: Notifier, config: SentinelConfig, note: Notification) -> None:
+def _deliver(notifier: Notifier, config: SentinelConfig, note: Notification) -> bool:
     """Notify failures are logged, never fatal -- a broken notifier must not stop state from being recorded."""
     try:
         notifier(config, note)
+        return True
     except Exception as exc:  # noqa: BLE001 - best-effort delivery, never crash the run
         sys.stderr.write(f"agentic-os-host-sentinel: notify failed for '{note.dedupe_key}': {exc}\n")
+        return False
 
 
 def notify_via_agentic_os_notify(config: SentinelConfig, note: Notification) -> None:
@@ -568,4 +726,6 @@ def notify_via_agentic_os_notify(config: SentinelConfig, note: Notification) -> 
     ]
     env = dict(os.environ)
     env["AGENTIC_OS_ROOT"] = str(config.root)
-    subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=30)
+    result = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=30)
+    if result.returncode != 0:
+        raise RuntimeError(f"agentic-os-notify exited {result.returncode}")
