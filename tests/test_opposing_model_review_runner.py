@@ -124,15 +124,11 @@ def test_runner_verdict_uses_final_line_and_template_uses_shared_vocabulary() ->
     assert "VERDICT: ready" not in template
 
 
-def test_runner_uses_routed_unavailable_policy_and_rejects_unknown_values() -> None:
+def test_runner_rejects_unbound_caller_policy(tmp_path: Path) -> None:
     runner = _load_runner()
-
-    assert runner.review_unavailable_policy({}) == "continue_with_receipt"
-    assert runner.review_unavailable_policy(
-        {"effective_policy": {"unavailable_policy": "block"}}
-    ) == "block"
-    with pytest.raises(runner.ReviewError, match="review_unavailable_policy"):
-        runner.review_unavailable_policy({"review_unavailable_policy": "permit_anything"})
+    (tmp_path / "autodev.json").write_text(json.dumps({"delivery": {"review_unavailable_policy": "continue_with_receipt"}}))
+    with pytest.raises(runner.ReviewError, match="pinned review policy task"):
+        runner.pinned_review_authority(tmp_path, tmp_path)
 
 
 def test_review_repository_selector_omits_singleton_and_requires_catalog_choice() -> None:
@@ -482,6 +478,9 @@ def test_runner_request_run_id_matches_created_artifact_directory(
     monkeypatch.setattr(runner, "stable_review_key", lambda _subject: review_key)
     monkeypatch.setattr(runner, "diff_hash", lambda *_args: "d" * 64)
     monkeypatch.setattr(runner, "ReviewCoordinator", FakeCoordinator)
+    monkeypatch.setattr(runner, "pinned_review_authority", lambda *_args: {
+        "unavailable_policy": "block", "policy_fingerprint": "c" * 64,
+    })
     monkeypatch.setattr(runner.shutil, "which", lambda _name: None)
     monkeypatch.setattr(runner, "decide", lambda _run_dir: {"decision": "blocked_model_identity"})
     monkeypatch.setattr(

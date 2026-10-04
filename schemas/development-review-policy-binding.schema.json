@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://genomes-agentic-os.local/schemas/development-review-policy-binding.schema.json",
+  "title": "Explicit legacy Development Delivery review policy binding",
+  "type": "object",
+  "required": ["schema", "task_state_ref", "work_item", "repository_id", "original_policy_fingerprint", "original_snapshot_sha256", "profile_source", "profile_source_sha256", "review", "reason", "created_at", "sha256"],
+  "properties": {
+    "schema": {"const": "development-review-policy-binding/v1"},
+    "task_state_ref": {"type": "string", "minLength": 1},
+    "work_item": {"type": "string", "minLength": 1},
+    "repository_id": {"type": "string", "minLength": 1},
+    "original_policy_fingerprint": {"$ref": "#/$defs/hash"},
+    "original_snapshot_sha256": {"$ref": "#/$defs/hash"},
+    "profile_source": {"type": "string", "minLength": 1},
+    "profile_source_sha256": {"$ref": "#/$defs/hash"},
+    "review": {"type": "object"},
+    "reason": {"type": "string", "minLength": 1},
+    "created_at": {"type": "string", "format": "date-time"},
+    "sha256": {"$ref": "#/$defs/hash"}
+  },
+  "$defs": {"hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"}},
+  "additionalProperties": false
+}

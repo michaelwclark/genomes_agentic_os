@@ -719,6 +719,9 @@ def assert_exact_head_review_receipt(
     pull_request: str | None = None,
     policy_fingerprint: str | None = None,
     require_clean: bool = True,
+    unavailable_authority: Mapping[str, Any] | None = None,
+    base_branch: str | None = None,
+    base_sha: str | None = None,
 ) -> dict[str, Any]:
     """Validate that a ready/finalize gate reuses the exact terminal review."""
 
@@ -726,6 +729,8 @@ def assert_exact_head_review_receipt(
     subject = payload["subject"]
     checks = {
         "head_sha": head_sha,
+        **({"base_branch": base_branch} if base_branch else {}),
+        **({"base_sha": base_sha} if base_sha else {}),
         **({"pull_request": str(pull_request)} if pull_request else {}),
         **({"policy_fingerprint": policy_fingerprint} if policy_fingerprint else {}),
     }
@@ -745,7 +750,23 @@ def assert_exact_head_review_receipt(
             "review coordination receipt drifted for " + ", ".join(sorted(drift))
         )
     if require_clean and payload.get("outcome") != "clean":
-        raise ReviewCoordinationError("ready_for_merge requires a clean exact-head review")
+        review = payload["review"]
+        if not (
+            payload.get("outcome") == "unavailable"
+            and all((repository, pull_request, policy_fingerprint, base_branch, base_sha))
+            and unavailable_authority
+            and unavailable_authority.get("unavailable_policy") == "continue_with_receipt"
+            and unavailable_authority.get("policy_fingerprint") == subject.get("policy_fingerprint")
+            and review.get("policy_authority") == dict(unavailable_authority)
+            and review.get("reviewer_transport") == "claude_cli"
+            and review.get("reviewer_auth") == "cli_native"
+            and review.get("reviewer_status") in {"unavailable", "runtime_failure"}
+            and review.get("failure_code") in {"cli_not_found", "cli_runtime_failed", "cli_timeout", "cli_output_invalid"}
+            and review.get("readback_verified") is True
+            and review.get("scrub_passed") is not False
+            and not any(row["status"] == "open" for row in payload["findings_ledger"])
+        ):
+            raise ReviewCoordinationError("ready_for_merge requires a clean exact-head review or pinned policy-authorized unavailable receipt")
     return payload
 
 

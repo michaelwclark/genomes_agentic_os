@@ -2267,6 +2267,23 @@ and strict `auto-dev-health-evidence/v1` for Health. Record delivery-managed
 Readiness, Develop, PR Create, Review Self, Merge, Deploy, and
 Closeout transitions with `agentic-os develop stage`, not this command.
 
+### `develop bind-review-policy`
+
+Freeze omitted review policy for one legacy Development Delivery task, preserving
+its original snapshot and lifecycle. Dry-run is the default. This command cannot
+override a snapshot that already contains review policy.
+
+```bash
+agentic-os develop bind-review-policy <state.json> \
+  --expected-policy-fingerprint <original-sha256> \
+  --reason "Capture omitted project review policy" [--apply] [--json]
+```
+
+The receipt is immutable and task/repository/snapshot-bound. Its separate context
+digest preserves the original review-chain fingerprint and budgets; no old review
+is converted to clean. See [review coordination](../45-auto-dev-review-coordination.md)
+for unavailable outcomes, readiness requirements and guarded installation.
+
 Common launch flags are `--state`, `--run-id`, `--repository`, `--base-branch`,
 repeatable `--policy-overlay PLANE=PATH`, `--root`, `--apply`, and `--json`.
 Without `--apply`, launch commands are plans only. Matching `/auto-dev-*`
