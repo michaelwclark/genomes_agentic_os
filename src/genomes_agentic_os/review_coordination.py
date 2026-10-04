@@ -526,7 +526,9 @@ def _exclusive_lock(path: Path) -> Iterator[None]:
             fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
-def load_review_receipt(path: str | Path) -> dict[str, Any]:
+def load_review_receipt(
+    path: str | Path, *, require_explicit_unavailable_ledger: bool = False,
+) -> dict[str, Any]:
     """Load and structurally verify one terminal coordination receipt."""
 
     ref = Path(path).expanduser().resolve()
@@ -650,6 +652,19 @@ def load_review_receipt(path: str | Path) -> dict[str, Any]:
             "operator_resolution receipt requires operator override evidence"
         )
     ledger = payload.get("findings_ledger")
+    if require_explicit_unavailable_ledger and payload.get("outcome") == "unavailable":
+        # Recovery may read old unavailable receipts without a top-level
+        # ledger. Readiness cannot turn that normalization into proof that no
+        # findings exist, or ignore a divergent reviewer-owned ledger.
+        nested_ledger = review_payload.get("findings_ledger")
+        if not (
+            isinstance(ledger, list)
+            and isinstance(nested_ledger, list)
+            and nested_ledger == ledger
+        ):
+            raise ReviewCoordinationError(
+                "unavailable admission requires explicit coherent findings ledgers"
+            )
     # v1 unavailable receipts written before CC-422's repair did not contain a
     # ledger.  They are accepted only so the successful artifact can be safely
     # recovered; they are never eligible for reuse, budget, or delta ancestry.
@@ -725,7 +740,7 @@ def assert_exact_head_review_receipt(
 ) -> dict[str, Any]:
     """Validate that a ready/finalize gate reuses the exact terminal review."""
 
-    payload = load_review_receipt(path)
+    payload = load_review_receipt(path, require_explicit_unavailable_ledger=require_clean)
     subject = payload["subject"]
     checks = {
         "head_sha": head_sha,
@@ -763,7 +778,7 @@ def assert_exact_head_review_receipt(
             and review.get("reviewer_status") in {"unavailable", "runtime_failure"}
             and review.get("failure_code") in {"cli_not_found", "cli_runtime_failed", "cli_timeout", "cli_output_invalid"}
             and review.get("readback_verified") is True
-            and review.get("scrub_passed") is not False
+            and ("scrub_passed" not in review or review["scrub_passed"] is True)
             and not any(row["status"] == "open" for row in payload["findings_ledger"])
         ):
             raise ReviewCoordinationError("ready_for_merge requires a clean exact-head review or pinned policy-authorized unavailable receipt")

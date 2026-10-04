@@ -14,7 +14,7 @@ from genomes_agentic_os import development_delivery as delivery
 from genomes_agentic_os.cli import main
 from genomes_agentic_os.review_coordination import (
     ReviewCoordinationError, ReviewCoordinator, ReviewSubject,
-    assert_exact_head_review_receipt,
+    assert_exact_head_review_receipt, load_review_receipt,
 )
 
 
@@ -70,6 +70,56 @@ def test_allowed_unavailable_remains_unavailable(tmp_path):
     before = path.read_bytes()
     assert _assert(path, authority, base_branch="main", base_sha="a" * 40)["outcome"] == "unavailable"
     assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize("scrub_passed", [False, "false", "true", None, 0, 1, [], {}])
+def test_unavailable_rejects_non_true_explicit_scrub_result(tmp_path, scrub_passed):
+    authority = delivery.resolve_task_review_policy(_task(tmp_path))
+    path = _receipt(tmp_path, authority, scrub_passed=scrub_passed)
+    with pytest.raises(ReviewCoordinationError, match="pinned policy-authorized"):
+        _assert(path, authority)
+
+
+def test_unavailable_accepts_explicit_boolean_scrub_success(tmp_path):
+    authority = delivery.resolve_task_review_policy(_task(tmp_path))
+    path = _receipt(tmp_path, authority, scrub_passed=True)
+    assert _assert(path, authority)["outcome"] == "unavailable"
+
+
+@pytest.mark.parametrize("top_level", ["missing", "empty"])
+def test_unavailable_cannot_hide_nested_open_finding(tmp_path, top_level):
+    authority = delivery.resolve_task_review_policy(_task(tmp_path))
+    path = _receipt(tmp_path, authority, findings=[{"summary": "Unresolved real defect"}])
+    value = json.loads(path.read_text())
+    assert value["review"]["findings_ledger"][0]["status"] == "open"
+    if top_level == "missing":
+        value.pop("findings_ledger")
+    else:
+        value["findings_ledger"] = []
+    path.write_text(json.dumps(value))
+    before = path.read_bytes()
+    # Legacy normalization remains readable for recovery, never admission.
+    assert load_review_receipt(path)["findings_ledger"] == []
+    with pytest.raises(ReviewCoordinationError, match="explicit coherent findings ledgers"):
+        _assert(path, authority)
+    assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize("location,value", [
+    ("top", None), ("nested", None), ("nested", {}), ("nested", "missing"),
+])
+def test_unavailable_requires_present_typed_ledgers_even_when_empty(tmp_path, location, value):
+    authority = delivery.resolve_task_review_policy(_task(tmp_path))
+    path = _receipt(tmp_path, authority)
+    receipt = json.loads(path.read_text())
+    ledger_owner = receipt if location == "top" else receipt["review"]
+    if value == "missing":
+        ledger_owner.pop("findings_ledger")
+    else:
+        ledger_owner["findings_ledger"] = value
+    path.write_text(json.dumps(receipt))
+    with pytest.raises(ReviewCoordinationError, match="explicit coherent findings ledgers"):
+        _assert(path, authority)
 
 
 @pytest.mark.parametrize("changes", [
