@@ -64,6 +64,7 @@ from .policy_plane import (
 from .review_coordination import (
     ReviewCoordinationError,
     assert_exact_head_review_receipt,
+    load_review_receipt,
 )
 from .scaffold import (
     domain_path,
@@ -1163,6 +1164,7 @@ def _selected_profile_policy_authority(
         "schema": "development-selected-profile/v1",
         "repository_id": str(repository.get("id") or ""),
         "validation": deepcopy(dict(validation)),
+        "review": deepcopy(dict(profile.get("review") or {})),
     }
     authority["sha256"] = _json_sha256(authority)
     return authority
@@ -1213,6 +1215,150 @@ def _effective_policy_snapshot_fingerprint(
             context_selection.get("content_sha256") or ""
         )
     return _json_sha256(digest_values)
+
+
+def _review_policy_task_context(
+    state_file: str | Path,
+) -> tuple[Path, dict[str, Any], dict[str, Any], Mapping[str, Any]]:
+    path = Path(state_file).expanduser().resolve()
+    task = TaskState(path).read()
+    snapshot_path = Path(str(task.get("policy_receipt") or "")).expanduser().resolve()
+    try:
+        snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise DevelopmentDeliveryError("review policy requires a readable pinned snapshot") from exc
+    if not isinstance(snapshot, Mapping):
+        raise DevelopmentDeliveryError("review policy snapshot must be a mapping")
+    selected = _validate_effective_policy_snapshot(snapshot, require_selected_profile=True)
+    if snapshot.get("fingerprint") != task.get("policy_fingerprint"):
+        raise DevelopmentDeliveryError("review policy snapshot fingerprint drifted")
+    if selected.get("repository_id") != task.get("repository", {}).get("id"):
+        raise DevelopmentDeliveryError("review policy snapshot repository drifted")
+    return path, task, snapshot, selected
+
+
+def _opposing_unavailable_policy(review: Mapping[str, Any]) -> str:
+    opposing = review.get("opposing_harness", {})
+    if not isinstance(opposing, Mapping):
+        raise DevelopmentDeliveryError("pinned opposing_harness must be a mapping")
+    policy = opposing.get("unavailable_policy", "block")
+    if not isinstance(policy, str) or policy not in {"block", "continue_with_receipt"}:
+        raise DevelopmentDeliveryError("pinned unavailable_policy must be block or continue_with_receipt")
+    return str(policy)
+
+
+def resolve_task_review_policy(state_file: str | Path) -> dict[str, Any]:
+    """Consume immutable task authority; never rediscover current project policy."""
+    path, task, snapshot, selected = _review_policy_task_context(state_file)
+    binding_path = path.parent / "review-policy-binding.json"
+    policy_fingerprint = str(task["policy_fingerprint"])
+    binding_sha256 = None
+    review = selected.get("review")
+    if review is None and binding_path.is_file():
+        binding = _read_mapping(binding_path)
+        claimed = binding.get("sha256")
+        if claimed != _json_sha256({k: v for k, v in binding.items() if k != "sha256"}):
+            raise DevelopmentDeliveryError("review policy binding digest drifted")
+        if not (
+            all(isinstance(binding.get(key), str) and binding[key].strip()
+                for key in ("profile_source", "reason", "created_at"))
+            and re.fullmatch(r"[0-9a-f]{64}", str(binding.get("profile_source_sha256") or ""))
+        ):
+            raise DevelopmentDeliveryError("review policy binding source provenance is incomplete")
+        expected = {
+            "schema": "development-review-policy-binding/v1",
+            "task_state_ref": str(path),
+            "original_policy_fingerprint": policy_fingerprint,
+            "original_snapshot_sha256": _json_sha256(snapshot),
+            "repository_id": selected["repository_id"],
+            "work_item": str(task.get("work_item") or ""),
+        }
+        if any(binding.get(key) != value for key, value in expected.items()):
+            raise DevelopmentDeliveryError("review policy binding task or snapshot provenance drifted")
+        review = binding.get("review")
+        binding_sha256 = claimed
+    if review is None:
+        # Old snapshots retain their clean-review path, but cannot authorize an
+        # unavailable outcome until the explicit binding command is applied.
+        review = {}
+    if not isinstance(review, Mapping):
+        raise DevelopmentDeliveryError("pinned review policy must be a mapping")
+    return {
+        "schema": "development-review-policy-authority/v1",
+        "task_state_ref": str(path),
+        "policy_fingerprint": policy_fingerprint,
+        "snapshot_sha256": _json_sha256(snapshot),
+        "selected_profile_sha256": selected["sha256"],
+        "binding_sha256": binding_sha256,
+        # Keep the original review chain/budget identity. The separate context
+        # digest binds omitted policy without buying another full review or
+        # bypassing an existing findings receipt under a new policy key.
+        "context_sha256": _json_sha256({
+            "policy_fingerprint": policy_fingerprint,
+            "binding_sha256": binding_sha256,
+        }),
+        "unavailable_policy": _opposing_unavailable_policy(review),
+    }
+
+
+def bind_task_review_policy(
+    state_file: str | Path,
+    *,
+    expected_policy_fingerprint: str,
+    reason: str,
+    apply: bool = False,
+) -> dict[str, Any]:
+    """Fill only the historical omitted review field, without replacing task history."""
+    path = Path(state_file).expanduser().resolve()
+    with _file_lock(path.with_suffix(path.suffix + ".lock")):
+        path, task, snapshot, selected = _review_policy_task_context(path)
+        if task.get("policy_fingerprint") != expected_policy_fingerprint:
+            raise DevelopmentDeliveryError("expected original policy fingerprint does not match")
+        if "review" in selected:
+            raise DevelopmentDeliveryError("snapshot already pins review policy; rebinding is forbidden")
+        if not reason.strip():
+            raise DevelopmentDeliveryError("review policy binding requires an operator reason")
+        if task.get("state") not in FORWARD_STATES[:FORWARD_STATES.index("ready_for_merge")]:
+            raise DevelopmentDeliveryError("review policy binding requires an active pre-readiness task")
+        binding_path = path.parent / "review-policy-binding.json"
+        if binding_path.exists():
+            authority = resolve_task_review_policy(path)
+            if apply:
+                TaskState(path).emit(
+                    event_type="review_policy_bound",
+                    idempotency_key=f"review-policy:{authority['binding_sha256']}",
+                    payload={"binding_ref": str(binding_path), "sha256": authority["binding_sha256"]},
+                )
+            return {"reused": True, "binding_ref": str(binding_path), "authority": authority}
+        profile, profile_path = load_development_profile(task["os_root"], task["domain"], task["project"])
+        selector = selected["repository_id"] if profile.get("repository", {}).get("catalog") else None
+        profile = select_development_repository(profile, selector)
+        if _normalized_repository_identity(profile.get("repository", {})) != selected["repository_id"]:
+            raise DevelopmentDeliveryError("current review policy repository does not match pinned task")
+        review = deepcopy(profile.get("review") or {})
+        if not isinstance(review, Mapping):
+            raise DevelopmentDeliveryError("review policy must be a mapping")
+        _opposing_unavailable_policy(review)
+        binding = {
+            "schema": "development-review-policy-binding/v1",
+            "task_state_ref": str(path), "work_item": str(task.get("work_item") or ""),
+            "repository_id": selected["repository_id"],
+            "original_policy_fingerprint": expected_policy_fingerprint,
+            "original_snapshot_sha256": _json_sha256(snapshot),
+            "profile_source": str(profile_path),
+            "profile_source_sha256": hashlib.sha256(profile_path.read_bytes()).hexdigest(),
+            "review": review, "reason": reason.strip(), "created_at": utc_now(),
+        }
+        binding["sha256"] = _json_sha256(binding)
+        if apply:
+            _atomic_json(binding_path, binding)
+            TaskState(path).emit(
+                event_type="review_policy_bound",
+                idempotency_key=f"review-policy:{binding['sha256']}",
+                payload={"binding_ref": str(binding_path), "sha256": binding["sha256"]},
+            )
+        return {"applied": apply, "binding_ref": str(binding_path), "binding": binding,
+                **({"authority": resolve_task_review_policy(path)} if apply else {})}
 
 
 def _resolve_development_context_selection(
@@ -10006,11 +10152,26 @@ def run_development_stage(
                         "ready_for_merge review_coordination_receipt is not readable"
                     )
                 try:
+                    # Legacy clean receipts retain their original gate. Only
+                    # unavailable outcomes (or explicitly migrated tasks) need
+                    # the additional frozen profile authority.
+                    pinned_review = (
+                        resolve_task_review_policy(state.path)
+                        if load_review_receipt(coordination_path)["outcome"] == "unavailable"
+                        or (state.path.parent / "review-policy-binding.json").exists()
+                        else None
+                    )
+                    expected_review_policy = (
+                        pinned_review["policy_fingerprint"] if pinned_review
+                        else task_value.get("policy_fingerprint")
+                    )
                     review_policy_fingerprint = str(
                         evidence.get("review_policy_fingerprint")
-                        or task_value.get("policy_fingerprint")
+                        or expected_review_policy
                         or ""
                     ).strip()
+                    if expected_review_policy and review_policy_fingerprint != expected_review_policy:
+                        raise DevelopmentDeliveryError("ready_for_merge review policy differs from pinned task authority")
                     if review_policy_fingerprint and not re.fullmatch(
                         r"[0-9a-f]{64}", review_policy_fingerprint
                     ):
@@ -10023,6 +10184,9 @@ def run_development_stage(
                         repository=ready_authority.get("repository"),
                         pull_request=ready_authority.get("pull_request"),
                         policy_fingerprint=review_policy_fingerprint or None,
+                        unavailable_authority=pinned_review,
+                        base_branch=ready_authority.get("base_branch"),
+                        base_sha=str(evidence.get("base_sha") or "") or None,
                     )
                 except ReviewCoordinationError as exc:
                     raise DevelopmentDeliveryError(str(exc)) from exc

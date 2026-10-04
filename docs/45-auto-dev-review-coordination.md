@@ -133,6 +133,46 @@ reuse therefore makes zero model calls and zero duplicate provider posts.
 
 ## Metrics and operating signals
 
+### Pinned unavailable-review policy
+
+New Development Delivery snapshots freeze the selected repository's `review`
+profile alongside validation. The canonical opposing runner and readiness gate
+both consume that snapshot. A caller's review request cannot grant permission
+to continue. An unavailable native Claude CLI attempt remains `unavailable`;
+it is admissible only when pinned `review.opposing_harness.unavailable_policy`
+is `continue_with_receipt`, the receipt proves the same repository, PR, base,
+head, policy and native transport, and no unresolved finding or failed readback
+remains. `block` and missing policy fail closed. Checks, validation, coverage
+and other review obligations remain separate prerequisites.
+
+Historical snapshots omitted the review profile. Their clean-review path is
+unchanged. To authorize a new unavailable receipt for the same task, explicitly
+freeze the configured review policy with the supported one-time binding:
+
+```bash
+agentic-os develop bind-review-policy /path/to/tasks/ticket/state.json \
+  --expected-policy-fingerprint <original-task-fingerprint> \
+  --reason "Bind the previously omitted project review policy" --json
+# Inspect the capture, then repeat with --apply.
+```
+
+This writes `review-policy-binding.json` beside the task and appends an audit
+event. It preserves the original snapshot, task state, claim, worktree and
+receipt history. The binding is immutable and accepted only for a pre-readiness
+task whose snapshot lacks `review`; it cannot override a pinned blocking
+policy. Subsequent consumption never reads mutable project configuration.
+The returned `authority.context_sha256` binds the added policy. The original
+`policy_fingerprint` remains the review-chain identity, so migration cannot buy
+another full review or escape an existing findings receipt. Run the canonical
+reviewer with the binding present; an unavailable attempt is retryable under
+the existing coordinator, while completed findings remain blocking. Supply the
+resulting coordination receipt and provider-read-back `base_sha` in readiness
+evidence. Existing receipt bytes are never upgraded or relabeled; the coordinator
+retains its normal attempt archive, ledger and budgets.
+
+The install procedure below still applies. A tested source checkout is not an
+active runtime; deploy only after source review and the guarded rollout proof.
+
 Emit compact counters from receipts, not copied review bodies:
 
 - reviewer invocations by `full` and `delta`;

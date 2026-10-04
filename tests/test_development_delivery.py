@@ -9046,14 +9046,19 @@ def test_pr_open_receipt_error_names_the_fields_that_branch_checks(
     assert "pull_request" not in message
 
 
+@pytest.mark.parametrize(("unavailable", "policy"), [(False, "block"), (True, "block"), (True, "continue_with_receipt")])
 def test_review_stage_follows_pr_create_without_requiring_its_own_completion(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, unavailable: bool, policy: str,
 ) -> None:
     """A review records Review Self; it cannot require that result beforehand."""
 
     repo, base_sha = _repository(tmp_path)
     root = tmp_path / "os"
-    _project(root, repo)
+    project = _project(root, repo)
+    profile_path = project / "config/development.yml"
+    profile = yaml.safe_load(profile_path.read_text())
+    profile["review"]["opposing_harness"]["unavailable_policy"] = policy
+    profile_path.write_text(yaml.safe_dump(profile))
     monkeypatch.setattr(
         delivery,
         "create_isolated_worktree",
@@ -9093,6 +9098,17 @@ def test_review_stage_follows_pr_create_without_requiring_its_own_completion(
     for stage_name in ("groom", "detective", "create_artifacts", "document"):
         _record_standalone_stage(task, stage_name)
     authority = _provider_authority(task, pull_request="github:acme/app#77")
+    coordination_ref = _review_coordination_receipt(task, subject_revision=base_sha, pull_request="github:acme/app#77")
+    if unavailable:
+        pinned = delivery.resolve_task_review_policy(task.path)
+        subject = ReviewSubject(repository=task.read()["repository"]["id"], pull_request="github:acme/app#77",
+                                base_branch="main", base_sha=base_sha, head_sha=base_sha,
+                                policy_fingerprint=pinned["policy_fingerprint"])
+        coordination_ref = str(ReviewCoordinator(work_item / "artifacts/native-unavailable").execute(subject, lambda: {
+            "outcome": "unavailable", "policy_authority": pinned, "reviewer_status": "unavailable",
+            "failure_code": "cli_not_found", "reviewer_transport": "claude_cli", "reviewer_auth": "cli_native",
+            "readback_verified": True,
+        }).receipt_path)
     review_receipts = {
         "pre_pr_review": _stage_receipt(work_item, "pre_pr_review"),
         "pr_open": _stage_receipt(work_item, "pr_open", evidence=authority),
@@ -9107,11 +9123,8 @@ def test_review_stage_follows_pr_create_without_requiring_its_own_completion(
                 "checks_verified": True,
                 "reviews_verified": True,
                 "subject_revision": base_sha,
-                "review_coordination_receipt": _review_coordination_receipt(
-                    task,
-                    subject_revision=base_sha,
-                    pull_request="github:acme/app#77",
-                ),
+                "base_sha": base_sha,
+                "review_coordination_receipt": coordination_ref,
             },
         ),
     }
@@ -9150,6 +9163,12 @@ def test_review_stage_follows_pr_create_without_requiring_its_own_completion(
             receipts=missing_coordination,
             idempotency_prefix="cc-review-cycle:review-missing-coordination",
         )
+    if unavailable and policy == "block":
+        with pytest.raises(DevelopmentDeliveryError, match="pinned policy-authorized"):
+            run_development_stage(task.path, stage="review", receipts=review_receipts,
+                                  idempotency_prefix="cc-review-cycle:review-blocked")
+        assert task.read()["state"] != "ready_for_merge"
+        return
     reviewed = run_development_stage(
         task.path,
         stage="review",

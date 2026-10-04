@@ -38,11 +38,14 @@ from genomes_agentic_os.review_coordination import (  # noqa: E402
     review_chain_key,
     shared_review_coordination_root,
     stable_review_key,
+    assert_exact_head_review_receipt,
 )
 from genomes_agentic_os.development_delivery import (  # noqa: E402
     DevelopmentDeliveryError,
     load_development_profile,
     select_development_repository,
+    resolve_task_review_policy,
+    TaskState,
 )
 from genomes_agentic_os.review_verdicts import reconcile_json_verdict  # noqa: E402
 
@@ -475,25 +478,21 @@ def policy_fingerprint(source: dict[str, Any]) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
-def review_unavailable_policy(source: dict[str, Any]) -> str:
-    """Read the routed project fallback policy without silently weakening it."""
-
-    candidates: list[Any] = [source.get("review_unavailable_policy")]
-    for key in ("review_policy", "effective_policy"):
-        value = source.get(key)
-        if isinstance(value, dict):
-            candidates.extend(
-                [value.get("review_unavailable_policy"), value.get("unavailable_policy")]
-            )
-    for candidate in candidates:
-        if candidate in {"block", "continue_with_receipt"}:
-            return str(candidate)
-    # The routed Development Delivery policy configures a receipt-backed
-    # fallback by default.  Unknown explicit values fail closed rather than
-    # being treated as permission to continue.
-    if any(candidate not in (None, "") for candidate in candidates):
-        raise ReviewError("review_unavailable_policy must be block or continue_with_receipt")
-    return "continue_with_receipt"
+def pinned_review_authority(work_item: Path, worktree: Path) -> dict[str, Any]:
+    """Bind policy to the packet's task, not caller-authored review requests."""
+    manifest = json.loads((work_item / "autodev.json").read_text(encoding="utf-8"))
+    delivery = manifest.get("delivery") or {}
+    state_ref = str(delivery.get("task_state_ref") or "")
+    if not state_ref:
+        raise ReviewError("packet has no pinned review policy task")
+    task = TaskState(Path(state_ref).expanduser().resolve()).read()
+    if (
+        Path(str(task.get("work_item") or "")).resolve() != work_item.resolve()
+        or Path(str(task.get("worktree", {}).get("path") or "")).resolve() != worktree.resolve()
+        or delivery.get("policy_fingerprint") != task.get("policy_fingerprint")
+    ):
+        raise ReviewError("packet review policy task provenance drifted")
+    return resolve_task_review_policy(state_ref)
 
 
 def diff_hash(worktree: Path, base: str, head: str) -> str:
@@ -611,7 +610,6 @@ def main() -> int:
         source = prior_request(work_item, args.ticket) or initial_request(
             work_item, args.ticket, worktree
         )
-        unavailable_policy = review_unavailable_policy(source)
         head = git_head(worktree)
         base = str(source["base_sha"])
         policy = policy_fingerprint(source)
@@ -647,6 +645,9 @@ def main() -> int:
                 )
             )
             return 2
+        authority = pinned_review_authority(work_item, worktree)
+        unavailable_policy = authority["unavailable_policy"]
+        policy = authority["policy_fingerprint"]
         pr_number = int(source["pr_number"])
         provider = provider_pr(pr_number, worktree)
         if provider["headRefOid"] != head:
@@ -725,6 +726,8 @@ def main() -> int:
                 "run_id": run_id,
                 "artifact_dir": str(run_dir.relative_to(work_item)),
                 "review_key": review_key,
+                "policy_fingerprint": policy,
+                "policy_authority": authority,
                 "review_mode": args.mode,
                 "parent_key": args.parent_key,
                 "delta_base_sha": review_diff_base,
@@ -830,7 +833,11 @@ def main() -> int:
             # prove the same exact head after the model returns.
             post_provider = provider_pr(pr_number, worktree)
             post_head = git_head(worktree)
-            if post_provider["headRefOid"] != head or post_head != head:
+            if (
+                post_provider["headRefOid"] != head or post_head != head
+                or post_provider.get("baseRefOid", base) != base
+                or post_provider.get("baseRefName") != subject.base_branch
+            ):
                 failure = "head_changed_after_review"
                 plan["reviewer_status"] = "runtime_failure"
             write_json(run_dir / "validation-plan.json", plan)
@@ -856,6 +863,9 @@ def main() -> int:
                 outcome = "findings"
             return {
                 "outcome": outcome,
+                "policy_authority": authority,
+                "reviewer_transport": "claude_cli",
+                "reviewer_auth": "cli_native",
                 "ticket": args.ticket,
                 "pr_number": pr_number,
                 "pr_url": provider["url"],
@@ -882,6 +892,15 @@ def main() -> int:
             base_forward_evidence=continuation,
         )
         review = dict(result.receipt["review"])
+        admission_error = None
+        try:
+            assert_exact_head_review_receipt(
+                result.receipt_path, head_sha=head, repository=repository,
+                pull_request=subject.pull_request, policy_fingerprint=policy,
+                unavailable_authority=authority, base_branch=subject.base_branch, base_sha=base,
+            )
+        except ReviewCoordinationError as exc:
+            admission_error = str(exc)
         receipt = {
             "schema": "opposing-model-review-receipt/v2",
             **review,
@@ -890,9 +909,13 @@ def main() -> int:
             "parent_key": args.parent_key,
             "coordination_receipt": str(result.receipt_path),
             "reused": result.reused,
+            "policy_admitted": admission_error is None,
+            "admission_error": admission_error,
             "next_action": (
                 "repair findings"
                 if result.receipt["outcome"] == "findings"
+                else "consume policy-authorized unavailable receipt"
+                if result.receipt["outcome"] == "unavailable" and admission_error is None
                 else "resolve reviewer runtime or obtain governed review"
                 if result.receipt["outcome"] == "unavailable"
                 else "consume exact-head receipt"
@@ -900,8 +923,8 @@ def main() -> int:
         }
         write_json(run_dir / "opposing-model-review-receipt.json", receipt)
         print(json.dumps(receipt, indent=2))
-        return 0 if result.receipt["outcome"] == "clean" else 2
-    except (ReviewError, ReviewCoordinationError, KeyError) as exc:
+        return 0 if admission_error is None else 2
+    except (ReviewError, ReviewCoordinationError, DevelopmentDeliveryError, OSError, ValueError, KeyError) as exc:
         print(json.dumps({"ok": False, "error": str(exc)}, indent=2))
         return 2
 

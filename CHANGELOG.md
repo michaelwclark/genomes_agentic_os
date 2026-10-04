@@ -9,6 +9,25 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-10-04
+
+### Added
+
+- Off-box host sentinel with registered reboot/unreachable-host evidence
+  ([#279](https://github.com/michaelwclark/genomes_agentic_os/pull/279)).
+
+### Fixed
+
+- Honor pinned opposing-review unavailable policy with additive legacy task
+  binding and strict receipt admission
+  ([AGE-220](https://linear.app/genomes/issue/AGE-220/honor-pinned-opposing-review-unavailable-policy-at-readiness),
+  [#289](https://github.com/michaelwclark/genomes_agentic_os/pull/289)).
+- Tracker-content readiness, schedule dry-run and timeout behavior, worker
+  recovery and delivery retries, production/test path classification, and
+  repository visibility boundaries. See the
+  [0.11.0 release notes](docs/releases/0.11.0.md) for linked changes and the
+  guarded installation requirements. Publication is pending release checks.
+
 ## [0.10.1] - 2026-08-28
 
 ### Fixed

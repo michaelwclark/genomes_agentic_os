@@ -10,6 +10,7 @@ from ..development_delivery import (
     DEVELOPMENT_POLICY_PLANES,
     DevelopmentDeliveryError,
     TaskState,
+    bind_task_review_policy,
     resolve_development_policy,
     run_development_stage,
     start_development_run,
@@ -140,6 +141,15 @@ def handle_stage(args: argparse.Namespace) -> int:
     return 0
 
 
+def handle_bind_review_policy(args: argparse.Namespace) -> int:
+    result = bind_task_review_policy(
+        args.state_file, expected_policy_fingerprint=args.expected_policy_fingerprint,
+        reason=args.reason, apply=args.apply,
+    )
+    _print(result, json_output=args.json)
+    return 0
+
+
 def _common_output(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--json", action="store_true", help="Print deterministic JSON instead of YAML.")
 
@@ -198,6 +208,14 @@ def register(subparsers) -> None:
     status.add_argument("run_dir")
     _common_output(status)
     status.set_defaults(handler=handle_status)
+
+    binding = sub.add_parser("bind-review-policy", help="Pin omitted review policy for a legacy task without replacing its original snapshot.")
+    binding.add_argument("state_file")
+    binding.add_argument("--expected-policy-fingerprint", required=True)
+    binding.add_argument("--reason", required=True)
+    binding.add_argument("--apply", action="store_true")
+    _common_output(binding)
+    binding.set_defaults(handler=handle_bind_review_policy)
 
     transition = sub.add_parser("transition", help="Deprecated unsafe transition adapter; always fails closed.")
     transition.add_argument("state_file")
