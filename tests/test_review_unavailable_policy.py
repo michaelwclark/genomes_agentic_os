@@ -5,6 +5,7 @@ import hashlib
 import importlib.util
 import json
 from pathlib import Path
+import subprocess
 import sys
 
 import pytest
@@ -18,9 +19,10 @@ from genomes_agentic_os.review_coordination import (
 )
 
 
-def _task(tmp_path: Path, *, legacy: bool = False, policy: str = "continue_with_receipt") -> Path:
+def _task(tmp_path: Path, *, legacy: bool = False, policy: str = "continue_with_receipt",
+          repository_id: str = "github:acme/widgets") -> Path:
     selected = delivery._selected_profile_policy_authority({
-        "repository": {"id": "github:acme/widgets"},
+        "repository": {"id": repository_id},
         "review": {"opposing_harness": {"required": True, "unavailable_policy": policy}},
     })
     if legacy:
@@ -38,7 +40,7 @@ def _task(tmp_path: Path, *, legacy: bool = False, policy: str = "continue_with_
     path = tmp_path / "state.json"
     path.write_text(json.dumps({
         "state": "post_pr_review", "os_root": str(tmp_path), "domain": "acme", "project": "widgets",
-        "repository": {"id": "github:acme/widgets"}, "work_item": str(tmp_path / "packet"),
+        "repository": {"id": repository_id}, "work_item": str(tmp_path / "packet"),
         "policy_receipt": str(snapshot_path), "policy_fingerprint": snapshot["fingerprint"],
     }))
     return path
@@ -187,6 +189,46 @@ def test_explicit_legacy_binding_preserves_original_and_does_not_reread_config(t
     assert path.read_bytes() == original
     assert (tmp_path / "policy.json").read_bytes() == snapshot
     assert len((tmp_path / "events.jsonl").read_text().splitlines()) == 1
+
+
+@pytest.mark.parametrize("remote,configured_id,accepted", [
+    ("git@github.com:acme/widgets.git", None, True),
+    ("https://github.com/acme/widgets.git", None, True),
+    ("git@github.com:acme/other.git", None, False),
+    ("git@github.com:acme/widgets.git", "git:github.com/acme/other", False),
+])
+def test_legacy_binding_uses_same_repository_identity_as_task_creation(
+    tmp_path, monkeypatch, remote, configured_id, accepted,
+):
+    repository_id = "git:github.com/acme/widgets"
+    path = _task(tmp_path, legacy=True, repository_id=repository_id)
+    profile, source = _current_profile(tmp_path, monkeypatch)
+    checkout = tmp_path / "checkout"
+    subprocess.run(["git", "init", str(checkout)], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(checkout), "remote", "add", "origin", remote],
+                   check=True, capture_output=True)
+    profile["repository"] = {"root": str(checkout)}
+    if configured_id is not None:
+        profile["repository"]["id"] = configured_id
+    source.write_text(json.dumps(profile))
+    original = path.read_bytes()
+    snapshot = (tmp_path / "policy.json").read_bytes()
+    fingerprint = json.loads(original)["policy_fingerprint"]
+    kwargs = {"expected_policy_fingerprint": fingerprint, "reason": "Migrate omitted policy"}
+    if accepted:
+        preview = delivery.bind_task_review_policy(path, **kwargs)
+        assert preview["binding"]["repository_id"] == repository_id
+        assert not (tmp_path / "review-policy-binding.json").exists()
+        bound = delivery.bind_task_review_policy(path, **kwargs, apply=True)
+        assert bound["authority"]["unavailable_policy"] == "continue_with_receipt"
+        assert bound["authority"]["policy_fingerprint"] == fingerprint
+    else:
+        with pytest.raises(delivery.DevelopmentDeliveryError, match="repository does not match"):
+            delivery.bind_task_review_policy(path, **kwargs, apply=True)
+        assert not (tmp_path / "review-policy-binding.json").exists()
+        assert not (tmp_path / "events.jsonl").exists()
+    assert path.read_bytes() == original
+    assert (tmp_path / "policy.json").read_bytes() == snapshot
 
 
 @pytest.mark.parametrize("corruption", ["snapshot", "task", "binding_digest", "binding_subject", "source_provenance"])

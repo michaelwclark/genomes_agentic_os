@@ -1333,7 +1333,7 @@ def bind_task_review_policy(
         profile, profile_path = load_development_profile(task["os_root"], task["domain"], task["project"])
         selector = selected["repository_id"] if profile.get("repository", {}).get("catalog") else None
         profile = select_development_repository(profile, selector)
-        if profile.get("repository", {}).get("id") != selected["repository_id"]:
+        if _normalized_repository_identity(profile.get("repository", {})) != selected["repository_id"]:
             raise DevelopmentDeliveryError("current review policy repository does not match pinned task")
         review = deepcopy(profile.get("review") or {})
         if not isinstance(review, Mapping):
