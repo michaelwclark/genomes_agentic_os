@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
@@ -83,6 +84,8 @@ class RunLogStore(Protocol):
     """Business-facing evidence operations; no provider types cross this port."""
 
     backend: str
+
+    def write_deadline(self, seconds: float) -> AbstractContextManager[None]: ...
 
     def upsert_host(self, host: Mapping[str, Any]) -> dict[str, Any]: ...
 
@@ -202,6 +205,10 @@ class InMemoryRunLogStore:
     """Contract fake used by tests; it is not a production persistence backend."""
 
     backend = "memory"
+
+    def write_deadline(self, seconds: float) -> AbstractContextManager[None]:
+        """The in-process contract fake performs no network operations."""
+        return nullcontext()
 
     def __init__(self, config: RunLogStoreConfig):
         self.config = config
