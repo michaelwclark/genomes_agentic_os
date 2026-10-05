@@ -140,6 +140,23 @@ def handle_stage(args: argparse.Namespace) -> int:
     return 0
 
 
+def handle_readiness_proof(args: argparse.Namespace) -> int:
+    from ..review_readiness_evidence import _json, emit_readiness_evidence
+
+    task = TaskState(Path(args.state_file).expanduser().resolve()).read()
+    provider = None
+    if args.provider_readback:
+        path = Path(args.provider_readback).expanduser().resolve()
+        if not path.is_relative_to(Path(task["work_item"]).resolve()):
+            raise DevelopmentDeliveryError("provider readback must be packet-contained")
+        provider = _json(path)
+    result = emit_readiness_evidence(
+        args.state_file, head=args.head, policy=task["policy_fingerprint"], provider=provider,
+    )
+    _print(result, json_output=args.json)
+    return 0 if all(result["readiness_evidence_verified"].values()) else 1
+
+
 def _common_output(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--json", action="store_true", help="Print deterministic JSON instead of YAML.")
 
@@ -198,6 +215,13 @@ def register(subparsers) -> None:
     status.add_argument("run_dir")
     _common_output(status)
     status.set_defaults(handler=handle_status)
+
+    proof = sub.add_parser("readiness-proof", help="Project actual command and fresh provider proof for review readiness.")
+    proof.add_argument("state_file")
+    proof.add_argument("--head", required=True, help="Exact validated 40-character source head.")
+    proof.add_argument("--provider-readback", help="Packet-contained complete GitHub gate readback JSON.")
+    _common_output(proof)
+    proof.set_defaults(handler=handle_readiness_proof)
 
     transition = sub.add_parser("transition", help="Deprecated unsafe transition adapter; always fails closed.")
     transition.add_argument("state_file")

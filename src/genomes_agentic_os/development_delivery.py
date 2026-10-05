@@ -1148,7 +1148,10 @@ def _explicit_auto_dev_boundary(
 
 def _selected_profile_policy_authority(
     profile: Mapping[str, Any],
+    *,
+    profile_source: Path | None = None,
 ) -> dict[str, Any]:
+    profile_source = Path(profile_source) if profile_source else None
     repository = (
         profile.get("repository")
         if isinstance(profile.get("repository"), Mapping)
@@ -1160,9 +1163,23 @@ def _selected_profile_policy_authority(
         else {}
     )
     authority = {
-        "schema": "development-selected-profile/v1",
+        "schema": "development-selected-profile/v2",
         "repository_id": str(repository.get("id") or ""),
+        "repository": {
+            "id": str(repository.get("id") or ""),
+            "base_branch": str(repository.get("base_branch") or ""),
+        },
         "validation": deepcopy(dict(validation)),
+        "review": _mapping_copy(profile.get("review")),
+        "provenance": {
+            "source_ref": str(profile_source) if profile_source else "explicit_selected_profile",
+            "source_sha256": (
+                hashlib.sha256(profile_source.read_bytes()).hexdigest()
+                if profile_source and profile_source.is_file()
+                else _json_sha256(profile)
+            ),
+            "selected_content_sha256": _json_sha256(profile),
+        },
     }
     authority["sha256"] = _json_sha256(authority)
     return authority
@@ -1606,7 +1623,10 @@ def _validate_effective_policy_snapshot(
             if key != "sha256"
         }
         if not (
-            selected_profile.get("schema") == "development-selected-profile/v1"
+            selected_profile.get("schema") in {
+                "development-selected-profile/v1",
+                "development-selected-profile/v2",
+            }
             and isinstance(selected_profile.get("validation"), Mapping)
             and re.fullmatch(
                 r"[a-f0-9]{64}", str(selected_profile.get("sha256") or "")
@@ -1616,6 +1636,25 @@ def _validate_effective_policy_snapshot(
             raise DevelopmentDeliveryError(
                 "effective policy receipt has invalid selected repository authority"
             )
+        if selected_profile.get("schema") == "development-selected-profile/v2":
+            provenance = selected_profile.get("provenance")
+            repository = selected_profile.get("repository")
+            if not (
+                isinstance(selected_profile.get("review"), Mapping)
+                and isinstance(repository, Mapping)
+                and repository.get("id") == selected_profile.get("repository_id")
+                and isinstance(repository.get("base_branch"), str)
+                and isinstance(provenance, Mapping)
+                and isinstance(provenance.get("source_ref"), str)
+                and provenance.get("source_ref")
+                and all(
+                    re.fullmatch(r"[a-f0-9]{64}", str(provenance.get(field) or ""))
+                    for field in ("source_sha256", "selected_content_sha256")
+                )
+            ):
+                raise DevelopmentDeliveryError(
+                    "effective policy receipt has invalid selected gate authority provenance"
+                )
     context_selection = snapshot.get("context_selection")
     if context_selection is not None:
         if not isinstance(context_selection, Mapping):
@@ -1680,7 +1719,8 @@ def resolve_development_policies(
         project=project,
     )
     selected_profile_authority = _selected_profile_policy_authority(
-        effective_profile
+        effective_profile,
+        profile_source=effective_source,
     )
     if context_selection_override is None:
         context_selection = _resolve_development_context_selection(
@@ -10876,7 +10916,18 @@ def run_development_stage(
             receipt=validated[target],
             idempotency_key=f"{idempotency_prefix}:{target}",
         )
-    return persist_delivery_revision_metadata()
+    result = persist_delivery_revision_metadata()
+    if normalized == "implementation":
+        validation_payload = validated_payloads.get("local_validation") or {}
+        validation_evidence = validation_payload.get("evidence") or {}
+        validation_head = validation_evidence.get("head_sha") if isinstance(validation_evidence, Mapping) else None
+        if re.fullmatch(r"[a-f0-9]{40}", str(validation_head or "")):
+            from .review_readiness_evidence import emit_readiness_evidence
+
+            emit_readiness_evidence(
+                state.path, head=str(validation_head), policy=str(result["policy_fingerprint"]),
+            )
+    return result
 
 
 HISTORICAL_DELIVERY_RECONCILIATION_SCHEMA = "auto-dev-historical-delivery-reconciliation/v1"
