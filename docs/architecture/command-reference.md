@@ -2098,6 +2098,22 @@ Run the whole applicable lifecycle:
 agentic-os auto-dev everything <domain> <project> <ticket> [<ticket> ...] --apply
 ```
 
+Bind a modern task's fresh local validation after source repair without changing
+its lifecycle state or rewriting predecessor evidence:
+
+```bash
+agentic-os develop refresh-validation <development-task-state.json> \
+  --evidence <packet-contained-successor-validation.json> \
+  --idempotency-key <stable-repair-key> --json
+```
+
+The passed evidence must bind exact task/head/policy authority, ordered frozen
+commands and hashed governed command/terminal receipts, plus explicit predecessor
+repair lineage. Only a clean registered feature worktree in the modern
+Groom-through-PR-Create boundary is eligible. Exact replay is idempotent; stale
+downstream stage receipts remain historical until their current-head replacements
+are recorded. See [the Auto-Dev program](../42-auto-dev-program.md) for its schema.
+
 Adopt one exact active packet created before `autodev.json` existed:
 
 ```bash

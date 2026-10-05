@@ -592,6 +592,7 @@ def _load_stage_receipts(
     terminal_revision: str | None,
     invalidated_subject_revision: str | None = None,
     suppress_revision_sensitive_stages: bool = False,
+    validation_head_sha: str | None = None,
 ) -> None:
     stage_dir = work_item / "artifacts" / "auto-dev-orchestration" / "stages"
     if stage_dir.is_dir():
@@ -605,6 +606,10 @@ def _load_stage_receipts(
             if status not in TERMINAL_STAGE_STATUSES:
                 continue
             receipt_revision = payload.get("subject_revision")
+            if (validation_head_sha and status == "completed"
+                    and name in (REVISION_SENSITIVE_STAGES | {"document", "validate_production_release"})
+                    and receipt_revision != validation_head_sha):
+                continue
             if (
                 status == "completed"
                 and name in REVISION_SENSITIVE_STAGES
@@ -724,6 +729,7 @@ def _load_stage_receipts(
                     and evidence_payload.get("state") == "release_propagation"
                     and evidence_payload.get("status")
                     in {"verified", "passed", "completed", "not_required"}
+                    and (not validation_head_sha or evidence_payload.get("evidence", {}).get("source_head_sha") == validation_head_sha)
                 ):
                     stages["pr_create"].update(
                         {
@@ -1093,6 +1099,10 @@ def sync_delivery_projection(task_state_path: str | Path) -> dict[str, Any] | No
             if pending_supersession is not None
             else str(task.get("subject_revision") or existing.get("subject_revision") or "") or None
         )
+        if task.get("validation_head_sha") and subject_revision != task["validation_head_sha"]:
+            # A validated successor is not itself a reviewed subject. Historical
+            # subject authority is restored only by fresh current-head evidence.
+            subject_revision = None
         terminal_revision = str(
             task.get("terminal_revision") or existing.get("terminal_revision") or ""
         ) or None
@@ -1107,6 +1117,7 @@ def sync_delivery_projection(task_state_path: str | Path) -> dict[str, Any] | No
                 else None
             ),
             suppress_revision_sensitive_stages=pending_supersession is not None,
+            validation_head_sha=task.get("validation_head_sha"),
         )
         for name, row in stages.items():
             policy = stage_policies.get(name, {"applicability": "required"})
@@ -2403,6 +2414,17 @@ def require_auto_dev_predecessors(state_file: str | Path, stage: str) -> dict[st
             missing.append(predecessor)
             continue
         try:
+            if predecessor == "develop" and name == "pr_create":
+                refs = row.get("receipt_refs") or []
+                deferred_path = _resolve_health_receipt(refs[0], work_item) if len(refs) == 1 else None
+                if deferred_path is not None and _read_json(deferred_path).get("status") == "deferred_to_ci":
+                    from .development_validation_refresh import validate_deferred_pr_create
+                    from .development_delivery import DevelopmentDeliveryError
+                    try:
+                        validate_deferred_pr_create(current["delivery"]["task_state_ref"], deferred_path)
+                    except DevelopmentDeliveryError as exc:
+                        raise AutoDevStateError(str(exc)) from exc
+                    continue
             if predecessor == "develop" and name in {
                 "review_self",
                 "review_others",

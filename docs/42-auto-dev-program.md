@@ -149,6 +149,30 @@ the task is still in local validation; once PR review begins, a changed head
 requires a fresh delivery run so review, QA, and Finalize cannot stay attached
 to the old commit.
 
+For a modern task still at `local_validation`, bind successor validation with
+`agentic-os develop refresh-validation <task-state.json> --evidence
+<successor-evidence.json> --idempotency-key <stable-key>`. This appends a receipt
+and explicit predecessor/head repair lineage; it never relabels historical
+Develop evidence. The packet-contained `development-stage-evidence/v1` must
+report `passed`, bind the task, selected repository, registered clean worktree,
+branch, current head and frozen policy bytes, and include `validation_runs` for
+every frozen command in order. Each run binds `command_receipt` and `terminal`
+files by path and SHA-256, with successful governed execution and unchanged Git
+identity before and after. Expected Git identity also binds the worktree path.
+The executed argv is the frozen command, optionally prefixed only with
+`env REVIEW_POLICY_FINGERPRINT=<pinned-fingerprint>`; that explicit prefix is
+required for the readiness producer to verify the policy binding.
+`repair_lineage` binds the predecessor file/hash,
+`from_head_sha`, `to_head_sha` and reason. An identical replay reuses its receipt;
+changed or stale evidence fails before mutation. Document and PR Create must
+then supply fresh evidence for the successor. Readiness is emitted through its
+canonical producer when available and otherwise remains unknown.
+
+A policy-pinned `deferred_to_ci` Develop receipt can admit only same-head PR
+Create when it names an unavailable frozen command and a verified focused check.
+It provides pending CI authority and cannot satisfy Review, QA, Finalize or Merge.
+A changed head requires fresh passed validation through the explicit refresh.
+
 ### Documentation delivery
 
 For this source package, a completed Auto-Dev Document outcome includes the

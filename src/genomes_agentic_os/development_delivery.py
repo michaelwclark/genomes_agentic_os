@@ -10214,6 +10214,8 @@ def run_development_stage(
                 "release_propagation requires --receipt release_propagation=<ref>"
             )
         receipt, release_receipt_payload = validate_receipt("release_propagation", raw_receipt)
+        from .development_validation_refresh import pr_create_validation_authority
+        validation_authority = pr_create_validation_authority(state.path, release_receipt_payload)
         qa_stage_policy = (
             current.get("auto_dev_stage_policies", {}).get("qa", {})
             if isinstance(current.get("auto_dev_stage_policies"), Mapping)
@@ -10267,6 +10269,8 @@ def run_development_stage(
             "idempotency_key": f"{idempotency_prefix}:release_propagation",
             "recorded_at": utc_now(),
         }
+        if validation_authority is not None:
+            payload["validation_authority"] = validation_authority
         output = legacy_output
         with _file_lock(state.path.with_suffix(state.path.suffix + ".lock")):
             task_value = state.read()

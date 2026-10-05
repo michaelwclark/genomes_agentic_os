@@ -1,0 +1,404 @@
+"""Real canonical task/worktree and governed-command validation refresh regressions."""
+from __future__ import annotations
+
+from datetime import datetime, timezone
+import hashlib
+import importlib.machinery
+import json
+from pathlib import Path
+import shlex
+import sys
+import time
+import types
+
+import pytest
+import yaml
+
+from genomes_agentic_os import development_delivery as delivery
+from genomes_agentic_os import development_validation_refresh as refresh
+from genomes_agentic_os.auto_dev_orchestration import (
+    AutoDevStateError, read_auto_dev_state, require_auto_dev_predecessors, record_auto_dev_stage,
+)
+from genomes_agentic_os.cli import main
+from genomes_agentic_os.long_run import start_run
+from test_development_delivery import (
+    _git, _project, _record_standalone_stage, _repository, _stage_receipt,
+)
+
+
+def _write(path: Path, value: dict) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
+    return path
+
+
+def _bound(path: Path) -> dict:
+    return {"path": str(path), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _command_proof(root: Path, packet: Path, worktree: Path, command: str, head: str, policy: str) -> dict:
+    identity = {"repository": _git("config", "--get", "remote.origin.url", cwd=worktree),
+                "branch": _git("branch", "--show-current", cwd=worktree),
+                "head": head, "clean": "true", "worktree": str(worktree)}
+    state = start_run(root, command=["env", "REVIEW_POLICY_FINGERPRINT=" + policy, *shlex.split(command)], label="actual validation proof",
+                      artifact_dir=str(packet / "artifacts/command-runs"),
+                      work_dir=str(worktree), expected_git_identity=identity,
+                      budgets={"wall_clock_minutes": 0.5, "no_progress_minutes": 0.33})
+    run = Path(state["run_dir"])
+    deadline = time.monotonic() + 15
+    while not (run / "terminal-receipt.json").is_file() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert (run / "terminal-receipt.json").is_file(), (run / "state.json").read_text()
+    assert json.loads((run / "terminal-receipt.json").read_text())["status"] == "success"
+    return {"command": command, "terminal": _bound(run / "terminal-receipt.json"),
+            "command_receipt": _bound(run / "command.json")}
+
+
+def _fixture(tmp_path: Path, *, changed: bool = True, mode: str = "single_stage",
+             historical_command: bool = True, multiple_commands: bool = False) -> dict:
+    repo, old_head = _repository(tmp_path)
+    root = tmp_path / "os"
+    project = _project(root, repo, repository_id="git:github.com/acme/app")
+    config = project / "config/development.yml"
+    profile = yaml.safe_load(config.read_text())
+    command = shlex.join([sys.executable, "-c", "print('validated')"])
+    commands = [command]
+    if multiple_commands:
+        commands.append(shlex.join([sys.executable, "-c", "print('validated second layer')"]))
+    profile["validation"]["commands"] = commands
+    config.write_text(yaml.safe_dump(profile))
+    args = {"auto_dev_mode": mode}
+    if mode == "single_stage":
+        args.update(requested_stage="pr_create", goal="pr_create")
+    run = delivery.start_development_run(
+        root, "acme", "app", ["AGE-236"], run_id="refresh", apply=True, **args)
+    task = delivery.TaskState(Path(run["tasks"][0]["state_ref"]))
+    current = task.read()
+    packet, worktree = Path(current["work_item"]), Path(current["worktree"]["path"])
+    for stage in ("groom", "detective", "create_artifacts"):
+        _record_standalone_stage(task, stage)
+    delivery.run_development_stage(task.path, stage="readiness",
+        receipts={"planned": _stage_receipt(packet, "planned")},
+        idempotency_prefix="planned")
+    old = {"ticket": current["ticket"], "repository": "acme/app",
+           "policy_fingerprint": current["policy_fingerprint"], "head_sha": old_head,
+           "focused_checks": "passed", "unavailable_check": {
+               "command": "python -m pytest tests/ -q --cov=genomes_agentic_os --cov-branch --cov-fail-under=80" if historical_command else command,
+               "classification": "environment_unavailable",
+               "reason": "predecessor disposable environment was unavailable"}}
+    delivery.run_development_stage(task.path, stage="implementation",
+        receipts={"implementing": _stage_receipt(packet, "implementing"),
+                  "local_validation": _stage_receipt(packet, "local_validation",
+                        status="deferred_to_ci", evidence=old)},
+        idempotency_prefix="implementation")
+    _record_standalone_stage(task, "document", revision=old_head)
+    current = task.read()
+    predecessor = Path([r for r in current["receipts"] if r["state"] == "local_validation"][-1]["ref"])
+    assert json.loads(predecessor.read_text())["status"] == "deferred_to_ci"
+    if changed:
+        (worktree / "README.md").write_text("successor implementation\n")
+        _git("add", "README.md", cwd=worktree)
+        _git("commit", "-m", "successor implementation", cwd=worktree)
+    head = _git("rev-parse", "HEAD", cwd=worktree)
+    proofs = [_command_proof(root, packet, worktree, c, head, current["policy_fingerprint"]) for c in commands]
+    current = task.read()
+    evidence = {"ticket": current["ticket"], "canonical_work_id": current["canonical_work_id"],
+        "repository_id": current["repository"]["id"], "repository": "acme/app",
+        "task_state_ref": str(task.path), "worktree": str(worktree),
+        "source_branch": current["worktree"]["branch"], "head_sha": head,
+        "policy_fingerprint": current["policy_fingerprint"],
+        "policy_sha256": _bound(Path(current["policy_receipt"]))["sha256"],
+        "validation_runs": proofs, "repair_lineage": {
+            "predecessor": _bound(predecessor), "from_head_sha": old_head,
+            "to_head_sha": head, "reason": "repaired source requires fresh exact-head validation"}}
+    request = _write(packet / "artifacts/successor.json", {
+        "schema": "development-stage-evidence/v1", "state": "local_validation",
+        "status": "passed", "summary": "Full frozen command passed on current head",
+        "verified_at": _now(), "evidence": evidence})
+    return dict(root=root, task=task, packet=packet, worktree=worktree, request=request,
+                head=head, old_head=old_head, predecessor=predecessor, command=command)
+
+
+def _refresh(f: dict, key: str = "repair") -> dict:
+    return refresh.refresh_development_validation(
+        f["task"].path, evidence_file=f["request"], idempotency_key=key)
+
+
+def _family(f: dict, head: str | None = None) -> str:
+    current = f["task"].read()
+    return _stage_receipt(f["packet"], "release_propagation", status="completed", evidence={
+        "ticket": current["ticket"], "repository": "acme/app",
+        "policy_fingerprint": current["policy_fingerprint"],
+        "provider": "github", "pull_request": "github:acme/app#236",
+        "base_branch": "main", "source_branch": current["worktree"]["branch"],
+        "source_head_sha": head or f["head"], "subject_revision": head or f["head"],
+        "readback_verified": True, "author_kind": "ours", "author_identity": "github:michaelwclark"})
+
+
+def _document(f: dict) -> None:
+    proof = f["packet"] / "artifacts/new-document-proof.txt"
+    proof.write_text("Current-head documentation checked\n")
+    evidence = _write(f["packet"] / "artifacts/new-document.json", {
+        "schema": "auto-dev-stage-evidence/v1", "stage": "document", "status": "completed",
+        "summary": "Current-head documentation", "subject_revision": f["head"],
+        "verified_at": _now(), "evidence": {"receipt_refs": [str(proof)]}})
+    record_auto_dev_stage(f["task"].read()["autodev_path"], stage="document",
+        evidence_file=evidence, idempotency_key="document:" + f["head"])
+
+
+def test_real_producer_refresh_preserves_history_invalidates_old_document_and_replays(tmp_path):
+    f = _fixture(tmp_path)
+    task = f["task"]
+    before = task.read()
+    old_bytes = f["predecessor"].read_bytes()
+    document = f["packet"] / "artifacts/auto-dev-orchestration/stages/document/latest.json"
+    old_doc = document.read_bytes()
+    result = _refresh(f)
+    assert result["replayed"] is False
+    readiness = result["readiness_projection"]
+    if importlib.util.find_spec("genomes_agentic_os.review_readiness_evidence") is None:
+        assert readiness["status"] == "unknown"
+    else:
+        assert readiness["validation_status"] == "passed"
+        assert readiness["readiness_evidence_verified"]["validation"] is True
+        envelope = json.loads(Path(readiness["envelope"]).read_text())
+        assert envelope["head_sha"] == f["head"]
+        assert envelope["policy_fingerprint"] == before["policy_fingerprint"]
+    assert f["predecessor"].read_bytes() == old_bytes
+    assert document.read_bytes() == old_doc
+    after = task.read()
+    assert after["state"] == "local_validation"
+    assert after["failure"] == before["failure"]
+    assert after["receipts"][:-1] == before["receipts"]
+    assert after["validation_head_sha"] == f["head"]
+    latest = after["receipts"][-1]
+    assert Path(latest["ref"]).read_bytes() == f["request"].read_bytes()
+    assert latest["sha256"] == _bound(f["request"])["sha256"]
+    manifest = read_auto_dev_state(after["autodev_path"])
+    assert manifest["stages"]["document"]["status"] == "not_started"
+    assert manifest["stages"]["pr_create"]["status"] == "not_started"
+    assert manifest["subject_revision"] is None
+    replay = _refresh(f)
+    assert replay["replayed"] is True
+    assert task.read()["receipts"] == after["receipts"]
+    assert task.read()["validation_refreshes"] == after["validation_refreshes"]
+    _document(f)
+    completed = delivery.run_development_stage(task.path, stage="release_propagation",
+        receipts={"release_propagation": _family(f)}, idempotency_prefix="family")
+    wrapper = json.loads((task.path.parent / "stages/release-propagation.json").read_text())
+    assert wrapper["validation_authority"]["head_sha"] == f["head"]
+    assert wrapper["validation_authority"]["status"] == "passed"
+    assert read_auto_dev_state(task.read()["autodev_path"])["stages"]["pr_create"]["status"] == "completed"
+
+
+def test_same_head_policy_defer_admits_only_pr_create(tmp_path):
+    f = _fixture(tmp_path, changed=False, mode="everything", historical_command=False)
+    task = f["task"]
+    require_auto_dev_predecessors(task.read()["autodev_path"], "pr_create")
+    for stage in ("review_self", "review_others", "qa", "finalize", "merge"):
+        with pytest.raises(AutoDevStateError):
+            require_auto_dev_predecessors(task.read()["autodev_path"], stage)
+    delivery.run_development_stage(task.path, stage="release_propagation",
+        receipts={"release_propagation": _family(f)}, idempotency_prefix="deferred-family")
+    wrapper = json.loads((task.path.parent / "stages/release-propagation.json").read_text())
+    assert wrapper["validation_authority"]["status"] == "deferred_to_ci"
+    assert wrapper["validation_authority"]["ci_authority"] == "pending"
+
+
+def test_changed_head_defer_is_blocked_before_recording_family(tmp_path):
+    f = _fixture(tmp_path, historical_command=False)
+    before = f["task"].path.read_bytes()
+    with pytest.raises(delivery.DevelopmentDeliveryError, match="changed-head"):
+        refresh.validate_deferred_pr_create(f["task"].path, f["predecessor"])
+    with pytest.raises(delivery.DevelopmentDeliveryError, match="develop"):
+        delivery.run_development_stage(f["task"].path, stage="release_propagation",
+            receipts={"release_propagation": _family(f)}, idempotency_prefix="stale")
+    assert f["task"].path.read_bytes() == before
+    assert not (f["task"].path.parent / "stages/release-propagation.json").exists()
+
+
+@pytest.mark.parametrize("field,value", [
+    ("ticket", "AGE-999"), ("canonical_work_id", "wrong"), ("repository_id", "wrong"),
+    ("repository", "other/app"), ("task_state_ref", "/tmp/other-task"),
+    ("worktree", "/tmp/other-worktree"), ("source_branch", "main"),
+    ("head_sha", "a" * 40), ("policy_fingerprint", "b" * 64), ("policy_sha256", "c" * 64),
+])
+def test_successor_identity_mismatch_is_fail_closed(tmp_path, field, value):
+    f = _fixture(tmp_path)
+    payload = json.loads(f["request"].read_text())
+    payload["evidence"][field] = value
+    _write(f["request"], payload)
+    before = f["task"].path.read_bytes()
+    with pytest.raises(delivery.DevelopmentDeliveryError):
+        _refresh(f)
+    assert f["task"].path.read_bytes() == before
+    assert not list((f["packet"] / "artifacts/development-delivery/evidence").glob("validation-refresh-*"))
+
+
+@pytest.mark.parametrize("corruption", [
+    "missing_runs", "partial_runs", "junk_run", "missing_lineage", "wrong_predecessor_hash",
+    "wrong_from_head", "wrong_to_head", "unsuccessful", "unavailable", "dirty", "terminal_revision",
+    "tampered_predecessor", "unknown_command",
+])
+def test_refresh_rejects_partial_stale_or_nonmodern_proof(tmp_path, corruption):
+    f = _fixture(tmp_path)
+    payload = json.loads(f["request"].read_text())
+    evidence = payload["evidence"]
+    if corruption == "missing_runs":
+        evidence.pop("validation_runs")
+    elif corruption == "partial_runs":
+        evidence["validation_runs"] = []
+    elif corruption == "junk_run":
+        evidence["validation_runs"].append(None)
+    elif corruption == "missing_lineage":
+        evidence.pop("repair_lineage")
+    elif corruption == "wrong_predecessor_hash":
+        evidence["repair_lineage"]["predecessor"]["sha256"] = "0" * 64
+    elif corruption == "wrong_from_head":
+        evidence["repair_lineage"]["from_head_sha"] = "0" * 40
+    elif corruption == "wrong_to_head":
+        evidence["repair_lineage"]["to_head_sha"] = f["old_head"]
+    elif corruption == "unsuccessful":
+        payload["status"] = "deferred_to_ci"
+    elif corruption == "unavailable":
+        evidence["unavailable_check"] = {"classification": "infrastructure"}
+    elif corruption == "dirty":
+        (f["worktree"] / "README.md").write_text("uncommitted")
+    elif corruption == "terminal_revision":
+        current = f["task"].read()
+        current["terminal_revision"] = f["old_head"]
+        _write(f["task"].path, current)
+    elif corruption == "tampered_predecessor":
+        f["predecessor"].write_text(f["predecessor"].read_text() + " ")
+    elif corruption == "unknown_command":
+        old = json.loads(f["predecessor"].read_text())
+        old["evidence"]["unavailable_check"]["command"] = ""
+        _write(f["predecessor"], old)
+        evidence["repair_lineage"]["predecessor"] = _bound(f["predecessor"])
+        current = f["task"].read()
+        [r for r in current["receipts"] if r["state"] == "local_validation"][-1]["sha256"] = _bound(f["predecessor"])["sha256"]
+        _write(f["task"].path, current)
+    _write(f["request"], payload)
+    before = f["task"].path.read_bytes()
+    with pytest.raises(delivery.DevelopmentDeliveryError):
+        _refresh(f)
+    assert f["task"].path.read_bytes() == before
+
+
+@pytest.mark.parametrize("artifact,field,value", [
+    ("terminal", "status", "failed"), ("terminal", "exit_code", 1),
+    ("terminal", "post_run_invariants_ok", False),
+    ("terminal", "git_identity_post", {"head": "0" * 40}),
+    ("terminal", "git_identity_pre", {"clean": "false"}),
+    ("terminal", "expected_git_identity", {}),
+    ("terminal", "created_at", "2000-01-01T00:00:00Z"),
+    ("terminal", "finished_at", "2099-01-01T00:00:00Z"),
+    ("terminal", "finished_at", "2026-10-05T00:00:00"),
+    ("command_receipt", "shell", True), ("command_receipt", "command", ["echo", "fake"]),
+    ("command_receipt", "work_dir", "/tmp/wrong"), ("command_receipt", "id", "wrong"),
+    ("command_receipt", "expected_git_identity", {}),
+])
+def test_hash_valid_command_receipts_still_require_exact_semantic_authority(tmp_path, artifact, field, value):
+    f = _fixture(tmp_path)
+    payload = json.loads(f["request"].read_text())
+    proof = payload["evidence"]["validation_runs"][0]
+    path = Path(proof[artifact]["path"])
+    contents = json.loads(path.read_text())
+    contents[field] = value
+    _write(path, contents)
+    proof[artifact] = _bound(path)
+    _write(f["request"], payload)
+    before = f["task"].path.read_bytes()
+    with pytest.raises(delivery.DevelopmentDeliveryError):
+        _refresh(f)
+    assert f["task"].path.read_bytes() == before
+
+
+def test_refresh_cli_and_present_readiness_producer_read_current_atomic_receipt(tmp_path, monkeypatch, capsys):
+    f = _fixture(tmp_path)
+    calls = []
+    module_name = "genomes_agentic_os.review_readiness_evidence"
+    module = types.ModuleType(module_name)
+    module.__spec__ = importlib.machinery.ModuleSpec(module_name, loader=None)
+    def emit(task_path, *, head, policy):
+        current = delivery.TaskState(task_path).read()
+        latest = current["receipts"][-1]
+        assert latest["kind"] == "validation_refresh"
+        proof = json.loads(Path(latest["ref"]).read_text())
+        assert proof["evidence"]["head_sha"] == head == f["head"]
+        assert proof["evidence"]["policy_fingerprint"] == policy
+        assert proof["evidence"]["validation_runs"]
+        calls.append(head)
+        envelope = _write(f["packet"] / "artifacts/finishing-touches/readiness-evidence.json", {
+            "schema": "opposing-review-readiness-evidence/v1", "head_sha": head,
+            "policy_fingerprint": policy, "verified_at": _now()})
+        return {"schema": "review-readiness-projection/v1", "envelope": str(envelope),
+                "validation_status": "passed", "readiness_evidence_verified": {"validation": True}}
+    module.emit_readiness_evidence = emit
+    monkeypatch.setitem(sys.modules, module_name, module)
+    assert main(["develop", "refresh-validation", str(f["task"].path),
+        "--evidence", str(f["request"]), "--idempotency-key", "cli-repair", "--json"]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["readiness_projection"]["validation_status"] == "passed"
+    assert json.loads(Path(result["readiness_projection"]["envelope"]).read_text())["head_sha"] == f["head"]
+    assert calls == [f["head"]]
+
+
+def test_replay_collision_and_stale_family_remain_blocked(tmp_path):
+    f = _fixture(tmp_path)
+    _refresh(f)
+    before = f["task"].path.read_bytes()
+    with pytest.raises(delivery.DevelopmentDeliveryError, match="exact-head"):
+        refresh.pr_create_validation_authority(f["task"].path,
+            json.loads(Path(_family(f, f["old_head"])).read_text()))
+    payload = json.loads(f["request"].read_text())
+    payload["summary"] = "changed input with reused key"
+    _write(f["request"], payload)
+    with pytest.raises(delivery.DevelopmentDeliveryError, match="idempotency"):
+        _refresh(f)
+    assert f["task"].path.read_bytes() == before
+
+
+@pytest.mark.parametrize("corruption", ["partial", "reordered", "outside_packet"])
+def test_multiple_frozen_commands_and_proof_containment_are_required(tmp_path, corruption):
+    f = _fixture(tmp_path, multiple_commands=True)
+    payload = json.loads(f["request"].read_text())
+    runs = payload["evidence"]["validation_runs"]
+    if corruption == "partial":
+        runs.pop()
+    elif corruption == "reordered":
+        runs.reverse()
+    else:
+        outside = tmp_path / "uncontained-terminal.json"
+        outside.write_bytes(Path(runs[0]["terminal"]["path"]).read_bytes())
+        runs[0]["terminal"] = _bound(outside)
+    _write(f["request"], payload)
+    before = f["task"].path.read_bytes()
+    with pytest.raises(delivery.DevelopmentDeliveryError):
+        _refresh(f)
+    assert f["task"].path.read_bytes() == before
+
+
+def test_old_replay_cannot_authorize_a_newer_source_head(tmp_path):
+    f = _fixture(tmp_path)
+    _refresh(f)
+    before = f["task"].path.read_bytes()
+    (f["worktree"] / "README.md").write_text("later repair requires new validation\n")
+    _git("add", "README.md", cwd=f["worktree"])
+    _git("commit", "-m", "later repair", cwd=f["worktree"])
+    with pytest.raises(delivery.DevelopmentDeliveryError, match="mismatch"):
+        _refresh(f)
+    assert f["task"].path.read_bytes() == before
+
+
+def test_historical_deferred_command_is_not_current_pr_create_authority(tmp_path):
+    f = _fixture(tmp_path, changed=False)
+    with pytest.raises(delivery.DevelopmentDeliveryError, match="unavailable-command"):
+        refresh.validate_deferred_pr_create(f["task"].path, f["predecessor"])
+    # The same historical failure remains valid lineage for independently
+    # proved fresh frozen commands. It is never relabeled or reused as passed.
+    assert _refresh(f)["task"]["receipts"][-1]["kind"] == "validation_refresh"
