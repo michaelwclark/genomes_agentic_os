@@ -158,6 +158,29 @@ def test_cycles_and_key_coercion_collisions_cannot_drop_fields() -> None:
             validate_payload(payload, max_payload_bytes=1024)
 
 
+@pytest.mark.parametrize("backend", ["memory", "mongodb"])
+@pytest.mark.parametrize("method", ["append", "append_many", "import_idempotently"])
+@pytest.mark.parametrize("content_hash", [None, "explicit-synthetic-hash"])
+@pytest.mark.parametrize("payload", [None, [], {"nested": ["\ud800"]}, {"\udfff": "value"}])
+def test_invalid_outer_payload_and_unicode_reject_before_any_record_mutation(
+    backend: str, method: str, content_hash: str | None, payload: Any,
+) -> None:
+    store, database = _store(backend, 1024)
+    operations_before = list(database.operations) if database is not None else []
+    invalid = _record(payload, content_hash=content_hash, id="invalid")
+    with pytest.raises(PayloadValidationError) as rejected:
+        if method == "append":
+            store.append(invalid)
+        else:
+            getattr(store, method)([_record({"ok": True}, id="valid"), invalid])
+    assert rejected.value.error_code == "invalid_payload_json"
+    assert rejected.value.retryable is False
+    assert rejected.value.__cause__ is None
+    assert store.search("run_log") == []
+    if database is not None:
+        assert database.operations == operations_before
+
+
 def test_single_append_freezes_nested_payload_from_caller_mutation() -> None:
     store, _ = _store("memory", 100)
     payload = {"nested": {"value": "before"}}

@@ -74,6 +74,9 @@ prevalidation atomicity, not a transaction guarantee against a later provider
 outage. Existing content-hash idempotency remains unchanged for valid JSON;
 duplicate identifiers or hashes never exempt a new payload from validation.
 JSON object-key coercion collisions are rejected instead of dropping fields.
+Payloads must contain valid Unicode scalar values after JSON decoding; lone
+surrogates and invalid outer payload types are permanent invalidity even when a
+caller supplies an existing content hash.
 
 `PayloadValidationError` reports sanitized `payload_too_large` or
 `invalid_payload_json` codes with `retryable=False`. Invalid values, non-finite

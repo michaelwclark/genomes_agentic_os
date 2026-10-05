@@ -37,7 +37,7 @@ class PayloadValidationError(RunLogStoreError, ValueError):
         self.retryable = False
         message = {
             "payload_too_large": "evidence exceeds model payload byte limit",
-            "invalid_payload_json": "evidence payload must be finite JSON without duplicate object keys",
+            "invalid_payload_json": "evidence payload must be finite JSON with valid Unicode and unique object keys",
         }[error_code]
         super().__init__(message)
 
@@ -50,6 +50,19 @@ def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
             raise PayloadValidationError("invalid_payload_json")
         result[key] = value
     return result
+
+
+def _validate_unicode(value: Any) -> None:
+    """Reject lone surrogates before hashing, even with a caller-supplied hash."""
+    if isinstance(value, str):
+        value.encode("utf-8")
+    elif isinstance(value, dict):
+        for key, member in value.items():
+            _validate_unicode(key)
+            _validate_unicode(member)
+    elif isinstance(value, list):
+        for member in value:
+            _validate_unicode(member)
 
 
 def validate_payload(payload: Mapping[str, Any], *, max_payload_bytes: int) -> dict[str, Any]:
@@ -76,7 +89,9 @@ def validate_payload(payload: Mapping[str, Any], *, max_payload_bytes: int) -> d
             if size > max_payload_bytes:
                 raise PayloadValidationError("payload_too_large")
             chunks.append(chunk)
-        return json.loads("".join(chunks), object_pairs_hook=_unique_object)
+        snapshot = json.loads("".join(chunks), object_pairs_hook=_unique_object)
+        _validate_unicode(snapshot)
+        return snapshot
     except PayloadValidationError:
         raise
     except (TypeError, ValueError, RecursionError):
@@ -242,8 +257,8 @@ def _validate_record(record: EvidenceRecord, config: RunLogStoreConfig, known_ho
         raise UnknownHostError(f"unknown evidence host: {record.host_id}")
     if not record.source or not record.classification:
         raise RunLogStoreError("evidence source and classification are required")
-    if not isinstance(record.payload, Mapping) or not isinstance(record.payload_metadata, Mapping):
-        raise RunLogStoreError("evidence payload and payload_metadata must be mappings")
+    if not isinstance(record.payload_metadata, Mapping):
+        raise RunLogStoreError("evidence payload_metadata must be a mapping")
     model = config.models[record.model_key]
     if record.schema_version != model.get("schema_version"):
         raise RunLogStoreError(f"schema version does not match model {record.model_key}")
