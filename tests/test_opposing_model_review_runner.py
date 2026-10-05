@@ -567,22 +567,54 @@ def test_bootstrap_consumes_actual_legacy_family_and_flat_readback(
 
 
 def _catalog_bootstrap_selection(packet: Path, worktree: Path, root: Path) -> dict[str, str]:
+    from genomes_agentic_os.development_delivery import resolve_development_policies
+    from genomes_agentic_os.scaffold import create_project
+
     selected = {"id": "api", "root": str(root), "base_branch": "main"}
+    policy_root = packet / "policy-root"
+    _installed_root(policy_root)
+    create_project(policy_root, "acme", "widgets", repo=str(root))
+    frozen = resolve_development_policies(
+        policy_root, "acme", "widgets",
+        selected_profile={"repository": selected, "validation": {"commands": []}},
+    )
+    # Consume the actual producer shape, not a richer hand-built authority.
+    assert "repository" not in frozen["selected_profile"]
+    assert frozen["selected_profile"]["repository_id"] == "api"
     policy = packet / "frozen-policy.json"
-    policy.write_text(json.dumps({
-        "fingerprint": "c" * 64, "selected_profile": {"repository": selected},
+    policy.write_text(json.dumps(frozen))
+    task = packet / "selection-state.json"
+    task.write_text(json.dumps({
+        "schema": "development-task/v1", "ticket": "AGE-221",
+        "canonical_work_id": "acme:widgets:age-221", "work_item": str(packet),
+        "policy_fingerprint": frozen["fingerprint"], "policy_receipt": str(policy),
+        "repository": selected,
+        "worktree": {"repository_id": "api", "path": str(worktree)},
     }))
     path = packet / "autodev.json"
     manifest = json.loads(path.read_text())
     manifest["delivery"].update({
         "repository": selected, "policy_receipt": str(policy),
+        "policy_fingerprint": frozen["fingerprint"], "task_state_ref": str(task),
+        "canonical_work_id": "acme:widgets:age-221",
         "worktree": {"repository_id": "api", "path": str(worktree)},
     })
     path.write_text(json.dumps(manifest))
+    family_path = packet / "artifacts/auto-dev-pr-create/family-complete.json"
+    family = json.loads(family_path.read_text())
+    family["evidence"]["policy_fingerprint"] = frozen["fingerprint"]
+    family_path.write_text(json.dumps(family))
+    snapshot_path = packet / "artifacts/auto-dev-pr-create/source-snapshot.json"
+    snapshot = json.loads(snapshot_path.read_text())
+    snapshot["policy_fingerprint"] = frozen["fingerprint"]
+    snapshot_path.write_text(json.dumps(snapshot))
     return selected
 
 
-@pytest.mark.parametrize("mismatch", [None, "selected", "frozen", "worktree", "common-dir"])
+@pytest.mark.parametrize("mismatch", [
+    None, "selected", "frozen", "worktree", "common-dir", "policy-digest",
+    "selected-authority", "task-policy", "task-ticket", "task-worktree", "task-packet",
+])
 def test_catalog_bootstrap_binds_short_id_to_frozen_source_and_worktree(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, mismatch: str | None,
 ) -> None:
@@ -593,10 +625,24 @@ def test_catalog_bootstrap_binds_short_id_to_frozen_source_and_worktree(
     if mismatch == "selected":
         selected = dict(selected, id="web")
     elif mismatch == "frozen":
-        policy = packet / "frozen-policy.json"
-        frozen = json.loads(policy.read_text())
-        frozen["selected_profile"]["repository"]["root"] = str(tmp_path / "other")
-        policy.write_text(json.dumps(frozen))
+        task_path = packet / "selection-state.json"
+        task = json.loads(task_path.read_text())
+        task["repository"]["root"] = str(tmp_path / "other")
+        task_path.write_text(json.dumps(task))
+    elif mismatch in {"policy-digest", "selected-authority"}:
+        policy_path = packet / "frozen-policy.json"
+        frozen = json.loads(policy_path.read_text())
+        frozen["selected_profile"]["sha256" if mismatch == "policy-digest" else "repository_id"] = "changed"
+        policy_path.write_text(json.dumps(frozen))
+    elif mismatch in {"task-policy", "task-ticket", "task-worktree", "task-packet"}:
+        task_path = packet / "selection-state.json"
+        task = json.loads(task_path.read_text())
+        if mismatch == "task-worktree":
+            task["worktree"]["path"] = str(tmp_path / "other")
+        else:
+            field = {"task-policy": "policy_fingerprint", "task-ticket": "ticket", "task-packet": "work_item"}[mismatch]
+            task[field] = "changed"
+        task_path.write_text(json.dumps(task))
     elif mismatch == "worktree":
         path = packet / "autodev.json"
         manifest = json.loads(path.read_text())

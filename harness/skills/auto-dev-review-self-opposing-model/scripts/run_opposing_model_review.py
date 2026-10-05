@@ -41,6 +41,7 @@ from genomes_agentic_os.review_coordination import (  # noqa: E402
 )
 from genomes_agentic_os.development_delivery import (  # noqa: E402
     DevelopmentDeliveryError,
+    _validate_effective_policy_snapshot,
     load_development_profile,
     select_development_repository,
 )
@@ -510,17 +511,35 @@ def canonical_pr_create_target(
         raise ReviewError("PR Create family repository does not match packet selection")
     if repository_id and "/" not in repository_id:
         delivery = manifest["delivery"]
-        frozen = bootstrap_json(Path(str(delivery.get("policy_receipt") or "")), "frozen repository policy")
-        frozen_profile = frozen.get("selected_profile") or {}
-        if not isinstance(frozen_profile, dict):
-            raise ReviewError("frozen repository policy selection is malformed")
-        frozen_repository = frozen_profile.get("repository") or {}
+        policy_path = Path(str(delivery.get("policy_receipt") or ""))
+        frozen = bootstrap_json(policy_path, "frozen repository policy")
+        try:
+            frozen_profile = _validate_effective_policy_snapshot(
+                frozen, require_selected_profile=True,
+            )
+        except DevelopmentDeliveryError as exc:
+            raise ReviewError(f"catalog frozen repository policy is invalid: {exc}") from exc
+        task = bootstrap_json(
+            Path(str(delivery.get("task_state_ref") or "")), "catalog repository selection",
+        )
+        frozen_repository = task.get("repository") or {}
         recorded_worktree = delivery.get("worktree") or {}
+        frozen_worktree = task.get("worktree") or {}
         if (
             not isinstance(selected_repository, dict)
             or not isinstance(frozen_repository, dict)
             or not isinstance(recorded_worktree, dict)
+            or not isinstance(frozen_worktree, dict)
             or frozen.get("fingerprint") != policy
+            or not isinstance(frozen_profile, dict)
+            or frozen_profile.get("repository_id") != repository_id
+            or task.get("schema") != "development-task/v1"
+            or task.get("ticket") != ticket
+            or not delivery.get("canonical_work_id")
+            or task.get("canonical_work_id") != delivery["canonical_work_id"]
+            or task.get("policy_fingerprint") != policy
+            or Path(str(task.get("policy_receipt") or "")).resolve() != policy_path.resolve()
+            or Path(str(task.get("work_item") or "")).resolve() != work_item.resolve()
             or selected_repository.get("id") != repository_id
             or frozen_repository.get("id") != repository_id
             or frozen_repository.get("root") != descriptor.get("root")
@@ -528,7 +547,9 @@ def canonical_pr_create_target(
             or selected_repository.get("base_branch") != snapshot.get("base_branch")
             or frozen_repository.get("base_branch") != snapshot.get("base_branch")
             or recorded_worktree.get("repository_id") != repository_id
+            or frozen_worktree.get("repository_id") != repository_id
             or Path(str(recorded_worktree.get("path") or "")).resolve() != worktree.resolve()
+            or Path(str(frozen_worktree.get("path") or "")).resolve() != worktree.resolve()
             or not isinstance(descriptor.get("root"), str)
             or not Path(descriptor["root"]).is_absolute()
         ):
