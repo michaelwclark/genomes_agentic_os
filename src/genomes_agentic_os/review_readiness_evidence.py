@@ -107,7 +107,7 @@ def _execution_argv(command: dict) -> tuple[list[str], dict[str, str]]:
     argv = command.get("command")
     if not isinstance(argv, list) or not all(isinstance(x, str) for x in argv):
         return [], {}
-    environment = dict(command.get("environment_overrides") or {})
+    environment: dict[str, str] = {}
     if argv and argv[0] == "env":
         argv = argv[1:]
         if argv and argv[0] == "-i":
@@ -186,7 +186,11 @@ def validation_proof(packet: Path, task: dict, selected: dict, head: str, policy
                 configured in required
                 and command.get("id") == terminal.get("id")
                 and command.get("work_dir") == task["worktree"]["path"]
-                and environment.get("REVIEW_POLICY_FINGERPRINT", policy) == policy
+                and environment.get("REVIEW_POLICY_FINGERPRINT") == policy
+                and bool(_repository(selected["repository_id"]))
+                and command.get("expected_git_identity", {}).get("worktree") == task["worktree"]["path"]
+                and terminal.get("expected_git_identity", {}).get("worktree") == task["worktree"]["path"]
+                and bool(task["worktree"].get("branch"))
                 and _matches_command(configured, argv, task, selected)
                 and terminal.get("schema") == "agentic-os-long-running-terminal/v1"
                 and terminal.get("status") in {"success", "failure"}
@@ -194,6 +198,8 @@ def validation_proof(packet: Path, task: dict, selected: dict, head: str, policy
                 and (terminal["status"] == "success") == (terminal["exit_code"] == 0)
                 and _fresh(terminal.get("finished_at"), now)
                 and all(terminal.get(field, {}).get("head") == head and terminal[field].get("clean") == "true"
+                        and terminal[field].get("branch") == task["worktree"]["branch"]
+                        and bool(_repository(terminal[field].get("repository")))
                         and _repository(terminal[field].get("repository")) == _repository(selected["repository_id"])
                         for field in ("git_identity_pre", "git_identity_post"))
                 and terminal.get("post_run_invariants_ok") is True

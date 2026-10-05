@@ -116,3 +116,13 @@ never patch old policy bytes or relabel old receipts. The canonical
 validation-refresh owner must emit proof after recording successor evidence.
 Keep installed configuration changes as a proposal until integrated proof and
 ongoing frozen contexts are protected.
+
+The execution command must record `REVIEW_POLICY_FINGERPRINT=<pinned hash>` in
+its actual `env` argument vector. An inherited variable or an unused metadata
+field does not establish this binding. Both command and terminal receipts must
+record `expected_git_identity.worktree` equal to the canonical registered
+worktree; the command's `work_dir` must match it exactly. The actual pre/post
+Git identities use the existing producer shape: a nonempty matching provider
+repository URL, exact registered branch, exact head, and clean status. Repository
+aliases or filesystem Git paths that cannot establish provider identity remain
+unknown.

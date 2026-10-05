@@ -58,7 +58,7 @@ def context(tmp_path, generated_policy):
     pinned.write_text(json.dumps(snapshot))
     state = packet / 'state.json'
     task = {'work_item': str(packet), 'policy_receipt': str(pinned), 'policy_fingerprint': snapshot['fingerprint'],
-            'repository': {'id': 'github:acme/app'}, 'worktree': {'path': str(worktree), 'base_sha': BASE}, 'receipts': []}
+            'repository': {'id': 'github:acme/app'}, 'worktree': {'path': str(worktree), 'base_sha': BASE, 'branch': 'feature/CC-PROOF'}, 'receipts': []}
     state.write_text(json.dumps(task))
     (packet / 'autodev.json').write_text(json.dumps({'delivery': {'task_state_ref': str(state),
            'policy_receipt': str(pinned), 'policy_fingerprint': snapshot['fingerprint']}}))
@@ -73,14 +73,14 @@ def ref(context, name, value):
 
 
 def stage(context, *, terminal_changes=None, command_changes=None, stage_changes=None, argv=None):
-    identity = {'head': HEAD, 'clean': 'true', 'repository': 'github:acme/app'}
+    identity = {'head': HEAD, 'clean': 'true', 'repository': 'git@github.com:acme/app.git', 'branch': context.task['worktree']['branch']}
     terminal = {'schema': 'agentic-os-long-running-terminal/v1', 'id': 'full-gate', 'status': 'success', 'exit_code': 0,
                 'finished_at': NOW.isoformat(), 'git_identity_pre': deepcopy(identity), 'git_identity_post': deepcopy(identity),
-                'post_run_invariants_ok': True}
+                'post_run_invariants_ok': True, 'expected_git_identity': {'worktree': str(context.worktree)}}
     terminal.update(terminal_changes or {})
-    command = {'id': 'full-gate', 'work_dir': str(context.worktree),
-               'command': argv or [str(context.worktree / '.venv/bin/python'), '-m', 'pytest', 'tests/', '-q',
-                                   '--cov=genomes_agentic_os', '--cov-branch', '--basetemp=/task/pytest']}
+    command = {'id': 'full-gate', 'work_dir': str(context.worktree), 'expected_git_identity': {'worktree':str(context.worktree)},
+               'command': ['env', '-i', 'REVIEW_POLICY_FINGERPRINT='+context.policy, *(argv or [str(context.worktree / '.venv/bin/python'), '-m', 'pytest', 'tests/', '-q',
+                                   '--cov=genomes_agentic_os', '--cov-branch', '--basetemp=/task/pytest'])]}
     command.update(command_changes or {})
     row = {'command': COMMAND, 'terminal': ref(context, 'terminal', terminal), 'command_receipt': ref(context, 'command', command)}
     value = {'schema': 'development-stage-evidence/v1', 'state': 'local_validation', 'status': 'passed',
@@ -159,7 +159,7 @@ def test_task_owned_python314_command_requires_pinned_mapping(context, mapping):
     actual = str(context.packet / 'artifacts/test-runtime314/bin/python')
     if mapping:
         context.selected['validation']['command_executables'] = {COMMAND: {'executable': '{work_item}/artifacts/test-runtime314/bin/python', 'authority': 'selected_profile'}}
-    stage(context, argv=['env', '-i', 'PATH=/task/bin', actual, '-m', 'pytest', 'tests/', '-q', '--cov=genomes_agentic_os', '--cov-branch', '--basetemp=/task/pytest'])
+    stage(context, argv=[actual, '-m', 'pytest', 'tests/', '-q', '--cov=genomes_agentic_os', '--cov-branch', '--basetemp=/task/pytest'])
     assert proof.validation_proof(context.packet, context.task, context.selected, HEAD, context.policy, NOW)['status'] == ('passed' if mapping else 'unknown')
 
 
@@ -177,7 +177,7 @@ def test_validation_terminal_failure_stale_or_missing(context, change):
 
 
 @pytest.mark.parametrize('change', [{'work_dir': '/other'}, {'command': ['python', '-m', 'pytest', 'tests/', '-q']},
-     {'command': [COMMAND]}, {'environment_overrides': {'REVIEW_POLICY_FINGERPRINT': 'f' * 64}}, {'command': None}])
+     {'command': [COMMAND]}, {'command':['env','REVIEW_POLICY_FINGERPRINT='+'f'*64,'python','-m','pytest','tests/','-q']}, {'command': None}])
 def test_validation_wrong_command_or_policy(context, change):
     stage(context, command_changes=change)
     assert proof.validation_proof(context.packet, context.task, context.selected, HEAD, context.policy, NOW)['status'] == 'unknown'
@@ -475,10 +475,10 @@ def test_canonical_stage_emits_actual_proof_using_real_generated_policy(tmp_path
     state=Path(run['tasks'][0]['state_ref']);task=delivery.TaskState(state)
     delivery.run_development_stage(state,stage='readiness',receipts={'planned':_stage_receipt(tmp_path,'planned')},idempotency_prefix='ready')
     current=task.read();packet=Path(current['work_item']);ctx=SimpleNamespace(packet=packet)
-    identity={'head':HEAD,'clean':'true','repository':'github:acme/app'}
+    identity={'head':HEAD,'clean':'true','repository':'https://github.com/acme/app.git','branch':current['worktree']['branch']}
     terminal={'schema':'agentic-os-long-running-terminal/v1','id':'actual','status':'success','exit_code':0,
-              'finished_at':NOW.isoformat(),'git_identity_pre':identity,'git_identity_post':identity,'post_run_invariants_ok':True}
-    command={'id':'actual','work_dir':str(worktree),'command':['env','PATH=/task/bin','python3','-m','pytest','tests','-q']}
+              'finished_at':NOW.isoformat(),'git_identity_pre':identity,'git_identity_post':identity,'post_run_invariants_ok':True,'expected_git_identity':{'worktree':str(worktree)}}
+    command={'id':'actual','work_dir':str(worktree),'expected_git_identity':{'worktree':str(worktree)},'command':['env','REVIEW_POLICY_FINGERPRINT='+current['policy_fingerprint'],'PATH=/task/bin','python3','-m','pytest','tests','-q']}
     row={'command':'python3 -m pytest tests -q','terminal':ref(ctx,'terminal',terminal),'command_receipt':ref(ctx,'command',command)}
     evidence={'head_sha':HEAD,'policy_fingerprint':current['policy_fingerprint'],'compileall':'passed','unit_tests':'passed','validation_runs':[row]}
     delivery.run_development_stage(state,stage='implementation',receipts={
@@ -488,3 +488,32 @@ def test_canonical_stage_emits_actual_proof_using_real_generated_policy(tmp_path
     assert proof._bound(packet,envelope['validation'])['status']=='passed'
     assert proof._bound(packet,envelope['ci'])['status']=='unknown'
     assert proof._bound(packet,envelope['copilot'])['status']=='unknown'
+
+
+def test_missing_execution_policy_binding_is_unknown(context):
+    actual=[str(context.worktree/'.venv/bin/python'),'-m','pytest','tests/','-q']
+    stage(context,command_changes={'command':actual})
+    assert proof.validation_proof(context.packet,context.task,context.selected,HEAD,context.policy,NOW)['status']=='unknown'
+    stage(context,command_changes={'command':actual,'environment_overrides':{'REVIEW_POLICY_FINGERPRINT':context.policy}})
+    assert proof.validation_proof(context.packet,context.task,context.selected,HEAD,context.policy,NOW)['status']=='unknown'
+
+
+@pytest.mark.parametrize('side', ['git_identity_pre','git_identity_post'])
+@pytest.mark.parametrize('field,value', [('branch','feature/other'),('branch',''),('repository','api'),('repository','/tmp/repo/.git'),('repository','')])
+def test_identity_must_match_actual_repository_and_registered_branch(context,side,field,value):
+    identity={'head':HEAD,'clean':'true','branch':context.task['worktree']['branch'],'repository':'git@github.com:acme/app.git'}
+    identity[field]=value
+    stage(context,terminal_changes={side:identity})
+    assert proof.validation_proof(context.packet,context.task,context.selected,HEAD,context.policy,NOW)['status']=='unknown'
+
+
+@pytest.mark.parametrize('where', ['command','terminal'])
+def test_registered_worktree_scope_requires_explicit_record(context,where):
+    stage(context,**({'command_changes':{'expected_git_identity':{}}} if where=='command' else {'terminal_changes':{'expected_git_identity':{'worktree':'/other'}}}))
+    assert proof.validation_proof(context.packet,context.task,context.selected,HEAD,context.policy,NOW)['status']=='unknown'
+
+
+def test_repository_aliases_cannot_match_empty_normalization(context):
+    context.selected['repository_id']='api'
+    stage(context,terminal_changes={key:{'head':HEAD,'clean':'true','branch':context.task['worktree']['branch'],'repository':'/tmp/repo/.git'} for key in ['git_identity_pre','git_identity_post']})
+    assert proof.validation_proof(context.packet,context.task,context.selected,HEAD,context.policy,NOW)['status']=='unknown'
