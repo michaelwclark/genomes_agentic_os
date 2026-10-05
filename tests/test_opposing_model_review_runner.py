@@ -471,6 +471,63 @@ def test_initial_request_consumes_current_family_and_actual_provider_base(
     assert not (packet / "artifacts/auto-dev-pr-create/pull-request-provider-readback.json").exists()
 
 
+@pytest.mark.parametrize("subject_revision", [None, ""])
+def test_canonical_bootstrap_allows_unset_packet_subject(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, subject_revision: object,
+) -> None:
+    runner = _load_runner()
+    packet = tmp_path / "packet"
+    provider = _canonical_pr_create_packet(packet)
+    path = packet / "autodev.json"
+    manifest = json.loads(path.read_text())
+    manifest["subject_revision"] = subject_revision
+    path.write_text(json.dumps(manifest))
+    monkeypatch.setattr(runner, "git_repository", lambda _path: "acme/widgets")
+    monkeypatch.setattr(runner, "provider_pr", lambda *_args: provider)
+    assert runner.initial_request(packet, "AGE-221", tmp_path / "worktree")["head_sha"] == "b" * 40
+
+
+def test_canonical_bootstrap_tracks_each_reference_origin_and_rejects_conflict(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    runner = _load_runner()
+    packet = tmp_path / "packet"
+    provider = _canonical_pr_create_packet(packet)
+    path = packet / "artifacts/auto-dev-pr-create/family-complete.json"
+    family = json.loads(path.read_text())
+    target = family["evidence"]["targets"][0]
+    target["provider_readback"] = "../pr/provider-readback.json"
+    path.write_text(json.dumps(family))
+    monkeypatch.setattr(runner, "git_repository", lambda _path: "acme/widgets")
+    monkeypatch.setattr(runner, "provider_pr", lambda *_args: provider)
+    request = runner.initial_request(packet, "AGE-221", tmp_path / "worktree")
+    assert request["provider_readback_ref"] == "artifacts/pr/provider-readback.json"
+    different = packet / "artifacts/auto-dev-pr-create/other-proof.json"
+    different.write_text((packet / "artifacts/pr/provider-readback.json").read_text())
+    target["provider_readback"] = different.name
+    path.write_text(json.dumps(family))
+    with pytest.raises(runner.ReviewError, match="contradictory"):
+        runner.initial_request(packet, "AGE-221", tmp_path / "worktree")
+
+
+def test_canonical_bootstrap_accepts_family_v1_without_delivery_phase(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    runner = _load_runner()
+    packet = tmp_path / "packet"
+    provider = _canonical_pr_create_packet(packet)
+    path = packet / "artifacts/auto-dev-pr-create/family-complete.json"
+    family = json.loads(path.read_text())["evidence"]
+    family["schema"] = "auto-dev-pr-family/v1"
+    family["status"] = "completed"
+    family["source"] = {"sha": family.pop("source_head_sha")}
+    family["effective_policy_fingerprint"] = family.pop("policy_fingerprint")
+    path.write_text(json.dumps(family))
+    monkeypatch.setattr(runner, "git_repository", lambda _path: "acme/widgets")
+    monkeypatch.setattr(runner, "provider_pr", lambda *_args: provider)
+    assert runner.initial_request(packet, "AGE-221", tmp_path / "worktree")["pr_number"] == 57
+
+
 @pytest.mark.parametrize(("name", "field", "value"), [
     ("autodev.json", "subject_revision", "e" * 40),
     ("autodev.json", "stages", {"pr_create": {"status": "not_started"}}),

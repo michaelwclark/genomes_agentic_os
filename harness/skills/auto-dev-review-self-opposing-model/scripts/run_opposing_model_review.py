@@ -428,7 +428,8 @@ def canonical_pr_create_target(
         or not isinstance(repository, str) or repository.count("/") != 1
     ):
         raise ReviewError("PR Create family repository or head is malformed")
-    if str(manifest.get("subject_revision") or "") != head:
+    subject_revision = str(manifest.get("subject_revision") or "")
+    if subject_revision and subject_revision != head:
         raise ReviewError("PR Create family head does not match the packet subject revision")
     frozen_policy = details.get("policy_fingerprint") or details.get("effective_policy_fingerprint")
     if details.get("ticket") != ticket or frozen_policy != policy:
@@ -448,7 +449,10 @@ def canonical_pr_create_target(
     ):
         raise ReviewError("PR Create family authority snapshot identity or policy mismatch")
     selected_repository = ((manifest.get("delivery") or {}).get("repository") or {}).get("id")
-    if selected_repository and selected_repository.removeprefix("git:github.com/") != repository:
+    if selected_repository and (
+        not isinstance(selected_repository, str)
+        or selected_repository.removeprefix("git:github.com/") != repository
+    ):
         raise ReviewError("PR Create family repository does not match packet selection")
     targets = details.get("targets")
     planned = plan.get("targets")
@@ -488,12 +492,18 @@ def canonical_pr_create_target(
         or target.get("classification") != "pr_required"
     ):
         raise ReviewError("PR Create target is incomplete, unverified or inconsistent with plan")
-    reference = target.get("readback_ref") or target.get("provider_readback")
-    reference = reference or snapshot.get("provider_readback")
-    readback_path = bootstrap_ref(
-        work_item, reference,
-        relative_to=root if target.get("provider_readback") else work_item,
-    )
+    references = [
+        (target.get("readback_ref"), work_item),
+        (target.get("provider_readback"), root),
+        (snapshot.get("provider_readback"), work_item),
+    ]
+    paths = [
+        bootstrap_ref(work_item, reference, relative_to=base)
+        for reference, base in references if reference is not None
+    ]
+    if len(set(paths)) != 1:
+        raise ReviewError("PR Create provider readback references are missing or contradictory")
+    readback_path = paths[0]
     proof = bootstrap_json(readback_path, "PR Create provider readback")
     if proof.get("schema") == "artifact-provider-readback/v1":
         observed = proof.get("observed") or {}
