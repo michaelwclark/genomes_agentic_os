@@ -9,6 +9,7 @@ from collections.abc import Callable, Mapping
 from datetime import datetime, timezone
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import shlex
@@ -135,7 +136,7 @@ def _matches_command(configured: str, actual: list[str], task: dict, selected: d
             mapped = Path(mapping["executable"].format(work_item=task["work_item"], worktree=worktree))
             if not mapped.is_absolute():
                 return False
-            mapped = mapped.resolve()
+            mapped = Path(os.path.abspath(mapped))
         except (KeyError, TypeError, ValueError, AttributeError):
             return False
         if not mapped.is_absolute() or not (mapped.is_relative_to(Path(task["work_item"])) or mapped.is_relative_to(Path(worktree))):
@@ -267,6 +268,9 @@ def _gate_projection(selected: dict, provider: dict, head: str, base: str, repos
         and contract["source"].get("url") == f"https://api.github.com/repos/{repository}/branches/{contract['base_branch']}/protection"
         and _fresh(contract["source"].get("captured_at"), now)
         and contract["source"].get("rules_complete") is True
+        and contract["source"].get("route") in {"composio:GITHUB_GET_BRANCH_PROTECTION", "github_cli_api"}
+        and isinstance(contract["source"].get("active_rules"), list)
+        and isinstance(provider.get("active_rules"), list)
         and DIGEST.fullmatch(str(contract["source"].get("readback_sha256") or ""))
         and _check_rows(contract["source"].get("required_checks")) == expected
         and contract.get("drift_policy") == "block_until_context_refresh"
@@ -282,7 +286,8 @@ def _gate_projection(selected: dict, provider: dict, head: str, base: str, repos
         if isinstance(observed, list):
             for name, app_id in expected:
                 matching = [r for r in observed if isinstance(r, dict) and r.get("name") == name
-                            and (app_id == -1 or r.get("app_id") == app_id) and r.get("head_sha") == head]
+                            and type(r.get("app_id")) is int and r["app_id"] >= -1 and r["app_id"] != 0
+                            and (app_id == -1 or r["app_id"] == app_id) and r.get("head_sha") == head]
                 states.append([r.get("conclusion") if r.get("status") == "completed" else "PENDING" for r in matching])
         if not states or any(not state for state in states):
             ci["reason"] = "required context or application result missing"
@@ -392,7 +397,7 @@ def collect_github_gate_readback(repository: str, number: int, worktree: str, *,
         for page in range(1, MAX_PAGES + 1):
             value = fetch([f"{endpoint}{'&' if '?' in endpoint else '?'}per_page=100&page={page}"])
             chunk = value[key] if key else value
-            if not isinstance(chunk, list):
+            if not isinstance(chunk, list) or len(chunk) > 100:
                 raise DevelopmentDeliveryError("GitHub pagination shape differs")
             rows.extend(chunk)
             if len(chunk) < 100:
@@ -414,7 +419,7 @@ def collect_github_gate_readback(repository: str, number: int, worktree: str, *,
             raise DevelopmentDeliveryError("GitHub thread readback has GraphQL errors")
         connection = value["data"]["repository"]["pullRequest"]["reviewThreads"]
         info = connection["pageInfo"]
-        if not isinstance(connection["nodes"], list) or type(info.get("hasNextPage")) is not bool:
+        if not isinstance(connection["nodes"], list) or len(connection["nodes"]) > 100 or type(info.get("hasNextPage")) is not bool:
             raise DevelopmentDeliveryError("GitHub thread pagination malformed")
         threads.extend(connection["nodes"])
         if not info["hasNextPage"]:

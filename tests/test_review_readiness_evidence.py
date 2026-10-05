@@ -28,7 +28,7 @@ def contract():
             'repository': 'acme/app', 'base_branch': 'main', 'checks': deepcopy(CHECKS),
             'drift_policy': 'block_until_context_refresh',
             'source': {'url': 'https://api.github.com/repos/acme/app/branches/main/protection',
-                       'captured_at': NOW.isoformat(), 'rules_complete': True, 'active_rules': [],
+                       'captured_at': NOW.isoformat(), 'rules_complete': True, 'active_rules': [], 'route':'composio:GITHUB_GET_BRANCH_PROTECTION',
                        'required_checks': deepcopy(CHECKS), 'readback_sha256': 'c' * 64}}
 
 
@@ -517,3 +517,61 @@ def test_repository_aliases_cannot_match_empty_normalization(context):
     context.selected['repository_id']='api'
     stage(context,terminal_changes={key:{'head':HEAD,'clean':'true','branch':context.task['worktree']['branch'],'repository':'/tmp/repo/.git'} for key in ['git_identity_pre','git_identity_post']})
     assert proof.validation_proof(context.packet,context.task,context.selected,HEAD,context.policy,NOW)['status']=='unknown'
+
+
+@pytest.mark.parametrize('app_id',[15368.0,True,None,'15368',0,-2])
+def test_observed_check_application_requires_typed_identity(context,app_id):
+    live=provider();live['checks'][0]['app_id']=app_id
+    assert project_gates(context,live)[0]['status']=='unknown'
+
+
+@pytest.mark.parametrize('route',[None,'made_up'])
+def test_contract_capture_route_is_explicit(context,route):
+    context.selected['validation']['ci_contract']['source']['route']=route
+    assert project_gates(context)[0]['status']=='unknown'
+
+
+def test_missing_both_rule_arrays_cannot_prove_empty_rules(context):
+    context.selected['validation']['ci_contract']['source'].pop('active_rules')
+    live=provider();live.pop('active_rules')
+    assert project_gates(context,live)[0]['status']=='unknown'
+
+
+def test_collector_refuses_oversized_provider_pages(context):
+    fetch,_=github_fetch()
+    def oversized(args):return [{}]*101 if '/rules/branches/' in args[0] else fetch(args)
+    with pytest.raises(delivery.DevelopmentDeliveryError,match='shape'):
+        proof.collect_github_gate_readback('acme/app',42,str(context.worktree),fetch=oversized,now=NOW)
+    def large_threads(args):
+        data=fetch(args)
+        if args[0]=='graphql':data['data']['repository']['pullRequest']['reviewThreads']['nodes']=[{}]*101
+        return data
+    with pytest.raises(delivery.DevelopmentDeliveryError,match='malformed'):
+        proof.collect_github_gate_readback('acme/app',42,str(context.worktree),fetch=large_threads,now=NOW)
+
+
+def test_pinned_task_owned_interpreter_launcher_may_use_standard_venv_symlink(context):
+    launcher=context.packet/'artifacts/test-runtime314/bin/python';launcher.parent.mkdir(parents=True)
+    outside=context.worktree.parent/'system-python';outside.write_text('offline fixture')
+    launcher.symlink_to(outside)
+    context.selected['validation']['command_executables']={COMMAND:{'executable':'{work_item}/artifacts/test-runtime314/bin/python','authority':'selected_profile'}}
+    stage(context,argv=[str(launcher),'-m','pytest','tests/','-q'])
+    assert proof.validation_proof(context.packet,context.task,context.selected,HEAD,context.policy,NOW)['status']=='passed'
+
+
+@pytest.mark.parametrize('field,value',[('review',[]),('repository',{'id':'different','base_branch':'main'}),
+    ('repository',{'id':'github:acme/app','base_branch':None}),('provenance',{}),
+    ('provenance',{'source_ref':'','source_sha256':'a'*64,'selected_content_sha256':'b'*64})])
+def test_rehashed_v2_malformed_gate_provenance_is_rejected(context,field,value):
+    selected=context.snapshot['selected_profile'];selected[field]=value
+    selected['sha256']=delivery._json_sha256({k:v for k,v in selected.items() if k!='sha256'})
+    context.snapshot['fingerprint']=delivery._effective_policy_snapshot_fingerprint(context.snapshot)
+    with pytest.raises(delivery.DevelopmentDeliveryError,match='gate authority provenance'):
+        delivery._validate_effective_policy_snapshot(context.snapshot,require_selected_profile=True)
+
+
+def test_explicit_profile_authority_without_file_still_hashes_frozen_content(context):
+    profile={'repository':{'id':'github:acme/app','base_branch':'main'},'validation':{'commands':[COMMAND]},'review':{'copilot':{'required':False}}}
+    selected=delivery._selected_profile_policy_authority(profile)
+    assert selected['provenance']['source_sha256']==delivery._json_sha256(profile)
+    assert selected['review']['copilot']['required'] is False
