@@ -582,3 +582,53 @@ def test_present_producer_failure_is_visible_and_replay_repairs_without_duplicat
     assert result["readiness_projection"]["readiness_evidence_verified"]["validation"] is True
     assert result["task"]["receipts"] == recorded["receipts"]
     assert calls == [f["head"], f["head"]]
+
+
+@pytest.mark.parametrize("corruption", ["outside_symlink", "inside_symlink", "loop", "collision", "directory"])
+def test_successor_output_refuses_unsafe_target_before_authority_recording(tmp_path, corruption):
+    f = _fixture(tmp_path)
+    raw = f["request"].read_bytes()
+    digest = hashlib.sha256(raw).hexdigest()
+    snapshot = f["packet"] / "artifacts/development-delivery/evidence" / f"validation-refresh-{digest}.json"
+    outside = tmp_path / "outside-successor.json"
+    outside.write_bytes(raw)
+    if corruption == "outside_symlink":
+        snapshot.symlink_to(outside)
+    elif corruption == "inside_symlink":
+        snapshot.symlink_to(f["request"])
+    elif corruption == "loop":
+        snapshot.symlink_to(snapshot)
+    elif corruption == "directory":
+        snapshot.mkdir()
+    else:
+        snapshot.write_bytes(b"different immutable evidence\n")
+    before = f["task"].path.read_bytes()
+    predecessor = f["predecessor"].read_bytes()
+    with pytest.raises(delivery.DevelopmentDeliveryError, match="snapshot"):
+        _refresh(f)
+    assert f["task"].path.read_bytes() == before
+    assert f["predecessor"].read_bytes() == predecessor
+    assert outside.read_bytes() == raw
+    assert not f["task"].read().get("validation_refreshes")
+
+
+@pytest.mark.parametrize("corruption", ["outside_parent", "inside_parent", "parent_loop", "dangling_parent"])
+def test_snapshot_parent_admission_creates_no_directories_or_external_files(tmp_path, corruption):
+    packet = tmp_path / "packet"
+    packet.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    if corruption == "outside_parent":
+        (packet / "artifacts").symlink_to(outside, target_is_directory=True)
+    elif corruption == "inside_parent":
+        (packet / "storage").mkdir()
+        (packet / "artifacts").symlink_to(packet / "storage", target_is_directory=True)
+    elif corruption == "parent_loop":
+        (packet / "artifacts").symlink_to(packet / "artifacts", target_is_directory=True)
+    else:
+        (packet / "artifacts").symlink_to(outside / "missing", target_is_directory=True)
+    before = list(packet.rglob("*"))
+    with pytest.raises(delivery.DevelopmentDeliveryError, match="snapshot"):
+        refresh._snapshot_target(packet.resolve(), "a" * 64)
+    assert list(packet.rglob("*")) == before
+    assert not list(outside.iterdir())

@@ -48,6 +48,25 @@ def _bound(ref: Mapping[str, Any], packet: Path) -> tuple[Path, dict[str, Any], 
     return path, value, digest
 
 
+def _snapshot_target(packet: Path, digest: str) -> Path:
+    """Admit the canonical output before creating directories or authority."""
+    target = packet / "artifacts/development-delivery/evidence" / f"validation-refresh-{digest}.json"
+    try:
+        candidate = target
+        while candidate != packet:
+            if candidate.is_symlink():
+                _error("validation snapshot target cannot use symlinks")
+            candidate = candidate.parent
+        resolved = target.resolve()
+        if not (resolved.is_relative_to(packet) and target.parent.resolve().is_relative_to(packet)):
+            _error("validation snapshot target must remain in its canonical packet")
+        if target.exists() and not target.is_file():
+            _error("validation snapshot target must be a regular file")
+    except (OSError, RuntimeError) as exc:
+        _error(f"validation snapshot target is unreadable: {exc}")
+    return resolved
+
+
 def _git(worktree: Path, *args: str) -> str:
     result = subprocess.run(["git", *args], cwd=worktree, text=True,
                             capture_output=True, timeout=10)
@@ -395,7 +414,7 @@ def refresh_development_validation(state_file: str | Path, *, evidence_file: str
     elif latest_path != predecessor_path or latest_digest != predecessor_digest:
         _error("validation repair predecessor is not current immutable task authority")
     if not replay:
-        snapshot = packet / "artifacts/development-delivery/evidence" / f"validation-refresh-{request_digest}.json"
+        snapshot = _snapshot_target(packet, request_digest)
         with _file_lock(task.path.with_suffix(task.path.suffix + ".lock")):
             if (task.read() != current or _git(worktree, "rev-parse", "HEAD") != head
                     or _git(worktree, "branch", "--show-current") != current["worktree"]["branch"]
@@ -409,11 +428,17 @@ def refresh_development_validation(state_file: str | Path, *, evidence_file: str
                 _error("validation frozen policy changed during refresh preflight")
             _commands({**evidence, "verified_at": payload["verified_at"]}, current, packet,
                       worktree, profile, head)
-            if snapshot.exists() and snapshot.read_bytes() != request_path.read_bytes():
-                _error("immutable validation refresh snapshot collision")
-            if not snapshot.exists():
-                snapshot.parent.mkdir(parents=True, exist_ok=True)
-                snapshot.write_bytes(request_path.read_bytes())
+            snapshot = _snapshot_target(packet, request_digest)
+            try:
+                if snapshot.exists() and snapshot.read_bytes() != request_path.read_bytes():
+                    _error("immutable validation refresh snapshot collision")
+                if not snapshot.exists():
+                    snapshot.parent.mkdir(parents=True, exist_ok=True)
+                    snapshot = _snapshot_target(packet, request_digest)
+                    with snapshot.open("xb") as handle:
+                        handle.write(request_path.read_bytes())
+            except OSError as exc:
+                _error(f"immutable validation refresh snapshot cannot be written: {exc}")
             now = utc_now()
             current.setdefault("receipts", []).append({"state": "local_validation", "kind": "validation_refresh",
                 "ref": str(snapshot), "sha256": request_digest, "recorded_at": now})

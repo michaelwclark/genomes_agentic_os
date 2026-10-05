@@ -172,6 +172,9 @@ paths and other overrides are refused.
 changed or stale evidence fails before mutation. Document and PR Create must
 then supply fresh evidence for the successor. Readiness is emitted through its
 canonical producer when available and otherwise remains unknown.
+The canonical successor snapshot must stay inside its packet. Symlinked output
+targets or parent directories and conflicting immutable bytes are refused before
+recording validation authority.
 
 A policy-pinned `deferred_to_ci` Develop receipt can admit only same-head PR
 Create when it names an unavailable frozen command and a verified focused check.
