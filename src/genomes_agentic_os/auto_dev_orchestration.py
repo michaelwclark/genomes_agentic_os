@@ -1235,10 +1235,15 @@ def plan_legacy_consumer_migration(
 
     This pure helper is never called by a read or projection refresh. The
     selected, active consumer transaction owns identity checks and persistence.
-    Only the known pre-production-release contract is supported; unknown fields
-    and all existing stage evidence remain byte-equivalent JSON values.
+    Known pre-production-release and current missing-row contracts are supported;
+    unknown fields and all existing evidence remain equivalent JSON values.
     """
-    old_order = list(projection.get("stage_order") or [])
+    if "schema" in task and task["schema"] != "development-task/v1":
+        raise AutoDevStateError("unsupported canonical delivery task schema version")
+    task_contract = "development-task/v1" if "schema" in task else "development-task/legacy-unversioned"
+    if not isinstance(projection.get("stage_order"), list) or not isinstance(task.get("auto_dev_stage_order"), list):
+        raise AutoDevStateError("consumer stage contracts must be explicit arrays")
+    old_order = list(projection["stage_order"])
     legacy_order = [name for name in AUTO_DEV_STAGE_ORDER if name != "validate_production_release"]
     if projection.get("schema") != AUTO_DEV_SCHEMA or old_order not in (
         legacy_order, list(AUTO_DEV_STAGE_ORDER)
@@ -1255,22 +1260,39 @@ def plan_legacy_consumer_migration(
         )
     ):
         raise AutoDevStateError("consumer task and projection workflow boundaries differ")
-    if projection.get("status") == "running" or any(
-        isinstance(row, Mapping) and row.get("status") == "running"
-        for row in (projection.get("stages") or {}).values()
-    ):
-        raise AutoDevStateError("consumer migration refuses running execution")
+    if projection.get("status") not in ("ready", "running", "paused", "blocked", "completed"):
+        raise AutoDevStateError("consumer status contract is unsupported")
     stages = projection.get("stages")
     if not isinstance(stages, Mapping) or not set(legacy_order).issubset(stages):
         raise AutoDevStateError("consumer is missing unsupported legacy stages")
+    if projection.get("status") == "running" or any(
+        isinstance(row, Mapping) and row.get("status") == "running"
+        for row in stages.values()
+    ):
+        raise AutoDevStateError("consumer migration refuses running execution")
     if any(not isinstance(stages[name], Mapping) for name in legacy_order):
         raise AutoDevStateError("consumer legacy stage rows must be mappings")
+    stage_fields = {"status", "owner", "command", "run_ref", "receipt_refs", "last_verified_at", "next_action"}
+    stage_statuses = {"not_started", "ready", "running", "paused", "blocked", "completed", "not_required", "out_of_scope"}
+    for name in old_order:
+        if name == "validate_production_release" and name not in stages:
+            continue
+        row = stages[name]
+        if (not isinstance(row, Mapping) or not stage_fields.issubset(row)
+                or not isinstance(row.get("status"), str) or row["status"] not in stage_statuses
+                or not isinstance(row.get("owner"), str) or not isinstance(row.get("command"), str)
+                or not row["command"] or not isinstance(row.get("receipt_refs"), list)
+                or any(not isinstance(ref, str) for ref in row["receipt_refs"])
+                or any(row.get(field) is not None and not isinstance(row[field], str)
+                       for field in ("run_ref", "last_verified_at", "next_action"))):
+            raise AutoDevStateError("consumer known stage-row contract is incomplete or malformed")
     migrated = deepcopy(dict(projection))
     migrated_task = deepcopy(dict(task))
-    changed = old_order != list(AUTO_DEV_STAGE_ORDER)
+    legacy_contract = old_order != list(AUTO_DEV_STAGE_ORDER)
+    changed = legacy_contract or "validate_production_release" not in stages
     added: list[str] = []
     if changed:
-        if "validate_production_release" in stages:
+        if legacy_contract and "validate_production_release" in stages:
             raise AutoDevStateError("legacy consumer contains a divergent production-release stage")
         active = set(auto_dev_workflow_window(
             AUTO_DEV_STAGE_ORDER,
@@ -1290,7 +1312,14 @@ def plan_legacy_consumer_migration(
             policies = current.get(key)
             if policies is not None and not isinstance(policies, Mapping):
                 raise AutoDevStateError("consumer stage policies must be a mapping")
-            current[key] = {**dict(policies or {}), "validate_production_release": {"applicability": "required"}}
+            prior = dict(policies or {})
+            required_policy = prior.get("validate_production_release", {})
+            if not isinstance(required_policy, Mapping) or required_policy.get("applicability", "required") != "required":
+                raise AutoDevStateError("consumer production-release policy conflicts with required applicability")
+            current[key] = {
+                **prior,
+                "validate_production_release": {**dict(required_policy), "applicability": "required"},
+            }
         next_stage = next((name for name in AUTO_DEV_STAGE_ORDER
                            if name in active and migrated["stages"][name].get("status")
                            not in NON_ACTIONABLE_STAGE_STATUSES), None)
@@ -1300,8 +1329,13 @@ def plan_legacy_consumer_migration(
             migrated["status"] = "ready" if next_stage else "completed"
     return {
         "schema": "auto-dev-consumer-migration/v1",
-        "from_contract": "auto-dev-stage-order/pre-production-release/v1" if changed else "auto-dev-stage-order/current/v1",
+        "from_contract": (
+            "auto-dev-stage-order/pre-production-release/v1" if legacy_contract
+            else "auto-dev-stage-order/current-missing-production-release/v1" if changed
+            else "auto-dev-stage-order/current/v1"
+        ),
         "to_contract": "auto-dev-stage-order/current/v1",
+        "task_contract": task_contract,
         "changed": changed,
         "new_pending_stages": added,
         "projection": migrated,

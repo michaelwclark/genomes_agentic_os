@@ -133,7 +133,9 @@ def test_unknown_consumer_fields_are_preserved_with_residual_diagnostics(tmp_pat
     root, _, _, _ = root_fixture(tmp_path, ownership="current"); active, task = consumer_fixture(root, unknown=True)
     plan = adoption.plan_schema_adoption(root, consumers=[active], migrate_consumers=True)
     assert not plan["consumers"][0]["migrated_validation"]["valid"]
-    apply(plan)
+    receipt = apply(plan)
+    assert receipt["selected_validation_readback"][0]["valid"] is False
+    assert receipt["selected_validation_readback"][0]["diagnostics_count"] > 0
     assert json.loads(active.read_bytes())["custom_operator_field"] == {"preserve": "unknown"}
     assert json.loads(task.read_bytes())["custom_operator_field"] == {"keep": True}
 
@@ -391,3 +393,59 @@ def test_unresolvable_or_recursive_local_schema_failure_is_sanitized(tmp_path, b
     with pytest.raises(adoption.SchemaAdoptionError) as exc:
         adoption.plan_schema_adoption(root, consumers=[active])
     assert exc.value.error_code == "validation_reference" and exc.value.retryable is False
+
+
+@pytest.mark.parametrize("historical", [False, True])
+def test_schema_rollback_refuses_changed_diagnostic_only_consumers(tmp_path, historical):
+    root, schema, manifest, _ = root_fixture(tmp_path)
+    selected, _ = consumer_fixture(root, historical=historical)
+    selection = {"historical": [selected]} if historical else {"consumers": [selected]}
+    plan = adoption.plan_schema_adoption(root, **selection); receipt = apply(plan)
+    value = json.loads(selected.read_bytes()); value["next_action"] = "concurrent selected consumer edit"
+    selected.write_text(json.dumps(value))
+    originals = schema.read_bytes(), manifest.read_bytes(), selected.read_bytes()
+    with pytest.raises(adoption.SchemaAdoptionError, match="diagnostic-only selected consumer"):
+        adoption.rollback_schema_transaction(root, receipt["journal"], expected_plan_sha256=plan["plan_sha256"])
+    assert (schema.read_bytes(), manifest.read_bytes(), selected.read_bytes()) == originals
+
+
+@pytest.mark.parametrize("malformation", ["installed", "bundled", "manifest", "schema", "migration"])
+def test_even_hash_acknowledged_malformed_plans_are_typed_refusals(tmp_path, malformation):
+    root, _, _, _ = root_fixture(tmp_path, ownership="current"); selected, _ = consumer_fixture(root)
+    plan = adoption.plan_schema_adoption(root, consumers=[selected], migrate_consumers=True)
+    if malformation in {"installed", "bundled", "manifest"}: plan[malformation] = None
+    if malformation == "schema": plan["schema_name"] = None
+    if malformation == "migration": plan["consumers"][0]["migration"] = None
+    plan["plan_sha256"] = adoption._identity({key: value for key, value in plan.items() if key != "plan_sha256"})
+    with pytest.raises(adoption.SchemaAdoptionError) as exc:
+        adoption.apply_schema_plan(plan, expected_plan_sha256=plan["plan_sha256"], acknowledge_installed_sha256="wrong")
+    assert exc.value.error_code == "invalid_plan" and not exc.value.retryable
+
+
+def test_canonical_current_order_missing_row_migrates_instead_of_zero_write_acceptance(tmp_path):
+    from genomes_agentic_os.auto_dev_orchestration import AUTO_DEV_STAGE_ORDER
+    root, _, _, _ = root_fixture(tmp_path, ownership="current"); selected, task_path = consumer_fixture(root)
+    projection = json.loads(selected.read_bytes()); task = json.loads(task_path.read_bytes())
+    projection["stage_order"] = list(AUTO_DEV_STAGE_ORDER); task["auto_dev_stage_order"] = list(AUTO_DEV_STAGE_ORDER)
+    selected.write_text(json.dumps(projection)); task_path.write_text(json.dumps(task))
+    plan = adoption.plan_schema_adoption(root, consumers=[selected], migrate_consumers=True)
+    assert not plan["consumers"][0]["new_validation"]["valid"]
+    assert plan["consumers"][0]["migrated_validation"]["valid"]
+    receipt = apply(plan)
+    assert len(receipt["writes"]) == 2
+    current = read_auto_dev_state(selected)
+    assert current["status"] == "ready" and current["current_stage"] == "validate_production_release"
+    row = current["stages"]["validate_production_release"]
+    assert row["status"] == "not_started" and row["receipt_refs"] == [] and row["last_verified_at"] is None
+    assert json.loads(task_path.read_bytes())["history"] == task["history"]
+
+
+def test_future_canonical_task_schema_is_refused_before_all_selected_mutations(tmp_path):
+    root, schema, manifest, _ = root_fixture(tmp_path, ownership="current")
+    first, first_task = consumer_fixture(root, "first"); future, future_task = consumer_fixture(root, "future")
+    task = json.loads(future_task.read_bytes()); task["schema"] = "development-task/v99"; future_task.write_text(json.dumps(task))
+    originals = {path: path.read_bytes() for path in (schema, manifest, first, first_task, future, future_task)}
+    with pytest.raises(adoption.SchemaAdoptionError) as exc:
+        adoption.plan_schema_adoption(root, consumers=[first, future], migrate_consumers=True)
+    assert exc.value.error_code == "unsupported_consumer" and not exc.value.retryable
+    assert {path: path.read_bytes() for path in originals} == originals

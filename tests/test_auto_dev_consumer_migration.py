@@ -66,6 +66,63 @@ def test_already_current_contract_is_a_pure_noop():
     assert not result["changed"] and result["projection"] == migrated["projection"] and result["task"] == migrated["task"]
 
 
+def test_existing_required_stage_policy_metadata_and_frozen_gates_are_preserved():
+    projection, task = legacy_pair()
+    policy = {"applicability": "required", "frozen_policy_ref": "keep", "unavailable_policy": "block", "custom": {"receipt": "exact"}}
+    projection["stage_policies"] = {"validate_production_release": deepcopy(policy)}
+    task["auto_dev_stage_policies"] = {"validate_production_release": deepcopy(policy)}
+    result = plan_legacy_consumer_migration(projection, task)
+    assert result["projection"]["stage_policies"]["validate_production_release"] == policy
+    assert result["task"]["auto_dev_stage_policies"]["validate_production_release"] == policy
+    assert result["task"]["policy_fingerprint"] == task["policy_fingerprint"]
+
+
+def test_current_order_missing_required_execution_row_is_explicitly_pending():
+    projection, task = legacy_pair(status="completed")
+    projection["stage_order"] = list(AUTO_DEV_STAGE_ORDER)
+    task["auto_dev_stage_order"] = list(AUTO_DEV_STAGE_ORDER)
+    result = plan_legacy_consumer_migration(projection, task)
+    assert result["changed"] and result["from_contract"] == "auto-dev-stage-order/current-missing-production-release/v1"
+    assert result["projection"]["current_stage"] == "validate_production_release"
+    assert result["projection"]["status"] == "ready"
+    assert result["projection"]["stages"]["validate_production_release"]["receipt_refs"] == []
+
+
+@pytest.mark.parametrize("row", [None, {}, {"status": "completed"}])
+def test_incomplete_present_current_stage_rows_are_refused(row):
+    projection, task = legacy_pair(status="completed")
+    projection["stage_order"] = list(AUTO_DEV_STAGE_ORDER)
+    task["auto_dev_stage_order"] = list(AUTO_DEV_STAGE_ORDER)
+    projection["stages"]["validate_production_release"] = row
+    with pytest.raises(AutoDevStateError, match="incomplete or malformed"):
+        plan_legacy_consumer_migration(projection, task)
+
+
+@pytest.mark.parametrize("applicability", ["disabled", "contextual", None, "unknown"])
+def test_conflicting_required_stage_policy_is_refused(applicability):
+    projection, task = legacy_pair()
+    task["auto_dev_stage_policies"] = {"validate_production_release": {"applicability": applicability}}
+    with pytest.raises(AutoDevStateError, match="conflicts"):
+        plan_legacy_consumer_migration(projection, task)
+
+
+@pytest.mark.parametrize("task_schema", ["development-task/v99", "different-task/v1", None, 99])
+def test_explicit_future_or_unknown_task_version_is_refused(task_schema):
+    projection, task = legacy_pair(); task["schema"] = task_schema
+    with pytest.raises(AutoDevStateError, match="task schema version"):
+        plan_legacy_consumer_migration(projection, task)
+
+
+@pytest.mark.parametrize("versioned", [False, True])
+def test_known_task_v1_and_explicit_structural_unversioned_legacy_handling(versioned):
+    projection, task = legacy_pair()
+    if versioned: task["schema"] = "development-task/v1"
+    result = plan_legacy_consumer_migration(projection, task)
+    assert result["task_contract"] == ("development-task/v1" if versioned else "development-task/legacy-unversioned")
+    assert ("schema" in result["task"]) is versioned
+
+
+
 @pytest.mark.parametrize("mutation", ["future-schema", "unknown-stage", "missing-stage", "running", "boundary", "task-order", "divergent-new-stage"])
 def test_unknown_or_unsafe_contracts_are_refused(mutation):
     projection, task = legacy_pair()

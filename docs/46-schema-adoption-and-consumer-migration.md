@@ -59,10 +59,19 @@ are not changed by adoption.
 
 First adopt the exact bundled Auto-Dev schema. Then create a separate consumer
 plan. This migration supports `auto-dev-work-item/v1` with the known canonical
-stage order preceding `validate_production_release`, or the already-current
-contract as a no-op. Future schemas, unknown or reordered stages, divergent
+stage order preceding `validate_production_release`, the current order with only
+that execution row absent, or a complete current contract as a no-op. Future
+schemas, unknown or reordered stages, malformed existing rows, divergent
 task/projection boundaries and running execution are refused. Older unrelated
 contracts remain explicit compatibility gaps.
+
+Task authority is versioned independently from the projection. Explicit
+`development-task/v1` is supported; any other explicit task schema, including
+a future version or null marker, is refused. An absent marker is reported as
+`development-task/legacy-unversioned` and is supported only with the known
+structural stage contract, matching explicit mode/window, and the exact
+canonical active task/packet binding. Its marker stays absent; migration does
+not manufacture a task version or ownership claim.
 
 ```bash
 agentic-os schema-adoption consumer-plan --root /tmp/example-os \
@@ -87,6 +96,11 @@ timestamp. The current stage/status point to real pending work; blocked and
 paused admission remain blocked or paused. A stage outside the window is
 `out_of_scope`. Previously completed later stages retain their historical
 evidence; they do not supply the absent prerequisite receipt.
+
+An existing production-release policy keeps its unknown/frozen metadata and
+must declare required applicability. Disabled or conflicting applicability is
+refused. A full stage-order list with an absent execution row is repaired
+explicitly; it cannot be reported as a zero-write successful migration.
 
 Unknown fields can remain incompatible with a strict vendor schema. Their
 residual diagnostics stay visible in `migrated_validation`; preserving them does
@@ -114,7 +128,8 @@ agentic-os schema-adoption rollback --root /tmp/example-os \
 
 Rollback checks every target and backup before restoring any member. It accepts
 only exact original or exact planned result bytes. A concurrent or unknown edit
-to the manifest, schema, task or projection refuses the whole rollback; the
+to the manifest, schema, task, projection or any selected diagnostic-only
+consumer refuses the whole rollback; the
 operator must investigate it without overwriting the divergence. Path traversal,
 symlink targets and external schema references are unsupported. Limits are 50
 selected consumers, 4 MiB per file/complete plan, and 100 diagnostics per consumer

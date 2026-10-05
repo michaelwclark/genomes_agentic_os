@@ -326,6 +326,26 @@ def _verify_plan(plan: Mapping[str, Any], expected: str) -> dict[str, Any]:
             or any(not isinstance(row, dict) or row.get("kind") not in {"active", "historical"}
                    or not isinstance(row.get("path"), str) for row in plan["consumers"])):
         raise SchemaAdoptionError("invalid_plan", "plan root or consumer selection is malformed")
+    for label in ("installed", "bundled", "manifest"):
+        descriptor = plan.get(label)
+        if not isinstance(descriptor, dict) or "sha256" not in descriptor:
+            raise SchemaAdoptionError("invalid_plan", "plan schema or manifest identities are malformed")
+        checksum = descriptor["sha256"]
+        if not (checksum is None and label != "bundled") and not (isinstance(checksum, str) and re.fullmatch(r"[a-f0-9]{64}", checksum)):
+            raise SchemaAdoptionError("invalid_plan", "plan identity checksum is malformed")
+        if label != "bundled" and not isinstance(descriptor.get("path"), str):
+            raise SchemaAdoptionError("invalid_plan", "plan target path is malformed")
+    if not isinstance(plan.get("schema_name"), str):
+        raise SchemaAdoptionError("invalid_plan", "plan schema selection is malformed")
+    for row in plan["consumers"]:
+        if not isinstance(row.get("canonical"), dict) or not isinstance(row.get("sha256"), str):
+            raise SchemaAdoptionError("invalid_plan", "plan consumer identity is malformed")
+        if plan["kind"] == "consumer_migration" and row["kind"] == "active":
+            migration = row.get("migration")
+            if (not isinstance(migration, dict) or not isinstance(migration.get("projection"), dict)
+                    or not isinstance(migration.get("task"), dict) or not isinstance(migration.get("changed"), bool)
+                    or not isinstance(row.get("task_path"), str) or not isinstance(row.get("task_sha256"), str)):
+                raise SchemaAdoptionError("invalid_plan", "plan migration binding is malformed")
     return dict(plan)
 
 
@@ -525,9 +545,16 @@ def apply_schema_plan(plan: Mapping[str, Any], *, expected_plan_sha256: str,
                 journal.update(status="recovery_required", readback_verified=False)
                 _journal(root, directory / "journal.json", journal)
             raise
+    validation_readback = []
+    for row in frozen["consumers"]:
+        validation = row.get("migrated_validation") if frozen["kind"] == "consumer_migration" and row["kind"] == "active" else row["new_validation"]
+        validation_readback.append({"path": row["path"], "kind": row["kind"], "valid": validation["valid"],
+                                    "diagnostics_count": len(validation["diagnostics"]), "truncated": validation["truncated"],
+                                    "new_pending_stages": row.get("migration", {}).get("new_pending_stages", [])})
     return {"schema": "schema-adoption-receipt/v1", "status": journal["status"], "kind": frozen["kind"],
             "plan_sha256": expected_plan_sha256, "journal": str(directory / "journal.json"),
             "readback_verified": journal["readback_verified"], "writes": journal["writes"],
+            "selected_validation_readback": validation_readback,
             "whole_root_health_claimed": False, "execution_receipts_created": False}
 
 
@@ -553,6 +580,8 @@ def rollback_schema_transaction(root: str | Path, journal_path: str | Path, *, e
                 raise SchemaAdoptionError("rollback_divergence", "rollback refuses a concurrent or unknown target change")
         for row in plan["consumers"]:
             consumer_path = _path(target, row["path"])
+            if (row["kind"] == "historical" or plan["kind"] == "schema_adoption") and _digest(_read(consumer_path)) != row["sha256"]:
+                raise SchemaAdoptionError("consumer_divergence", "rollback refuses a changed diagnostic-only selected consumer")
             value = _object(_read(consumer_path), "consumer rollback identity")
             if _canonical(target, consumer_path, value, active=row["kind"] == "active") != row["canonical"]:
                 raise SchemaAdoptionError("canonical_divergence", "rollback refuses changed canonical consumer authority")
