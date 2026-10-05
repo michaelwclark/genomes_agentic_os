@@ -161,10 +161,26 @@ def _matches_command(configured: str, actual: list[str], task: dict, selected: d
     if not extras:
         return True
     # Additional pytest selectors can reduce the required suite and are refused.
-    return expected[1:3] == ["-m", "pytest"] and all(
-        item == "--cov-branch" or item.startswith(("--cov=", "--cov-report=", "--cov-fail-under=", "--basetemp="))
-        for item in extras
-    )
+    if expected[1:3] != ["-m", "pytest"]:
+        return False
+    cache_override = False
+    index = 0
+    while index < len(extras):
+        item = extras[index]
+        if item == "-o":
+            if cache_override or index + 1 == len(extras) or not extras[index + 1].startswith("cache_dir="):
+                return False
+            value = Path(extras[index + 1].removeprefix("cache_dir="))
+            private_root = (Path(task["work_item"]) / "artifacts").resolve()
+            if not value.is_absolute() or not value.resolve().is_relative_to(private_root) or value.resolve() == private_root:
+                return False
+            cache_override = True
+            index += 2
+        elif item == "--cov-branch" or item.startswith(("--cov=", "--cov-report=", "--cov-fail-under=", "--basetemp=")):
+            index += 1
+        else:
+            return False
+    return True
 
 
 def validation_proof(packet: Path, task: dict, selected: dict, head: str, policy: str, now: datetime) -> dict:

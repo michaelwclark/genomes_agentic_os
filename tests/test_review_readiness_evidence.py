@@ -383,6 +383,48 @@ def test_exact_command_without_instrumentation_and_malformed_run(context):
     assert not proof._matches_command('',[],context.task,context.selected)
 
 
+def test_actual_full_gate_cache_annotation_emits_verified_validation(context):
+    private = context.packet / 'artifacts/producer-contract-repair-v2/full-v4'
+    argv = [str(context.worktree / '.venv/bin/python'), '-m', 'pytest', 'tests/', '-q',
+            '--basetemp=' + str(private / 'tmp/tests'), '-o', 'cache_dir=' + str(private / 'pytest-cache'),
+            '--cov=genomes_agentic_os', '--cov-branch', '--cov-report=json:' + str(private / 'coverage.json')]
+    stage(context, argv=argv)
+    result = proof.emit_readiness_evidence(context.state, head=HEAD, policy=context.policy, now=NOW)
+    assert result['validation_status'] == 'passed'
+    assert result['readiness_evidence_verified']['validation'] is True
+
+
+@pytest.mark.parametrize('extras', [
+    ['-o'], ['-o', 'addopts=-k focused'], ['-o', 'cache_dir='], ['-o', 'cache_dir=relative'],
+    ['-o', 'cache_dir=/unrelated/task/cache'], ['-o', 'cache_dir={packet}/artifacts/../../escape'],
+    ['-o', 'cache_dir={packet}/artifacts'], ['--override-ini=cache_dir={packet}/artifacts/cache'],
+    ['-o', 'cache_dir={packet}/artifacts/cache', '-o', 'cache_dir={packet}/artifacts/second'],
+    ['-o', 'cache_dir={packet}/artifacts/cache', '-k', 'focused'],
+    ['-o', 'cache_dir={packet}/artifacts/cache', '-m', 'unit'],
+    ['-o', 'cache_dir={packet}/artifacts/cache', 'tests/test_one.py'],
+])
+def test_cache_annotation_cannot_override_suite_or_escape_private_artifacts(context, extras):
+    argv = [str(context.worktree / '.venv/bin/python'), '-m', 'pytest', 'tests/', '-q',
+            *(item.format(packet=context.packet) for item in extras)]
+    stage(context, argv=argv)
+    assert proof.validation_proof(context.packet, context.task, context.selected, HEAD, context.policy, NOW)['status'] == 'unknown'
+
+
+def test_cache_annotation_symlink_escape_is_refused(context):
+    artifacts = context.packet / 'artifacts'
+    artifacts.mkdir()
+    (artifacts / 'outside').symlink_to(context.worktree, target_is_directory=True)
+    argv = [str(context.worktree / '.venv/bin/python'), '-m', 'pytest', 'tests/', '-q',
+            '-o', 'cache_dir=' + str(artifacts / 'outside/cache')]
+    assert not proof._matches_command(COMMAND, argv, context.task, context.selected)
+
+
+def test_pytest_annotations_cannot_extend_other_required_commands(context):
+    configured = '.venv/bin/python -m unittest'
+    actual = [str(context.worktree / '.venv/bin/python'), '-m', 'unittest', '--cov-branch']
+    assert not proof._matches_command(configured, actual, context.task, context.selected)
+
+
 def test_bound_size_object_and_collision_guards(context,monkeypatch):
     value=ref(context,'input',{})
     monkeypatch.setattr(proof,'MAX_BYTES',1)

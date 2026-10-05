@@ -54,8 +54,10 @@ Every required logical command must have actual execution proof. Deferral to
 CI remains unknown for local validation.
 
 Command matching uses the frozen argument vector. Coverage and task-owned
-pytest basetemp flags may extend it; focused selectors and additional test
-paths cannot substitute for the required full suite. An alternate interpreter
+pytest basetemp flags may extend it. A single `-o cache_dir=<absolute path>`
+pair is accepted only below the packet's private `artifacts/` directory;
+other configuration overrides, focused selectors, and additional test paths
+cannot substitute for the required full suite. An alternate interpreter
 needs explicit pinned authority, for example:
 
 ```yaml
