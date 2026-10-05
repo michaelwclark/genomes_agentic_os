@@ -52,8 +52,9 @@ installed `~/agentic_os` root after marker/directory validation. It never uses
 the current worktree as a private coordination root, and an explicit root that
 disagrees with `AGENTIC_OS_ROOT` fails closed.
 
-6. Require the resulting `review-request.json`, `reviewer-response.md` when
-   available, `model-receipt.md`, `review-ledger.jsonl`, and
+6. Require the resulting `review-request.json`, original `reviewer-stdout.bin`
+   with `reviewer-stdout-receipt.json`, `reviewer-structured-output.json` and
+   `reviewer-response.md` when validated, `model-receipt.md`, `review-ledger.jsonl`, and
    `readiness-decision.json`. A timeout, auth failure, empty output, or malformed
    output is a sanitized receipt-backed unavailable/runtime result, never a
    clean review. Honor the project's block policy.
@@ -71,7 +72,15 @@ Only a structured clean verdict that passes the provider scrub is posted;
 findings remain canonical local receipts without a post, including findings
 that fail the scrub. A clean verdict that fails the scrub is stored as a
 retryable `unavailable` attempt for the same key instead of consuming the one
-canonical full-review receipt. Both transports parse only the final non-empty
+canonical full-review receipt. New native Claude invocations request
+`--output-format json --json-schema` and require a successful native result
+envelope with one typed `structured_output.verdict` and its findings. Native
+error envelopes, missing fields, duplicate JSON keys or finding IDs, wrong
+types, ambiguous explicit markers, and contradictory verdicts fail closed.
+Native stdout bytes and hash stay separate from the deterministic Markdown
+projection consumed by the existing ledger. A retry allocates a new artifact
+leaf after coordinator admission, retaining the same subject/key and budgets;
+it never overwrites a saved attempt. The legacy text transport parses only the final non-empty
 `AGENTIC_OS_REVIEW_VERDICT: CLEAN|FINDINGS` line, so an echoed prompt cannot
 manufacture or invalidate the reviewer verdict. Both transports define CLEAN
 as no unresolved blocking findings. An active top-level `BLOCKER` section or a
@@ -79,6 +88,21 @@ JSON finding with `blocking: true` contradicts CLEAN and becomes canonical
 findings. Resolved/prior sections and non-blocking WARNING/FYI or low findings
 may coexist with CLEAN. Every fenced JSON findings array is inspected, so a
 later empty example cannot erase an earlier blocker.
+
+For a protocol-only failure, preserve the failed attempt and raw response,
+repair and locally validate the framing transport, and obtain authorization for
+one guarded native acceptance call. Re-read the exact repository, PR, base,
+head and frozen policy before using the original normalized `review_self` /
+`full-pr` subject and shared coordinator. Existing terminal authority is reused
+and existing budget exhaustion still blocks. Do not promote the malformed
+response, move its marker, select another purpose/root, or replay a review wave.
+If base/head/policy moved, stop and reconcile that change through its owning
+workflow before invoking. A second framing failure requires new diagnostic
+evidence and an operator decision; it is not a blind retry instruction. Never
+use `--bare`, which excludes subscription OAuth/keychain authentication, or an
+API/SDK/Console fallback. The native transport owner is this runner; fixture
+and distribution gates prove source behavior, while real native acceptance
+and readiness integration remain separate evidence.
 
 Do not hand-craft a Claude/Codex prompt, create a second PR, force-push, bypass
 required checks, treat unavailable review as approval, or post intermediate
