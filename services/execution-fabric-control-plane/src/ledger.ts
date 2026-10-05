@@ -18,6 +18,7 @@ import type {
   WorkerRegistrationReceipt,
 } from "./contracts.js";
 import { roleHealthSnapshot, type RoleHealthSnapshot } from "./roles.js";
+import { DISPATCH_STARVATION_AGE_SECONDS, taskDispatchOrderSql } from "./queue-ordering.js";
 import type {
   NormalizedTaskAdmission,
   PolicySnapshot,
@@ -668,25 +669,7 @@ export class PostgresLedger implements LedgerPort {
                  AND running.namespace=t.namespace
              ) < (($3::jsonb ->> t.namespace)::integer)
            )
-         ORDER BY
-           t.priority + LEAST(
-             $7::integer,
-             GREATEST(
-               0,
-               floor(
-                 extract(epoch FROM (now() - t.created_at)) /
-                 GREATEST($5::integer,1)
-               )::integer * $6::integer
-             )
-           ) DESC,
-           (
-             SELECT count(*) + 1 FROM fabric_tasks running
-             WHERE running.status='running'
-               AND running.namespace=t.namespace
-           )::numeric /
-             COALESCE(NULLIF(($4::jsonb ->> t.namespace)::numeric,0),1)
-             ASC,
-           t.available_at,t.created_at,t.id
+         ORDER BY ${taskDispatchOrderSql("claim")}
          FOR UPDATE SKIP LOCKED LIMIT 1`,
         [
           eligibleQueues,
@@ -696,6 +679,7 @@ export class PostgresLedger implements LedgerPort {
           constraints.priorityAgingIntervalSeconds,
           constraints.priorityAgingBoost,
           constraints.priorityAgingMaxBoost,
+          DISPATCH_STARVATION_AGE_SECONDS,
         ],
       );
       if (!task.rowCount) return null;
@@ -1096,11 +1080,11 @@ export class PostgresLedger implements LedgerPort {
 
   async listPublishable(limit: number): Promise<TaskRecord[]> {
     const result = await this.pool.query(
-      `SELECT * FROM fabric_tasks
-       WHERE status='queued' AND available_at <= now()
-         AND (delivery_published_at IS NULL OR delivery_published_at < now() - interval '1 minute')
-       ORDER BY priority DESC,available_at,created_at,id LIMIT $1`,
-      [limit],
+      `SELECT t.* FROM fabric_tasks t
+       WHERE t.status='queued' AND t.available_at <= now()
+         AND (t.delivery_published_at IS NULL OR t.delivery_published_at < now() - interval '1 minute')
+       ORDER BY ${taskDispatchOrderSql("publish")} LIMIT $1`,
+      [limit, DISPATCH_STARVATION_AGE_SECONDS],
     );
     return result.rows.map((row) => taskFromRow(row as Record<string, unknown>));
   }

@@ -67,6 +67,9 @@ def _item(identifier: str, created: str, priority: int = 0, **extra) -> dict:
     ("2026-07-01T00:00:00.501Z", "fresh"),
     ("2026-07-01T00:00:00.500Z", "boundary"),
     ("2026-07-01T00:00:00.499Z", "boundary"),
+    ("2026-07-01T00:00:00.500001Z", "fresh"),
+    ("2026-07-01T00:00:00.500400Z", "fresh"),
+    ("2026-07-01T00:00:00.499999Z", "boundary"),
 ])
 def test_cutoff_equality_and_both_sides_across_actual_consumers(tmp_path, monkeypatch, consumer, created, expected):
     records = [_item("fresh", "2026-07-01T00:59:00Z", 10000), _item("boundary", created)]
@@ -81,6 +84,35 @@ def test_oldest_aged_item_wins_despite_priority_and_same_hour(tmp_path, monkeypa
         *[_item(f"fresh-{n}", "2026-07-01T00:59:00Z", 100000 + n) for n in range(20)],
     ]
     assert _selected(tmp_path, monkeypatch, consumer, records) == "oldest-low"
+
+
+@pytest.mark.parametrize("consumer", CONSUMERS)
+def test_aged_microsecond_order_and_future_due_parity(tmp_path, monkeypatch, consumer):
+    records = [
+        _item("future-high", "2026-06-30T20:00:00Z", 100000, due_at="2026-07-01T01:00:00.500001Z"),
+        _item("newer-high", "2026-07-01T00:00:00.499999Z", 10000),
+        _item("oldest-low", "2026-07-01T00:00:00.499998Z", -10),
+    ]
+    assert _selected(tmp_path, monkeypatch, consumer, records) == "oldest-low"
+
+
+@pytest.mark.parametrize("value", [None, "", "invalid", "2026-02-30T01:00:00Z", 42, True])
+def test_invalid_timestamps_have_no_normalized_date(value):
+    assert db.normalized_timestamp_us(value) is None
+
+
+def test_exact_normalized_timestamp_is_shared_by_sql_and_filesystem(tmp_path):
+    value = "2026-07-01 02:00:00.500001+02:00"
+    expected = db.normalized_timestamp_us("2026-07-01T00:00:00.500001Z")
+    assert expected == db.normalized_timestamp_us(value)
+    assert expected == db.normalized_timestamp_us("2026-07-01T00:00:00.500001")
+    path = tmp_path / "state.db"
+    conn = db.connect(path)
+    assert conn.execute("SELECT agentic_timestamp_us(?)", (value,)).fetchone()[0] == expected
+    conn.close()
+    readonly = db.connect_readonly(path)
+    assert readonly.execute("SELECT agentic_timestamp_us(?)", (value,)).fetchone()[0] == expected
+    readonly.close()
 
 
 @pytest.mark.parametrize("consumer", CONSUMERS)

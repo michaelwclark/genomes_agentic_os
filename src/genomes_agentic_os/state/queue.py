@@ -17,13 +17,13 @@ event ledger's own ``payload_ref`` catch-all pattern.
 
 from __future__ import annotations
 
-from datetime import timedelta, timezone
+from datetime import timedelta
 import json
 import sqlite3
 from typing import Any, Sequence
 import uuid
 
-from .db import days_ago_iso, parse_iso, row_to_dict, transaction, utc_now_iso
+from .db import days_ago_iso, normalized_timestamp_us, parse_iso, row_to_dict, transaction, utc_now_iso
 
 # Matches the "states"/"approval_states" vocabulary declared in the real
 # run-queue.yml (and in event_graph.default_run_queue()).
@@ -47,12 +47,12 @@ DISPATCH_STARVATION_AGE_SECONDS = 3600
 # exact normalized availability time wins, so future arrivals cannot continually
 # overtake an eligible old item. Only this module binds the SQL parameters.
 _DISPATCH_ORDER_SQL = """\
-CASE WHEN julianday(COALESCE(due_at, created_at)) <= julianday(?) THEN 0 ELSE 1 END ASC,
-CASE WHEN julianday(COALESCE(due_at, created_at)) <= julianday(?) THEN julianday(COALESCE(due_at, created_at)) END ASC,
+CASE WHEN agentic_timestamp_us(COALESCE(due_at, created_at)) <= agentic_timestamp_us(?) THEN 0 ELSE 1 END ASC,
+CASE WHEN agentic_timestamp_us(COALESCE(due_at, created_at)) <= agentic_timestamp_us(?) THEN agentic_timestamp_us(COALESCE(due_at, created_at)) END ASC,
 COALESCE(priority, 0) DESC,
 (due_at IS NULL) ASC,
-COALESCE(julianday(due_at), 1e100) ASC,
-COALESCE(julianday(created_at), 1e100) ASC, id ASC
+COALESCE(agentic_timestamp_us(due_at), 1e100) ASC,
+COALESCE(agentic_timestamp_us(created_at), 1e100) ASC, id ASC
 """
 
 _INSERT_SQL = """
@@ -87,16 +87,8 @@ def dispatch_order(now: str) -> tuple[str, tuple[str, str]]:
     return _DISPATCH_ORDER_SQL, (cutoff, cutoff)
 
 
-def _timestamp(value: Any) -> float | None:
-    if not value:
-        return None
-    try:
-        parsed = parse_iso(str(value))
-        if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=timezone.utc)
-        return parsed.timestamp()
-    except (ValueError, TypeError, OverflowError):
-        return None
+def _timestamp(value: Any) -> int | None:
+    return normalized_timestamp_us(value)
 
 
 def dispatch_available(item: dict[str, Any], now: str) -> bool:
@@ -264,8 +256,8 @@ def claim_next(
             f"""
             SELECT id FROM run_queue
             WHERE status IN ({placeholders})
-              AND (due_at IS NULL OR julianday(due_at) <= julianday(?))
-              AND (lease_until IS NULL OR julianday(lease_until) < julianday(?))
+              AND (due_at IS NULL OR agentic_timestamp_us(due_at) <= agentic_timestamp_us(?))
+              AND (lease_until IS NULL OR agentic_timestamp_us(lease_until) < agentic_timestamp_us(?))
             ORDER BY {order_sql}
             LIMIT 1
             """,

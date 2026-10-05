@@ -350,7 +350,7 @@ def claim_next(
         active_workers = conn.execute(
             """
             SELECT COUNT(DISTINCT lease_owner) FROM run_queue
-            WHERE status = 'running' AND worker_pool = ? AND julianday(lease_until) >= julianday(?)
+            WHERE status = 'running' AND worker_pool = ? AND agentic_timestamp_us(lease_until) >= agentic_timestamp_us(?)
             """,
             (worker["pool_name"], now_value),
         ).fetchone()[0]
@@ -395,7 +395,7 @@ def claim_next(
         queue_running = conn.execute(
             """
             SELECT COUNT(*) FROM run_queue
-            WHERE status = 'running' AND queue_name = ? AND julianday(lease_until) >= julianday(?)
+            WHERE status = 'running' AND queue_name = ? AND agentic_timestamp_us(lease_until) >= agentic_timestamp_us(?)
             """,
             (worker["queue_name"], now_value),
         ).fetchone()[0]
@@ -416,8 +416,8 @@ def claim_next(
             f"""
             SELECT id FROM run_queue
             WHERE status = 'queued' AND queue_name = ? AND worker_pool = ?
-              AND (due_at IS NULL OR julianday(due_at) <= julianday(?))
-              AND (lease_until IS NULL OR julianday(lease_until) < julianday(?))
+              AND (due_at IS NULL OR agentic_timestamp_us(due_at) <= agentic_timestamp_us(?))
+              AND (lease_until IS NULL OR agentic_timestamp_us(lease_until) < agentic_timestamp_us(?))
               {item_filter}
             ORDER BY {order_sql}
             LIMIT 1
