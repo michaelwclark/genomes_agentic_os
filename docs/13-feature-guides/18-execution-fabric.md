@@ -41,6 +41,45 @@ This preserves existing installs and upgrades. If `runtime.queue_mode` is
 missing from the installed runtime registry, the effective mode is still
 `filesystem`.
 
+## Bounded queue ordering and command leases
+
+Automatic claims and dispatches share an age-first policy. An eligible
+item becomes aged when its availability time (`due_at`, otherwise `created_at`)
+is at least one hour old. Aged work precedes fresh work regardless of priority;
+within that bucket, the oldest normalized availability time wins. Fresh work
+retains priority ordering with normalized due/creation timestamps and stable
+identifier ties. Queue, pool, approval, capacity and active-lease fences still
+apply. Explicit item selection and configured latest-queued schedule policies
+retain their declared operator intent.
+
+SQLite consumers obtain both the ordering clause and its bound cutoff values
+from one queue helper; filesystem dispatch uses the corresponding queue policy
+key. One parser normalizes ISO spellings to integer UTC microseconds in both
+SQLite and filesystem queue selection, including due eligibility and the generic
+queue's active-task lease cutoff. Existing named-worker heartbeat, fencing and
+recovery operations retain their separate lease timestamp behavior. Naive
+timestamps mean UTC; invalid due dates remain ineligible, and unknown creation
+dates do not enter the aged bucket. Submillisecond
+timestamps keep their ordering rather than rounding at the starvation cutoff.
+This bounds overtaking by newly arriving high-priority
+work; it does not promise a wall-clock start time while workers are unavailable
+or older eligible work remains ahead.
+
+Remote PostgreSQL claim and publication selection use one parameter-safe SQL
+factory with the same one-hour availability boundary and oldest-aged-first
+prefix. Existing fresh-work priority aging and namespace-weight ties remain in
+place, together with capacity and fencing checks. PostgreSQL timestamps retain
+microsecond precision. BullMQ supplies wakeups; a worker claims PostgreSQL
+truth before and after waiting, so projected job priority does not choose the
+executing task.
+
+Known direct root-scanning CLI commands receive a longer queue lease based on
+parsed executable and verb tokens, including `aos`, reordered options and
+quoted roots. Explicit `lease_seconds` or `runtime_policy.lease_seconds` takes
+precedence; wrappers can declare this budget. Invalid explicit leases are
+rejected instead of silently using a shorter default. A lease stays within the
+24-hour bound and is at least the command timeout plus its safety margin.
+
 ## What ships
 
 The editable installed policy is the discoverable root-level harness config:
