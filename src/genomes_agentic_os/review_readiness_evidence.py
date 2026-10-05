@@ -87,9 +87,22 @@ def _context(state_file: str | Path, head: str, policy: str) -> tuple[Path, dict
     if not SHA.fullmatch(head) or not DIGEST.fullmatch(policy):
         raise DevelopmentDeliveryError("readiness requires exact head and policy")
     task = _json(Path(state_file))
+    if task.get("schema") != "development-task/v1":
+        raise DevelopmentDeliveryError("readiness task schema differs")
     packet = Path(task["work_item"]).resolve()
     manifest = _json(packet / "autodev.json")
     delivery = manifest.get("delivery") or {}
+    if manifest.get("schema") != "auto-dev-work-item/v1" or not isinstance(delivery, dict):
+        raise DevelopmentDeliveryError("canonical packet manifest schema differs")
+    for owner in (manifest, delivery):
+        for key in ("canonical_work_id", "run_id"):
+            identity = owner.get(key)
+            if identity is not None and (not isinstance(identity, str) or not identity or task.get(key) != identity):
+                raise DevelopmentDeliveryError("canonical task work identity differs")
+    if delivery.get("work_item") is not None and Path(delivery["work_item"]).resolve() != packet:
+        raise DevelopmentDeliveryError("canonical delivery packet differs")
+    if task.get("autodev_path") is not None and Path(task["autodev_path"]).resolve() != packet / "autodev.json":
+        raise DevelopmentDeliveryError("canonical task manifest differs")
     if not (
         task.get("policy_fingerprint") == policy
         and delivery.get("policy_fingerprint") == policy
@@ -465,7 +478,9 @@ def refresh_packet_readiness(packet: str | Path, provider: dict, head: str, poli
     packet = Path(packet).resolve()
     manifest = _json(packet / "autodev.json")
     state_file = manifest["delivery"]["task_state_ref"]
-    _, task, selected = _context(state_file, head, policy)
+    context_packet, task, selected = _context(state_file, head, policy)
+    if context_packet != packet:
+        raise DevelopmentDeliveryError("caller packet differs from canonical task packet")
     repository = _repository(selected["repository_id"])
     try:
         live = collect_github_gate_readback(repository, provider.get("number"), task["worktree"]["path"],

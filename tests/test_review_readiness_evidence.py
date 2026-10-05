@@ -57,10 +57,10 @@ def context(tmp_path, generated_policy):
     pinned = packet / 'policy.json'
     pinned.write_text(json.dumps(snapshot))
     state = packet / 'state.json'
-    task = {'work_item': str(packet), 'policy_receipt': str(pinned), 'policy_fingerprint': snapshot['fingerprint'],
+    task = {'schema':'development-task/v1','canonical_work_id':'acme:app:CC-PROOF','run_id':'offline-proof','work_item': str(packet), 'policy_receipt': str(pinned), 'policy_fingerprint': snapshot['fingerprint'],
             'repository': {'id': 'github:acme/app'}, 'worktree': {'path': str(worktree), 'base_sha': BASE, 'branch': 'feature/CC-PROOF'}, 'receipts': []}
     state.write_text(json.dumps(task))
-    (packet / 'autodev.json').write_text(json.dumps({'delivery': {'task_state_ref': str(state),
+    (packet / 'autodev.json').write_text(json.dumps({'schema':'auto-dev-work-item/v1','canonical_work_id':'acme:app:CC-PROOF','delivery': {'canonical_work_id':'acme:app:CC-PROOF','run_id':'offline-proof','work_item':str(packet),'task_state_ref': str(state),
            'policy_receipt': str(pinned), 'policy_fingerprint': snapshot['fingerprint']}}))
     return SimpleNamespace(packet=packet, task=task, selected=snapshot['selected_profile'], policy=snapshot['fingerprint'],
                            state=state, pinned=pinned, snapshot=snapshot, source=source, worktree=worktree)
@@ -575,3 +575,31 @@ def test_explicit_profile_authority_without_file_still_hashes_frozen_content(con
     selected=delivery._selected_profile_policy_authority(profile)
     assert selected['provenance']['source_sha256']==delivery._json_sha256(profile)
     assert selected['review']['copilot']['required'] is False
+
+
+def test_same_policy_packet_pointer_cannot_capture_or_mutate_other_packet(context):
+    stage(context)
+    other=context.packet.parent/'other-packet';other.mkdir()
+    a=other/'autodev.json'
+    # A malicious caller packet points to a valid B task with the same policy.
+    a.write_text((context.packet/'autodev.json').read_text())
+    marker=context.packet/'artifacts/finishing-touches/readiness-evidence.json';marker.parent.mkdir(parents=True);marker.write_text('immutable predecessor')
+    calls=[]
+    def fetch(args):calls.append(args);raise AssertionError('provider must not run')
+    with pytest.raises(delivery.DevelopmentDeliveryError,match='caller packet differs'):
+        proof.refresh_packet_readiness(other,{'number':42,'headRefOid':HEAD,'baseRefOid':BASE},HEAD,context.policy,fetch=fetch,now=NOW)
+    assert calls==[] and marker.read_text()=='immutable predecessor'
+    assert not (other/'artifacts').exists()
+
+
+@pytest.mark.parametrize('where,key,value',[('task','schema','other'),('manifest','schema','other'),
+    ('manifest','canonical_work_id','acme:app:OTHER'),('delivery','canonical_work_id','acme:app:OTHER'),
+    ('delivery','run_id','other-run'),('delivery','work_item','/other'),('task','autodev_path','/other/autodev.json')])
+def test_canonical_work_identity_is_bound_before_emission(context,where,key,value):
+    path=context.state if where=='task' else context.packet/'autodev.json'
+    payload=json.loads(path.read_text())
+    if where=='delivery':payload['delivery'][key]=value
+    else:payload[key]=value
+    path.write_text(json.dumps(payload))
+    with pytest.raises(delivery.DevelopmentDeliveryError):proof._context(context.state,HEAD,context.policy)
+    assert not (context.packet/'artifacts/finishing-touches/readiness-evidence.json').exists()

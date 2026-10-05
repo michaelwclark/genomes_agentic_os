@@ -126,3 +126,9 @@ Git identities use the existing producer shape: a nonempty matching provider
 repository URL, exact registered branch, exact head, and clean status. Repository
 aliases or filesystem Git paths that cannot establish provider identity remain
 unknown.
+
+Before provider capture or any proof write, the refresh hook requires its
+explicit caller packet to equal the task's canonical packet. It validates the
+task/manifest schemas and binds available canonical work/run identities and
+manifest pointers. A same-policy pointer into another packet cannot borrow or
+replace that packet's proof, including during cached model reuse.
