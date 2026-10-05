@@ -83,8 +83,13 @@ metadata verification instead.
 
 ### Verify the selected runtime
 
-Record the selected launcher (`command -v agentic-os`) and its interpreter
-(the launcher's first line). Use that interpreter for identity verification:
+Record the selected launcher (`command -v agentic-os`), resolve any launcher
+symlinks, and inspect its interpreter selection. A Python shebang names the
+interpreter directly. Long environment paths can instead produce a
+`#!/bin/sh` launcher that executes Python from its wrapper body; inspect that
+exec target rather than treating the first line as the Python identity.
+Resolve an `/usr/bin/env python3` launcher using the launcher's effective PATH.
+Use the selected Python interpreter for identity verification:
 
 ```bash
 /path/to/runtime-venv/bin/python -c 'import sys, importlib.metadata as m, genomes_agentic_os as p; print(sys.executable); print(m.version("genomes-agentic-os")); print(p.__file__)'
