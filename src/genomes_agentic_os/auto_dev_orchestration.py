@@ -1042,6 +1042,9 @@ def sync_delivery_projection(task_state_path: str | Path) -> dict[str, Any] | No
     work_item = Path(str(work_item_raw)).expanduser().resolve()
     if not work_item.is_dir():
         return None
+    # A deleted refresh marker must not restore stale downstream authority.
+    from .development_validation_refresh import _refresh_history
+    _refresh_history(task, work_item)
     state_path = Path(str(task.get("autodev_path") or work_item / "autodev.json")).expanduser().resolve()
     with _file_lock(state_path.with_suffix(state_path.suffix + ".lock")):
         existing = _read_json(state_path) if state_path.is_file() else {}

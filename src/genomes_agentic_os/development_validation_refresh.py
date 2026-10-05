@@ -16,9 +16,16 @@ def _error(message: str) -> None:
 
 
 def _read(path: Path) -> tuple[dict[str, Any], str]:
+    def unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        value = {}
+        for key, item in pairs:
+            if key in value:
+                raise ValueError("duplicate validation authority key")
+            value[key] = item
+        return value
     try:
         raw = path.read_bytes()
-        value = json.loads(raw)
+        value = json.loads(raw, object_pairs_hook=unique_object)
     except (OSError, ValueError) as exc:
         _error(f"validation authority is unreadable: {path}: {exc}")
     if not isinstance(value, dict):
@@ -27,7 +34,9 @@ def _read(path: Path) -> tuple[dict[str, Any], str]:
 
 
 def _bound(ref: Mapping[str, Any], packet: Path) -> tuple[Path, dict[str, Any], str]:
-    if not isinstance(ref, Mapping) or not ref.get("path") or not ref.get("sha256"):
+    if (not isinstance(ref, Mapping) or not isinstance(ref.get("path"), str) or not ref["path"].strip()
+            or not isinstance(ref.get("sha256"), str) or len(ref["sha256"]) != 64
+            or any(c not in "0123456789abcdef" for c in ref["sha256"])):
         _error("validation proof requires a path and SHA-256 binding")
     path = Path(str(ref["path"]))
     path = (path if path.is_absolute() else packet / path).resolve()
@@ -50,6 +59,9 @@ def _git(worktree: Path, *args: str) -> str:
 def _head(evidence: Mapping[str, Any]) -> str:
     if not isinstance(evidence, Mapping):
         _error("validation head evidence is malformed")
+    if any(evidence.get(key) is not None and not isinstance(evidence[key], str)
+           for key in ("head_sha", "source_head_sha", "subject_revision")):
+        _error("validation head evidence must use exact string SHAs")
     values = {str(evidence[key]) for key in ("head_sha", "source_head_sha", "subject_revision")
               if evidence.get(key)}
     if len(values) != 1:
@@ -63,6 +75,10 @@ def _head(evidence: Mapping[str, Any]) -> str:
 def _repository_names(current: Mapping[str, Any]) -> set[str]:
     repository_id = str(current["repository"]["id"])
     return {repository_id, repository_id.removeprefix("git:github.com/").removeprefix("github:")}
+
+
+def _repository_matches(value: Any, current: Mapping[str, Any]) -> bool:
+    return isinstance(value, str) and value in _repository_names(current)
 
 
 def _context(state_file: str | Path) -> tuple[Any, dict[str, Any], Path, Path, dict[str, Any]]:
@@ -114,7 +130,72 @@ def _context(state_file: str | Path) -> tuple[Any, dict[str, Any], Path, Path, d
     if (frozen.get("fingerprint") != current.get("policy_fingerprint")
             or not isinstance(profile, dict) or profile.get("repository_id") != repository.get("id")):
         _error("validation frozen policy does not match the selected repository")
+    _refresh_history(current, packet)
     return task, current, packet, worktree, profile
+
+
+def _refresh_history(current: Mapping[str, Any], packet: Path) -> None:
+    history = current.get("validation_refreshes")
+    if history is None:
+        history = []
+    refresh_receipts = [row for row in current.get("receipts") or []
+                        if isinstance(row, Mapping) and row.get("kind") == "validation_refresh"]
+    if (not isinstance(history, list) or bool(history) != bool(current.get("validation_head_sha"))
+            or len(history) != len(refresh_receipts)):
+        _error("validation refresh history/head binding is missing or malformed")
+    keys = set()
+    previous = None
+    for index, row in enumerate(history):
+        fields = ("idempotency_key", "request_sha256", "predecessor_ref", "predecessor_sha256",
+                  "from_head_sha", "head_sha", "successor_ref", "successor_sha256",
+                  "policy_fingerprint", "recorded_at")
+        if (not isinstance(row, Mapping) or row.get("schema") != "development-validation-refresh/v1"
+                or not all(isinstance(row.get(key), str) and row[key].strip() for key in fields)
+                or row["idempotency_key"] in keys):
+            _error("validation refresh lineage is missing, malformed or ambiguous")
+        keys.add(row["idempotency_key"])
+        predecessor_path, predecessor, predecessor_digest = _bound(
+            {"path": row["predecessor_ref"], "sha256": row["predecessor_sha256"]}, packet)
+        successor_path, successor, successor_digest = _bound(
+            {"path": row["successor_ref"], "sha256": row["successor_sha256"]}, packet)
+        evidence = successor.get("evidence") or {}
+        lineage = evidence.get("repair_lineage") if isinstance(evidence, Mapping) else None
+        receipt = refresh_receipts[index]
+        recorded = _timestamp(row["recorded_at"])
+        if not isinstance(lineage, Mapping):
+            _error("validation refresh history lost its repair lineage")
+        lineage_path, _, lineage_digest = _bound(lineage.get("predecessor"), packet)
+        if (successor.get("schema") != "development-stage-evidence/v1"
+                or successor.get("state") != "local_validation" or successor.get("status") != "passed"
+                or (lineage_path, lineage_digest) != (predecessor_path, predecessor_digest)
+                or lineage.get("from_head_sha") != row["from_head_sha"]
+                or lineage.get("to_head_sha") != row["head_sha"]
+                or _head(predecessor.get("evidence") or {}) != row["from_head_sha"]
+                or _head(evidence) != row["head_sha"]
+                or row["request_sha256"] != successor_digest
+                or evidence.get("policy_fingerprint") != row["policy_fingerprint"]
+                or row["policy_fingerprint"] != current["policy_fingerprint"]
+                or receipt.get("state") != "local_validation" or receipt.get("ref") != str(successor_path)
+                or receipt.get("sha256") != successor_digest
+                or recorded.timestamp() > datetime.now().astimezone().timestamp()
+                or (previous is not None and previous != (predecessor_path, predecessor_digest))):
+            _error("validation refresh lineage no longer matches immutable history")
+        runs = evidence.get("validation_runs")
+        if not isinstance(runs, list) or not runs or not all(isinstance(run, Mapping) for run in runs):
+            _error("validation refresh history lost its command proof")
+        for run in runs:
+            _bound(run.get("terminal"), packet)
+            _bound(run.get("command_receipt"), packet)
+        previous = (successor_path, successor_digest)
+    if history:
+        latest_path, latest, digest = _latest(current, packet)
+        row = history[-1]
+        if (Path(row["successor_ref"]).resolve() != latest_path
+                or row["successor_sha256"] != digest or row["request_sha256"] != digest
+                or row["head_sha"] != _head(latest.get("evidence") or {})
+                or current["validation_head_sha"] != row["head_sha"]
+                or row["policy_fingerprint"] != current["policy_fingerprint"]):
+            _error("validation refresh lineage no longer matches immutable current authority")
 
 
 def _latest(current: Mapping[str, Any], packet: Path) -> tuple[Path, dict[str, Any], str]:
@@ -136,8 +217,8 @@ def _deferred(payload: Mapping[str, Any], validation: Mapping[str, Any], *,
             or payload.get("schema") != "development-stage-evidence/v1"
             or payload.get("state") != "local_validation" or payload.get("status") != "deferred_to_ci"
             or not isinstance(evidence, Mapping) or not isinstance(unavailable, Mapping)
-            or unavailable.get("classification") not in {"environment_unavailable", "infrastructure"}
-            or not all(str(unavailable.get(key) or "").strip() for key in ("command", "reason"))
+            or unavailable.get("classification") not in ("environment_unavailable", "infrastructure")
+            or not all(isinstance(unavailable.get(key), str) and unavailable[key].strip() for key in ("command", "reason"))
             or (require_frozen_command and unavailable.get("command") not in (validation.get("commands") or []))
             or not any(value == "passed" for key, value in evidence.items() if key != "unavailable_check")):
         _error("PR Create CI deferral requires exact pinned fallback policy and unavailable-command proof")
@@ -152,7 +233,7 @@ def validate_deferred_pr_create(state_file: str | Path, receipt: Path) -> None:
     _deferred(payload, profile["validation"])
     evidence = payload["evidence"]
     if (evidence.get("ticket") != current["ticket"]
-            or evidence.get("repository") not in _repository_names(current)
+            or not _repository_matches(evidence.get("repository"), current)
             or evidence.get("policy_fingerprint") != current["policy_fingerprint"]
             or _head(evidence) != _git(worktree, "rev-parse", "HEAD")):
         _error("changed-head CI deferral requires fresh successor validation")
@@ -164,6 +245,7 @@ def pr_create_validation_authority(state_file: str | Path, family: Mapping[str, 
     current = TaskState(Path(state_file).resolve()).read()
     packet = Path(str(current.get("work_item") or "")).resolve()
     rows = [r for r in current.get("receipts") or [] if isinstance(r, Mapping) and r.get("state") == "local_validation"]
+    _refresh_history(current, packet)
     if not rows:
         return None
     if not current.get("validation_refreshes"):
@@ -182,7 +264,7 @@ def pr_create_validation_authority(state_file: str | Path, family: Mapping[str, 
     evidence = family.get("evidence") or {}
     if (head != _git(worktree, "rev-parse", "HEAD") or _head(evidence) != head
             or evidence.get("ticket") != current["ticket"]
-            or evidence.get("repository") not in _repository_names(current)
+            or not _repository_matches(evidence.get("repository"), current)
             or evidence.get("policy_fingerprint") != current["policy_fingerprint"]
             or evidence.get("source_branch") != current["worktree"]["branch"]):
         _error("PR Create family does not match current exact-head validation authority")
@@ -209,7 +291,8 @@ def _commands(evidence: Mapping[str, Any], current: Mapping[str, Any], packet: P
         command_path, command, _ = _bound(run.get("command_receipt"), packet)
         actual_argv, environment = execution_argv(command)
         if (terminal.get("schema") != "agentic-os-long-running-terminal/v1"
-                or terminal.get("status") != "success" or terminal.get("exit_code") != 0
+                or terminal.get("status") != "success" or type(terminal.get("exit_code")) is not int
+                or terminal.get("exit_code") != 0
                 or terminal.get("post_run_invariants_ok") is not True
                 or command.get("schema") != "agentic-os-long-running-state/v1" or command.get("shell") is not False
                 or not matches_command(run["command"], actual_argv, current, profile)
@@ -227,7 +310,7 @@ def _commands(evidence: Mapping[str, Any], current: Mapping[str, Any], packet: P
         started = _timestamp(terminal.get("created_at"))
         finished = _timestamp(terminal.get("finished_at"))
         commit_time = int(_git(worktree, "show", "-s", "--format=%ct", head))
-        if not commit_time <= started.timestamp() <= finished.timestamp() <= verified.timestamp():
+        if not commit_time <= started.timestamp() <= finished.timestamp() <= verified.timestamp() <= datetime.now().astimezone().timestamp():
             _error("fresh validation command timestamps are stale or contradictory")
 
 
@@ -254,7 +337,7 @@ def refresh_development_validation(state_file: str | Path, *, evidence_file: str
     """Bind fresh passed validation without relabeling or transitioning history."""
     from .development_delivery import (_atomic_json, _file_lock, _refresh_portfolio_state,
                                        _sync_auto_dev_projection, _sync_canonical_task_progress, utc_now)
-    if not idempotency_key.strip():
+    if not isinstance(idempotency_key, str) or not idempotency_key.strip():
         _error("validation refresh requires an idempotency key")
     task, current, packet, worktree, profile = _context(state_file)
     request_path = Path(evidence_file).resolve()
@@ -263,14 +346,15 @@ def refresh_development_validation(state_file: str | Path, *, evidence_file: str
     payload, request_digest = _read(request_path)
     evidence = payload.get("evidence") or {}
     if (payload.get("schema") != "development-stage-evidence/v1" or payload.get("state") != "local_validation"
-            or payload.get("status") != "passed" or not payload.get("summary") or not payload.get("verified_at")
+            or payload.get("status") != "passed" or not isinstance(payload.get("summary"), str)
+            or not payload["summary"].strip() or not payload.get("verified_at")
             or not isinstance(evidence, dict) or evidence.get("unavailable_check") is not None):
         _error("successor validation requires actual passed local evidence")
     head = _head(evidence)
     if (evidence.get("head_sha") != head or evidence.get("ticket") != current["ticket"]
             or evidence.get("canonical_work_id") != current["canonical_work_id"]
             or evidence.get("repository_id") != current["repository"]["id"]
-            or evidence.get("repository") not in _repository_names(current)
+            or not _repository_matches(evidence.get("repository"), current)
             or evidence.get("policy_fingerprint") != current["policy_fingerprint"]
             or evidence.get("policy_sha256") != _read(Path(current["policy_receipt"]))[1]
             or Path(str(evidence.get("task_state_ref") or "")).resolve() != task.path
@@ -281,7 +365,8 @@ def refresh_development_validation(state_file: str | Path, *, evidence_file: str
     _commands({**evidence, "verified_at": payload["verified_at"]}, current, packet,
               worktree, profile, head)
     lineage = evidence.get("repair_lineage") or {}
-    if not isinstance(lineage, dict) or not str(lineage.get("reason") or "").strip():
+    if (not isinstance(lineage, dict) or not isinstance(lineage.get("reason"), str)
+            or not lineage["reason"].strip()):
         _error("successor validation requires explicit repair lineage")
     predecessor_path, predecessor, predecessor_digest = _bound(lineage.get("predecessor"), packet)
     old_head = _head(predecessor.get("evidence") or {})
@@ -291,12 +376,12 @@ def refresh_development_validation(state_file: str | Path, *, evidence_file: str
         # Historical failed argv never serves as current passed command proof.
         # The fresh successor below must execute every exact frozen command.
         _deferred(predecessor, profile["validation"], require_frozen_command=False)
-    elif predecessor.get("status") not in {"passed", "verified", "completed"}:
+    elif predecessor.get("status") not in ("passed", "verified", "completed"):
         _error("validation predecessor is not terminal authority")
     old_evidence = predecessor.get("evidence") or {}
     if (predecessor.get("schema") != "development-stage-evidence/v1" or predecessor.get("state") != "local_validation"
             or old_evidence.get("ticket") != current["ticket"]
-            or old_evidence.get("repository") not in _repository_names(current)
+            or not _repository_matches(old_evidence.get("repository"), current)
             or old_evidence.get("policy_fingerprint") != current["policy_fingerprint"]):
         _error("validation predecessor identity/policy mismatch")
     latest_path, _, latest_digest = _latest(current, packet)

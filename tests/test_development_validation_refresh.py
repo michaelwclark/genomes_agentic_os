@@ -18,6 +18,7 @@ from genomes_agentic_os import development_delivery as delivery
 from genomes_agentic_os import development_validation_refresh as refresh
 from genomes_agentic_os.auto_dev_orchestration import (
     AutoDevStateError, read_auto_dev_state, require_auto_dev_predecessors, record_auto_dev_stage,
+    sync_delivery_projection,
 )
 from genomes_agentic_os.cli import main
 from genomes_agentic_os.long_run import start_run
@@ -317,6 +318,7 @@ def test_refresh_rejects_partial_stale_or_nonmodern_proof(tmp_path, corruption):
 @pytest.mark.parametrize("artifact,field,value", [
     ("terminal", "status", "failed"), ("terminal", "exit_code", 1),
     ("terminal", "post_run_invariants_ok", False),
+    ("terminal", "exit_code", False),
     ("terminal", "git_identity_post", {"head": "0" * 40}),
     ("terminal", "git_identity_pre", {"clean": "false"}),
     ("terminal", "expected_git_identity", {}),
@@ -438,3 +440,145 @@ def test_actual_annotated_pytest_execution_binds_successor_and_pr_family(tmp_pat
         receipts={"release_propagation": _family(f)}, idempotency_prefix="annotated-family")
     wrapper = json.loads((f["task"].path.parent / "stages/release-propagation.json").read_text())
     assert wrapper["validation_authority"]["status"] == "passed"
+
+
+@pytest.mark.parametrize("corruption", ["deleted_head", "deleted_lineage", "deleted_successor",
+    "wrong_successor_hash", "wrong_lineage_head", "duplicate_key", "scalar_lineage",
+    "deleted_both_markers", "deleted_receipt", "changed_predecessor", "changed_command_leaf"])
+def test_replay_cannot_restore_corrupted_current_authority(tmp_path, corruption):
+    f = _fixture(tmp_path)
+    _refresh(f)
+    current = f["task"].read()
+    if corruption == "deleted_head":
+        current.pop("validation_head_sha")
+    elif corruption == "deleted_lineage":
+        current.pop("validation_refreshes")
+    elif corruption == "deleted_successor":
+        current["validation_refreshes"][-1].pop("successor_ref")
+    elif corruption == "wrong_successor_hash":
+        current["validation_refreshes"][-1]["successor_sha256"] = "f" * 64
+    elif corruption == "wrong_lineage_head":
+        current["validation_refreshes"][-1]["head_sha"] = f["old_head"]
+    elif corruption == "duplicate_key":
+        current["validation_refreshes"].append(dict(current["validation_refreshes"][-1]))
+    elif corruption == "deleted_both_markers":
+        current.pop("validation_head_sha")
+        current.pop("validation_refreshes")
+    elif corruption == "deleted_receipt":
+        current["receipts"].pop()
+    elif corruption == "changed_predecessor":
+        f["predecessor"].write_text(f["predecessor"].read_text() + " ")
+    elif corruption == "changed_command_leaf":
+        proof = json.loads(f["request"].read_text())["evidence"]["validation_runs"][0]["command_receipt"]["path"]
+        Path(proof).write_text(Path(proof).read_text() + " ")
+    else:
+        current["validation_refreshes"] = "not a lineage list"
+    _write(f["task"].path, current)
+    before = f["task"].path.read_bytes()
+    with pytest.raises(delivery.DevelopmentDeliveryError):
+        _refresh(f)
+    assert f["task"].path.read_bytes() == before
+    projection_before = Path(current["autodev_path"]).read_bytes()
+    with pytest.raises(delivery.DevelopmentDeliveryError):
+        sync_delivery_projection(f["task"].path)
+    with pytest.raises(delivery.DevelopmentDeliveryError):
+        refresh.pr_create_validation_authority(f["task"].path, json.loads(Path(_family(f)).read_text()))
+    assert Path(current["autodev_path"]).read_bytes() == projection_before
+
+
+@pytest.mark.parametrize("corruption", ["summary_bool", "reason_bool", "head_bool", "ref_bool",
+    "hash_bool", "ambiguous_json", "mutated_terminal", "scalar_idempotency", "repository_list",
+    "predecessor_status_list", "unavailable_classification_list", "unavailable_command_bool",
+    "future_proof"])
+def test_malformed_scalar_and_immutable_reference_proof_refuses_before_mutation(tmp_path, corruption):
+    f = _fixture(tmp_path)
+    payload = json.loads(f["request"].read_text())
+    evidence = payload["evidence"]
+    if corruption == "summary_bool":
+        payload["summary"] = True
+    elif corruption == "reason_bool":
+        evidence["repair_lineage"]["reason"] = True
+    elif corruption == "head_bool":
+        evidence["source_head_sha"] = False
+    elif corruption == "ref_bool":
+        evidence["validation_runs"][0]["terminal"]["path"] = True
+    elif corruption == "hash_bool":
+        evidence["validation_runs"][0]["terminal"]["sha256"] = True
+    elif corruption == "repository_list":
+        evidence["repository"] = ["acme/app"]
+    elif corruption.startswith("predecessor_") or corruption.startswith("unavailable_"):
+        predecessor = json.loads(f["predecessor"].read_text())
+        if corruption == "predecessor_status_list":
+            predecessor["status"] = ["passed"]
+        elif corruption == "unavailable_classification_list":
+            predecessor["evidence"]["unavailable_check"]["classification"] = ["infrastructure"]
+        else:
+            predecessor["evidence"]["unavailable_check"]["command"] = True
+        _write(f["predecessor"], predecessor)
+        evidence["repair_lineage"]["predecessor"] = _bound(f["predecessor"])
+        current = f["task"].read()
+        [r for r in current["receipts"] if r["state"] == "local_validation"][-1]["sha256"] = _bound(f["predecessor"])["sha256"]
+        _write(f["task"].path, current)
+    elif corruption == "future_proof":
+        payload["verified_at"] = "2099-01-01T00:00:00Z"
+    elif corruption == "mutated_terminal":
+        terminal = Path(evidence["validation_runs"][0]["terminal"]["path"])
+        terminal.write_text(terminal.read_text() + " ")
+    _write(f["request"], payload)
+    if corruption == "ambiguous_json":
+        raw = f["request"].read_text().replace('"head_sha":', '"head_sha": "wrong", "head_sha":', 1)
+        f["request"].write_text(raw)
+    before = f["task"].path.read_bytes()
+    with pytest.raises(delivery.DevelopmentDeliveryError):
+        _refresh(f, key=True if corruption == "scalar_idempotency" else "repair")
+    assert f["task"].path.read_bytes() == before
+
+
+def test_successive_refreshes_preserve_bound_chain_and_last_replay(tmp_path):
+    f = _fixture(tmp_path)
+    first = _refresh(f)["task"]
+    first_snapshot = Path(first["receipts"][-1]["ref"])
+    original = first_snapshot.read_bytes()
+    (f["worktree"] / "README.md").write_text("second validated repair\n")
+    _git("add", "README.md", cwd=f["worktree"])
+    _git("commit", "-m", "second validated repair", cwd=f["worktree"])
+    head = _git("rev-parse", "HEAD", cwd=f["worktree"])
+    payload = json.loads(f["request"].read_text())
+    evidence = payload["evidence"]
+    evidence["head_sha"] = head
+    evidence["validation_runs"] = [_command_proof(f["root"], f["packet"], f["worktree"],
+        f["command"], head, first["policy_fingerprint"])]
+    evidence["repair_lineage"] = {"predecessor": _bound(first_snapshot),
+        "from_head_sha": f["head"], "to_head_sha": head, "reason": "second independently validated repair"}
+    payload["verified_at"] = _now()
+    _write(f["request"], payload)
+    second = _refresh(f, "second")["task"]
+    assert len(second["validation_refreshes"]) == 2
+    assert second["validation_head_sha"] == head
+    assert first_snapshot.read_bytes() == original
+    assert _refresh(f, "second")["replayed"] is True
+    assert f["task"].read()["receipts"] == second["receipts"]
+    second["validation_refreshes"].pop(0)
+    _write(f["task"].path, second)
+    with pytest.raises(delivery.DevelopmentDeliveryError):
+        _refresh(f, "second")
+
+
+def test_present_producer_failure_is_visible_and_replay_repairs_without_duplicate_authority(tmp_path, monkeypatch):
+    f = _fixture(tmp_path)
+    calls = []
+    def emit(task, head, policy):
+        calls.append(head)
+        if len(calls) == 1:
+            raise delivery.DevelopmentDeliveryError("present readiness producer failed")
+        return {"validation_status": "passed", "readiness_evidence_verified": {"validation": True}}
+    monkeypatch.setattr(refresh, "_emit_readiness", emit)
+    with pytest.raises(delivery.DevelopmentDeliveryError, match="producer failed"):
+        _refresh(f)
+    recorded = f["task"].read()
+    assert len(recorded["validation_refreshes"]) == 1
+    result = _refresh(f)
+    assert result["replayed"] is True
+    assert result["readiness_projection"]["readiness_evidence_verified"]["validation"] is True
+    assert result["task"]["receipts"] == recorded["receipts"]
+    assert calls == [f["head"], f["head"]]
