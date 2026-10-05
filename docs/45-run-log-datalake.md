@@ -111,6 +111,54 @@ Inject the application-facing `EvidenceWriter` port into producers.
 configuration to an injected `RunLogStore` and starts one worker. It does not
 cut over existing writers, schedule replay or alter live installation state.
 
+Input size and JSON validity are checked before identity normalization copies
+or hashes the record. The configured model payload limit also applies before
+acceptance. Cyclic input, non-integer schema versions and excessive payloads
+raise `IngressError` without enqueueing or creating an envelope. Configuration
+must select an outbox directory strictly inside the selected OS root; absolute,
+parent-traversal and escaping symlink paths fail before directory creation.
+
+### Configuration consumer inventory and tenant impact matrix
+
+The inventory search covers `src/`, `harness/`, `schemas/`, `setup.py`, and the
+run-evidence tests for `run-evidence.yml`, `load_run_evidence_config`,
+`load_run_log_store_config`, and `build_evidence_writer`. The canonical registry
+lists every planned producer under `writers`; AGE-155 owns those cutovers.
+
+| Consumer and owner | Previous configuration | Canonical configuration | Meaningful runtime proof |
+| --- | --- | --- | --- |
+| `run_evidence_config.load_run_evidence_config`, configuration owner | Legacy five ingress keys remain schema-valid | Four additional safety keys are validated | Both shapes retain the complete model/writer registry |
+| `run_evidence.store.load_run_log_store_config` and store construction, evidence-store owner | Backend, host, model and provider selections retain their shape | Selection remains identical | Legacy fixture writes and reads back a non-empty record through the actual store consumer |
+| `run_evidence.ingress.build_evidence_writer`, ingress owner | Explicit construction failure for missing overflow/record/outbox bounds | Starts one worker with selected queue and filesystem limits | Canonical fixture submits, flushes and observes a durable matching record; missing and escaping paths fail visibly |
+| `scaffold.py` package template installer, installer owner | Existing user configuration is preserved | Fresh scaffolds receive the additional defaults | Adjacent registry scaffold tests execute template installation and validate the installed registry |
+| `validate.py` schema validation, validator owner | Old registry stays valid | New registry stays valid | Adjacent registry tests execute the schema consumer for valid and invalid registries |
+| Registered producer families, respective `writers.*.owner` | Current filesystem behavior remains | No automatic ingress construction or writer cutover | Inventory conformance test compares actual evidence writers with registered owners and paths |
+
+Backward compatibility preserves the legacy registry for its existing
+consumers. A legacy ingress upgrade is coordinated before opting a producer
+into the new writer: supply `overflow_policy`, `max_record_bytes`,
+`max_outbox_items`, and `max_outbox_bytes` explicitly. The constructor never
+silently chooses a durability/drop policy or rewrites user configuration.
+This is new opt-in construction, so no existing producer loses a previously
+supported call. Payload field nesting and stored correlation/host identity
+remain unchanged.
+
+Tenant impact is limited to the explicitly selected OS root. No remote tenant
+configuration is changed by this library slice. The matrix classifies fresh
+roots as compatible, legacy roots as compatible for existing readers/stores
+and blocked for new ingress until configured, and existing producers as
+unaffected pending AGE-155. Customer-specific overrides and live writer
+cutover require separate execution receipts before activation; this source
+matrix does not claim a live tenant inventory.
+
+`tests/test_run_evidence_ingress.py` executes the legacy and canonical
+configuration consumers, asserts persisted record content and visible empty/
+invalid configuration failures, and uses separate-process abrupt-exit tests
+for durable unavailable-ingress and background-outage acknowledgements.
+The local MongoDB-unavailability test uses the real PyMongo deadline against
+an owned unavailable loopback endpoint. Healthy/partial-network MongoDB
+acceptance still requires the opt-in disposable-provider integration gate.
+
 Submission validates the model, schema, classification and locally supplied
 host set, freezes mutable input and enqueues without datastore I/O. One bounded
 batch runs in the background. The MongoDB adapter owns a total PyMongo deadline

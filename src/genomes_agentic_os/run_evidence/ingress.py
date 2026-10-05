@@ -105,22 +105,37 @@ class BufferedEvidenceWriter:
         model = self.config.models.get(record.model_key)
         if (model is None or record.host_id not in self.host_ids or not record.source
                 or record.classification != model.get("classification")
+                or type(record.schema_version) is not int
                 or record.schema_version != model.get("schema_version")
                 or not isinstance(record.payload, Mapping)
                 or not isinstance(record.payload_metadata, Mapping)):
             raise IngressError("invalid evidence model, host, schema or classification")
         try:
-            document = record.normalized()
-            chunks: list[str] = []
-            size = 0
-            for chunk in json.JSONEncoder(allow_nan=False).iterencode(document):
-                size += len(chunk.encode("utf-8"))
-                if size > self.policy.max_record_bytes - 1024:
-                    raise IngressError("evidence exceeds record byte limit")
-                chunks.append(chunk)
-            return EvidenceRecord(**json.loads("".join(chunks)))
+            # Check bounds before normalized() deep-copies and hashes the input.
+            # An oversized/cyclic caller mapping must never reach that path.
+            document = {name: getattr(record, name) for name in record.__dataclass_fields__}
+            document["payload"] = dict(record.payload)
+            document["payload_metadata"] = dict(record.payload_metadata)
+            frozen = EvidenceRecord(**json.loads(self._bounded_json(document)))
+            payload_limit = model.get("max_payload_bytes", self.policy.max_record_bytes)
+            if len(self._bounded_json(frozen.payload).encode("utf-8")) > payload_limit:
+                raise IngressError("evidence exceeds model payload byte limit")
+            return EvidenceRecord(**json.loads(self._bounded_json(frozen.normalized())))
         except (TypeError, ValueError, RecursionError):
             raise IngressError("evidence is not bounded JSON") from None
+
+    def _bounded_json(self, document: Any) -> str:
+        chunks: list[str] = []
+        size = 0
+        for chunk in json.JSONEncoder(allow_nan=False).iterencode(document):
+            # Avoid allocating a second oversized byte string for a large chunk.
+            if len(chunk) > self.policy.max_record_bytes - 1024:
+                raise IngressError("evidence exceeds record byte limit")
+            size += len(chunk.encode("utf-8"))
+            if size > self.policy.max_record_bytes - 1024:
+                raise IngressError("evidence exceeds record byte limit")
+            chunks.append(chunk)
+        return "".join(chunks)
 
     def submit(self, record: EvidenceRecord) -> Submission:
         """Enqueue without provider I/O; overflow may use explicit local fallback."""
@@ -256,7 +271,10 @@ def build_evidence_writer(root: Path, store: RunLogStore, *, host_ids: frozenset
     relative = Path(ingress["outbox_root"])
     if relative.is_absolute() or ".." in relative.parts:
         raise IngressError("outbox_root must be relative to the selected root")
-    outbox = FilesystemOutbox(root / relative, OutboxPolicy(
+    selected_root, outbox_root = root.resolve(), (root / relative).resolve()
+    if outbox_root == selected_root or not outbox_root.is_relative_to(selected_root):
+        raise IngressError("outbox_root must stay inside the selected root")
+    outbox = FilesystemOutbox(outbox_root, OutboxPolicy(
         max_items=ingress["max_outbox_items"], max_bytes=ingress["max_outbox_bytes"],
         max_record_bytes=policy.max_record_bytes,
         lease_seconds=max(30, 2 * policy.write_timeout_ms / 1000)))

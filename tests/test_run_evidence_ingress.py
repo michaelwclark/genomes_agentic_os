@@ -3,7 +3,11 @@
 from contextlib import contextmanager
 from dataclasses import replace
 import json
+import os
 from pathlib import Path
+import subprocess
+import sys
+import socket
 from threading import Event
 import time
 
@@ -273,3 +277,131 @@ def test_composition_uses_canonical_configuration_and_selected_root(tmp_path):
 def test_invalid_policy_fails_before_worker_start(tmp_path, changes):
     with pytest.raises(ValueError):
         setup_writer(tmp_path, **changes)
+
+
+def test_oversized_input_is_rejected_before_identity_copy_or_hash(tmp_path, monkeypatch):
+    writer, _, outbox = setup_writer(tmp_path)
+    monkeypatch.setattr(EvidenceRecord, "normalized", lambda _: pytest.fail("unbounded normalization"))
+    with pytest.raises(IngressError, match="record byte limit"):
+        writer.submit(record(payload={"large": "x" * 100_000}))
+    assert writer.status()["accepted"] == 0 and outbox.status()["count"] == 0
+
+
+def test_cyclic_input_and_boolean_schema_are_rejected_before_acceptance(tmp_path):
+    writer, _, outbox = setup_writer(tmp_path)
+    payload = {}
+    payload["cycle"] = payload
+    for invalid in (record(payload=payload), record(schema_version=True)):
+        with pytest.raises(IngressError):
+            writer.submit(invalid)
+    assert writer.status()["accepted"] == 0 and outbox.status()["count"] == 0
+
+
+def test_model_payload_limit_is_checked_before_outboxing(tmp_path):
+    writer, _, outbox = setup_writer(tmp_path)
+    models = {key: dict(value) for key, value in writer.config.models.items()}
+    models["run_log"]["max_payload_bytes"] = 20
+    writer.config = replace(writer.config, models=models)
+    with pytest.raises(IngressError, match="model payload byte limit"):
+        writer.submit(record(payload={"message": "x" * 30}))
+    assert writer.status()["accepted"] == 0 and outbox.status()["count"] == 0
+
+
+def configured_root(root, **ingress_changes):
+    import yaml
+    folder = root / "harness/config"
+    folder.mkdir(parents=True)
+    document = yaml.safe_load((REPO / "harness/config/run-evidence.yml").read_text())
+    document["ingress"].update(ingress_changes)
+    (folder / "run-evidence.yml").write_text(yaml.safe_dump(document))
+    return document
+
+
+@pytest.mark.parametrize("relative", ["../outside", "/outside", ".", "linked/buffer"])
+def test_composition_rejects_escaping_outbox_before_filesystem_mutation(tmp_path, relative):
+    root, outside = tmp_path / "selected", tmp_path / "outside"
+    configured_root(root, outbox_root=relative)
+    outside.mkdir()
+    (root / "linked").symlink_to(outside, target_is_directory=True)
+    with pytest.raises(IngressError, match="outbox_root"):
+        build_evidence_writer(root, Provider(load_run_log_store_config(REPO)),
+                              host_ids=frozenset({"bigmac"}))
+    assert not list(outside.iterdir())
+
+
+def test_legacy_configuration_loads_but_requires_explicit_ingress_upgrade(tmp_path):
+    import yaml
+    from genomes_agentic_os.run_evidence_config import load_run_evidence_config
+    document = configured_root(tmp_path)
+    for key in ("overflow_policy", "max_record_bytes", "max_outbox_items", "max_outbox_bytes"):
+        document["ingress"].pop(key)
+    (tmp_path / "harness/config/run-evidence.yml").write_text(yaml.safe_dump(document))
+    assert load_run_evidence_config(tmp_path)["models"] == document["models"]
+    provider = Provider(load_run_log_store_config(tmp_path))
+    assert provider.append(record())["host_id"] == "bigmac"
+    with pytest.raises(IngressError, match="explicit overflow and outbox bounds"):
+        build_evidence_writer(tmp_path, provider, host_ids=frozenset({"bigmac"}))
+    assert not (tmp_path / document["ingress"]["outbox_root"]).exists()
+
+
+@pytest.mark.parametrize("background_outage", [False, True])
+def test_abrupt_ingress_exit_keeps_every_durable_acknowledgement(tmp_path, background_outage):
+    code = r'''
+import json, os, sys
+from pathlib import Path
+from genomes_agentic_os.run_evidence.ingress import BufferedEvidenceWriter, IngressPolicy
+from genomes_agentic_os.run_evidence.outbox import FilesystemOutbox, OutboxPolicy
+from genomes_agentic_os.run_evidence.store import EvidenceRecord, InMemoryRunLogStore, load_run_log_store_config
+class Outage(InMemoryRunLogStore):
+    def append_many(self, records):
+        raise TimeoutError("simulated outage")
+config = load_run_log_store_config(Path(sys.argv[1]))
+box = FilesystemOutbox(Path(sys.argv[2]), OutboxPolicy(16, 200000, 10000))
+writer = BufferedEvidenceWriter(Outage(config), box, config,
+    IngressPolicy(4, 1, 1, 25, "outbox", 10000), host_ids=frozenset({"bigmac"}))
+if sys.argv[3] == "True":
+    writer.start()
+ack = writer.submit(EvidenceRecord("run_log", "bigmac", "crash-test", "durable_evidence",
+    {"message": "retained"}, "2026-10-04T00:00:00Z", 1, correlation_id="crash-correlation"))
+assert ack.wait(1) and ack.durable and ack.status == "outboxed"
+print(json.dumps({"id": ack.record_id, "hash": ack.content_hash}), flush=True)
+os._exit(0)
+'''
+    environment = {key: value for key, value in os.environ.items()
+                   if not key.startswith(("AGENTIC_OS_", "EXECUTION_FABRIC_"))}
+    environment["PYTHONPATH"] = str(REPO / "src")
+    result = subprocess.run([sys.executable, "-c", code, str(REPO), str(tmp_path / "outbox"),
+                             str(background_outage)], env=environment, check=True,
+                            capture_output=True, text=True, timeout=5)
+    acknowledgement = json.loads(result.stdout)
+    writer, provider, outbox = setup_writer(tmp_path)
+    assert writer.replay(limit=2) == {"persisted": 1, "retry": 0}
+    saved = provider.get("run_log", acknowledgement["id"])
+    assert saved["content_hash"] == acknowledgement["hash"]
+    assert saved["correlation_id"] == "crash-correlation"
+    assert outbox.status()["count"] == 0
+    assert writer.replay(limit=2)["persisted"] == 0
+
+
+def test_real_mongodb_unavailability_respects_batch_deadline_and_durable_fallback(tmp_path):
+    pymongo = pytest.importorskip("pymongo")
+    from genomes_agentic_os.run_evidence.adapters.mongodb import MongoDBRunLogStore
+    writer, _, outbox = setup_writer(tmp_path, write_timeout_ms=50, batch_size=1)
+    # Bind without listening: this endpoint cannot be another local datastore.
+    with socket.socket() as endpoint:
+        endpoint.bind(("127.0.0.1", 0))
+        client = pymongo.MongoClient("127.0.0.1", endpoint.getsockname()[1],
+                                     serverSelectionTimeoutMS=5000, connect=False)
+        writer.store = MongoDBRunLogStore(writer.config, client["age153_disposable_deadline"])
+        try:
+            writer.start()
+            started = time.monotonic()
+            acknowledgement = writer.submit(record())
+            assert time.monotonic() - started < .2
+            assert acknowledgement.wait(1)
+            assert time.monotonic() - started < 1
+            assert acknowledgement.durable and acknowledgement.status == "outboxed"
+            assert outbox.status()["pending"] == 1
+        finally:
+            assert writer.close(timeout_seconds=1)["drained"]
+            client.close()
