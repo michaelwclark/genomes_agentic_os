@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import argparse
 import sys
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
+from .. import __version__
 from ..cli_help import AosHelpFormatter, env_epilog
 from . import scaffold
 from . import project
@@ -131,6 +133,16 @@ def build_parser(prog: str = "agentic-os") -> argparse.ArgumentParser:
             ],
         ),
         formatter_class=AosHelpFormatter,
+    )
+    try:
+        package_version = version("genomes-agentic-os")
+    except PackageNotFoundError:
+        package_version = f"{__version__} (uninstalled source)"
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {package_version}",
+        help="Report the executing distribution version and exit.",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 

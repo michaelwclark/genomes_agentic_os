@@ -22,6 +22,7 @@ never change.
 | **Name format** | `snake_case` only — lowercase letters, digits, underscores. Hyphens are **rejected**. `weekly-report` fails; `weekly_report` works. |
 | **`--root` default** | `~/agentic_os` (or `$AGENTIC_OS_ROOT` when set). Always pass `--root` explicitly in scripts; never rely on the default in automation. |
 | **Exit 0** | Success. |
+| **`--version`** | Reports the executing distribution version and exits 0 before subcommand validation; works without an OS root. The `aos` alias supports the same flag. |
 | **Exit 1** | Health check "not ok" — `doctor` / `validate` / `config doctor` report a problem. Fix it and re-run. |
 | **Exit 2** | Argparse usage error **or** deliberate handled refusal — e.g. `here route` when routing confidence is low, a name with a hyphen. Exit 2 is not a crash; it is the OS saying "I won't guess." |
 | **Dry-run by default** | Most commands that mutate files or call an external system (Notion, GitHub, SSH, runtime dispatch) preview their effect and require `--apply` to take effect; `--dry-run` is accepted too and is the default when neither flag is passed. Coverage has grown past any fixed list here — check `<command> --help` for the specific pair of flags on the command you're running. |

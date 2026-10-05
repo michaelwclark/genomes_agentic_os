@@ -38,7 +38,13 @@ same thing.
 
 ```bash
 agentic-os --help
+agentic-os --version
 ```
+
+For a pinned released runtime, install the release wheel in a dedicated venv;
+an editable checkout update does not update that environment. Follow the
+[runtime identity verification](/docs/01-install-and-quickstart) before selecting
+launcher aliases or accepting an installed-root upgrade.
 
 ## 2. Try it somewhere disposable first
 
