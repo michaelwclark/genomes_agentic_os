@@ -197,6 +197,59 @@ def test_consumer_rollback_refuses_changed_readonly_schema_and_manifest(tmp_path
     assert Path(receipt["journal"]).read_bytes() == journal_before
 
 
+@pytest.mark.parametrize("dependency", ["schema", "manifest"])
+@pytest.mark.parametrize("change", ["edit", "remove"])
+def test_apply_rechecks_readonly_dependencies_and_restores_only_known_consumers(tmp_path, monkeypatch, dependency, change):
+    root, schema, manifest, _ = root_fixture(tmp_path, ownership="current")
+    active, task = consumer_fixture(root)
+    plan = adoption.plan_schema_adoption(root, consumers=[active], migrate_consumers=True)
+    consumer_originals = active.read_bytes(), task.read_bytes()
+    changed_path = {"schema": schema, "manifest": manifest}[dependency]
+    original_atomic = adoption._atomic
+    changed = False
+    dependency_after = None
+    def manual_writer(path, data):
+        nonlocal changed, dependency_after
+        original_atomic(path, data)
+        if path == active and not changed:
+            changed = True
+            if change == "edit":
+                changed_path.write_bytes(changed_path.read_bytes() + b"\n")
+                dependency_after = changed_path.read_bytes()
+            else:
+                changed_path.unlink()
+    monkeypatch.setattr(adoption, "_atomic", manual_writer)
+    with pytest.raises(adoption.SchemaAdoptionError) as exc:
+        apply(plan)
+    assert exc.value.error_code == "apply_dependency_divergence" and not exc.value.retryable
+    assert (active.read_bytes(), task.read_bytes()) == consumer_originals
+    assert (changed_path.read_bytes() if changed_path.exists() else None) == dependency_after
+    journals = list((root / adoption.TRANSACTION_RELATIVE).glob("*/journal.json"))
+    assert len(journals) == 1
+    assert json.loads(journals[0].read_bytes())["status"] == "rolled_back"
+
+
+@pytest.mark.parametrize("target", ["schema", "manifest", "consumer", "task"])
+def test_changed_identity_between_replan_and_backup_refuses_before_mutation(tmp_path, monkeypatch, target):
+    root, schema, manifest, _ = root_fixture(tmp_path, ownership="current")
+    active, task = consumer_fixture(root)
+    plan = adoption.plan_schema_adoption(root, consumers=[active], migrate_consumers=True)
+    selected = {"schema": schema, "manifest": manifest, "consumer": active, "task": task}[target]
+    original_writes = adoption._writes
+    expected = {}
+    def late_writer(root_path, frozen):
+        writes = original_writes(root_path, frozen)
+        selected.write_bytes(selected.read_bytes() + b"\n")
+        expected.update({path: path.read_bytes() for path in (schema, manifest, active, task)})
+        return writes
+    monkeypatch.setattr(adoption, "_writes", late_writer)
+    with pytest.raises(adoption.SchemaAdoptionError) as exc:
+        apply(plan)
+    assert exc.value.error_code == "stale_plan" and not exc.value.retryable
+    assert {path: path.read_bytes() for path in expected} == expected
+    assert not list((root / adoption.TRANSACTION_RELATIVE).glob("*/journal.json"))
+
+
 def test_write_failure_restores_exact_schema_and_manifest(tmp_path, monkeypatch):
     root, schema, manifest, _ = root_fixture(tmp_path); originals = schema.read_bytes(), manifest.read_bytes()
     plan = adoption.plan_schema_adoption(root); original_atomic = adoption._atomic; failed = False

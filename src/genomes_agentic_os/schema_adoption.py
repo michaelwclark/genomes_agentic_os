@@ -484,6 +484,15 @@ def _restore(root: Path, directory: Path, journal: dict[str, Any]) -> None:
     _journal(root, directory / "journal.json", journal)
 
 
+def _migration_dependencies(root: Path, plan: Mapping[str, Any], error_code: str) -> None:
+    """Read-only compatibility prerequisites bind every migration boundary."""
+    if plan["kind"] == "consumer_migration":
+        for dependency in ("installed", "manifest"):
+            descriptor = plan[dependency]
+            if _digest(_read(_path(root, descriptor["path"]), optional=True)) != descriptor["sha256"]:
+                raise SchemaAdoptionError(error_code, "transaction refuses a changed schema or manifest prerequisite")
+
+
 def apply_schema_plan(plan: Mapping[str, Any], *, expected_plan_sha256: str,
                       acknowledge_installed_sha256: str) -> dict[str, Any]:
     """Apply acknowledged exact bytes with prevalidation, journal, and recovery."""
@@ -507,13 +516,21 @@ def apply_schema_plan(plan: Mapping[str, Any], *, expected_plan_sha256: str,
         if current["plan_sha256"] != expected_plan_sha256:
             raise SchemaAdoptionError("stale_plan", "installed, bundled, manifest, or selected consumer identity changed")
         writes = _writes(root, frozen)
+        expected_before = {frozen["installed"]["path"]: frozen["installed"]["sha256"],
+                           frozen["manifest"]["path"]: frozen["manifest"]["sha256"]}
+        for row in frozen["consumers"]:
+            if row["kind"] == "active" and "migration" in row:
+                expected_before.update({row["task_path"]: row["task_sha256"], row["path"]: row["sha256"]})
+        prepared = [(path, data, _read(path, optional=True)) for path, data in writes]
+        if any(_digest(before) != expected_before[path.relative_to(root).as_posix()] for path, _, before in prepared):
+            raise SchemaAdoptionError("stale_plan", "target identity changed before its exact backup")
+        _migration_dependencies(root, frozen, "stale_plan")
         directory = _path(root, owner_dir / uuid.uuid4().hex)
         directory.mkdir(parents=True)
         journal: dict[str, Any] = {"schema": JOURNAL_SCHEMA, "root": str(root), "kind": frozen["kind"],
                                   "plan_sha256": expected_plan_sha256, "status": "prepared", "created_at": _now(),
                                   "writes": [], "lock_paths": [str(path.relative_to(root)) for path in _transaction_lock_paths(root, frozen)]}
-        for index, (path, after) in enumerate(writes):
-            before = _read(path, optional=True)
+        for index, (path, after, before) in enumerate(prepared):
             backup = f"backup-{index}.bin"
             if before is not None:
                 _atomic(directory / backup, before)
@@ -522,12 +539,11 @@ def apply_schema_plan(plan: Mapping[str, Any], *, expected_plan_sha256: str,
         _atomic(directory / "plan.json", _json_bytes(frozen))
         _journal(root, directory / "journal.json", journal)
         try:
+            _validate_journal_writes(root, directory, journal, frozen)
             journal["status"] = "applying"
             _journal(root, directory / "journal.json", journal)
             for path, data in writes:
                 _atomic(path, data)
-            if any(_digest(_read(path)) != _digest(data) for path, data in writes):
-                raise SchemaAdoptionError("apply_readback", "written target identity differs")
             for row in frozen["consumers"]:
                 path = _path(root, row["path"])
                 value = _object(_read(path), "consumer readback")
@@ -536,6 +552,9 @@ def apply_schema_plan(plan: Mapping[str, Any], *, expected_plan_sha256: str,
                 if row["kind"] == "historical" or frozen["kind"] == "schema_adoption":
                     if _digest(_read(path)) != row["sha256"]:
                         raise SchemaAdoptionError("consumer_divergence", "diagnostic-only consumer changed during apply")
+            _migration_dependencies(root, frozen, "apply_dependency_divergence")
+            if any(_digest(_read(path)) != _digest(data) for path, data in writes):
+                raise SchemaAdoptionError("apply_readback", "written target identity differs")
             journal.update(status="applied", finished_at=_now(), readback_verified=True)
             _journal(root, directory / "journal.json", journal)
         except BaseException:
@@ -575,14 +594,7 @@ def rollback_schema_transaction(root: str | Path, journal_path: str | Path, *, e
         for lock_path in _transaction_lock_paths(target, plan):
             locks.enter_context(_lock(_path(target, lock_path)))
         _validate_journal_writes(target, path.parent, journal, plan)
-        if plan["kind"] == "consumer_migration":
-            # The schema and complete ownership manifest are read-only
-            # prerequisites of this transaction. Restoring consumers against a
-            # later contract would cross the acknowledged compatibility bound.
-            for dependency in ("installed", "manifest"):
-                descriptor = plan[dependency]
-                if _digest(_read(_path(target, descriptor["path"]), optional=True)) != descriptor["sha256"]:
-                    raise SchemaAdoptionError("rollback_dependency_divergence", "rollback refuses a changed schema or manifest prerequisite")
+        _migration_dependencies(target, plan, "rollback_dependency_divergence")
         for row in journal["writes"]:
             if _digest(_read(_path(target, row["path"]), optional=True)) not in {row["before_sha256"], row["after_sha256"]}:
                 raise SchemaAdoptionError("rollback_divergence", "rollback refuses a concurrent or unknown target change")

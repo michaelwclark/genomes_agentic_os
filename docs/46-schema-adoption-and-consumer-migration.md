@@ -89,6 +89,11 @@ selected task/projection stage contracts. It does not retarget a shared
 portfolio's workflow boundary, change lifecycle state, or manufacture execution
 evidence.
 
+Exact backup inputs must still match the plan before the first target write.
+Final migration readback rechecks the unchanged schema and complete manifest.
+A concurrent prerequisite change refuses acceptance and restores only the known
+consumer writes, preserving the changed prerequisite for investigation.
+
 Existing stage rows, history, receipt references, frozen policies and unknown
 consumer fields survive. A missing production-release stage inside the selected
 workflow window receives `not_started`, empty receipt references and no verified
