@@ -1228,6 +1228,176 @@ def read_auto_dev_state(path: str | Path) -> dict[str, Any]:
     return value
 
 
+def plan_legacy_consumer_migration(
+    projection: Mapping[str, Any], task: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Plan explicit v1 stage-contract migration without fabricating execution.
+
+    This pure helper is never called by a read or projection refresh. The
+    selected, active consumer transaction owns identity checks and persistence.
+    Known pre-production-release and current missing-row contracts are supported;
+    unknown fields and all existing evidence remain equivalent JSON values.
+    """
+    if not isinstance(projection, Mapping) or not isinstance(task, Mapping):
+        raise AutoDevStateError("consumer and task must be explicit mappings")
+    if "schema" in task and task["schema"] != "development-task/v1":
+        raise AutoDevStateError("unsupported canonical delivery task schema version")
+    task_contract = "development-task/v1" if "schema" in task else "development-task/legacy-unversioned"
+    if not isinstance(projection.get("stage_order"), list) or not isinstance(task.get("auto_dev_stage_order"), list):
+        raise AutoDevStateError("consumer stage contracts must be explicit arrays")
+    old_order = list(projection["stage_order"])
+    legacy_order = [name for name in AUTO_DEV_STAGE_ORDER if name != "validate_production_release"]
+    if projection.get("schema") != AUTO_DEV_SCHEMA or old_order not in (
+        legacy_order, list(AUTO_DEV_STAGE_ORDER)
+    ):
+        raise AutoDevStateError("unsupported Auto-Dev consumer schema/stage contract")
+    if list(task.get("auto_dev_stage_order") or []) != old_order:
+        raise AutoDevStateError("consumer task and projection stage contracts differ")
+    if not isinstance(projection.get("mode"), str) or projection["mode"] not in AUTO_DEV_MODES:
+        raise AutoDevStateError("consumer mode must name a supported explicit Auto-Dev mode")
+    if any(
+        task.get(task_key) != projection.get(projection_key)
+        for task_key, projection_key in (
+            ("auto_dev_mode", "mode"),
+            ("auto_dev_start_stage", "start_stage"),
+            ("auto_dev_completion_stage", "completion_stage"),
+        )
+    ):
+        raise AutoDevStateError("consumer task and projection workflow boundaries differ")
+    start_stage, completion_stage = projection.get("start_stage"), projection.get("completion_stage")
+    if (not isinstance(start_stage, str) or not isinstance(completion_stage, str)
+            or start_stage not in old_order or completion_stage not in old_order):
+        raise AutoDevStateError("consumer workflow window must name explicit known stages")
+    active = set(auto_dev_workflow_window(AUTO_DEV_STAGE_ORDER, start_stage, completion_stage))
+    for name in ("work_item_id", "created_at", "updated_at"):
+        if not isinstance(projection.get(name), str) or not projection[name].strip():
+            raise AutoDevStateError("consumer required identity and timestamp fields must be nonempty text")
+    for name in ("delivery", "compatibility"):
+        if not isinstance(projection.get(name), Mapping):
+            raise AutoDevStateError("consumer delivery and compatibility fields must be mappings")
+    for name in ("domain", "project", "canonical_work_id"):
+        if name not in projection or (projection[name] is not None and not isinstance(projection[name], str)):
+            raise AutoDevStateError("consumer canonical identity fields have unsupported types")
+    for name in ("subject_revision", "terminal_revision", "next_action"):
+        if name in projection and projection[name] is not None and not isinstance(projection[name], str):
+            raise AutoDevStateError("consumer optional text fields have unsupported types")
+    for name in ("source", "run_packet", "blocker"):
+        if name in projection and not (isinstance(projection[name], Mapping) or (name != "source" and projection[name] is None)):
+            raise AutoDevStateError("consumer optional authority fields have unsupported types")
+    for name in ("current_stage", "requested_stage"):
+        if (name == "current_stage" and name not in projection) or (projection.get(name) is not None
+                and (not isinstance(projection[name], str) or projection[name] not in old_order)):
+            raise AutoDevStateError("consumer stage identity fields name unsupported stages")
+    if "requested_stage" in task and (task["requested_stage"] != projection.get("requested_stage")
+            or task["requested_stage"] is not None and (not isinstance(task["requested_stage"], str) or task["requested_stage"] not in old_order)):
+        raise AutoDevStateError("consumer task and projection requested-stage authority differs")
+    if projection.get("status") not in ("ready", "running", "paused", "blocked", "completed"):
+        raise AutoDevStateError("consumer status contract is unsupported")
+    stages = projection.get("stages")
+    if not isinstance(stages, Mapping) or not set(legacy_order).issubset(stages):
+        raise AutoDevStateError("consumer is missing unsupported legacy stages")
+    if any(name not in AUTO_DEV_STAGE_ORDER for name in stages):
+        raise AutoDevStateError("consumer contains unknown stage authority")
+    if projection.get("status") == "running" or any(
+        isinstance(row, Mapping) and row.get("status") == "running"
+        for row in stages.values()
+    ):
+        raise AutoDevStateError("consumer migration refuses running execution")
+    if any(not isinstance(stages[name], Mapping) for name in legacy_order):
+        raise AutoDevStateError("consumer legacy stage rows must be mappings")
+    stage_fields = {"status", "owner", "command", "run_ref", "receipt_refs", "last_verified_at", "next_action"}
+    stage_statuses = {"not_started", "ready", "running", "paused", "blocked", "completed", "not_required", "out_of_scope"}
+    for name in old_order:
+        if name == "validate_production_release" and name not in stages:
+            continue
+        row = stages[name]
+        if (not isinstance(row, Mapping) or not stage_fields.issubset(row)
+                or not isinstance(row.get("status"), str) or row["status"] not in stage_statuses
+                or not isinstance(row.get("owner"), str) or not row["owner"].strip()
+                or row.get("command") != AUTO_DEV_STAGE_COMMANDS[name] or not isinstance(row.get("receipt_refs"), list)
+                or any(not isinstance(ref, str) for ref in row["receipt_refs"])
+                or any(row.get(field) is not None and not isinstance(row[field], str)
+                       for field in ("run_ref", "last_verified_at", "next_action"))):
+            raise AutoDevStateError("consumer known stage-row contract is incomplete or malformed")
+        if ("applicability" in row and (not isinstance(row["applicability"], str) or row["applicability"] not in AUTO_DEV_STAGE_APPLICABILITY)
+                or row.get("applicability", "required") != "required" and name not in NOT_REQUIRED_ALLOWED_STAGES
+                or row["status"] == "not_required" and name not in NOT_REQUIRED_ALLOWED_STAGES):
+            raise AutoDevStateError("consumer stage applicability conflicts with canonical authority")
+
+    declared: list[dict[str, Any]] = []
+    for current, key in ((projection, "stage_policies"), (task, "auto_dev_stage_policies")):
+        policies = current.get(key, {})
+        if not isinstance(policies, Mapping):
+            raise AutoDevStateError("consumer stage policies must be an explicit mapping")
+        for name, policy in policies.items():
+            if name not in AUTO_DEV_STAGE_ORDER or not isinstance(policy, Mapping):
+                raise AutoDevStateError("consumer stage policies contain unknown or malformed authority")
+            applicability = policy.get("applicability", "required")
+            if (not isinstance(applicability, str) or applicability not in AUTO_DEV_STAGE_APPLICABILITY
+                    or applicability != "required" and name not in NOT_REQUIRED_ALLOWED_STAGES):
+                raise AutoDevStateError("consumer production-release policy conflicts with required applicability" if name == "validate_production_release"
+                                        else "consumer stage policy conflicts with canonical applicability")
+            if (name in stages and "applicability" in stages[name]
+                    and stages[name]["applicability"] != applicability):
+                raise AutoDevStateError("consumer stage row and policy applicability differ")
+        declared.append(dict(policies))
+    for name in set(declared[0]).intersection(declared[1]):
+        if declared[0][name].get("applicability", "required") != declared[1][name].get("applicability", "required"):
+            raise AutoDevStateError("consumer task and projection policy applicability differ")
+    migrated = deepcopy(dict(projection))
+    migrated_task = deepcopy(dict(task))
+    legacy_contract = old_order != list(AUTO_DEV_STAGE_ORDER)
+    changed = legacy_contract or "validate_production_release" not in stages
+    added: list[str] = []
+    if changed:
+        if legacy_contract and "validate_production_release" in stages:
+            raise AutoDevStateError("legacy consumer contains a divergent production-release stage")
+        row = _stage_row("validate_production_release")
+        row["applicability"] = "required"
+        if "validate_production_release" not in active:
+            row.update(status="out_of_scope", next_action=None)
+        else:
+            added.append("validate_production_release")
+        migrated["stages"]["validate_production_release"] = row
+        migrated["stage_order"] = list(AUTO_DEV_STAGE_ORDER)
+        migrated_task["auto_dev_stage_order"] = list(AUTO_DEV_STAGE_ORDER)
+        for current, key in ((migrated, "stage_policies"), (migrated_task, "auto_dev_stage_policies")):
+            policies = current.get(key)
+            if policies is not None and not isinstance(policies, Mapping):
+                raise AutoDevStateError("consumer stage policies must be a mapping")
+            prior = dict(policies or {})
+            required_policy = prior.get("validate_production_release", {})
+            if not isinstance(required_policy, Mapping) or required_policy.get("applicability", "required") != "required":
+                raise AutoDevStateError("consumer production-release policy conflicts with required applicability")
+            current[key] = {
+                **prior,
+                "validate_production_release": {**dict(required_policy), "applicability": "required"},
+            }
+        next_stage = next((name for name in AUTO_DEV_STAGE_ORDER
+                           if name in active and migrated["stages"][name].get("status")
+                           not in NON_ACTIONABLE_STAGE_STATUSES), None)
+        migrated["current_stage"] = next_stage
+        migrated["next_action"] = migrated["stages"][next_stage].get("next_action") if next_stage else None
+        if migrated.get("status") not in {"blocked", "paused"}:
+            migrated["status"] = "ready" if next_stage else "completed"
+    return {
+        "schema": "auto-dev-consumer-migration/v1",
+        "from_contract": (
+            "auto-dev-stage-order/pre-production-release/v1" if legacy_contract
+            else "auto-dev-stage-order/current-missing-production-release/v1" if changed
+            else "auto-dev-stage-order/current/v1"
+        ),
+        "to_contract": "auto-dev-stage-order/current/v1",
+        "task_contract": task_contract,
+        "changed": changed,
+        "new_pending_stages": added,
+        "projection": migrated,
+        "task": migrated_task,
+        "execution_receipts_created": False,
+        "delivery_lifecycle_changed": False,
+    }
+
+
 def _required_text(value: Mapping[str, Any], key: str, label: str) -> str:
     result = str(value.get(key) or "").strip()
     if not result:

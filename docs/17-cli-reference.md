@@ -70,6 +70,19 @@ path you type after `agentic-os`; the description is verbatim from `--help`.
 | `room create` | Create a room scaffold. |
 | `room update` | Update a room from a profile. |
 
+### Schema Adoption — `cli/schema_adoption.py`
+
+| Command | What it does |
+| --- | --- |
+| `schema-adoption` | Plan, adopt, migrate selected consumers, or restore exact schema bytes. |
+| `schema-adoption plan` | Freeze installed/bundled identities and exact active/historical consumer diagnostics. |
+| `schema-adoption consumer-plan` | Plan an explicit supported active consumer stage-contract migration. |
+| `schema-adoption apply` | Apply a hash-acknowledged frozen plan with exact backups and a recovery journal. |
+| `schema-adoption rollback` | Restore exact transaction backups after refusing unknown concurrent changes. |
+
+See [Schema Adoption and Consumer Migration](46-schema-adoption-and-consumer-migration.md)
+for ownership, byte guards, pending execution evidence, limits, and rollback.
+
 ### Projects — `cli/project.py`
 
 | Command | What it does |
