@@ -1228,6 +1228,89 @@ def read_auto_dev_state(path: str | Path) -> dict[str, Any]:
     return value
 
 
+def plan_legacy_consumer_migration(
+    projection: Mapping[str, Any], task: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Plan explicit v1 stage-contract migration without fabricating execution.
+
+    This pure helper is never called by a read or projection refresh. The
+    selected, active consumer transaction owns identity checks and persistence.
+    Only the known pre-production-release contract is supported; unknown fields
+    and all existing stage evidence remain byte-equivalent JSON values.
+    """
+    old_order = list(projection.get("stage_order") or [])
+    legacy_order = [name for name in AUTO_DEV_STAGE_ORDER if name != "validate_production_release"]
+    if projection.get("schema") != AUTO_DEV_SCHEMA or old_order not in (
+        legacy_order, list(AUTO_DEV_STAGE_ORDER)
+    ):
+        raise AutoDevStateError("unsupported Auto-Dev consumer schema/stage contract")
+    if list(task.get("auto_dev_stage_order") or []) != old_order:
+        raise AutoDevStateError("consumer task and projection stage contracts differ")
+    if any(
+        task.get(task_key) != projection.get(projection_key)
+        for task_key, projection_key in (
+            ("auto_dev_mode", "mode"),
+            ("auto_dev_start_stage", "start_stage"),
+            ("auto_dev_completion_stage", "completion_stage"),
+        )
+    ):
+        raise AutoDevStateError("consumer task and projection workflow boundaries differ")
+    if projection.get("status") == "running" or any(
+        isinstance(row, Mapping) and row.get("status") == "running"
+        for row in (projection.get("stages") or {}).values()
+    ):
+        raise AutoDevStateError("consumer migration refuses running execution")
+    stages = projection.get("stages")
+    if not isinstance(stages, Mapping) or not set(legacy_order).issubset(stages):
+        raise AutoDevStateError("consumer is missing unsupported legacy stages")
+    if any(not isinstance(stages[name], Mapping) for name in legacy_order):
+        raise AutoDevStateError("consumer legacy stage rows must be mappings")
+    migrated = deepcopy(dict(projection))
+    migrated_task = deepcopy(dict(task))
+    changed = old_order != list(AUTO_DEV_STAGE_ORDER)
+    added: list[str] = []
+    if changed:
+        if "validate_production_release" in stages:
+            raise AutoDevStateError("legacy consumer contains a divergent production-release stage")
+        active = set(auto_dev_workflow_window(
+            AUTO_DEV_STAGE_ORDER,
+            str(projection.get("start_stage") or ""),
+            str(projection.get("completion_stage") or ""),
+        ))
+        row = _stage_row("validate_production_release")
+        row["applicability"] = "required"
+        if "validate_production_release" not in active:
+            row.update(status="out_of_scope", next_action=None)
+        else:
+            added.append("validate_production_release")
+        migrated["stages"]["validate_production_release"] = row
+        migrated["stage_order"] = list(AUTO_DEV_STAGE_ORDER)
+        migrated_task["auto_dev_stage_order"] = list(AUTO_DEV_STAGE_ORDER)
+        for current, key in ((migrated, "stage_policies"), (migrated_task, "auto_dev_stage_policies")):
+            policies = current.get(key)
+            if policies is not None and not isinstance(policies, Mapping):
+                raise AutoDevStateError("consumer stage policies must be a mapping")
+            current[key] = {**dict(policies or {}), "validate_production_release": {"applicability": "required"}}
+        next_stage = next((name for name in AUTO_DEV_STAGE_ORDER
+                           if name in active and migrated["stages"][name].get("status")
+                           not in NON_ACTIONABLE_STAGE_STATUSES), None)
+        migrated["current_stage"] = next_stage
+        migrated["next_action"] = migrated["stages"][next_stage].get("next_action") if next_stage else None
+        if migrated.get("status") not in {"blocked", "paused"}:
+            migrated["status"] = "ready" if next_stage else "completed"
+    return {
+        "schema": "auto-dev-consumer-migration/v1",
+        "from_contract": "auto-dev-stage-order/pre-production-release/v1" if changed else "auto-dev-stage-order/current/v1",
+        "to_contract": "auto-dev-stage-order/current/v1",
+        "changed": changed,
+        "new_pending_stages": added,
+        "projection": migrated,
+        "task": migrated_task,
+        "execution_receipts_created": False,
+        "delivery_lifecycle_changed": False,
+    }
+
+
 def _required_text(value: Mapping[str, Any], key: str, label: str) -> str:
     result = str(value.get(key) or "").strip()
     if not result:
