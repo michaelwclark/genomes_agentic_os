@@ -135,6 +135,10 @@ symlink targets and external schema references are unsupported. Limits are 50
 selected consumers, 4 MiB per file/complete plan, and 100 diagnostics per consumer
 validation; truncation is explicit and cannot count as valid.
 
+Consumer rollback also verifies the unchanged installed schema and complete
+manifest, although that transaction did not write them. A changed or removed
+compatibility prerequisite refuses restoration before any consumer is changed.
+
 ## Claude and Codex
 
 Both harnesses use the same CLI, frozen plans and receipts. Agents can prepare a

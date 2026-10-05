@@ -176,6 +176,27 @@ def test_rollback_refuses_unknown_target_changes_without_partial_restoration(tmp
     assert {item: item.read_bytes() for item in originals} == originals
 
 
+@pytest.mark.parametrize("dependency", ["schema", "manifest"])
+@pytest.mark.parametrize("change", ["edit", "remove"])
+def test_consumer_rollback_refuses_changed_readonly_schema_and_manifest(tmp_path, dependency, change):
+    root, schema, manifest, _ = root_fixture(tmp_path, ownership="current")
+    active, task = consumer_fixture(root)
+    plan = adoption.plan_schema_adoption(root, consumers=[active], migrate_consumers=True)
+    receipt = apply(plan)
+    path = {"schema": schema, "manifest": manifest}[dependency]
+    if change == "edit":
+        path.write_bytes(path.read_bytes() + b"\n")
+    else:
+        path.unlink()
+    originals = {item: item.read_bytes() if item.exists() else None for item in (schema, manifest, active, task)}
+    journal_before = Path(receipt["journal"]).read_bytes()
+    with pytest.raises(adoption.SchemaAdoptionError) as exc:
+        adoption.rollback_schema_transaction(root, receipt["journal"], expected_plan_sha256=plan["plan_sha256"])
+    assert exc.value.error_code == "rollback_dependency_divergence" and not exc.value.retryable
+    assert {item: item.read_bytes() if item.exists() else None for item in originals} == originals
+    assert Path(receipt["journal"]).read_bytes() == journal_before
+
+
 def test_write_failure_restores_exact_schema_and_manifest(tmp_path, monkeypatch):
     root, schema, manifest, _ = root_fixture(tmp_path); originals = schema.read_bytes(), manifest.read_bytes()
     plan = adoption.plan_schema_adoption(root); original_atomic = adoption._atomic; failed = False

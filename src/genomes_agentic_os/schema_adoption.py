@@ -575,6 +575,14 @@ def rollback_schema_transaction(root: str | Path, journal_path: str | Path, *, e
         for lock_path in _transaction_lock_paths(target, plan):
             locks.enter_context(_lock(_path(target, lock_path)))
         _validate_journal_writes(target, path.parent, journal, plan)
+        if plan["kind"] == "consumer_migration":
+            # The schema and complete ownership manifest are read-only
+            # prerequisites of this transaction. Restoring consumers against a
+            # later contract would cross the acknowledged compatibility bound.
+            for dependency in ("installed", "manifest"):
+                descriptor = plan[dependency]
+                if _digest(_read(_path(target, descriptor["path"]), optional=True)) != descriptor["sha256"]:
+                    raise SchemaAdoptionError("rollback_dependency_divergence", "rollback refuses a changed schema or manifest prerequisite")
         for row in journal["writes"]:
             if _digest(_read(_path(target, row["path"]), optional=True)) not in {row["before_sha256"], row["after_sha256"]}:
                 raise SchemaAdoptionError("rollback_divergence", "rollback refuses a concurrent or unknown target change")
