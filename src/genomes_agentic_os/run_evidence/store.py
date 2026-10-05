@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 import json
@@ -27,6 +27,60 @@ class RunLogStoreError(RuntimeError):
 
 class RunLogStoreConfigurationError(RunLogStoreError, ValueError):
     """Raised when the selected run-evidence backend is not usable."""
+
+
+class PayloadValidationError(RunLogStoreError, ValueError):
+    """Permanent, sanitized payload rejection before any persistence attempt."""
+
+    def __init__(self, error_code: str):
+        self.error_code = error_code
+        self.retryable = False
+        message = {
+            "payload_too_large": "evidence exceeds model payload byte limit",
+            "invalid_payload_json": "evidence payload must be finite JSON without duplicate object keys",
+        }[error_code]
+        super().__init__(message)
+
+
+def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    """Reject JSON key coercion collisions rather than silently dropping fields."""
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise PayloadValidationError("invalid_payload_json")
+        result[key] = value
+    return result
+
+
+def validate_payload(payload: Mapping[str, Any], *, max_payload_bytes: int) -> dict[str, Any]:
+    """Count and freeze payload JSON using the provider-neutral byte contract.
+
+    Count UTF-8 bytes with ASCII escaping, finite numbers, and default JSON
+    separators (comma-space and colon-space). Envelope and payload_metadata
+    are excluded. Equality is accepted; oversized input is never truncated.
+    The JSON snapshot isolates persistence from caller mutations. Ingress
+    retains its separate total-record bound in addition to this model bound.
+    """
+    if type(max_payload_bytes) is not int or max_payload_bytes <= 0:
+        raise RunLogStoreConfigurationError("model max_payload_bytes must be a positive integer")
+    if not isinstance(payload, Mapping):
+        raise PayloadValidationError("invalid_payload_json")
+    chunks: list[str] = []
+    size = 0
+    try:
+        encoder = json.JSONEncoder(allow_nan=False, ensure_ascii=True, separators=(", ", ": "))
+        for chunk in encoder.iterencode(dict(payload)):
+            # ASCII escaping makes character and UTF-8 byte counts identical.
+            # Check before allocating a second copy of an oversized chunk.
+            size += len(chunk)
+            if size > max_payload_bytes:
+                raise PayloadValidationError("payload_too_large")
+            chunks.append(chunk)
+        return json.loads("".join(chunks), object_pairs_hook=_unique_object)
+    except PayloadValidationError:
+        raise
+    except (TypeError, ValueError, RecursionError):
+        raise PayloadValidationError("invalid_payload_json") from None
 
 
 class UnknownHostError(RunLogStoreError):
@@ -195,7 +249,8 @@ def _validate_record(record: EvidenceRecord, config: RunLogStoreConfig, known_ho
         raise RunLogStoreError(f"schema version does not match model {record.model_key}")
     if record.classification != model.get("classification"):
         raise RunLogStoreError(f"classification does not match model {record.model_key}")
-    return record.normalized()
+    payload = validate_payload(record.payload, max_payload_bytes=model.get("max_payload_bytes"))
+    return replace(record, payload=payload).normalized()
 
 
 class InMemoryRunLogStore:
@@ -225,19 +280,26 @@ class InMemoryRunLogStore:
 
     def append(self, record: EvidenceRecord) -> dict[str, Any]:
         document = _validate_record(record, self.config, self.get_host(record.host_id) is not None)
-        hashes = self._content_hashes[record.model_key]
+        return self._append_document(record.model_key, document)
+
+    def _append_document(self, model_key: str, document: dict[str, Any]) -> dict[str, Any]:
+        """Persist a validated snapshot without re-reading caller mappings."""
+        hashes = self._content_hashes[model_key]
         existing_id = hashes.get(document["content_hash"])
         if existing_id is not None:
-            return dict(self._records[record.model_key][existing_id])
-        self._records[record.model_key][document["id"]] = document
+            return dict(self._records[model_key][existing_id])
+        self._records[model_key][document["id"]] = document
         hashes[document["content_hash"]] = document["id"]
         return dict(document)
 
     def append_many(self, records: Sequence[EvidenceRecord]) -> list[dict[str, Any]]:
-        # Validate the complete batch before mutating the fake to preserve the port's atomic boundary.
-        for record in records:
-            _validate_record(record, self.config, self.get_host(record.host_id) is not None)
-        return [self.append(record) for record in records]
+        # Freeze every member before the first mutation. Do not validate again
+        # during persistence: caller-owned mappings may have changed meanwhile.
+        documents = [
+            (record.model_key, _validate_record(record, self.config, self.get_host(record.host_id) is not None))
+            for record in records
+        ]
+        return [self._append_document(model_key, document) for model_key, document in documents]
 
     def import_idempotently(self, records: Sequence[EvidenceRecord]) -> list[dict[str, Any]]:
         return self.append_many(records)
