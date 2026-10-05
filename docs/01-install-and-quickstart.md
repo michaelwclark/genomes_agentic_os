@@ -39,7 +39,7 @@ After `pipx install`, `agentic-os` is available in every shell without
 activating a virtualenv.  If pipx is not installed, `pip install --user pipx`
 or `brew install pipx` then `pipx ensurepath`.
 
-### Option B — venv (development or pinned installs)
+### Option B — editable development venv
 
 From inside the cloned repository directory, create a venv and install:
 
@@ -62,6 +62,47 @@ python -m pip install -e '.[dev]'
 
 The installed entry point is `agentic-os`, wired to
 `genomes_agentic_os.cli:main` in `pyproject.toml`.
+
+### Option C — pinned released wheel
+
+Download the wheel from the selected
+[GitHub release](https://github.com/michaelwclark/genomes_agentic_os/releases),
+verify its published checksum, and install it into a dedicated environment:
+
+```bash
+python3 -m venv /path/to/runtime-venv
+/path/to/runtime-venv/bin/python -m pip install /path/to/genomes_agentic_os-VERSION-py3-none-any.whl
+/path/to/runtime-venv/bin/agentic-os --version
+/path/to/runtime-venv/bin/aos --version
+```
+
+Both commands exit 0 and report the executing distribution version without an
+OS root. An unpackaged source invocation is explicitly labelled
+`(uninstalled source)`. Releases before this flag was added require interpreter
+metadata verification instead.
+
+### Verify the selected runtime
+
+Record the selected launcher (`command -v agentic-os`) and its interpreter
+(the launcher's first line). Use that interpreter for identity verification:
+
+```bash
+/path/to/runtime-venv/bin/python -c 'import sys, importlib.metadata as m, genomes_agentic_os as p; print(sys.executable); print(m.version("genomes-agentic-os")); print(p.__file__)'
+```
+
+For a wheel install, the module must resolve inside that environment's
+`site-packages`, rather than a source checkout. Run from an unrelated directory
+with `PYTHONPATH` unset. For an editable install, record the checkout path and
+Git revision too; distribution metadata alone does not identify uncommitted
+source changes.
+
+A source merge updates neither a pinned wheel environment nor launcher aliases.
+Use the governed runtime migration to select a new environment, then read back
+each selected launcher, interpreter, distribution version, and module path.
+Installed-root acceptance separately checks its registries, preserved user
+state, and installed schema/version. GUI, spec, and Fabric services each have
+their own process/runtime identity and validation; the CLI version proves none
+of those deployments.
 
 Confirm it works:
 
