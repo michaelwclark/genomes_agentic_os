@@ -96,6 +96,21 @@ def test_aged_microsecond_order_and_future_due_parity(tmp_path, monkeypatch, con
     assert _selected(tmp_path, monkeypatch, consumer, records) == "oldest-low"
 
 
+@pytest.mark.parametrize("consumer", CONSUMERS)
+@pytest.mark.parametrize(("due_at", "expected"), [
+    ("2026-07-01T01:00:00.499999Z", "boundary-high"),
+    ("2026-07-01T01:00:00.500Z", "boundary-high"),
+    ("2026-07-01T01:00:00.500001Z", "eligible-low"),
+    ("2026-07-01T01:00:00.500400Z", "eligible-low"),
+])
+def test_due_boundary_with_fresh_eligible_competitor(tmp_path, monkeypatch, consumer, due_at, expected):
+    records = [
+        _item("eligible-low", "2026-07-01T00:59:00Z", 0),
+        _item("boundary-high", "2026-07-01T00:59:00Z", 100000, due_at=due_at),
+    ]
+    assert _selected(tmp_path, monkeypatch, consumer, records) == expected
+
+
 @pytest.mark.parametrize("value", [None, "", "invalid", "2026-02-30T01:00:00Z", 42, True])
 def test_invalid_timestamps_have_no_normalized_date(value):
     assert db.normalized_timestamp_us(value) is None

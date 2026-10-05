@@ -2816,7 +2816,7 @@ def runtime_run_batch(
             for row in conn.execute(
                 f"""
                 SELECT id FROM run_queue
-                WHERE status = 'queued' AND (due_at IS NULL OR julianday(due_at) <= julianday(?))
+                WHERE status = 'queued' AND (due_at IS NULL OR agentic_timestamp_us(due_at) <= agentic_timestamp_us(?))
                 ORDER BY {order_sql}
                 """,
                 (
@@ -3192,7 +3192,7 @@ def _prepare_execution_fabric_dispatch(
                 order_sql, order_params = state_queue.dispatch_order(now_value)
                 candidate_clauses = [
                     "status = 'queued'",
-                    "(due_at IS NULL OR julianday(due_at) <= julianday(?))",
+                    "(due_at IS NULL OR agentic_timestamp_us(due_at) <= agentic_timestamp_us(?))",
                 ]
                 candidate_params: list[Any] = [now_value]
                 if queue_name:
@@ -3216,7 +3216,7 @@ def _prepare_execution_fabric_dispatch(
                 if candidate_state is None and queue_name and worker_pool:
                     mismatch_clauses = [
                         "status = 'queued'",
-                        "(due_at IS NULL OR julianday(due_at) <= julianday(?))",
+                        "(due_at IS NULL OR agentic_timestamp_us(due_at) <= agentic_timestamp_us(?))",
                         "queue_name = ?",
                         "worker_pool != ?",
                     ]
