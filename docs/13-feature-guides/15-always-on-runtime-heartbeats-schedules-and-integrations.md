@@ -143,6 +143,25 @@ script execution.
 Do not treat a listed integration as active until `integration doctor` and the
 relevant approval gates pass.
 
+## Notion Runtime Tracking
+
+Keep runtime execution evidence in the installed OS root: heartbeat logs, run
+queue records, and dated morning reports show what the local runtime recorded.
+A Notion projection provides a reading surface for that evidence; a page update
+alone does not prove that a heartbeat, queued command, or provider action ran.
+
+Preview filesystem-to-Notion changes before applying a sync:
+
+```bash
+agentic-os notion plan-sync --root ~/agentic_os
+```
+
+Review the planned destination and actions, then verify the configured workspace
+before an approved sync. The daily morning report described above also requires
+workspace verification before projecting its report. See the
+[Notion command reference](../17-cli-reference.md) for sync, bootstrap, and
+active-work options and their approval requirements.
+
 ## Validation
 
 `agentic-os validate --root <root>` checks that runtime templates, commands,
