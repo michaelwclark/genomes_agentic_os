@@ -55,6 +55,8 @@ class Submission:
     content_hash: str
     status: str = "queued"
     error_code: str | None = None
+    persisted_id: str | None = None
+    outbox_key: str | None = None
     _done: Event = field(default_factory=Event, repr=False)
 
     @property
@@ -156,8 +158,10 @@ class BufferedEvidenceWriter:
         self._fallback(frozen, receipt)
         return receipt
 
-    def _finish(self, receipt: Submission, status: str, error: str | None = None) -> None:
-        receipt.status, receipt.error_code = status, error
+    def _finish(self, receipt: Submission, status: str, error: str | None = None,
+                *, persisted_id: str | None = None, outbox_key: str | None = None) -> None:
+        receipt.status, receipt.error_code, receipt.persisted_id = status, error, persisted_id
+        receipt.outbox_key = outbox_key
         with self._condition:
             self._metrics[status] += 1
             if status == "persisted":
@@ -166,11 +170,11 @@ class BufferedEvidenceWriter:
 
     def _fallback(self, record: EvidenceRecord, receipt: Submission) -> None:
         try:
-            self.outbox.put(record)
+            key = self.outbox.put(record)
         except (OSError, RunLogStoreError):
             self._finish(receipt, "dropped", "outbox_unavailable")
         else:
-            self._finish(receipt, "outboxed")
+            self._finish(receipt, "outboxed", outbox_key=key)
 
     def _persist(self, batch: list[tuple[EvidenceRecord, Submission]]) -> None:
         started = time.monotonic()
@@ -197,7 +201,7 @@ class BufferedEvidenceWriter:
                 if result["id"] != record.id:
                     with self._condition:
                         self._metrics["duplicated"] += 1
-                self._finish(receipt, "persisted")
+                self._finish(receipt, "persisted", persisted_id=result["id"])
         finally:
             with self._condition:
                 self._batch_latency = time.monotonic() - started

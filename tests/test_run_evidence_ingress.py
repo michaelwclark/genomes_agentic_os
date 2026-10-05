@@ -68,6 +68,8 @@ def test_healthy_batch_flushes_with_provider_readback_and_no_files(tmp_path):
     receipts = [writer.submit(record(i)) for i in range(3)]
     assert writer.close(timeout_seconds=1) == {"drained": True, "pending": 0, "dropped": 0}
     assert all(r.durable and r.status == "persisted" for r in receipts)
+    assert all(r.persisted_id == r.record_id for r in receipts)
+    assert all(r.outbox_key is None for r in receipts)
     assert sum(provider.batches) == 3 and max(provider.batches) <= 2
     assert provider.deadlines and set(provider.deadlines) == {.025}
     assert outbox.status()["count"] == 0
@@ -97,6 +99,8 @@ def test_producer_never_waits_for_database_and_close_reports_pending(tmp_path):
         second = writer.submit(record(2))
         assert time.monotonic() - start < .2
         assert not first.durable and not second.durable
+        assert first.persisted_id is None and second.persisted_id is None
+        assert first.outbox_key is None and second.outbox_key is None
         result = writer.close(timeout_seconds=.01)
         assert result["drained"] is False and result["pending"] == 2
         assert outbox.status()["count"] == 0
@@ -153,6 +157,8 @@ def test_partial_timeout_retains_whole_batch_and_replay_converges(tmp_path):
     receipts = [writer.submit(record(i)) for i in range(2)]
     assert writer.close(timeout_seconds=1)["drained"]
     assert all(r.status == "outboxed" and r.durable for r in receipts)
+    assert all(r.persisted_id is None for r in receipts)
+    assert all(r.outbox_key is not None for r in receipts)
     assert outbox.status()["pending"] == 2
     assert outbox.replay(provider, limit=2)["persisted"] == 2
     assert outbox.replay(provider, limit=2)["persisted"] == 0
@@ -168,6 +174,8 @@ def test_failed_local_fallback_is_visible_and_not_durable(tmp_path, monkeypatch,
     receipt = writer.submit(record())
     assert receipt.wait(0) and not receipt.durable
     assert receipt.status == "dropped" and receipt.error_code == "outbox_unavailable"
+    assert receipt.persisted_id is None
+    assert receipt.outbox_key is None
     assert writer.status()["dropped"] == 1
 
 
@@ -194,6 +202,49 @@ def test_submission_freezes_identity_and_mutable_payload(tmp_path):
     saved = provider.get("run_log", receipt.record_id)
     assert saved["payload"] == {"nested": [1]}
     assert saved["content_hash"] == receipt.content_hash
+
+
+@pytest.mark.parametrize("batch_size", [1, 2])
+def test_duplicate_receipt_exposes_verified_persisted_identity(tmp_path, batch_size):
+    writer, provider, outbox = setup_writer(tmp_path, batch_size=batch_size)
+    writer.start()
+    first = writer.submit(record(id="first"))
+    duplicate = writer.submit(record(id="second"))
+    assert writer.close(timeout_seconds=1)["drained"]
+    assert first.wait(0) and duplicate.wait(0)
+    assert first.status == duplicate.status == "persisted"
+    assert first.durable and duplicate.durable
+    assert duplicate.record_id == "second"
+    assert first.persisted_id == duplicate.persisted_id == "first"
+    assert provider.get("run_log", duplicate.record_id) is None
+    saved = provider.get("run_log", duplicate.persisted_id)
+    assert saved["content_hash"] == duplicate.content_hash
+    assert len(provider.search("run_log")) == 1
+    assert writer.status()["duplicated"] == 1
+    assert outbox.status()["count"] == 0
+
+
+def test_duplicate_outboxed_receipt_identifies_retained_envelope(tmp_path, monkeypatch):
+    writer, provider, outbox = setup_writer(tmp_path)
+    first = writer.submit(record(id="first"))
+    duplicate = writer.submit(record(id="second"))
+    assert first.durable and duplicate.durable
+    assert first.status == duplicate.status == "outboxed"
+    assert duplicate.record_id == "second"
+    assert first.persisted_id is duplicate.persisted_id is None
+    assert first.outbox_key == duplicate.outbox_key
+    assert duplicate.outbox_key is not None
+    assert outbox.status()["count"] == 1
+    now = time.time()
+    claim = outbox.claim(now=now)
+    assert claim.key == duplicate.outbox_key and claim.record.id == "first"
+    outbox.retry(claim, now=now)
+    monkeypatch.setattr("genomes_agentic_os.run_evidence.outbox.time.time", lambda: now + 2)
+    assert writer.replay(limit=1)["persisted"] == 1
+    assert provider.get("run_log", "first")["content_hash"] == duplicate.content_hash
+    assert writer.replay(limit=1)["persisted"] == 0
+    assert outbox.status()["count"] == 0
+    assert len(provider.search("run_log")) == 1
 
 
 def test_stress_rejects_without_spawning_or_unbounded_retention(tmp_path):
@@ -228,6 +279,7 @@ def test_readback_mismatch_goes_to_outbox(tmp_path):
     receipt = writer.submit(record())
     assert writer.close(timeout_seconds=1)["drained"]
     assert receipt.durable and receipt.status == "outboxed"
+    assert receipt.persisted_id is None
     assert outbox.status()["pending"] == 1
 
 

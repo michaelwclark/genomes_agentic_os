@@ -168,10 +168,22 @@ whole batch through idempotent durable fallback.
 | Returned status | Meaning | Caller action |
 | --- | --- | --- |
 | `queued` | Accepted in memory; not durable and vulnerable to process exit | Retain source evidence until completion when durability is required |
-| `persisted` | Provider write and matching readback completed | Receipt reports durable |
-| `outboxed` | Atomic local envelope and directory fsync completed | Receipt reports durable; explicit replay may later recover it |
+| `persisted` | Provider write and matching readback completed | Receipt reports durable; `persisted_id` resolves the verified provider record |
+| `outboxed` | Atomic local envelope and directory fsync completed | Receipt reports durable; `outbox_key` identifies the retained envelope for explicit recovery |
 | `dropped` | Local fallback failed, including capacity or permission failure | Receipt reports non-durable and a sanitized error code; caller must handle loss |
 | `IngressError` | Validation failed or configured rejection applies | Nothing was accepted |
+
+`record_id` always identifies the frozen submission. Idempotent duplicates can
+converge to an earlier provider record with a different ID. After `wait(...)`
+completes with `persisted`, use `persisted_id` with the store's `get` method.
+It is populated only after every record in the batch passes provider readback
+and remains `None` for queued, outboxed and dropped submissions. An outboxed
+receipt acknowledges local durability and exposes `outbox_key` after fsync.
+Same-content outbox duplicates share that key even when submitted IDs differ.
+Recovery uses the key on `OutboxClaim` and its retained record identity; a later
+explicit replay does not update the original receipt or claim a provider
+identity across process restarts. Queued, persisted and dropped receipts have
+no `outbox_key`.
 
 Queue saturation, absent ingress and closed ingress use the configured
 `overflow_policy`: `outbox` performs local durable fallback; `reject` raises
