@@ -372,6 +372,164 @@ def prior_request(work_item: Path, ticket: str) -> dict[str, Any] | None:
     return None
 
 
+def bootstrap_json(path: Path, label: str) -> dict[str, Any]:
+    """Read bootstrap evidence; malformed or absent evidence never admits review."""
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise ReviewError(f"{label} is missing or malformed") from exc
+    if not isinstance(value, dict):
+        raise ReviewError(f"{label} must be an object")
+    return value
+
+
+def bootstrap_ref(work_item: Path, reference: Any, *, relative_to: Path) -> Path:
+    """Resolve a recorded proof inside this packet, without a directory search."""
+    if not isinstance(reference, str) or not reference:
+        raise ReviewError("PR Create provider readback reference is missing")
+    path = (relative_to / reference).resolve()
+    if not path.is_relative_to(work_item.resolve()) or not path.is_file():
+        raise ReviewError("PR Create provider readback reference is outside or missing from packet")
+    return path
+
+
+def canonical_pr_create_target(
+    work_item: Path, ticket: str, manifest: dict[str, Any], policy: str
+) -> tuple[dict[str, Any], Path, dict[str, str]]:
+    """Resolve one completed, verified PR target; fail before model admission."""
+    root = work_item / "artifacts/auto-dev-pr-create"
+    family_path = root / "family-complete.json"
+    family = bootstrap_json(family_path, "PR Create family")
+    snapshot = bootstrap_json(root / "source-snapshot.json", "PR Create source snapshot")
+    topology = bootstrap_json(root / "topology.json", "PR Create topology")
+    plan = bootstrap_json(root / "plan.json", "PR Create plan")
+    if (manifest.get("stages") or {}).get("pr_create", {}).get("status") != "completed":
+        raise ReviewError("packet PR Create stage is not completed")
+    if family.get("status") != "completed":
+        raise ReviewError("PR Create family is not completed")
+    if family.get("schema") == "development-stage-evidence/v1":
+        if family.get("state") != "release_propagation":
+            raise ReviewError("PR Create family has the wrong stage")
+        details = family.get("evidence") or {}
+    elif family.get("schema") == "auto-dev-pr-family/v1":
+        details = family
+    else:
+        raise ReviewError("PR Create family schema is unsupported")
+    if not isinstance(details, dict):
+        raise ReviewError("PR Create family evidence is malformed")
+    source = details.get("source") or {}
+    if not isinstance(source, dict):
+        raise ReviewError("PR Create family source is malformed")
+    head = details.get("source_head_sha") or source.get("sha")
+    repository = details.get("repository")
+    if (
+        not isinstance(head, str) or len(head) != 40
+        or any(ch not in "0123456789abcdefABCDEF" for ch in head)
+        or not isinstance(repository, str) or repository.count("/") != 1
+    ):
+        raise ReviewError("PR Create family repository or head is malformed")
+    if str(manifest.get("subject_revision") or "") != head:
+        raise ReviewError("PR Create family head does not match the packet subject revision")
+    frozen_policy = details.get("policy_fingerprint") or details.get("effective_policy_fingerprint")
+    if details.get("ticket") != ticket or frozen_policy != policy:
+        raise ReviewError("PR Create family ticket or frozen policy does not match packet")
+    if (
+        snapshot.get("schema") != "auto-dev-pr-create-source-snapshot/v1"
+        or snapshot.get("ticket") != ticket
+        or snapshot.get("repository") != repository
+        or snapshot.get("source_head_sha") != head
+        or snapshot.get("policy_fingerprint") != policy
+        or topology.get("schema") != "auto-dev-pr-create-topology/v1"
+        or topology.get("ticket") != ticket
+        or topology.get("repository") != repository
+        or plan.get("schema") != "auto-dev-pr-create-plan/v1"
+        or plan.get("ticket") != ticket
+        or plan.get("source_head_sha") != head
+    ):
+        raise ReviewError("PR Create family authority snapshot identity or policy mismatch")
+    selected_repository = ((manifest.get("delivery") or {}).get("repository") or {}).get("id")
+    if selected_repository and selected_repository.removeprefix("git:github.com/") != repository:
+        raise ReviewError("PR Create family repository does not match packet selection")
+    targets = details.get("targets")
+    planned = plan.get("targets")
+    if not isinstance(targets, list) or not isinstance(planned, list):
+        raise ReviewError("PR Create family targets are malformed")
+    # A first review has no target selector. Never silently choose among siblings.
+    if len(targets) != 1 or len(planned) != 1 or not all(
+        isinstance(row, dict) for row in [*targets, *planned]
+    ):
+        raise ReviewError("PR Create family must identify one unique review target")
+    target, planned_target = targets[0], planned[0]
+    number = target.get("pr_number") or target.get("pull_request_number") or target.get("pull_request")
+    if isinstance(number, bool) or not (
+        isinstance(number, int) or isinstance(number, str) and number.isdecimal()
+    ):
+        raise ReviewError("PR Create target PR number is invalid")
+    try:
+        number = int(number)
+    except (TypeError, ValueError) as exc:
+        raise ReviewError("PR Create target PR number is invalid") from exc
+    branch = target.get("base_branch")
+    if (
+        number <= 0
+        or target.get("repository", repository) != repository
+        or target.get("source_head_sha", target.get("head_sha", head)) != head
+        or target.get("policy_fingerprint", policy) != policy
+        or target.get("status", "open") not in {"open", "created", "completed", "existing_equivalent"}
+        or branch != snapshot.get("base_branch")
+        or not isinstance(topology.get("default_targets"), list)
+        or branch not in topology["default_targets"]
+        or planned_target.get("repository") != repository
+        or planned_target.get("base_branch") != branch
+        or str(planned_target.get("pull_request")) != str(number)
+        or planned_target.get("readback_verified") is not True
+        or planned_target.get("classification", "pr_required") != "pr_required"
+        or not (target.get("readback_verified") is True or details.get("readback_verified") is True)
+        or target.get("classification") != "pr_required"
+    ):
+        raise ReviewError("PR Create target is incomplete, unverified or inconsistent with plan")
+    reference = target.get("readback_ref") or target.get("provider_readback")
+    reference = reference or snapshot.get("provider_readback")
+    readback_path = bootstrap_ref(
+        work_item, reference,
+        relative_to=root if target.get("provider_readback") else work_item,
+    )
+    proof = bootstrap_json(readback_path, "PR Create provider readback")
+    if proof.get("schema") == "artifact-provider-readback/v1":
+        observed = proof.get("observed") or {}
+        if not isinstance(observed, dict):
+            raise ReviewError("PR Create provider observation is malformed")
+        if (
+            proof.get("status") != "verified"
+            or proof.get("provider") != "github"
+            or proof.get("artifact_type") != "pull-request"
+            or proof.get("target") != repository
+            or str(proof.get("external_id")) != str(number)
+            or observed.get("repository") != repository
+            or observed.get("head_sha") != head
+        ):
+            raise ReviewError("PR Create provider readback is unverified or has mismatched identity")
+    elif proof.get("schema") == "auto-dev-pr-create-provider-readback/v1":
+        if (
+            proof.get("repository") != repository
+            or str(proof.get("number", proof.get("pull_request"))) != str(number)
+            or proof.get("head_sha", proof.get("source_head_sha")) != head
+            or proof.get("state") != "OPEN"
+        ):
+            raise ReviewError("PR Create provider readback identity or state does not match family")
+    else:
+        raise ReviewError("PR Create provider readback schema is unsupported")
+    evidence_hashes = {
+        str(path.relative_to(work_item)): hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in [family_path, root / "source-snapshot.json", root / "topology.json",
+                     root / "plan.json", readback_path]
+    }
+    return {
+        "repository": repository, "number": number, "base_branch": branch,
+        "head_sha": head, "title": proof.get("title"),
+    }, readback_path, evidence_hashes
+
+
 def initial_request(work_item: Path, ticket: str, worktree: Path) -> dict[str, Any]:
     """Derive the first review request from immutable PR Create and packet truth."""
 
@@ -380,12 +538,46 @@ def initial_request(work_item: Path, ticket: str, worktree: Path) -> dict[str, A
         / "artifacts/auto-dev-pr-create/pull-request-provider-readback.json"
     )
     manifest_path = work_item / "autodev.json"
-    if not readback_path.is_file() or not manifest_path.is_file():
+    if not manifest_path.is_file():
         raise ReviewError(
             f"no prior finishing-review request or canonical PR Create readback for {ticket}"
         )
-    readback = json.loads(readback_path.read_text(encoding="utf-8"))
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest = bootstrap_json(manifest_path, "packet manifest")
+    delivery = manifest.get("delivery") or {}
+    if (
+        not isinstance(delivery, dict)
+        or not isinstance(delivery.get("repository", {}), dict)
+        or not isinstance(manifest.get("stages", {}), dict)
+        or not isinstance((manifest.get("stages") or {}).get("pr_create", {}), dict)
+    ):
+        raise ReviewError("packet delivery or stage metadata is malformed")
+    supplied_policy_fingerprint = str(delivery.get("policy_fingerprint") or "")
+    if len(supplied_policy_fingerprint) != 64 or any(
+        ch not in "0123456789abcdef" for ch in supplied_policy_fingerprint
+    ):
+        raise ReviewError("packet delivery policy fingerprint is missing or invalid")
+    evidence_hashes: dict[str, str] = {}
+    family_path = readback_path.parent / "family-complete.json"
+    live: dict[str, Any] | None = None
+    if family_path.is_file():
+        readback, readback_path, evidence_hashes = canonical_pr_create_target(
+            work_item, ticket, manifest, supplied_policy_fingerprint
+        )
+        if git_repository(worktree) != readback["repository"]:
+            raise ReviewError("PR Create family repository does not match provider worktree")
+        live = provider_pr(readback["number"], worktree)
+        if (
+            live.get("number") != readback["number"]
+            or live.get("headRefOid") != readback["head_sha"]
+            or live.get("baseRefName") != readback["base_branch"]
+            or live.get("state") != "OPEN"
+            or live.get("url") != f"https://github.com/{readback['repository']}/pull/{readback['number']}"
+        ):
+            raise ReviewError("PR Create family does not match live provider identity, head or base branch")
+        # Checkout/snapshot base is historical. The provider owns the current PR base.
+        readback.update(base_sha=live.get("baseRefOid"), url=live["url"], state=live["state"])
+    else:
+        readback = bootstrap_json(readback_path, "canonical PR Create readback")
     required = {
         "number",
         "url",
@@ -407,10 +599,13 @@ def initial_request(work_item: Path, ticket: str, worktree: Path) -> dict[str, A
         raise ReviewError(
             "PR Create provider readback head does not match the packet subject revision"
         )
-    delivery = manifest.get("delivery") or {}
-    supplied_policy_fingerprint = str(delivery.get("policy_fingerprint") or "")
-    if len(supplied_policy_fingerprint) != 64:
-        raise ReviewError("packet delivery policy fingerprint is missing or invalid")
+    if any(
+        not isinstance(readback[field], str)
+        or len(readback[field]) != 40
+        or any(ch not in "0123456789abcdefABCDEF" for ch in readback[field])
+        for field in ("base_sha", "head_sha")
+    ):
+        raise ReviewError("PR Create provider base/head SHA is missing or invalid")
     return {
         "work_item_id": ticket,
         "run_id": "pending-initial-review",
@@ -431,8 +626,10 @@ def initial_request(work_item: Path, ticket: str, worktree: Path) -> dict[str, A
         "artifact_dir": "pending-initial-review",
         "mode": "post_pr",
         "policy_fingerprint": supplied_policy_fingerprint,
-        "request_origin": "auto-dev-pr-create-provider-readback",
+        "request_origin": "auto-dev-pr-create-family" if evidence_hashes else "auto-dev-pr-create-provider-readback",
         "provider_readback_ref": str(readback_path.relative_to(work_item)),
+        "pr_create_evidence_sha256": evidence_hashes,
+        "_bootstrap_provider_pr": live,
     }
 
 
@@ -608,13 +805,8 @@ def main() -> int:
         os_root = resolve_os_root(args.os_root)
         work_item = (args.work_item or locate_work_item(os_root, args.ticket)).resolve()
         worktree = (args.worktree or locate_worktree(os_root, args.ticket)).resolve()
-        source = prior_request(work_item, args.ticket) or initial_request(
-            work_item, args.ticket, worktree
-        )
-        unavailable_policy = review_unavailable_policy(source)
+        source = prior_request(work_item, args.ticket)
         head = git_head(worktree)
-        base = str(source["base_sha"])
-        policy = policy_fingerprint(source)
         domain, project = project_identity(work_item, os_root)
         profile, _profile_path = load_development_profile(os_root, domain, project)
         try:
@@ -622,16 +814,17 @@ def main() -> int:
                 profile, args.repository
             )
         except ReviewError as exc:
-            repository_hint = source.get("repository_id") or source.get("repository")
+            hints = source or {}
+            repository_hint = hints.get("repository_id") or hints.get("repository")
             if isinstance(repository_hint, dict):
                 repository_hint = repository_hint.get("id") or repository_hint.get("root")
             receipt_path = repository_preflight_receipt(
                 work_item=work_item,
                 ticket=args.ticket,
                 repository=str(repository_hint or worktree),
-                base_sha=base,
+                base_sha=str(hints.get("base_sha") or ""),
                 head_sha=head,
-                policy=policy,
+                policy=policy_fingerprint(hints),
                 selector=args.repository,
                 failure=str(exc),
             )
@@ -647,8 +840,12 @@ def main() -> int:
                 )
             )
             return 2
+        source = source or initial_request(work_item, args.ticket, worktree)
+        unavailable_policy = review_unavailable_policy(source)
+        base = str(source["base_sha"])
+        policy = policy_fingerprint(source)
         pr_number = int(source["pr_number"])
-        provider = provider_pr(pr_number, worktree)
+        provider = source.pop("_bootstrap_provider_pr", None) or provider_pr(pr_number, worktree)
         if provider["headRefOid"] != head:
             raise ReviewError(f"exact-head mismatch: provider={provider['headRefOid']} worktree={head}")
         if provider.get("baseRefOid") and provider["baseRefOid"] != base:

@@ -378,6 +378,211 @@ def test_initial_review_request_rejects_stale_packet_subject(tmp_path: Path) -> 
         runner.initial_request(packet, "PR-57", worktree)
 
 
+def _canonical_pr_create_packet(packet: Path) -> dict[str, object]:
+    """AGE-221's current PR Create family shape, without its optional flat alias."""
+    root = packet / "artifacts/auto-dev-pr-create"
+    root.mkdir(parents=True)
+    head, policy = "b" * 40, "c" * 64
+    repository, branch, number = "acme/widgets", "main", 57
+    reference = "artifacts/pr/provider-readback.json"
+    documents = {
+        "autodev.json": {
+            "subject_revision": head,
+            "stages": {"pr_create": {"status": "completed"}},
+            "delivery": {
+                "policy_fingerprint": policy,
+                "repository": {"id": "git:github.com/acme/widgets"},
+                "worktree": {"base_sha": "d" * 40},
+            },
+        },
+        "artifacts/auto-dev-pr-create/family-complete.json": {
+            "schema": "development-stage-evidence/v1",
+            "state": "release_propagation", "status": "completed",
+            "evidence": {
+                "ticket": "AGE-221", "repository": repository,
+                "source_head_sha": head, "policy_fingerprint": policy,
+                "readback_verified": True,
+                "targets": [{
+                    "base_branch": branch, "classification": "pr_required",
+                    "status": "existing_equivalent", "pull_request": number,
+                    "source_head_sha": head, "readback_ref": reference,
+                    "is_draft": True,
+                }],
+            },
+        },
+        "artifacts/auto-dev-pr-create/source-snapshot.json": {
+            "schema": "auto-dev-pr-create-source-snapshot/v1",
+            "ticket": "AGE-221", "repository": repository,
+            "source_head_sha": head, "base_branch": branch,
+            "policy_fingerprint": policy, "provider_readback": reference,
+        },
+        "artifacts/auto-dev-pr-create/topology.json": {
+            "schema": "auto-dev-pr-create-topology/v1",
+            "ticket": "AGE-221", "repository": repository,
+            "default_targets": [branch], "propagation": "none",
+        },
+        "artifacts/auto-dev-pr-create/plan.json": {
+            "schema": "auto-dev-pr-create-plan/v1", "ticket": "AGE-221",
+            "source_head_sha": head, "target_count": 1,
+            "targets": [{
+                "repository": repository, "base_branch": branch,
+                "classification": "pr_required", "action": "reuse",
+                "pull_request": number, "readback_verified": True,
+            }],
+        },
+        reference: {
+            "schema": "artifact-provider-readback/v1",
+            "status": "verified", "provider": "github",
+            "artifact_type": "pull-request", "target": repository,
+            "external_id": str(number),
+            "observed": {"repository": repository, "head_sha": head},
+        },
+    }
+    for name, value in documents.items():
+        path = packet / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(value), encoding="utf-8")
+    return {
+        "number": number, "url": f"https://github.com/{repository}/pull/{number}",
+        "state": "OPEN", "headRefOid": head, "baseRefName": branch,
+        "baseRefOid": "a" * 40, "statusCheckRollup": [],
+    }
+
+
+def test_initial_request_consumes_current_family_and_actual_provider_base(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    runner = _load_runner()
+    packet, worktree = tmp_path / "packet", tmp_path / "worktree"
+    worktree.mkdir()
+    provider = _canonical_pr_create_packet(packet)
+    before = {str(p): p.read_bytes() for p in packet.rglob("*.json")}
+    monkeypatch.setattr(runner, "git_repository", lambda _path: "acme/widgets")
+    monkeypatch.setattr(runner, "provider_pr", lambda *_args: provider)
+
+    request = runner.initial_request(packet, "AGE-221", worktree)
+
+    assert request["request_origin"] == "auto-dev-pr-create-family"
+    assert request["base_sha"] == "a" * 40  # provider, not the historical checkout "d"
+    assert request["head_sha"] == "b" * 40
+    assert request["policy_fingerprint"] == "c" * 64
+    assert len(request["pr_create_evidence_sha256"]) == 5
+    assert before == {str(p): p.read_bytes() for p in packet.rglob("*.json")}
+    assert not (packet / "artifacts/auto-dev-pr-create/pull-request-provider-readback.json").exists()
+
+
+@pytest.mark.parametrize(("name", "field", "value"), [
+    ("autodev.json", "subject_revision", "e" * 40),
+    ("autodev.json", "stages", {"pr_create": {"status": "not_started"}}),
+    ("family-complete.json", "status", "pending"),
+    ("source-snapshot.json", "source_head_sha", "e" * 40),
+    ("source-snapshot.json", "policy_fingerprint", "e" * 64),
+    ("topology.json", "repository", "acme/other"),
+    ("plan.json", "targets", []),
+    ("provider-readback.json", "status", "unverified"),
+    ("provider-readback.json", "observed", {"repository": "acme/other", "head_sha": "b" * 40}),
+])
+def test_canonical_bootstrap_rejects_incomplete_identity_and_policy(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    name: str, field: str, value: object,
+) -> None:
+    runner = _load_runner()
+    packet = tmp_path / "packet"
+    _canonical_pr_create_packet(packet)
+    if name == "autodev.json":
+        path = packet / name
+    elif name == "provider-readback.json":
+        path = packet / "artifacts/pr" / name
+    else:
+        path = packet / "artifacts/auto-dev-pr-create" / name
+    document = json.loads(path.read_text())
+    document[field] = value
+    path.write_text(json.dumps(document))
+    calls = []
+    monkeypatch.setattr(runner, "provider_pr", lambda *_args: calls.append("provider"))
+    monkeypatch.setattr(runner, "git_repository", lambda _path: "acme/widgets")
+    with pytest.raises(runner.ReviewError):
+        runner.initial_request(packet, "AGE-221", tmp_path / "worktree")
+    # Subject drift may need a provider read; all authority defects stop sooner.
+    if field != "subject_revision":
+        assert calls == []
+
+
+@pytest.mark.parametrize(("field", "value"), [
+    ("baseRefOid", None), ("baseRefOid", "historical"),
+    ("headRefOid", "e" * 40), ("baseRefName", "release"),
+    ("number", 58), ("state", "CLOSED"),
+    ("url", "https://github.com/acme/other/pull/57"),
+])
+def test_canonical_bootstrap_requires_actual_provider_identity_base_and_head(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    field: str, value: object,
+) -> None:
+    runner = _load_runner()
+    packet = tmp_path / "packet"
+    provider = _canonical_pr_create_packet(packet)
+    provider[field] = value
+    monkeypatch.setattr(runner, "provider_pr", lambda *_args: provider)
+    monkeypatch.setattr(runner, "git_repository", lambda _path: "acme/widgets")
+    with pytest.raises(runner.ReviewError, match="provider"):
+        runner.initial_request(packet, "AGE-221", tmp_path / "worktree")
+
+
+def test_canonical_bootstrap_rejects_ambiguous_target_and_external_proof(tmp_path: Path) -> None:
+    runner = _load_runner()
+    packet = tmp_path / "packet"
+    _canonical_pr_create_packet(packet)
+    path = packet / "artifacts/auto-dev-pr-create/family-complete.json"
+    family = json.loads(path.read_text())
+    target = family["evidence"]["targets"][0]
+    family["evidence"]["targets"].append(dict(target, pull_request=58))
+    path.write_text(json.dumps(family))
+    with pytest.raises(runner.ReviewError, match="unique"):
+        runner.initial_request(packet, "AGE-221", tmp_path / "worktree")
+    family["evidence"]["targets"] = [dict(target, readback_ref="../outside.json")]
+    path.write_text(json.dumps(family))
+    with pytest.raises(runner.ReviewError, match="outside"):
+        runner.initial_request(packet, "AGE-221", tmp_path / "worktree")
+
+
+def test_canonical_bootstrap_model_invoked_once_and_exact_key_reused(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    runner = _load_runner()
+    os_root = _installed_root(tmp_path / "os")
+    project = os_root / "domains/acme/02-projects/widgets"
+    packet, worktree = project / "work-items/age-221", project / "worktrees/age-221"
+    worktree.mkdir(parents=True)
+    provider = _canonical_pr_create_packet(packet)
+    model_calls = []
+    monkeypatch.setattr(runner, "provider_pr", lambda *_args: provider)
+    monkeypatch.setattr(runner, "git_repository", lambda _path: "acme/widgets")
+    monkeypatch.setattr(runner, "git_head", lambda _path: "b" * 40)
+    monkeypatch.setattr(runner, "diff_hash", lambda *_args: "d" * 64)
+    monkeypatch.setattr(runner, "render_prompt", lambda *_args: "offline mocked review")
+    monkeypatch.setattr(runner, "decide", lambda _path: {"decision": "ready_post_pr_checks"})
+    monkeypatch.setattr(runner, "load_development_profile", lambda *_args: (
+        {"repository": {"root": str(worktree), "base_branch": "main"}}, project / "config.yml",
+    ))
+    monkeypatch.setattr(runner.shutil, "which", lambda _name: "/offline/claude")
+    def fake_model(*args, **_kwargs):
+        model_calls.append(args)
+        return _completed(0, "```json\n[]\n```\nAGENTIC_OS_REVIEW_VERDICT: CLEAN")
+    monkeypatch.setattr(runner, "run", fake_model)
+    monkeypatch.setattr(sys, "argv", [
+        "runner", "AGE-221", "--os-root", str(os_root), "--work-item", str(packet),
+        "--worktree", str(worktree),
+    ])
+
+    assert runner.main() == 0
+    receipts = list((os_root / "state/review-coordination/receipts").glob("*.json"))
+    before = {str(p): p.read_bytes() for p in receipts}
+    assert len(receipts) == 1
+    assert runner.main() == 0
+    assert len(model_calls) == 1
+    assert before == {str(p): p.read_bytes() for p in receipts}
+
+
 def test_delta_validation_requires_parent_ancestry(monkeypatch: pytest.MonkeyPatch) -> None:
     runner = _load_runner()
     monkeypatch.setattr(runner, "run", lambda *_args, **_kwargs: _completed(1))
