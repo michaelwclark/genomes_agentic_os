@@ -1055,22 +1055,25 @@ def _materialize_inline_script_lease(root: Path, item: dict[str, Any]) -> dict[s
     worker is not reclaimed before the command returns.
     """
     runtime_policy = item.get("runtime_policy")
-    if item.get("timeout_seconds") or item.get("lease_seconds") or (
-        isinstance(runtime_policy, dict) and runtime_policy.get("timeout_seconds")
+    if any(item.get(key) is not None for key in ("timeout_seconds", "lease_seconds")) or (
+        isinstance(runtime_policy, dict)
+        and any(runtime_policy.get(key) is not None for key in ("timeout_seconds", "lease_seconds"))
     ):
         return item
-    normalized = str(item.get("command") or "").replace("<root>", str(root)).strip()
-    inline_prefixes = (
-        "agentic-os self-improvement run ",
-        "agentic-os self-improvement morning-report ",
-        "agentic-os self-improvement nightly-apply ",
+    try:
+        parts = shlex.split(str(item.get("command") or "").replace("<root>", str(root)))
+    except ValueError:
+        return item  # Command validation owns malformed command refusal.
+    if not parts or Path(parts[0]).name not in {"agentic-os", "aos"}:
+        return item
+    verbs = parts[1:]
+    scans_root = (
+        verbs[:1] == ["validate"]
+        or verbs[:2] == ["thread", "stale-finalize"]
+        or verbs[:3] == ["project", "worktree", "cleanup-closed"]
+        or (len(verbs) >= 2 and verbs[0] == "self-improvement" and verbs[1] in {"run", "morning-report", "nightly-apply"})
     )
-    inline_exact = {
-        f"agentic-os validate --root {root}",
-        f"agentic-os thread stale-finalize --root {root} --older-than-days 3 --apply",
-        f"agentic-os project worktree cleanup-closed --root {root} --apply",
-    }
-    if normalized in inline_exact or normalized.startswith(inline_prefixes):
+    if scans_root:
         item["lease_seconds"] = INLINE_SCRIPT_LEASE_SECONDS
     return item
 
@@ -1080,11 +1083,18 @@ def _dispatch_lease_seconds(item: dict[str, Any], timeout_seconds: int) -> int:
     value = item.get("lease_seconds")
     if value is None and isinstance(item.get("runtime_policy"), dict):
         value = item["runtime_policy"].get("lease_seconds")
-    try:
-        lease = int(value) if value is not None and not isinstance(value, bool) else floor
-    except (TypeError, ValueError):
-        lease = floor
-    return max(floor, min(MAX_LEASE_SECONDS, lease))
+    if floor > MAX_LEASE_SECONDS:
+        raise ValueError("command timeout exceeds the maximum safe queue lease")
+    if value is None:
+        return floor
+    if isinstance(value, bool) or not (
+        isinstance(value, int) or (isinstance(value, str) and re.fullmatch(r"[0-9]+", value))
+    ):
+        raise ValueError("lease_seconds must be a positive integer within the queue lease bound")
+    lease = int(value)
+    if not 0 < lease <= MAX_LEASE_SECONDS:
+        raise ValueError("lease_seconds must be a positive integer within the queue lease bound")
+    return max(floor, lease)
 
 
 def _provider_from_text(text: str) -> str | None:
@@ -1491,10 +1501,17 @@ def _schedule_run_due_locked(os_root: Path, *, dry_run: bool, mode: str) -> dict
     }
 
 
-def _dispatchable_item(items: list[dict[str, Any]], item_id: str | None) -> dict[str, Any] | None:
+def _dispatchable_item(
+    items: list[dict[str, Any]], item_id: str | None, *, now: str | None = None
+) -> dict[str, Any] | None:
     if item_id:
         return next((item for item in items if item.get("id") == item_id), None)
-    return next((item for item in items if item.get("status") == "queued"), None)
+    now_value = now or state_db.utc_now_iso()
+    candidates = [
+        item for item in items
+        if item.get("status") == "queued" and state_queue.dispatch_available(item, now_value)
+    ]
+    return min(candidates, key=lambda item: state_queue.dispatch_sort_key(item, now_value), default=None)
 
 
 def _queue_item_ref(item: dict[str, Any]) -> str:
@@ -2793,18 +2810,18 @@ def runtime_run_batch(
         if max_tasks is not None:
             batch_limit = min(batch_limit, max(1, int(max_tasks)))
         now_value = state_db.utc_now_iso()
+        order_sql, order_params = state_queue.dispatch_order(now_value)
         candidate_ids = [
             str(row["id"])
             for row in conn.execute(
                 f"""
                 SELECT id FROM run_queue
-                WHERE status = 'queued' AND (due_at IS NULL OR due_at <= ?)
-                ORDER BY {state_queue.DISPATCH_ORDER_SQL}
+                WHERE status = 'queued' AND (due_at IS NULL OR julianday(due_at) <= julianday(?))
+                ORDER BY {order_sql}
                 """,
                 (
                     now_value,
-                    state_queue.starvation_cutoff(now_value),
-                    state_queue.starvation_cutoff(now_value),
+                    *order_params,
                 ),
             ).fetchall()
         ]
@@ -3172,9 +3189,10 @@ def _prepare_execution_fabric_dispatch(
                 candidate_state = state_queue.get(conn, item_id)
             else:
                 now_value = state_db.utc_now_iso()
+                order_sql, order_params = state_queue.dispatch_order(now_value)
                 candidate_clauses = [
                     "status = 'queued'",
-                    "(due_at IS NULL OR due_at <= ?)",
+                    "(due_at IS NULL OR julianday(due_at) <= julianday(?))",
                 ]
                 candidate_params: list[Any] = [now_value]
                 if queue_name:
@@ -3188,17 +3206,17 @@ def _prepare_execution_fabric_dispatch(
                         (
                             "SELECT id FROM run_queue",
                             "WHERE " + " AND ".join(candidate_clauses),
-                            f"ORDER BY {state_queue.DISPATCH_ORDER_SQL}",
+                            f"ORDER BY {order_sql}",
                             "LIMIT 1",
                         )
                     ),
-                    (*candidate_params, state_queue.starvation_cutoff(now_value), state_queue.starvation_cutoff(now_value)),
+                    (*candidate_params, *order_params),
                 ).fetchone()
                 candidate_state = state_queue.get(conn, str(row["id"])) if row is not None else None
                 if candidate_state is None and queue_name and worker_pool:
                     mismatch_clauses = [
                         "status = 'queued'",
-                        "(due_at IS NULL OR due_at <= ?)",
+                        "(due_at IS NULL OR julianday(due_at) <= julianday(?))",
                         "queue_name = ?",
                         "worker_pool != ?",
                     ]
@@ -3207,11 +3225,11 @@ def _prepare_execution_fabric_dispatch(
                             (
                                 "SELECT id FROM run_queue",
                                 "WHERE " + " AND ".join(mismatch_clauses),
-                                "ORDER BY priority DESC, (due_at IS NULL) ASC, due_at, created_at, id",
+                                f"ORDER BY {order_sql}",
                                 "LIMIT 1",
                             )
                         ),
-                        (now_value, queue_name, worker_pool),
+                        (now_value, queue_name, worker_pool, *order_params),
                     ).fetchone()
                     if mismatch_row is not None:
                         candidate_state = state_queue.get(conn, str(mismatch_row["id"]))

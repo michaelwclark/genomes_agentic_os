@@ -350,7 +350,7 @@ def claim_next(
         active_workers = conn.execute(
             """
             SELECT COUNT(DISTINCT lease_owner) FROM run_queue
-            WHERE status = 'running' AND worker_pool = ? AND lease_until >= ?
+            WHERE status = 'running' AND worker_pool = ? AND julianday(lease_until) >= julianday(?)
             """,
             (worker["pool_name"], now_value),
         ).fetchone()[0]
@@ -395,7 +395,7 @@ def claim_next(
         queue_running = conn.execute(
             """
             SELECT COUNT(*) FROM run_queue
-            WHERE status = 'running' AND queue_name = ? AND lease_until >= ?
+            WHERE status = 'running' AND queue_name = ? AND julianday(lease_until) >= julianday(?)
             """,
             (worker["queue_name"], now_value),
         ).fetchone()[0]
@@ -403,23 +403,23 @@ def claim_next(
             return None
 
         item_filter = "AND id = ?" if item_id else ""
+        order_sql, order_params = state_queue.dispatch_order(now_value)
         params: tuple[Any, ...] = (
             worker["queue_name"],
             worker["pool_name"],
             now_value,
             now_value,
             *((item_id,) if item_id else ()),
-            state_queue.starvation_cutoff(now_value),
-            state_queue.starvation_cutoff(now_value),
+            *order_params,
         )
         row = conn.execute(
             f"""
             SELECT id FROM run_queue
             WHERE status = 'queued' AND queue_name = ? AND worker_pool = ?
-              AND (due_at IS NULL OR due_at <= ?)
-              AND (lease_until IS NULL OR lease_until < ?)
+              AND (due_at IS NULL OR julianday(due_at) <= julianday(?))
+              AND (lease_until IS NULL OR julianday(lease_until) < julianday(?))
               {item_filter}
-            ORDER BY {state_queue.DISPATCH_ORDER_SQL}
+            ORDER BY {order_sql}
             LIMIT 1
             """,
             params,

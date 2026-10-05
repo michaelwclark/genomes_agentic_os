@@ -17,7 +17,7 @@ event ledger's own ``payload_ref`` catch-all pattern.
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import timedelta, timezone
 import json
 import sqlite3
 from typing import Any, Sequence
@@ -43,15 +43,17 @@ VALID_APPROVAL_STATES = ("not_required", "required", "approved", "denied", "expi
 
 TERMINAL_STATUSES = ("done", "failed", "skipped", "cancelled", "dead-letter")
 DISPATCH_STARVATION_AGE_SECONDS = 3600
-DISPATCH_PRIORITY_BOOST = 10
-# Keep every dispatcher on the same aging/tie-break policy. The first two
-# placeholders receive the same starvation cutoff timestamp.
-DISPATCH_ORDER_SQL = """\
-COALESCE(priority, 0) + CASE WHEN datetime(COALESCE(due_at, created_at)) <= datetime(?) THEN {boost} ELSE 0 END DESC,
-COALESCE(CASE WHEN datetime(COALESCE(due_at, created_at)) <= datetime(?) THEN substr(datetime(COALESCE(due_at, created_at)), 1, 13) END, '~') ASC,
-priority DESC,
-(due_at IS NULL) ASC, due_at ASC, created_at ASC, id ASC
-""".format(boost=DISPATCH_PRIORITY_BOOST)
+# Aged work precedes fresh work regardless of priority. Within the aged bucket,
+# exact normalized availability time wins, so future arrivals cannot continually
+# overtake an eligible old item. Only this module binds the SQL parameters.
+_DISPATCH_ORDER_SQL = """\
+CASE WHEN julianday(COALESCE(due_at, created_at)) <= julianday(?) THEN 0 ELSE 1 END ASC,
+CASE WHEN julianday(COALESCE(due_at, created_at)) <= julianday(?) THEN julianday(COALESCE(due_at, created_at)) END ASC,
+COALESCE(priority, 0) DESC,
+(due_at IS NULL) ASC,
+COALESCE(julianday(due_at), 1e100) ASC,
+COALESCE(julianday(created_at), 1e100) ASC, id ASC
+"""
 
 _INSERT_SQL = """
 INSERT INTO run_queue (
@@ -74,8 +76,53 @@ class StateQueueError(RuntimeError):
 
 def starvation_cutoff(now: str) -> str:
     """Return the availability timestamp before which queued work is starvation-aged."""
-    return (parse_iso(now) - timedelta(seconds=DISPATCH_STARVATION_AGE_SECONDS)).replace(microsecond=0).isoformat().replace(
+    return (parse_iso(now) - timedelta(seconds=DISPATCH_STARVATION_AGE_SECONDS)).isoformat().replace(
         "+00:00", "Z"
+    )
+
+
+def dispatch_order(now: str) -> tuple[str, tuple[str, str]]:
+    """Return the shared ordering clause together with its exact bound values."""
+    cutoff = starvation_cutoff(now)
+    return _DISPATCH_ORDER_SQL, (cutoff, cutoff)
+
+
+def _timestamp(value: Any) -> float | None:
+    if not value:
+        return None
+    try:
+        parsed = parse_iso(str(value))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.timestamp()
+    except (ValueError, TypeError, OverflowError):
+        return None
+
+
+def dispatch_available(item: dict[str, Any], now: str) -> bool:
+    """Match SQL due-time eligibility, including offset/space timestamp forms."""
+    if item.get("due_at") is None:
+        return True
+    due = _timestamp(item["due_at"])
+    current = _timestamp(now)
+    return due is not None and current is not None and due <= current
+
+
+def dispatch_sort_key(item: dict[str, Any], now: str) -> tuple[Any, ...]:
+    """Filesystem counterpart of dispatch_order; never interpret SQL as input."""
+    due = _timestamp(item.get("due_at"))
+    created = _timestamp(item.get("created_at"))
+    available = due if item.get("due_at") is not None else created
+    cutoff = _timestamp(starvation_cutoff(now))
+    aged = available is not None and cutoff is not None and available <= cutoff
+    return (
+        0 if aged else 1,
+        available if aged else 0,
+        -int(item.get("priority") or 0),
+        item.get("due_at") is None,
+        due if due is not None else float("inf"),
+        created if created is not None else float("inf"),
+        str(item.get("id") or ""),
     )
 
 
@@ -211,18 +258,18 @@ def claim_next(
         "+00:00", "Z"
     )
     lease_token = uuid.uuid4().hex
-    starvation_cutoff_value = starvation_cutoff(now_value)
+    order_sql, order_params = dispatch_order(now_value)
     with transaction(conn):
         row = conn.execute(
             f"""
             SELECT id FROM run_queue
             WHERE status IN ({placeholders})
-              AND (due_at IS NULL OR due_at <= ?)
-              AND (lease_until IS NULL OR lease_until < ?)
-            ORDER BY {DISPATCH_ORDER_SQL}
+              AND (due_at IS NULL OR julianday(due_at) <= julianday(?))
+              AND (lease_until IS NULL OR julianday(lease_until) < julianday(?))
+            ORDER BY {order_sql}
             LIMIT 1
             """,
-            (*statuses, now_value, now_value, starvation_cutoff_value, starvation_cutoff_value),
+            (*statuses, now_value, now_value, *order_params),
         ).fetchone()
         if row is None:
             return None
