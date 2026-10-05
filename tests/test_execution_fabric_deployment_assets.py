@@ -2132,6 +2132,7 @@ def test_macos_activation_regression_guard_detects_sourced_path_hijack(
     monkeypatch.setattr(
         sys.modules[__name__], "_isolated_environment", lambda _: dict(os.environ)
     )
+    monkeypatch.setenv("FABRIC_LOS_SECURITY_WORKER_ENABLED", "false")
     try:
         with pytest.raises(subprocess.CalledProcessError) as failure:
             test_macos_activation_preflights_before_restarting_loaded_jobs(
@@ -2141,11 +2142,13 @@ def test_macos_activation_regression_guard_detects_sourced_path_hijack(
         assert "launchctl bootstrap" in inherited_live_runtime["path_marker"].read_text()
         backend = tmp_path / "operator-runtime/execution-fabric.yml"
         assert backend.read_text() == "backend: changed\n"
+        runtime = tmp_path / "operator-runtime/runtime.env"
+        assert runtime.read_bytes() == inherited_live_runtime["before"][runtime]
     finally:
         # Undo only this test's intentional negative-control mutations, so the
         # fixture still checks every other inherited-state side effect.
-        for path, data in inherited_live_runtime["before"].items():
-            path.write_bytes(data)
+        backend = tmp_path / "operator-runtime/execution-fabric.yml"
+        backend.write_bytes(inherited_live_runtime["before"][backend])
         inherited_live_runtime["path_marker"].unlink(missing_ok=True)
 
 
