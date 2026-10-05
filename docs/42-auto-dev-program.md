@@ -433,3 +433,8 @@ registries before release.
 Review Self, Review Repair, opposing-model review, and Finalize share the
 [Auto-Dev Review Coordination](45-auto-dev-review-coordination.md) stable-key,
 receipt, finding-ledger, budget, and terminal-provider-post contract.
+
+Development Delivery projects actual local-validation and fresh provider gate
+proof through `agentic-os develop readiness-proof`; see
+[46 · Review Readiness Evidence](46-review-readiness-evidence.md) for the pinned
+contract, command binding, consumer hook, and immutable context-refresh boundary.
