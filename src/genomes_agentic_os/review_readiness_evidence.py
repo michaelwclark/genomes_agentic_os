@@ -352,9 +352,12 @@ def gate_projection(selected: dict, provider: dict, head: str, base: str, reposi
 
 
 def emit_readiness_evidence(state_file: str | Path, *, head: str, policy: str,
-                            provider: dict | None = None, now: datetime | None = None) -> dict:
+                            provider: dict | None = None, now: datetime | None = None,
+                            expected_packet: str | Path | None = None) -> dict:
     now = now or datetime.now(timezone.utc)
     packet, task, selected = _context(state_file, head, policy)
+    if expected_packet is not None and packet != Path(os.path.abspath(expected_packet)):
+        raise DevelopmentDeliveryError("emission packet differs from expected caller packet")
     repository = _repository(selected["repository_id"])
     live = provider or {}
     number = live.get("pr_number")
@@ -490,4 +493,4 @@ def refresh_packet_readiness(packet: str | Path, provider: dict, head: str, poli
             live["after"]["state"] = "UNKNOWN"
     except (DevelopmentDeliveryError, OSError, ValueError, KeyError, TypeError, AttributeError, subprocess.SubprocessError):
         live = {}
-    return emit_readiness_evidence(state_file, head=head, policy=policy, provider=live, now=now)
+    return emit_readiness_evidence(state_file, head=head, policy=policy, provider=live, now=now, expected_packet=packet)

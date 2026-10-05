@@ -132,3 +132,9 @@ explicit caller packet to equal the task's canonical packet. It validates the
 task/manifest schemas and binds available canonical work/run identities and
 manifest pointers. A same-policy pointer into another packet cannot borrow or
 replace that packet's proof, including during cached model reuse.
+
+The caller packet is carried as `expected_packet` into the final emission
+recheck after provider capture. A task-pointer swap during capture cannot
+redirect the write. The CLI and canonical local-validation writer carry the
+same expected packet; legacy tasks without canonical packet linkage retain
+their existing lifecycle behavior and do not emit readiness proof.

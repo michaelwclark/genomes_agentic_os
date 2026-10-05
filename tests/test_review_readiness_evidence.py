@@ -603,3 +603,38 @@ def test_canonical_work_identity_is_bound_before_emission(context,where,key,valu
     path.write_text(json.dumps(payload))
     with pytest.raises(delivery.DevelopmentDeliveryError):proof._context(context.state,HEAD,context.policy)
     assert not (context.packet/'artifacts/finishing-touches/readiness-evidence.json').exists()
+
+
+def test_pointer_swap_during_capture_cannot_redirect_emission(context):
+    stage(context)
+    other=context.packet.parent/'other-packet';other.mkdir()
+    bstate=other/'state.json'
+    btask=deepcopy(context.task);btask['work_item']=str(other)
+    btask['canonical_work_id']='acme:app:OTHER';btask['receipts']=[]
+    bstate.write_text(json.dumps(btask))
+    bmanifest=json.loads((context.packet/'autodev.json').read_text())
+    bmanifest['canonical_work_id']=btask['canonical_work_id']
+    bmanifest['delivery'].update(canonical_work_id=btask['canonical_work_id'],work_item=str(other),task_state_ref=str(bstate))
+    (other/'autodev.json').write_text(json.dumps(bmanifest))
+    baseline={}
+    for packet in (context.packet,other):
+        marker=packet/'artifacts/finishing-touches/readiness-evidence.json';marker.parent.mkdir(parents=True);marker.write_text('preserved')
+        baseline[marker]=marker.read_bytes()
+    fetch,calls=github_fetch()
+    switched=False
+    def swap(args):
+        nonlocal switched
+        value=fetch(args)
+        if not switched:
+            # Redirect the originally read task path to another fully valid,
+            # same-policy canonical packet while provider capture is in flight.
+            context.state.write_text(json.dumps(btask))
+            bmanifest['delivery']['task_state_ref']=str(context.state)
+            (other/'autodev.json').write_text(json.dumps(bmanifest))
+            switched=True
+        return value
+    with pytest.raises(delivery.DevelopmentDeliveryError,match='emission packet differs'):
+        proof.refresh_packet_readiness(context.packet,{'number':42,'headRefOid':HEAD,'baseRefOid':BASE},HEAD,context.policy,fetch=swap,now=NOW)
+    assert calls and all(marker.read_bytes()==data for marker,data in baseline.items())
+    assert not (other/'artifacts/finishing-touches/proofs').exists()
+    assert not (context.packet/'artifacts/finishing-touches/proofs').exists()

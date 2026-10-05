@@ -152,6 +152,7 @@ def handle_readiness_proof(args: argparse.Namespace) -> int:
         provider = _json(path)
     result = emit_readiness_evidence(
         args.state_file, head=args.head, policy=task["policy_fingerprint"], provider=provider,
+        expected_packet=Path(task["work_item"]).resolve(),
     )
     _print(result, json_output=args.json)
     return 0 if all(result["readiness_evidence_verified"].values()) else 1

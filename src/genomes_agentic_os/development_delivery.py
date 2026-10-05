@@ -10917,7 +10917,7 @@ def run_development_stage(
             idempotency_key=f"{idempotency_prefix}:{target}",
         )
     result = persist_delivery_revision_metadata()
-    if normalized == "implementation":
+    if normalized == "implementation" and result.get("work_item") and result.get("autodev_path"):
         validation_payload = validated_payloads.get("local_validation") or {}
         validation_evidence = validation_payload.get("evidence") or {}
         validation_head = validation_evidence.get("head_sha") if isinstance(validation_evidence, Mapping) else None
@@ -10926,6 +10926,7 @@ def run_development_stage(
 
             emit_readiness_evidence(
                 state.path, head=str(validation_head), policy=str(result["policy_fingerprint"]),
+                expected_packet=Path(result["work_item"]).resolve(),
             )
     return result
 
