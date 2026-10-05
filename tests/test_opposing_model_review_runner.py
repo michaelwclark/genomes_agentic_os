@@ -378,6 +378,406 @@ def test_initial_review_request_rejects_stale_packet_subject(tmp_path: Path) -> 
         runner.initial_request(packet, "PR-57", worktree)
 
 
+def _canonical_pr_create_packet(packet: Path) -> dict[str, object]:
+    """AGE-221's current PR Create family shape, without its optional flat alias."""
+    root = packet / "artifacts/auto-dev-pr-create"
+    root.mkdir(parents=True)
+    head, policy = "b" * 40, "c" * 64
+    repository, branch, number = "acme/widgets", "main", 57
+    reference = "artifacts/pr/provider-readback.json"
+    documents = {
+        "autodev.json": {
+            "subject_revision": head,
+            "stages": {"pr_create": {"status": "completed"}},
+            "delivery": {
+                "policy_fingerprint": policy,
+                "repository": {"id": "git:github.com/acme/widgets"},
+                "worktree": {"base_sha": "d" * 40},
+            },
+        },
+        "artifacts/auto-dev-pr-create/family-complete.json": {
+            "schema": "development-stage-evidence/v1",
+            "state": "release_propagation", "status": "completed",
+            "evidence": {
+                "ticket": "AGE-221", "repository": repository,
+                "source_head_sha": head, "policy_fingerprint": policy,
+                "readback_verified": True,
+                "targets": [{
+                    "base_branch": branch, "classification": "pr_required",
+                    "status": "existing_equivalent", "pull_request": number,
+                    "source_head_sha": head, "readback_ref": reference,
+                    "is_draft": True,
+                }],
+            },
+        },
+        "artifacts/auto-dev-pr-create/source-snapshot.json": {
+            "schema": "auto-dev-pr-create-source-snapshot/v1",
+            "ticket": "AGE-221", "repository": repository,
+            "source_head_sha": head, "base_branch": branch,
+            "policy_fingerprint": policy, "provider_readback": reference,
+        },
+        "artifacts/auto-dev-pr-create/topology.json": {
+            "schema": "auto-dev-pr-create-topology/v1",
+            "ticket": "AGE-221", "repository": repository,
+            "default_targets": [branch], "propagation": "none",
+        },
+        "artifacts/auto-dev-pr-create/plan.json": {
+            "schema": "auto-dev-pr-create-plan/v1", "ticket": "AGE-221",
+            "source_head_sha": head, "target_count": 1,
+            "targets": [{
+                "repository": repository, "base_branch": branch,
+                "classification": "pr_required", "action": "reuse",
+                "pull_request": number, "readback_verified": True,
+            }],
+        },
+        reference: {
+            "schema": "artifact-provider-readback/v1",
+            "status": "verified", "provider": "github",
+            "artifact_type": "pull-request", "target": repository,
+            "external_id": str(number),
+            "observed": {"repository": repository, "head_sha": head},
+        },
+    }
+    for name, value in documents.items():
+        path = packet / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(value), encoding="utf-8")
+    return {
+        "number": number, "url": f"https://github.com/{repository}/pull/{number}",
+        "state": "OPEN", "headRefOid": head, "baseRefName": branch,
+        "baseRefOid": "a" * 40, "statusCheckRollup": [],
+    }
+
+
+def test_initial_request_consumes_current_family_and_actual_provider_base(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    runner = _load_runner()
+    packet, worktree = tmp_path / "packet", tmp_path / "worktree"
+    worktree.mkdir()
+    provider = _canonical_pr_create_packet(packet)
+    before = {str(p): p.read_bytes() for p in packet.rglob("*.json")}
+    monkeypatch.setattr(runner, "git_repository", lambda _path: "acme/widgets")
+    monkeypatch.setattr(runner, "provider_pr", lambda *_args: provider)
+
+    request = runner.initial_request(packet, "AGE-221", worktree)
+
+    assert request["request_origin"] == "auto-dev-pr-create-family"
+    assert request["base_sha"] == "a" * 40  # provider, not the historical checkout "d"
+    assert request["head_sha"] == "b" * 40
+    assert request["policy_fingerprint"] == "c" * 64
+    assert len(request["pr_create_evidence_sha256"]) == 5
+    assert before == {str(p): p.read_bytes() for p in packet.rglob("*.json")}
+    assert not (packet / "artifacts/auto-dev-pr-create/pull-request-provider-readback.json").exists()
+
+
+@pytest.mark.parametrize("subject_revision", [None, ""])
+def test_canonical_bootstrap_allows_unset_packet_subject(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, subject_revision: object,
+) -> None:
+    runner = _load_runner()
+    packet = tmp_path / "packet"
+    provider = _canonical_pr_create_packet(packet)
+    path = packet / "autodev.json"
+    manifest = json.loads(path.read_text())
+    manifest["subject_revision"] = subject_revision
+    path.write_text(json.dumps(manifest))
+    monkeypatch.setattr(runner, "git_repository", lambda _path: "acme/widgets")
+    monkeypatch.setattr(runner, "provider_pr", lambda *_args: provider)
+    assert runner.initial_request(packet, "AGE-221", tmp_path / "worktree")["head_sha"] == "b" * 40
+
+
+def test_canonical_bootstrap_tracks_each_reference_origin_and_rejects_conflict(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    runner = _load_runner()
+    packet = tmp_path / "packet"
+    provider = _canonical_pr_create_packet(packet)
+    path = packet / "artifacts/auto-dev-pr-create/family-complete.json"
+    family = json.loads(path.read_text())
+    target = family["evidence"]["targets"][0]
+    target["provider_readback"] = "../pr/provider-readback.json"
+    path.write_text(json.dumps(family))
+    monkeypatch.setattr(runner, "git_repository", lambda _path: "acme/widgets")
+    monkeypatch.setattr(runner, "provider_pr", lambda *_args: provider)
+    request = runner.initial_request(packet, "AGE-221", tmp_path / "worktree")
+    assert request["provider_readback_ref"] == "artifacts/pr/provider-readback.json"
+    different = packet / "artifacts/auto-dev-pr-create/other-proof.json"
+    different.write_text((packet / "artifacts/pr/provider-readback.json").read_text())
+    target["provider_readback"] = different.name
+    path.write_text(json.dumps(family))
+    with pytest.raises(runner.ReviewError, match="contradictory"):
+        runner.initial_request(packet, "AGE-221", tmp_path / "worktree")
+
+
+def test_canonical_bootstrap_accepts_family_v1_without_delivery_phase(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    runner = _load_runner()
+    packet = tmp_path / "packet"
+    provider = _canonical_pr_create_packet(packet)
+    path = packet / "artifacts/auto-dev-pr-create/family-complete.json"
+    family = json.loads(path.read_text())["evidence"]
+    family["schema"] = "auto-dev-pr-family/v1"
+    family["status"] = "completed"
+    family["source"] = {"sha": family.pop("source_head_sha")}
+    family["effective_policy_fingerprint"] = family.pop("policy_fingerprint")
+    path.write_text(json.dumps(family))
+    monkeypatch.setattr(runner, "git_repository", lambda _path: "acme/widgets")
+    monkeypatch.setattr(runner, "provider_pr", lambda *_args: provider)
+    assert runner.initial_request(packet, "AGE-221", tmp_path / "worktree")["pr_number"] == 57
+
+
+def test_bootstrap_consumes_actual_legacy_family_and_flat_readback(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    runner = _load_runner()
+    packet = tmp_path / "packet"
+    fixture = json.loads((Path(__file__).parent / "fixtures/pr-create-bootstrap-legacy-age209.json").read_text())
+    assert "readback_verified" not in json.dumps(fixture)
+    for name, value in fixture.items():
+        path = packet / "artifacts/auto-dev-pr-create" / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(value))
+    family = fixture["family-complete.json"]
+    head, repository = family["source"]["sha"], family["repository"]
+    (packet / "autodev.json").write_text(json.dumps({
+        "subject_revision": head, "stages": {"pr_create": {"status": "completed"}},
+        "delivery": {"policy_fingerprint": family["effective_policy_fingerprint"],
+                     "repository": {"id": "git:github.com/" + repository}},
+    }))
+    provider = {
+        "number": 257, "url": family["targets"][0]["url"], "state": "OPEN",
+        "headRefOid": head, "baseRefName": "main", "baseRefOid": "a" * 40,
+    }
+    monkeypatch.setattr(runner, "provider_pr", lambda *_args: provider)
+    monkeypatch.setattr(runner, "git_repository", lambda _path: repository)
+    request = runner.initial_request(packet, "AGE-209", tmp_path / "worktree")
+    assert request["head_sha"] == head
+    assert request["base_sha"] == "a" * 40
+    assert request["request_origin"] == "auto-dev-pr-create-family"
+    assert len(request["pr_create_evidence_sha256"]) == 5
+    # A contradictory legacy alias is rejected, rather than being trusted alone.
+    proof = packet / "artifacts/auto-dev-pr-create/pull-request-provider-readback.json"
+    value = json.loads(proof.read_text())
+    value["head_sha"] = "e" * 40
+    proof.write_text(json.dumps(value))
+    with pytest.raises(runner.ReviewError, match="provider"):
+        runner.initial_request(packet, "AGE-209", tmp_path / "worktree")
+
+
+def _catalog_bootstrap_selection(packet: Path, worktree: Path, root: Path) -> dict[str, str]:
+    from genomes_agentic_os.development_delivery import resolve_development_policies
+    from genomes_agentic_os.scaffold import create_project
+
+    selected = {"id": "api", "root": str(root), "base_branch": "main"}
+    policy_root = packet / "policy-root"
+    _installed_root(policy_root)
+    create_project(policy_root, "acme", "widgets", repo=str(root))
+    frozen = resolve_development_policies(
+        policy_root, "acme", "widgets",
+        selected_profile={"repository": selected, "validation": {"commands": []}},
+    )
+    # Consume the actual producer shape, not a richer hand-built authority.
+    assert "repository" not in frozen["selected_profile"]
+    assert frozen["selected_profile"]["repository_id"] == "api"
+    policy = packet / "frozen-policy.json"
+    policy.write_text(json.dumps(frozen))
+    task = packet / "selection-state.json"
+    task.write_text(json.dumps({
+        "schema": "development-task/v1", "ticket": "AGE-221",
+        "canonical_work_id": "acme:widgets:age-221", "work_item": str(packet),
+        "policy_fingerprint": frozen["fingerprint"], "policy_receipt": str(policy),
+        "repository": selected,
+        "worktree": {"repository_id": "api", "path": str(worktree)},
+    }))
+    path = packet / "autodev.json"
+    manifest = json.loads(path.read_text())
+    manifest["delivery"].update({
+        "repository": selected, "policy_receipt": str(policy),
+        "policy_fingerprint": frozen["fingerprint"], "task_state_ref": str(task),
+        "canonical_work_id": "acme:widgets:age-221",
+        "worktree": {"repository_id": "api", "path": str(worktree)},
+    })
+    path.write_text(json.dumps(manifest))
+    family_path = packet / "artifacts/auto-dev-pr-create/family-complete.json"
+    family = json.loads(family_path.read_text())
+    family["evidence"]["policy_fingerprint"] = frozen["fingerprint"]
+    family_path.write_text(json.dumps(family))
+    snapshot_path = packet / "artifacts/auto-dev-pr-create/source-snapshot.json"
+    snapshot = json.loads(snapshot_path.read_text())
+    snapshot["policy_fingerprint"] = frozen["fingerprint"]
+    snapshot_path.write_text(json.dumps(snapshot))
+    return selected
+
+
+@pytest.mark.parametrize("mismatch", [
+    None, "selected", "frozen", "worktree", "common-dir", "policy-digest",
+    "selected-authority", "task-policy", "task-ticket", "task-worktree", "task-packet",
+])
+def test_catalog_bootstrap_binds_short_id_to_frozen_source_and_worktree(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, mismatch: str | None,
+) -> None:
+    runner = _load_runner()
+    packet, worktree, source_root = tmp_path / "packet", tmp_path / "worktree", tmp_path / "source"
+    provider = _canonical_pr_create_packet(packet)
+    selected = _catalog_bootstrap_selection(packet, worktree, source_root)
+    if mismatch == "selected":
+        selected = dict(selected, id="web")
+    elif mismatch == "frozen":
+        task_path = packet / "selection-state.json"
+        task = json.loads(task_path.read_text())
+        task["repository"]["root"] = str(tmp_path / "other")
+        task_path.write_text(json.dumps(task))
+    elif mismatch in {"policy-digest", "selected-authority"}:
+        policy_path = packet / "frozen-policy.json"
+        frozen = json.loads(policy_path.read_text())
+        frozen["selected_profile"]["sha256" if mismatch == "policy-digest" else "repository_id"] = "changed"
+        policy_path.write_text(json.dumps(frozen))
+    elif mismatch in {"task-policy", "task-ticket", "task-worktree", "task-packet"}:
+        task_path = packet / "selection-state.json"
+        task = json.loads(task_path.read_text())
+        if mismatch == "task-worktree":
+            task["worktree"]["path"] = str(tmp_path / "other")
+        else:
+            field = {"task-policy": "policy_fingerprint", "task-ticket": "ticket", "task-packet": "work_item"}[mismatch]
+            task[field] = "changed"
+        task_path.write_text(json.dumps(task))
+    elif mismatch == "worktree":
+        path = packet / "autodev.json"
+        manifest = json.loads(path.read_text())
+        manifest["delivery"]["worktree"]["repository_id"] = "web"
+        path.write_text(json.dumps(manifest))
+    common = (tmp_path / "other" if mismatch == "common-dir" else source_root) / ".git"
+    monkeypatch.setattr(runner, "run", lambda *_args, **_kwargs: _completed(0, str(common)))
+    monkeypatch.setattr(runner, "provider_pr", lambda *_args: provider)
+    monkeypatch.setattr(runner, "git_repository", lambda _path: "acme/widgets")
+    if mismatch is None:
+        assert runner.initial_request(packet, "AGE-221", worktree, selected_repository=selected)["repository"] == "acme/widgets"
+    else:
+        with pytest.raises(runner.ReviewError, match="catalog"):
+            runner.initial_request(packet, "AGE-221", worktree, selected_repository=selected)
+
+
+@pytest.mark.parametrize(("name", "field", "value"), [
+    ("autodev.json", "subject_revision", "e" * 40),
+    ("autodev.json", "stages", {"pr_create": {"status": "not_started"}}),
+    ("family-complete.json", "status", "pending"),
+    ("source-snapshot.json", "source_head_sha", "e" * 40),
+    ("source-snapshot.json", "policy_fingerprint", "e" * 64),
+    ("topology.json", "repository", "acme/other"),
+    ("plan.json", "targets", []),
+    ("provider-readback.json", "status", "unverified"),
+    ("provider-readback.json", "observed", {"repository": "acme/other", "head_sha": "b" * 40}),
+])
+def test_canonical_bootstrap_rejects_incomplete_identity_and_policy(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    name: str, field: str, value: object,
+) -> None:
+    runner = _load_runner()
+    packet = tmp_path / "packet"
+    _canonical_pr_create_packet(packet)
+    if name == "autodev.json":
+        path = packet / name
+    elif name == "provider-readback.json":
+        path = packet / "artifacts/pr" / name
+    else:
+        path = packet / "artifacts/auto-dev-pr-create" / name
+    document = json.loads(path.read_text())
+    document[field] = value
+    path.write_text(json.dumps(document))
+    calls = []
+    monkeypatch.setattr(runner, "provider_pr", lambda *_args: calls.append("provider"))
+    monkeypatch.setattr(runner, "git_repository", lambda _path: "acme/widgets")
+    with pytest.raises(runner.ReviewError):
+        runner.initial_request(packet, "AGE-221", tmp_path / "worktree")
+    # Subject drift may need a provider read; all authority defects stop sooner.
+    if field != "subject_revision":
+        assert calls == []
+
+
+@pytest.mark.parametrize(("field", "value"), [
+    ("baseRefOid", None), ("baseRefOid", "historical"),
+    ("headRefOid", "e" * 40), ("baseRefName", "release"),
+    ("number", 58), ("state", "CLOSED"),
+    ("url", "https://github.com/acme/other/pull/57"),
+])
+def test_canonical_bootstrap_requires_actual_provider_identity_base_and_head(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    field: str, value: object,
+) -> None:
+    runner = _load_runner()
+    packet = tmp_path / "packet"
+    provider = _canonical_pr_create_packet(packet)
+    provider[field] = value
+    monkeypatch.setattr(runner, "provider_pr", lambda *_args: provider)
+    monkeypatch.setattr(runner, "git_repository", lambda _path: "acme/widgets")
+    with pytest.raises(runner.ReviewError, match="provider"):
+        runner.initial_request(packet, "AGE-221", tmp_path / "worktree")
+
+
+def test_canonical_bootstrap_rejects_ambiguous_target_and_external_proof(tmp_path: Path) -> None:
+    runner = _load_runner()
+    packet = tmp_path / "packet"
+    _canonical_pr_create_packet(packet)
+    path = packet / "artifacts/auto-dev-pr-create/family-complete.json"
+    family = json.loads(path.read_text())
+    target = family["evidence"]["targets"][0]
+    family["evidence"]["targets"].append(dict(target, pull_request=58))
+    path.write_text(json.dumps(family))
+    with pytest.raises(runner.ReviewError, match="unique"):
+        runner.initial_request(packet, "AGE-221", tmp_path / "worktree")
+    family["evidence"]["targets"] = [dict(target, readback_ref="../outside.json")]
+    path.write_text(json.dumps(family))
+    with pytest.raises(runner.ReviewError, match="outside"):
+        runner.initial_request(packet, "AGE-221", tmp_path / "worktree")
+
+
+@pytest.mark.parametrize("catalog", [False, True])
+def test_canonical_bootstrap_model_invoked_once_and_exact_key_reused(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    catalog: bool,
+) -> None:
+    runner = _load_runner()
+    os_root = _installed_root(tmp_path / "os")
+    project = os_root / "domains/acme/02-projects/widgets"
+    packet, worktree = project / "work-items/age-221", project / "worktrees/age-221"
+    worktree.mkdir(parents=True)
+    provider = _canonical_pr_create_packet(packet)
+    selected = _catalog_bootstrap_selection(packet, worktree, tmp_path / "source") if catalog else None
+    model_calls = []
+    monkeypatch.setattr(runner, "provider_pr", lambda *_args: provider)
+    monkeypatch.setattr(runner, "git_repository", lambda _path: "acme/widgets")
+    monkeypatch.setattr(runner, "git_head", lambda _path: "b" * 40)
+    monkeypatch.setattr(runner, "diff_hash", lambda *_args: "d" * 64)
+    monkeypatch.setattr(runner, "render_prompt", lambda *_args: "offline mocked review")
+    monkeypatch.setattr(runner, "decide", lambda _path: {"decision": "ready_post_pr_checks"})
+    profile = {"repository": {"catalog": [selected], "selection_required": True}} if catalog else {
+        "repository": {"root": str(worktree), "base_branch": "main"},
+    }
+    monkeypatch.setattr(runner, "load_development_profile", lambda *_args: (profile, project / "config.yml"))
+    monkeypatch.setattr(runner.shutil, "which", lambda _name: "/offline/claude")
+    def fake_model(*args, **_kwargs):
+        if args[0][0] == "git":
+            return _completed(0, str(tmp_path / "source/.git"))
+        model_calls.append(args)
+        return _completed(0, "```json\n[]\n```\nAGENTIC_OS_REVIEW_VERDICT: CLEAN")
+    monkeypatch.setattr(runner, "run", fake_model)
+    monkeypatch.setattr(sys, "argv", [
+        "runner", "AGE-221", "--os-root", str(os_root), "--work-item", str(packet),
+        "--worktree", str(worktree),
+        *(["--repository", "api"] if catalog else []),
+    ])
+
+    assert runner.main() == 0
+    receipts = list((os_root / "state/review-coordination/receipts").glob("*.json"))
+    before = {str(p): p.read_bytes() for p in receipts}
+    assert len(receipts) == 1
+    assert runner.main() == 0
+    assert len(model_calls) == 1
+    assert before == {str(p): p.read_bytes() for p in receipts}
+
+
 def test_delta_validation_requires_parent_ancestry(monkeypatch: pytest.MonkeyPatch) -> None:
     runner = _load_runner()
     monkeypatch.setattr(runner, "run", lambda *_args, **_kwargs: _completed(1))

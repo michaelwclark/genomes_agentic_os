@@ -71,6 +71,25 @@ provider post is allowed for the PR family. The post includes the hidden marker
 marker before the post is considered complete. Intermediate retries and
 in-flight findings remain local.
 
+An initial opposing-model review consumes the completed PR Create family,
+source snapshot, topology, plan and referenced provider readback. The family
+must bind one unique target to the packet ticket, repository, exact head and
+frozen policy. The runner verifies the live provider repository, open PR, head
+and base branch, and takes the current base SHA from the provider rather than
+the historical checkout base. Evidence hashes travel with the review request.
+The flat provider-readback input remains supported for older packets; it cannot
+bypass an incomplete or contradictory canonical family. None of these inputs
+grant review readiness, provider write authority, or a larger review budget.
+The recognized legacy family-v1 source/topology/plan formats are checked against
+their typed flat readback and fresh provider facts without inventing a
+verification flag. Catalog repository names such as `api` are selector identities,
+so the verified selected-profile authority binds their repository ID to the
+frozen policy. The canonical task's repository and worktree records supply the
+root/base mapping, which must agree with the packet, admitted selection and Git
+common directory before provider identity is verified. This uses the actual
+policy producer contract, which does not embed a repository mapping inside its
+selected-profile authority.
+
 ## How is it configured?
 
 The default circuit-breaker budget is intentionally small:
