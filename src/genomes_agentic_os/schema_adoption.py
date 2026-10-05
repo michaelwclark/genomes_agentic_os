@@ -251,12 +251,28 @@ def _consumers(root: Path, active: Sequence[str | Path], historical: Sequence[st
                 delivery = value.get("delivery")
                 if not isinstance(delivery, dict):
                     raise SchemaAdoptionError("consumer_identity", "consumer delivery binding is missing")
-                task_path = _path(root, str(delivery.get("task_state_ref") or ""))
+                if (value.get("work_item_id") != path.parent.name
+                        or not isinstance(delivery.get("task_state_ref"), str) or not delivery["task_state_ref"].strip()
+                        or ("portfolio_ref" in delivery and (not isinstance(delivery["portfolio_ref"], str) or not delivery["portfolio_ref"].strip()))):
+                    raise SchemaAdoptionError("consumer_identity", "consumer packet and explicit delivery references must match canonical authority")
+                task_path = _path(root, delivery["task_state_ref"])
+                run_root = path.parents[2] / "state/development-runs"
+                try:
+                    task_relative = task_path.relative_to(run_root)
+                except ValueError as exc:
+                    raise SchemaAdoptionError("consumer_identity", "task must belong to the selected project's canonical delivery run") from exc
+                if (len(task_relative.parts) != 4 or task_relative.parts[1] != "tasks" or task_relative.parts[3] != "state.json"
+                        or "portfolio_ref" in delivery and _path(root, delivery["portfolio_ref"]) != task_path.parents[2] / "portfolio.json"):
+                    raise SchemaAdoptionError("consumer_identity", "task and portfolio references must match canonical delivery layout")
                 task_data = _read(task_path)
                 task = _object(task_data, "task")
                 if (task.get("canonical_work_id") != canonical["id"]
-                        or _path(root, str(task.get("work_item") or "")) != path.parent
-                        or _path(root, str(task.get("autodev_path") or path)) != path):
+                        or not isinstance(task.get("work_item"), str) or not task["work_item"].strip()
+                        or ("autodev_path" in task and (not isinstance(task["autodev_path"], str) or not task["autodev_path"].strip()))
+                        or any(name in task and task[name] != value.get(name) for name in ("domain", "project"))
+                        or "run_id" in task and task["run_id"] != task_relative.parts[0]
+                        or _path(root, task["work_item"]) != path.parent
+                        or _path(root, task.get("autodev_path", path)) != path):
                     raise SchemaAdoptionError("consumer_identity", "task is not bound to the selected canonical consumer")
                 try:
                     migration = plan_legacy_consumer_migration(value, task)
@@ -403,9 +419,7 @@ def _transaction_lock_paths(root: Path, plan: Mapping[str, Any]) -> list[Path]:
         projections.add(_path(root, row["path"]))
         if row["kind"] == "active" and "migration" in row:
             task = _path(root, row["task_path"])
-            delivery = row["migration"]["projection"].get("delivery") or {}
-            if delivery.get("portfolio_ref"):
-                portfolios.add(_path(root, delivery["portfolio_ref"]))
+            portfolios.add(_path(root, task.parents[2] / "portfolio.json"))
             tasks.add(task)
     # Match delivery's portfolio -> task -> projection order. The adoption lock
     # is an outer owner lock, never acquired by delivery or projection writers.

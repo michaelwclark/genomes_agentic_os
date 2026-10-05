@@ -65,6 +65,19 @@ schemas, unknown or reordered stages, malformed existing rows, divergent
 task/projection boundaries and running execution are refused. Older unrelated
 contracts remain explicit compatibility gaps.
 
+Both task and projection must advertise the same explicit supported mode
+(`default`, `everything` or `single_stage`) and ordered workflow window. Missing,
+null, nontext or future modes never default during migration. Known envelope and
+stage fields retain their canonical types and commands; unsupported stage names,
+required-stage applicability conflicts and divergent task/projection policy
+declarations refuse. Unknown metadata inside supported fields is preserved.
+Selected active task references must use that project's canonical delivery-run
+layout and match packet, project, domain and run identity. Explicit null binding
+fields refuse. A supported legacy task may omit its projection path; the exact
+selected packet supplies it without adding a field. The canonical portfolio lock
+is derived from the selected task layout, including when its projection omitted
+the optional portfolio reference.
+
 Task authority is versioned independently from the projection. Explicit
 `development-task/v1` is supported; any other explicit task schema, including
 a future version or null marker, is refused. An absent marker is reported as

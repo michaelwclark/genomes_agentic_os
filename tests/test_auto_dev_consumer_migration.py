@@ -122,6 +122,109 @@ def test_known_task_v1_and_explicit_structural_unversioned_legacy_handling(versi
     assert ("schema" in result["task"]) is versioned
 
 
+@pytest.mark.parametrize("mode", [None, False, 3, {}, [], "", "future_mode"])
+def test_matching_unsupported_modes_are_refused_without_defaulting(mode):
+    projection, task = legacy_pair()
+    projection["mode"] = task["auto_dev_mode"] = mode
+    with pytest.raises(AutoDevStateError, match="supported explicit Auto-Dev mode"):
+        plan_legacy_consumer_migration(projection, task)
+
+
+def test_absent_matching_modes_are_refused_without_defaulting():
+    projection, task = legacy_pair()
+    del projection["mode"]; del task["auto_dev_mode"]
+    with pytest.raises(AutoDevStateError, match="supported explicit Auto-Dev mode"):
+        plan_legacy_consumer_migration(projection, task)
+
+
+@pytest.mark.parametrize("mode", ["default", "everything", "single_stage"])
+def test_all_explicit_supported_modes_preserve_the_frozen_window(mode):
+    projection, task = legacy_pair()
+    projection["mode"] = task["auto_dev_mode"] = mode
+    result = plan_legacy_consumer_migration(projection, task)
+    assert result["projection"]["mode"] == result["task"]["auto_dev_mode"] == mode
+    assert result["new_pending_stages"] == ["validate_production_release"]
+
+
+@pytest.mark.parametrize("boundary", [None, 3, [], "future_stage", "", "validate_production_release"])
+def test_matching_unsupported_legacy_windows_are_refused(boundary):
+    projection, task = legacy_pair()
+    projection["start_stage"] = task["auto_dev_start_stage"] = boundary
+    with pytest.raises(AutoDevStateError, match="workflow window"):
+        plan_legacy_consumer_migration(projection, task)
+
+
+def test_reverse_window_is_refused_even_when_task_and_projection_match():
+    projection, task = legacy_pair(completion="groom")
+    projection["start_stage"] = task["auto_dev_start_stage"] = "health"
+    with pytest.raises(AutoDevStateError, match="must not follow"):
+        plan_legacy_consumer_migration(projection, task)
+
+
+@pytest.mark.parametrize("field,value", [
+    ("work_item_id", None), ("domain", []), ("project", 5), ("canonical_work_id", False),
+    ("created_at", None), ("updated_at", 3), ("delivery", None), ("compatibility", []),
+    ("blocker", []), ("run_packet", False), ("source", None), ("current_stage", []),
+    ("requested_stage", "future_stage"), ("next_action", []), ("subject_revision", {}),
+])
+def test_known_envelope_shapes_refuse_without_normalizing_authority(field, value):
+    projection, task = legacy_pair(); projection[field] = value
+    original = deepcopy((projection, task))
+    with pytest.raises(AutoDevStateError):
+        plan_legacy_consumer_migration(projection, task)
+    assert (projection, task) == original
+
+
+@pytest.mark.parametrize("field,value", [
+    ("owner", None), ("owner", ""), ("command", "/custom-execution"), ("status", "future_status"),
+    ("applicability", []), ("applicability", None), ("applicability", "contextual"),
+    ("receipt_refs", "one-ref"), ("receipt_refs", [3]), ("run_ref", False),
+    ("last_verified_at", 5), ("next_action", []), ("status", "not_required"),
+])
+def test_known_stage_row_identity_types_and_required_applicability_are_refused(field, value):
+    projection, task = legacy_pair(); projection["stages"]["develop"][field] = value
+    with pytest.raises(AutoDevStateError):
+        plan_legacy_consumer_migration(projection, task)
+
+
+@pytest.mark.parametrize("policies", [None, [], {"future_stage": {}}, {"develop": None},
+                                      {"develop": {"applicability": []}}, {"develop": {"applicability": "disabled"}}])
+def test_malformed_or_unknown_stage_policy_authority_is_refused(policies):
+    projection, task = legacy_pair(); task["auto_dev_stage_policies"] = policies
+    with pytest.raises(AutoDevStateError):
+        plan_legacy_consumer_migration(projection, task)
+
+
+def test_row_policy_and_task_projection_applicability_divergence_is_refused():
+    projection, task = legacy_pair()
+    projection["stage_policies"] = {"document": {"applicability": "disabled"}}
+    task["auto_dev_stage_policies"] = {"document": {"applicability": "contextual"}}
+    with pytest.raises(AutoDevStateError, match="policy applicability differ"):
+        plan_legacy_consumer_migration(projection, task)
+    task["auto_dev_stage_policies"] = deepcopy(projection["stage_policies"])
+    projection["stages"]["document"]["applicability"] = "contextual"
+    with pytest.raises(AutoDevStateError, match="row and policy applicability differ"):
+        plan_legacy_consumer_migration(projection, task)
+
+
+def test_unknown_extra_stage_authority_is_refused_and_complete_noop_is_also_validated():
+    projection, task = legacy_pair(); projection["stages"]["future_stage"] = _stage_row("develop")
+    with pytest.raises(AutoDevStateError, match="unknown stage authority"):
+        plan_legacy_consumer_migration(projection, task)
+    del projection["stages"]["future_stage"]
+    migrated = plan_legacy_consumer_migration(projection, task)
+    migrated["projection"]["mode"] = migrated["task"]["auto_dev_mode"] = "future_mode"
+    with pytest.raises(AutoDevStateError, match="supported explicit Auto-Dev mode"):
+        plan_legacy_consumer_migration(migrated["projection"], migrated["task"])
+
+
+@pytest.mark.parametrize("requested", ["future_stage", [], None])
+def test_divergent_or_unsupported_requested_stage_authority_is_refused(requested):
+    projection, task = legacy_pair(); projection["requested_stage"] = "develop"; task["requested_stage"] = requested
+    with pytest.raises(AutoDevStateError, match="requested-stage authority"):
+        plan_legacy_consumer_migration(projection, task)
+
+
 
 @pytest.mark.parametrize("mutation", ["future-schema", "unknown-stage", "missing-stage", "running", "boundary", "task-order", "divergent-new-stage"])
 def test_unknown_or_unsafe_contracts_are_refused(mutation):

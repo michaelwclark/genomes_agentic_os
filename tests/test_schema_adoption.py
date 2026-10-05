@@ -523,3 +523,30 @@ def test_future_canonical_task_schema_is_refused_before_all_selected_mutations(t
         adoption.plan_schema_adoption(root, consumers=[first, future], migrate_consumers=True)
     assert exc.value.error_code == "unsupported_consumer" and not exc.value.retryable
     assert {path: path.read_bytes() for path in originals} == originals
+
+
+@pytest.mark.parametrize("fault", ["packet-id", "task-ref-null", "portfolio-ref-null", "task-work-item-null",
+                                   "task-projection-null", "task-domain", "task-project", "unsupported-mode",
+                                   "foreign-portfolio", "foreign-task-layout", "foreign-run-id"])
+def test_exact_task_projection_binding_and_supported_shape_refuse_before_any_member_mutation(tmp_path, fault):
+    root, schema, manifest, _ = root_fixture(tmp_path, ownership="current")
+    first, first_task = consumer_fixture(root, "first"); bad, bad_task = consumer_fixture(root, "bad")
+    value, task = json.loads(bad.read_bytes()), json.loads(bad_task.read_bytes())
+    if fault == "packet-id": value["work_item_id"] = "different-packet"
+    if fault == "task-ref-null": value["delivery"]["task_state_ref"] = None
+    if fault == "portfolio-ref-null": value["delivery"]["portfolio_ref"] = None
+    if fault == "task-work-item-null": task["work_item"] = None
+    if fault == "task-projection-null": task["autodev_path"] = None
+    if fault == "task-domain": task["domain"] = "different-domain"
+    if fault == "task-project": task["project"] = "different-project"
+    if fault == "unsupported-mode": value["mode"] = task["auto_dev_mode"] = "future_mode"
+    if fault == "foreign-portfolio": value["delivery"]["portfolio_ref"] = str(root / "different/portfolio.json")
+    if fault == "foreign-task-layout": value["delivery"]["task_state_ref"] = str(root / "foreign/state.json")
+    if fault == "foreign-run-id": task["run_id"] = "different-run"
+    bad.write_text(json.dumps(value)); bad_task.write_text(json.dumps(task))
+    originals = {path: path.read_bytes() for path in (schema, manifest, first, first_task, bad, bad_task)}
+    with pytest.raises(adoption.SchemaAdoptionError) as exc:
+        adoption.plan_schema_adoption(root, consumers=[first, bad], migrate_consumers=True)
+    assert exc.value.error_code in {"consumer_identity", "unsupported_consumer"} and not exc.value.retryable
+    assert {path: path.read_bytes() for path in originals} == originals
+    assert not (root / adoption.TRANSACTION_RELATIVE).exists()
