@@ -18,6 +18,7 @@ import re
 import shutil
 import subprocess
 import sys
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -45,6 +46,12 @@ from genomes_agentic_os.development_delivery import (  # noqa: E402
     select_development_repository,
 )
 from genomes_agentic_os.review_verdicts import reconcile_json_verdict  # noqa: E402
+from genomes_agentic_os.native_review_output import (  # noqa: E402
+    NATIVE_REVIEW_SCHEMA,
+    NativeReviewOutputError,
+    parse_native_review_output,
+    project_native_review,
+)
 
 HELPER = ROOT / "harness/skills/finishing-touches-review/scripts/finishing_touches_review_helper.py"
 TEMPLATE = ROOT / "harness/skills/auto-dev/templates/reviewer-prompt.md"
@@ -171,6 +178,39 @@ def repository_preflight_receipt(
 
 def run(command: list[str], *, cwd: Path | None = None, timeout: int = 30, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
     return subprocess.run(command, cwd=str(cwd) if cwd else None, text=True, capture_output=True, check=False, timeout=timeout, env=env)
+
+
+def run_native_review(command: list[str], *, cwd: Path, timeout: int, env: dict[str, str]) -> subprocess.CompletedProcess[bytes]:
+    """Capture native stdout bytes unchanged, including line endings."""
+    return subprocess.run(command, cwd=str(cwd), capture_output=True, check=False, timeout=timeout, env=env)
+
+
+def preserve_native_stdout(run_dir: Path, stdout: bytes) -> dict[str, Any]:
+    """Store the original envelope independently of the ledger projection."""
+    path = run_dir / "reviewer-stdout.bin"
+    path.write_bytes(stdout)
+    evidence = {
+        "schema": "native-review-stdout/v1",
+        "path": path.name,
+        "bytes": len(stdout),
+        "sha256": hashlib.sha256(stdout).hexdigest(),
+        "format": "claude-json-schema-result",
+    }
+    write_json(run_dir / "reviewer-stdout-receipt.json", evidence)
+    return evidence
+
+
+def allocate_review_run_dir(work_item: Path, review_key: str) -> Path:
+    """Allocate artifacts after admission without overwriting any prior attempt."""
+    parent = work_item / "artifacts/finishing-touches/review-runs"
+    parent.mkdir(parents=True, exist_ok=True)
+    path = parent / review_key
+    try:
+        path.mkdir()
+    except FileExistsError:
+        path = parent / f"{review_key}-attempt-{uuid.uuid4().hex}"
+        path.mkdir()
+    return path
 
 
 def normalized(ticket: str) -> str:
@@ -548,6 +588,16 @@ def render_prompt(request: dict[str, Any], provider: dict[str, Any]) -> str:
         "TOKENS": "Do not expose secrets, local paths, private links, or internal operational detail.",
     }
     prompt = TEMPLATE.read_text(encoding="utf-8")
+    # The shared template remains the historical text contract for other
+    # consumers. Native invocations use the supported schema output channel.
+    prompt = prompt.split("Return only a fenced JSON array", 1)[0] + (
+        "Return the review through the supplied JSON schema. Declare exactly "
+        "one verdict, CLEAN or FINDINGS, and include every finding with all "
+        "required typed fields. CLEAN means no unresolved blocking findings. "
+        "FINDINGS requires at least one finding; advisory findings may also "
+        "coexist with CLEAN. Only critical or high findings may be blocking. "
+        "Do not include text verdict markers or fenced JSON in commentary.\n"
+    )
     for key, value in values.items():
         prompt = prompt.replace("{{" + key + "}}", value)
     return prompt
@@ -699,12 +749,6 @@ def main() -> int:
             }
             print(json.dumps(receipt, indent=2))
             return 0
-        run_dir = work_item / "artifacts/finishing-touches/review-runs" / review_key
-        # The finishing-review artifact contract binds run_id to the artifact
-        # directory leaf. The stable coordination key already provides the
-        # required deterministic identity, so use it directly rather than a
-        # second display-oriented identifier.
-        run_id = run_dir.name
         review_diff_base = base
         review_diff_hash: str | None = None
         continuation: dict[str, object] | None = None
@@ -719,6 +763,10 @@ def main() -> int:
             review_diff_hash = validated_delta_hash(worktree, review_diff_base, head)
 
         def execute_review() -> dict[str, Any]:
+            # Artifact identity is separate from subject/budget identity. The
+            # coordinator still admits the exact same normalized subject.
+            run_dir = allocate_review_run_dir(work_item, review_key)
+            run_id = run_dir.name
             failure: str | None = None
             request = {
                 **source,
@@ -768,6 +816,7 @@ def main() -> int:
             parsed_outcome = "findings"
             verdict_structured = False
             findings: list[dict[str, Any]] = []
+            stdout_evidence: dict[str, Any] | None = None
             if not claude:
                 failure = "cli_not_found"
                 plan["reviewer_status"] = "unavailable"
@@ -776,7 +825,7 @@ def main() -> int:
                 for key in CLAUDE_ENV_REMOVED:
                     env.pop(key, None)
                 try:
-                    completed = run(
+                    completed = run_native_review(
                         [
                             claude,
                             "-p",
@@ -790,29 +839,31 @@ def main() -> int:
                             "--allowedTools",
                             CLAUDE_TOOLS,
                             "--no-session-persistence",
+                            "--output-format",
+                            "json",
+                            "--json-schema",
+                            json.dumps(NATIVE_REVIEW_SCHEMA, sort_keys=True),
                             prompt,
                         ],
                         cwd=worktree,
                         timeout=args.timeout_seconds,
                         env=env,
                     )
+                    stdout_evidence = preserve_native_stdout(run_dir, completed.stdout)
                     if completed.returncode:
                         failure = "cli_runtime_failed"
-                    elif not completed.stdout.strip():
-                        failure = "cli_output_invalid"
                     else:
-                        response = completed.stdout.strip()
-                        parsed_outcome, verdict_structured = parse_review_verdict(response)
                         try:
-                            findings = parse_structured_findings(response)
-                        except ReviewError:
+                            payload = parse_native_review_output(completed.stdout)
+                            findings = payload["findings"]
+                            parsed_outcome = payload["verdict"].lower()
+                            verdict_structured = True
+                            response = project_native_review(payload)
+                            write_json(run_dir / "reviewer-structured-output.json", payload)
+                        except NativeReviewOutputError:
                             failure = "cli_output_invalid"
-                        if not verdict_structured:
-                            failure = "cli_output_invalid"
-                        (run_dir / "reviewer-response.md").write_text(
-                            response + "\n", encoding="utf-8"
-                        )
                         if failure is None:
+                            (run_dir / "reviewer-response.md").write_text(response, encoding="utf-8")
                             events = ledger_events(findings)
                             (run_dir / "review-ledger.jsonl").write_text(
                                 "".join(
@@ -821,8 +872,11 @@ def main() -> int:
                                 ),
                                 encoding="utf-8",
                             )
-                except subprocess.TimeoutExpired:
+                except subprocess.TimeoutExpired as exc:
                     failure = "cli_timeout"
+                    stdout_evidence = preserve_native_stdout(run_dir, exc.stdout or b"")
+                except OSError:
+                    failure = "cli_runtime_failed"
                 if failure:
                     plan["reviewer_status"] = "runtime_failure"
 
@@ -865,6 +919,9 @@ def main() -> int:
                 "failure_code": failure,
                 "decision": decision["decision"],
                 "response": response,
+                "response_format": "native-json-schema-projection/v1",
+                "native_stdout": stdout_evidence,
+                "projection_sha256": hashlib.sha256(response.encode()).hexdigest() if response else None,
                 "parsed_outcome": parsed_outcome,
                 "verdict_structured": verdict_structured,
                 "findings": coordination_findings(findings),
@@ -898,7 +955,8 @@ def main() -> int:
                 else "consume exact-head receipt"
             ),
         }
-        write_json(run_dir / "opposing-model-review-receipt.json", receipt)
+        if not result.reused:
+            write_json(Path(review["review_run_dir"]) / "opposing-model-review-receipt.json", receipt)
         print(json.dumps(receipt, indent=2))
         return 0 if result.receipt["outcome"] == "clean" else 2
     except (ReviewError, ReviewCoordinationError, KeyError) as exc:

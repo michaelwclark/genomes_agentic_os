@@ -15,5 +15,13 @@ model receipt, review ledger, and deterministic readiness decision consumed by
 provider output is one consolidated terminal marked comment. It never creates,
 retargets, pushes, merges, deploys, or releases a pull request.
 
+New native Claude calls use schema-constrained JSON output with strict success
+envelope and verdict/findings validation. Original stdout bytes and their hash
+are preserved separately from the deterministic ledger projection. Historical
+text responses remain immutable evidence. Protocol recovery keeps the same
+subject and shared coordinator, allocates new attempt artifacts, and requires
+one guarded acceptance call after local validation. See the skill's bounded
+recovery contract; source validation alone does not establish review authority.
+
 Use it from either Claude or Codex. Do not replace it with an ad-hoc `claude -p`
 prompt, copied review text, or a different reviewer receipt format.
