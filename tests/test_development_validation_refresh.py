@@ -40,13 +40,22 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-def _command_proof(root: Path, packet: Path, worktree: Path, command: str, head: str, policy: str) -> dict:
+def _command_proof(root: Path, packet: Path, worktree: Path, command: str, head: str, policy: str,
+                   annotated: bool = False) -> dict:
     identity = {"repository": _git("config", "--get", "remote.origin.url", cwd=worktree),
                 "branch": _git("branch", "--show-current", cwd=worktree),
                 "head": head, "clean": "true", "worktree": str(worktree)}
-    state = start_run(root, command=["env", "REVIEW_POLICY_FINGERPRINT=" + policy, *shlex.split(command)], label="actual validation proof",
+    argv = shlex.split(command)
+    if annotated:
+        argv[0] = str(worktree / ".venv/bin/python")
+        argv.extend(["--basetemp=" + str(packet / "artifacts/actor-tmp/tests"),
+            "-o", "cache_dir=" + str(packet / "artifacts/actor-cache"),
+            "--cov=genomes_agentic_os", "--cov-branch",
+            "--cov-report=json:" + str(packet / "artifacts/actor-coverage.json")])
+    state = start_run(root, command=["env", "REVIEW_POLICY_FINGERPRINT=" + policy, *argv], label="actual validation proof",
                       artifact_dir=str(packet / "artifacts/command-runs"),
                       work_dir=str(worktree), expected_git_identity=identity,
+                      environment_overrides={"PYTEST_ADDOPTS": "", "COVERAGE_FILE": str(packet / "artifacts/actor-coverage-data")},
                       budgets={"wall_clock_minutes": 0.5, "no_progress_minutes": 0.33})
     run = Path(state["run_dir"])
     deadline = time.monotonic() + 15
@@ -59,13 +68,22 @@ def _command_proof(root: Path, packet: Path, worktree: Path, command: str, head:
 
 
 def _fixture(tmp_path: Path, *, changed: bool = True, mode: str = "single_stage",
-             historical_command: bool = True, multiple_commands: bool = False) -> dict:
+             historical_command: bool = True, multiple_commands: bool = False,
+             annotated: bool = False) -> dict:
     repo, old_head = _repository(tmp_path)
+    if annotated:
+        (repo / ".gitignore").write_text(".venv\n.pytest_cache/\n__pycache__/\n")
+        (repo / "tests").mkdir()
+        (repo / "tests/test_execution.py").write_text("def test_execution():\n    assert 2 + 2 == 4\n")
+        _git("add", ".gitignore", "tests", cwd=repo)
+        _git("commit", "-m", "real pytest command fixture", cwd=repo)
+        _git("push", "origin", "main", cwd=repo)
+        old_head = _git("rev-parse", "HEAD", cwd=repo)
     root = tmp_path / "os"
     project = _project(root, repo, repository_id="git:github.com/acme/app")
     config = project / "config/development.yml"
     profile = yaml.safe_load(config.read_text())
-    command = shlex.join([sys.executable, "-c", "print('validated')"])
+    command = ".venv/bin/python -m pytest tests/ -q" if annotated else shlex.join([sys.executable, "-c", "print('validated')"])
     commands = [command]
     if multiple_commands:
         commands.append(shlex.join([sys.executable, "-c", "print('validated second layer')"]))
@@ -79,6 +97,13 @@ def _fixture(tmp_path: Path, *, changed: bool = True, mode: str = "single_stage"
     task = delivery.TaskState(Path(run["tasks"][0]["state_ref"]))
     current = task.read()
     packet, worktree = Path(current["work_item"]), Path(current["worktree"]["path"])
+    # All network-free provisioning is finished. Bind subsequent proof to the
+    # selected provider NWO; no fixture performs a remote operation afterward.
+    _git("remote", "set-url", "origin", "https://github.com/acme/app.git", cwd=worktree)
+    if annotated:
+        # Preserve an actual locked task venv rather than inferring that a
+        # system-Python symlink has this disposable environment's packages.
+        (worktree / ".venv").symlink_to(sys.prefix, target_is_directory=True)
     for stage in ("groom", "detective", "create_artifacts"):
         _record_standalone_stage(task, stage)
     delivery.run_development_stage(task.path, stage="readiness",
@@ -104,7 +129,7 @@ def _fixture(tmp_path: Path, *, changed: bool = True, mode: str = "single_stage"
         _git("add", "README.md", cwd=worktree)
         _git("commit", "-m", "successor implementation", cwd=worktree)
     head = _git("rev-parse", "HEAD", cwd=worktree)
-    proofs = [_command_proof(root, packet, worktree, c, head, current["policy_fingerprint"]) for c in commands]
+    proofs = [_command_proof(root, packet, worktree, c, head, current["policy_fingerprint"], annotated) for c in commands]
     current = task.read()
     evidence = {"ticket": current["ticket"], "canonical_work_id": current["canonical_work_id"],
         "repository_id": current["repository"]["id"], "repository": "acme/app",
@@ -402,3 +427,14 @@ def test_historical_deferred_command_is_not_current_pr_create_authority(tmp_path
     # The same historical failure remains valid lineage for independently
     # proved fresh frozen commands. It is never relabeled or reused as passed.
     assert _refresh(f)["task"]["receipts"][-1]["kind"] == "validation_refresh"
+
+
+def test_actual_annotated_pytest_execution_binds_successor_and_pr_family(tmp_path):
+    f = _fixture(tmp_path, annotated=True)
+    result = _refresh(f)
+    assert result["task"]["validation_head_sha"] == f["head"]
+    _document(f)
+    delivery.run_development_stage(f["task"].path, stage="release_propagation",
+        receipts={"release_propagation": _family(f)}, idempotency_prefix="annotated-family")
+    wrapper = json.loads((f["task"].path.parent / "stages/release-propagation.json").read_text())
+    assert wrapper["validation_authority"]["status"] == "passed"

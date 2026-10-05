@@ -6,7 +6,6 @@ import hashlib
 import importlib.util
 import json
 from pathlib import Path
-import shlex
 import subprocess
 from typing import Any, Mapping
 
@@ -193,8 +192,9 @@ def pr_create_validation_authority(state_file: str | Path, family: Mapping[str, 
 
 
 def _commands(evidence: Mapping[str, Any], current: Mapping[str, Any], packet: Path,
-              worktree: Path, validation: Mapping[str, Any], head: str) -> None:
-    commands = validation.get("commands")
+              worktree: Path, profile: Mapping[str, Any], head: str) -> None:
+    from .validation_command_authority import execution_argv, matches_command
+    commands = profile.get("validation", {}).get("commands")
     runs = evidence.get("validation_runs")
     if (not isinstance(commands, list) or not commands or not all(isinstance(c, str) and c for c in commands)
             or not isinstance(runs, list) or not all(isinstance(r, Mapping) for r in runs)
@@ -207,13 +207,14 @@ def _commands(evidence: Mapping[str, Any], current: Mapping[str, Any], packet: P
     for run in runs:
         terminal_path, terminal, _ = _bound(run.get("terminal"), packet)
         command_path, command, _ = _bound(run.get("command_receipt"), packet)
-        frozen_argv = shlex.split(run["command"])
-        policy_argv = ["env", f"REVIEW_POLICY_FINGERPRINT={current['policy_fingerprint']}", *frozen_argv]
+        actual_argv, environment = execution_argv(command)
         if (terminal.get("schema") != "agentic-os-long-running-terminal/v1"
                 or terminal.get("status") != "success" or terminal.get("exit_code") != 0
                 or terminal.get("post_run_invariants_ok") is not True
                 or command.get("schema") != "agentic-os-long-running-state/v1" or command.get("shell") is not False
-                or command.get("command") not in (frozen_argv, policy_argv)
+                or not matches_command(run["command"], actual_argv, current, profile)
+                or (command.get("command", [None])[0] == "env"
+                    and environment.get("REVIEW_POLICY_FINGERPRINT") != current["policy_fingerprint"])
                 or Path(str(command.get("work_dir") or "")).resolve() != worktree
                 or command.get("id") != terminal.get("id")
                 or terminal_path.parent != command_path.parent
@@ -278,7 +279,7 @@ def refresh_development_validation(state_file: str | Path, *, evidence_file: str
             or head != _git(worktree, "rev-parse", "HEAD")):
         _error("successor validation task/repository/worktree/branch/head/policy mismatch")
     _commands({**evidence, "verified_at": payload["verified_at"]}, current, packet,
-              worktree, profile["validation"], head)
+              worktree, profile, head)
     lineage = evidence.get("repair_lineage") or {}
     if not isinstance(lineage, dict) or not str(lineage.get("reason") or "").strip():
         _error("successor validation requires explicit repair lineage")
@@ -322,7 +323,7 @@ def refresh_development_validation(state_file: str | Path, *, evidence_file: str
             if _read(Path(current["policy_receipt"]))[1] != evidence["policy_sha256"]:
                 _error("validation frozen policy changed during refresh preflight")
             _commands({**evidence, "verified_at": payload["verified_at"]}, current, packet,
-                      worktree, profile["validation"], head)
+                      worktree, profile, head)
             if snapshot.exists() and snapshot.read_bytes() != request_path.read_bytes():
                 _error("immutable validation refresh snapshot collision")
             if not snapshot.exists():

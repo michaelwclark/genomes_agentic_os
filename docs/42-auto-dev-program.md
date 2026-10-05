@@ -159,9 +159,14 @@ branch, current head and frozen policy bytes, and include `validation_runs` for
 every frozen command in order. Each run binds `command_receipt` and `terminal`
 files by path and SHA-256, with successful governed execution and unchanged Git
 identity before and after. Expected Git identity also binds the worktree path.
-The executed argv is the frozen command, optionally prefixed only with
-`env REVIEW_POLICY_FINGERPRINT=<pinned-fingerprint>`; that explicit prefix is
-required for the readiness producer to verify the policy binding.
+The executed argv keeps the frozen command prefix. The task's absolute venv
+launcher is equivalent only to its configured relative path; an alternate
+launcher requires explicit frozen selected-profile/v2 executable authority.
+An executed `env REVIEW_POLICY_FINGERPRINT=<pinned-fingerprint>` prefix binds
+the readiness producer to the policy. Nonselecting pytest coverage/report and
+contained basetemp annotations are allowed. Only one `-o cache_dir=<absolute
+packet-artifacts-private-path>` override is allowed; selectors, extra test
+paths and other overrides are refused.
 `repair_lineage` binds the predecessor file/hash,
 `from_head_sha`, `to_head_sha` and reason. An identical replay reuses its receipt;
 changed or stale evidence fails before mutation. Document and PR Create must
