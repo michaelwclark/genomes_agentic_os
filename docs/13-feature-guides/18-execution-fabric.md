@@ -55,7 +55,9 @@ retain their declared operator intent.
 SQLite consumers obtain both the ordering clause and its bound cutoff values
 from one queue helper; filesystem dispatch uses the corresponding queue policy
 key. One parser normalizes ISO spellings to integer UTC microseconds in both
-SQLite and filesystem consumers, including due and lease eligibility. Naive
+SQLite and filesystem queue selection, including due eligibility and the generic
+queue's active-task lease cutoff. Existing named-worker heartbeat, fencing and
+recovery operations retain their separate lease timestamp behavior. Naive
 timestamps mean UTC; invalid due dates remain ineligible, and unknown creation
 dates do not enter the aged bucket. Submillisecond
 timestamps keep their ordering rather than rounding at the starvation cutoff.
