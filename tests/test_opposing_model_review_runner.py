@@ -528,6 +528,91 @@ def test_canonical_bootstrap_accepts_family_v1_without_delivery_phase(
     assert runner.initial_request(packet, "AGE-221", tmp_path / "worktree")["pr_number"] == 57
 
 
+def test_bootstrap_consumes_actual_legacy_family_and_flat_readback(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    runner = _load_runner()
+    packet = tmp_path / "packet"
+    fixture = json.loads((Path(__file__).parent / "fixtures/pr-create-bootstrap-legacy-age209.json").read_text())
+    assert "readback_verified" not in json.dumps(fixture)
+    for name, value in fixture.items():
+        path = packet / "artifacts/auto-dev-pr-create" / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(value))
+    family = fixture["family-complete.json"]
+    head, repository = family["source"]["sha"], family["repository"]
+    (packet / "autodev.json").write_text(json.dumps({
+        "subject_revision": head, "stages": {"pr_create": {"status": "completed"}},
+        "delivery": {"policy_fingerprint": family["effective_policy_fingerprint"],
+                     "repository": {"id": "git:github.com/" + repository}},
+    }))
+    provider = {
+        "number": 257, "url": family["targets"][0]["url"], "state": "OPEN",
+        "headRefOid": head, "baseRefName": "main", "baseRefOid": "a" * 40,
+    }
+    monkeypatch.setattr(runner, "provider_pr", lambda *_args: provider)
+    monkeypatch.setattr(runner, "git_repository", lambda _path: repository)
+    request = runner.initial_request(packet, "AGE-209", tmp_path / "worktree")
+    assert request["head_sha"] == head
+    assert request["base_sha"] == "a" * 40
+    assert request["request_origin"] == "auto-dev-pr-create-family"
+    assert len(request["pr_create_evidence_sha256"]) == 5
+    # A contradictory legacy alias is rejected, rather than being trusted alone.
+    proof = packet / "artifacts/auto-dev-pr-create/pull-request-provider-readback.json"
+    value = json.loads(proof.read_text())
+    value["head_sha"] = "e" * 40
+    proof.write_text(json.dumps(value))
+    with pytest.raises(runner.ReviewError, match="provider"):
+        runner.initial_request(packet, "AGE-209", tmp_path / "worktree")
+
+
+def _catalog_bootstrap_selection(packet: Path, worktree: Path, root: Path) -> dict[str, str]:
+    selected = {"id": "api", "root": str(root), "base_branch": "main"}
+    policy = packet / "frozen-policy.json"
+    policy.write_text(json.dumps({
+        "fingerprint": "c" * 64, "selected_profile": {"repository": selected},
+    }))
+    path = packet / "autodev.json"
+    manifest = json.loads(path.read_text())
+    manifest["delivery"].update({
+        "repository": selected, "policy_receipt": str(policy),
+        "worktree": {"repository_id": "api", "path": str(worktree)},
+    })
+    path.write_text(json.dumps(manifest))
+    return selected
+
+
+@pytest.mark.parametrize("mismatch", [None, "selected", "frozen", "worktree", "common-dir"])
+def test_catalog_bootstrap_binds_short_id_to_frozen_source_and_worktree(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, mismatch: str | None,
+) -> None:
+    runner = _load_runner()
+    packet, worktree, source_root = tmp_path / "packet", tmp_path / "worktree", tmp_path / "source"
+    provider = _canonical_pr_create_packet(packet)
+    selected = _catalog_bootstrap_selection(packet, worktree, source_root)
+    if mismatch == "selected":
+        selected = dict(selected, id="web")
+    elif mismatch == "frozen":
+        policy = packet / "frozen-policy.json"
+        frozen = json.loads(policy.read_text())
+        frozen["selected_profile"]["repository"]["root"] = str(tmp_path / "other")
+        policy.write_text(json.dumps(frozen))
+    elif mismatch == "worktree":
+        path = packet / "autodev.json"
+        manifest = json.loads(path.read_text())
+        manifest["delivery"]["worktree"]["repository_id"] = "web"
+        path.write_text(json.dumps(manifest))
+    common = (tmp_path / "other" if mismatch == "common-dir" else source_root) / ".git"
+    monkeypatch.setattr(runner, "run", lambda *_args, **_kwargs: _completed(0, str(common)))
+    monkeypatch.setattr(runner, "provider_pr", lambda *_args: provider)
+    monkeypatch.setattr(runner, "git_repository", lambda _path: "acme/widgets")
+    if mismatch is None:
+        assert runner.initial_request(packet, "AGE-221", worktree, selected_repository=selected)["repository"] == "acme/widgets"
+    else:
+        with pytest.raises(runner.ReviewError, match="catalog"):
+            runner.initial_request(packet, "AGE-221", worktree, selected_repository=selected)
+
+
 @pytest.mark.parametrize(("name", "field", "value"), [
     ("autodev.json", "subject_revision", "e" * 40),
     ("autodev.json", "stages", {"pr_create": {"status": "not_started"}}),
@@ -602,8 +687,10 @@ def test_canonical_bootstrap_rejects_ambiguous_target_and_external_proof(tmp_pat
         runner.initial_request(packet, "AGE-221", tmp_path / "worktree")
 
 
+@pytest.mark.parametrize("catalog", [False, True])
 def test_canonical_bootstrap_model_invoked_once_and_exact_key_reused(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    catalog: bool,
 ) -> None:
     runner = _load_runner()
     os_root = _installed_root(tmp_path / "os")
@@ -611,6 +698,7 @@ def test_canonical_bootstrap_model_invoked_once_and_exact_key_reused(
     packet, worktree = project / "work-items/age-221", project / "worktrees/age-221"
     worktree.mkdir(parents=True)
     provider = _canonical_pr_create_packet(packet)
+    selected = _catalog_bootstrap_selection(packet, worktree, tmp_path / "source") if catalog else None
     model_calls = []
     monkeypatch.setattr(runner, "provider_pr", lambda *_args: provider)
     monkeypatch.setattr(runner, "git_repository", lambda _path: "acme/widgets")
@@ -618,17 +706,21 @@ def test_canonical_bootstrap_model_invoked_once_and_exact_key_reused(
     monkeypatch.setattr(runner, "diff_hash", lambda *_args: "d" * 64)
     monkeypatch.setattr(runner, "render_prompt", lambda *_args: "offline mocked review")
     monkeypatch.setattr(runner, "decide", lambda _path: {"decision": "ready_post_pr_checks"})
-    monkeypatch.setattr(runner, "load_development_profile", lambda *_args: (
-        {"repository": {"root": str(worktree), "base_branch": "main"}}, project / "config.yml",
-    ))
+    profile = {"repository": {"catalog": [selected], "selection_required": True}} if catalog else {
+        "repository": {"root": str(worktree), "base_branch": "main"},
+    }
+    monkeypatch.setattr(runner, "load_development_profile", lambda *_args: (profile, project / "config.yml"))
     monkeypatch.setattr(runner.shutil, "which", lambda _name: "/offline/claude")
     def fake_model(*args, **_kwargs):
+        if args[0][0] == "git":
+            return _completed(0, str(tmp_path / "source/.git"))
         model_calls.append(args)
         return _completed(0, "```json\n[]\n```\nAGENTIC_OS_REVIEW_VERDICT: CLEAN")
     monkeypatch.setattr(runner, "run", fake_model)
     monkeypatch.setattr(sys, "argv", [
         "runner", "AGE-221", "--os-root", str(os_root), "--work-item", str(packet),
         "--worktree", str(worktree),
+        *(["--repository", "api"] if catalog else []),
     ])
 
     assert runner.main() == 0

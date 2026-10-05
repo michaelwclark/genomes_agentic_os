@@ -80,6 +80,11 @@ the historical checkout base. Evidence hashes travel with the review request.
 The flat provider-readback input remains supported for older packets; it cannot
 bypass an incomplete or contradictory canonical family. None of these inputs
 grant review readiness, provider write authority, or a larger review budget.
+The recognized legacy family-v1 source/topology/plan formats are checked against
+their typed flat readback and fresh provider facts without inventing a
+verification flag. Catalog repository names such as `api` are selector identities,
+so their frozen source/worktree mapping and provider repository are verified
+separately from a provider-qualified repository name.
 
 ## How is it configured?
 

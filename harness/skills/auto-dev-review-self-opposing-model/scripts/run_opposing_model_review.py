@@ -394,7 +394,8 @@ def bootstrap_ref(work_item: Path, reference: Any, *, relative_to: Path) -> Path
 
 
 def canonical_pr_create_target(
-    work_item: Path, ticket: str, manifest: dict[str, Any], policy: str
+    work_item: Path, ticket: str, manifest: dict[str, Any], policy: str,
+    worktree: Path, selected_repository: dict[str, Any] | None,
 ) -> tuple[dict[str, Any], Path, dict[str, str]]:
     """Resolve one completed, verified PR target; fail before model admission."""
     root = work_item / "artifacts/auto-dev-pr-create"
@@ -434,6 +435,57 @@ def canonical_pr_create_target(
     frozen_policy = details.get("policy_fingerprint") or details.get("effective_policy_fingerprint")
     if details.get("ticket") != ticket or frozen_policy != policy:
         raise ReviewError("PR Create family ticket or frozen policy does not match packet")
+    legacy = (
+        family.get("schema") == "auto-dev-pr-family/v1"
+        and snapshot.get("schema") == "auto-dev-pr-source-snapshot/v1"
+    )
+    if legacy:
+        targets = details.get("targets")
+        topology_targets = topology.get("targets")
+        actions = plan.get("actions")
+        if (
+            topology.get("schema") != "auto-dev-pr-topology/v1"
+            or plan.get("schema") != "auto-dev-pr-plan/v1"
+            or not isinstance(targets, list) or len(targets) != 1
+            or not isinstance(topology_targets, list) or len(topology_targets) != 1
+            or not isinstance(actions, list) or len(actions) != 1
+            or not all(isinstance(row, dict) for row in [*targets, *topology_targets, *actions])
+        ):
+            raise ReviewError("legacy PR Create family authority is incomplete or ambiguous")
+        target, authority, action = targets[0], topology_targets[0], actions[0]
+        branch = target.get("base_branch")
+        source_branch = source.get("branch")
+        if (
+            snapshot.get("source_sha") != head
+            or snapshot.get("source_branch") != source_branch
+            or snapshot.get("effective_policy_fingerprint") != policy
+            or target.get("head_branch") != source_branch
+            or authority.get("repository") != repository
+            or authority.get("base_branch") != branch
+            or authority.get("head_branch") != source_branch
+            or authority.get("classification") != "pr_required"
+            or action.get("classification") != "pr_required"
+            or action.get("push") != f"{source_branch}@{head}"
+            or action.get("create_pull_request") != f"{repository}:{branch}"
+        ):
+            raise ReviewError("legacy PR Create family identity or policy mismatch")
+        # Normalize identity only. Legacy receipts have no readback_verified bit;
+        # their typed flat proof and fresh provider facts are verified below.
+        snapshot = {
+            **snapshot, "schema": "auto-dev-pr-create-source-snapshot/v1",
+            "source_head_sha": snapshot["source_sha"],
+            "policy_fingerprint": snapshot["effective_policy_fingerprint"],
+        }
+        topology = {
+            **topology, "schema": "auto-dev-pr-create-topology/v1",
+            "repository": authority["repository"], "default_targets": [branch],
+        }
+        plan = {
+            **plan, "schema": "auto-dev-pr-create-plan/v1", "source_head_sha": head,
+            "targets": [{"repository": repository, "base_branch": branch,
+                         "pull_request": target.get("pull_request_number"),
+                         "classification": action["classification"]}],
+        }
     if (
         snapshot.get("schema") != "auto-dev-pr-create-source-snapshot/v1"
         or snapshot.get("ticket") != ticket
@@ -448,12 +500,45 @@ def canonical_pr_create_target(
         or plan.get("source_head_sha") != head
     ):
         raise ReviewError("PR Create family authority snapshot identity or policy mismatch")
-    selected_repository = ((manifest.get("delivery") or {}).get("repository") or {}).get("id")
-    if selected_repository and (
-        not isinstance(selected_repository, str)
-        or selected_repository.removeprefix("git:github.com/") != repository
+    descriptor = (manifest.get("delivery") or {}).get("repository") or {}
+    repository_id = descriptor.get("id")
+    if repository_id and not isinstance(repository_id, str):
+        raise ReviewError("PR Create family repository descriptor is malformed")
+    if repository_id and "/" in repository_id and (
+        repository_id.removeprefix("git:github.com/").removeprefix("github:") != repository
     ):
         raise ReviewError("PR Create family repository does not match packet selection")
+    if repository_id and "/" not in repository_id:
+        delivery = manifest["delivery"]
+        frozen = bootstrap_json(Path(str(delivery.get("policy_receipt") or "")), "frozen repository policy")
+        frozen_profile = frozen.get("selected_profile") or {}
+        if not isinstance(frozen_profile, dict):
+            raise ReviewError("frozen repository policy selection is malformed")
+        frozen_repository = frozen_profile.get("repository") or {}
+        recorded_worktree = delivery.get("worktree") or {}
+        if (
+            not isinstance(selected_repository, dict)
+            or not isinstance(frozen_repository, dict)
+            or not isinstance(recorded_worktree, dict)
+            or frozen.get("fingerprint") != policy
+            or selected_repository.get("id") != repository_id
+            or frozen_repository.get("id") != repository_id
+            or frozen_repository.get("root") != descriptor.get("root")
+            or selected_repository.get("root") != descriptor.get("root")
+            or selected_repository.get("base_branch") != snapshot.get("base_branch")
+            or frozen_repository.get("base_branch") != snapshot.get("base_branch")
+            or recorded_worktree.get("repository_id") != repository_id
+            or Path(str(recorded_worktree.get("path") or "")).resolve() != worktree.resolve()
+            or not isinstance(descriptor.get("root"), str)
+            or not Path(descriptor["root"]).is_absolute()
+        ):
+            raise ReviewError("catalog repository selection does not match frozen worktree mapping")
+        common = run(["git", "rev-parse", "--git-common-dir"], cwd=worktree)
+        if common.returncode or (
+            (worktree / common.stdout.strip()).resolve()
+            != (Path(descriptor["root"]) / ".git").resolve()
+        ):
+            raise ReviewError("catalog worktree does not belong to the frozen source repository")
     targets = details.get("targets")
     planned = plan.get("targets")
     if not isinstance(targets, list) or not isinstance(planned, list):
@@ -486,9 +571,9 @@ def canonical_pr_create_target(
         or planned_target.get("repository") != repository
         or planned_target.get("base_branch") != branch
         or str(planned_target.get("pull_request")) != str(number)
-        or planned_target.get("readback_verified") is not True
+        or (not legacy and planned_target.get("readback_verified") is not True)
         or planned_target.get("classification", "pr_required") != "pr_required"
-        or not (target.get("readback_verified") is True or details.get("readback_verified") is True)
+        or (not legacy and not (target.get("readback_verified") is True or details.get("readback_verified") is True))
         or target.get("classification") != "pr_required"
     ):
         raise ReviewError("PR Create target is incomplete, unverified or inconsistent with plan")
@@ -519,12 +604,16 @@ def canonical_pr_create_target(
             or observed.get("head_sha") != head
         ):
             raise ReviewError("PR Create provider readback is unverified or has mismatched identity")
-    elif proof.get("schema") == "auto-dev-pr-create-provider-readback/v1":
+    elif proof.get("schema") == "auto-dev-pr-create-provider-readback/v1" or (
+        legacy and proof.get("schema") == "github-pull-request-readback/v1"
+    ):
         if (
             proof.get("repository") != repository
             or str(proof.get("number", proof.get("pull_request"))) != str(number)
             or proof.get("head_sha", proof.get("source_head_sha")) != head
             or proof.get("state") != "OPEN"
+            or proof.get("base_branch") != branch
+            or proof.get("url") != f"https://github.com/{repository}/pull/{number}"
         ):
             raise ReviewError("PR Create provider readback identity or state does not match family")
     else:
@@ -540,7 +629,10 @@ def canonical_pr_create_target(
     }, readback_path, evidence_hashes
 
 
-def initial_request(work_item: Path, ticket: str, worktree: Path) -> dict[str, Any]:
+def initial_request(
+    work_item: Path, ticket: str, worktree: Path,
+    *, selected_repository: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Derive the first review request from immutable PR Create and packet truth."""
 
     readback_path = (
@@ -571,7 +663,8 @@ def initial_request(work_item: Path, ticket: str, worktree: Path) -> dict[str, A
     live: dict[str, Any] | None = None
     if family_path.is_file():
         readback, readback_path, evidence_hashes = canonical_pr_create_target(
-            work_item, ticket, manifest, supplied_policy_fingerprint
+            work_item, ticket, manifest, supplied_policy_fingerprint,
+            worktree, selected_repository,
         )
         if git_repository(worktree) != readback["repository"]:
             raise ReviewError("PR Create family repository does not match provider worktree")
@@ -850,7 +943,10 @@ def main() -> int:
                 )
             )
             return 2
-        source = source or initial_request(work_item, args.ticket, worktree)
+        source = source or initial_request(
+            work_item, args.ticket, worktree,
+            selected_repository=selected_profile.get("repository"),
+        )
         unavailable_policy = review_unavailable_policy(source)
         base = str(source["base_sha"])
         policy = policy_fingerprint(source)
