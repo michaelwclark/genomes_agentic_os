@@ -43,7 +43,7 @@ NATIVE_REVIEW_SCHEMA: dict[str, Any] = {
         },
     },
 }
-VERDICT_MARKER = re.compile(r"AGENTIC_OS_REVIEW_VERDICT[^\r\n]*")
+VERDICT_MARKER = re.compile(r"AGENTIC_OS_REVIEW_VERDICT[^\r\n]*", re.IGNORECASE)
 
 
 def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -113,7 +113,7 @@ def parse_native_review_output(stdout: bytes) -> dict[str, Any]:
         raise NativeReviewOutputError("native FINDINGS verdict requires findings")
     commentary = "\n".join([envelope["result"], payload.get("summary", "")])
     markers = VERDICT_MARKER.findall(commentary)
-    if markers and (len(markers) != 1 or markers[0].strip() != f"AGENTIC_OS_REVIEW_VERDICT: {verdict}"):
+    if markers and (len(markers) != 1 or markers[0].strip().upper() != f"AGENTIC_OS_REVIEW_VERDICT: {verdict}"):
         raise NativeReviewOutputError("native commentary contains ambiguous or contradictory verdict markers")
     return {
         **payload,
