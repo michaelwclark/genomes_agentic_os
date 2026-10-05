@@ -550,3 +550,178 @@ def test_exact_task_projection_binding_and_supported_shape_refuse_before_any_mem
     assert exc.value.error_code in {"consumer_identity", "unsupported_consumer"} and not exc.value.retryable
     assert {path: path.read_bytes() for path in originals} == originals
     assert not (root / adoption.TRANSACTION_RELATIVE).exists()
+
+
+@pytest.mark.parametrize("checkpoint", ["prepared", "applying"])
+@pytest.mark.parametrize("dependency", ["schema", "manifest"])
+@pytest.mark.parametrize("migration", [False, True])
+def test_durable_preparation_race_preserves_unknown_bytes_before_first_target_write(tmp_path, monkeypatch, checkpoint, dependency, migration):
+    root, schema, manifest, _ = root_fixture(tmp_path, ownership="current" if migration else "unowned")
+    active, task = consumer_fixture(root)
+    plan = adoption.plan_schema_adoption(root, consumers=[active], migrate_consumers=migration)
+    changed_path = {"schema": schema, "manifest": manifest}[dependency]
+    original_journal = adoption._journal
+    expected = {}
+    changed = False
+    def writer(root_path, path, value):
+        nonlocal changed
+        original_journal(root_path, path, value)
+        if value["status"] == checkpoint and not changed:
+            changed = True
+            changed_path.write_bytes(changed_path.read_bytes() + b"\n")
+            expected.update({item: item.read_bytes() for item in (schema, manifest, active, task)})
+    monkeypatch.setattr(adoption, "_journal", writer)
+    with pytest.raises(adoption.SchemaAdoptionError) as exc:
+        apply(plan)
+    assert exc.value.error_code in {"stale_plan", "apply_dependency_divergence"} and not exc.value.retryable
+    assert {item: item.read_bytes() for item in expected} == expected
+    journal = json.loads(next((root / adoption.TRANSACTION_RELATIVE).glob("*/journal.json")).read_bytes())
+    assert journal["status"] == ("rolled_back" if migration else "recovery_required")
+    assert journal["readback_verified"] is migration
+
+
+@pytest.mark.parametrize("migration", [False, True])
+def test_late_next_target_change_restores_only_own_writes_and_preserves_unknown_target(tmp_path, monkeypatch, migration):
+    root, schema, manifest, _ = root_fixture(tmp_path, ownership="current" if migration else "unowned")
+    active, task = consumer_fixture(root)
+    plan = adoption.plan_schema_adoption(root, consumers=[active], migrate_consumers=migration)
+    first, second = (task, active) if migration else (schema, manifest)
+    first_before = first.read_bytes()
+    original_atomic = adoption._atomic
+    changed = False
+    second_after = None
+    def writer(path, data):
+        nonlocal changed, second_after
+        original_atomic(path, data)
+        if path == first and not changed:
+            changed = True
+            second.write_bytes(second.read_bytes() + b"\n")
+            second_after = second.read_bytes()
+    monkeypatch.setattr(adoption, "_atomic", writer)
+    with pytest.raises(adoption.SchemaAdoptionError) as exc:
+        apply(plan)
+    assert exc.value.error_code == "stale_plan" and not exc.value.retryable
+    assert first.read_bytes() == first_before and second.read_bytes() == second_after
+    journal = json.loads(next((root / adoption.TRANSACTION_RELATIVE).glob("*/journal.json")).read_bytes())
+    assert journal["status"] == "recovery_required" and not journal["readback_verified"]
+    assert {row.get("path") for row in journal["recovery_diagnostics"]} == {second.relative_to(root).as_posix()}
+
+
+def test_public_rollback_rechecks_each_member_preserving_a_late_unknown_change(tmp_path, monkeypatch):
+    root, schema, manifest, _ = root_fixture(tmp_path)
+    before_schema, before_manifest = schema.read_bytes(), manifest.read_bytes()
+    plan = adoption.plan_schema_adoption(root); receipt = apply(plan)
+    original_atomic = adoption._atomic
+    changed = False
+    schema_after = None
+    def writer(path, data):
+        nonlocal changed, schema_after
+        original_atomic(path, data)
+        if path == manifest and data == before_manifest and not changed:
+            changed = True
+            schema.write_bytes(schema.read_bytes() + b"\n")
+            schema_after = schema.read_bytes()
+    monkeypatch.setattr(adoption, "_atomic", writer)
+    with pytest.raises(adoption.SchemaAdoptionError) as exc:
+        adoption.rollback_schema_transaction(root, receipt["journal"], expected_plan_sha256=plan["plan_sha256"])
+    assert exc.value.error_code == "rollback_divergence" and not exc.value.retryable
+    assert schema.read_bytes() == schema_after and schema.read_bytes() != before_schema
+    assert manifest.read_bytes() == before_manifest
+    journal = json.loads(Path(receipt["journal"]).read_bytes())
+    assert journal["status"] == "recovery_required" and not journal["readback_verified"]
+
+
+def test_public_rollback_rehashes_backup_immediately_before_restoration(tmp_path, monkeypatch):
+    root, schema, manifest, _ = root_fixture(tmp_path)
+    before_manifest = manifest.read_bytes()
+    plan = adoption.plan_schema_adoption(root); receipt = apply(plan)
+    schema_after = schema.read_bytes()
+    journal_path = Path(receipt["journal"])
+    original_atomic = adoption._atomic
+    changed = False
+    def writer(path, data):
+        nonlocal changed
+        original_atomic(path, data)
+        if path == manifest and data == before_manifest and not changed:
+            changed = True
+            (journal_path.parent / "backup-0.bin").write_bytes(b"unknown backup change")
+    monkeypatch.setattr(adoption, "_atomic", writer)
+    with pytest.raises(adoption.SchemaAdoptionError) as exc:
+        adoption.rollback_schema_transaction(root, journal_path, expected_plan_sha256=plan["plan_sha256"])
+    assert exc.value.error_code == "backup_divergence" and not exc.value.retryable
+    assert schema.read_bytes() == schema_after and manifest.read_bytes() == before_manifest
+    assert json.loads(journal_path.read_bytes())["status"] == "recovery_required"
+
+
+def test_rollback_skips_members_already_at_exact_original_bytes(tmp_path, monkeypatch):
+    root, schema, manifest, _ = root_fixture(tmp_path)
+    originals = schema.read_bytes(), manifest.read_bytes()
+    plan = adoption.plan_schema_adoption(root); receipt = apply(plan)
+    schema.write_bytes(originals[0]); manifest.write_bytes(originals[1])
+    original_atomic = adoption._atomic
+    def no_target_rewrites(path, data):
+        assert path not in {schema, manifest}
+        original_atomic(path, data)
+    monkeypatch.setattr(adoption, "_atomic", no_target_rewrites)
+    assert adoption.rollback_schema_transaction(root, receipt["journal"], expected_plan_sha256=plan["plan_sha256"])["readback_verified"]
+
+
+@pytest.mark.parametrize("dependency", ["schema", "manifest"])
+@pytest.mark.parametrize("checkpoint", ["between-members", "final-readback"])
+def test_consumer_rollback_rechecks_readonly_prerequisites_during_and_after_restoration(tmp_path, monkeypatch, dependency, checkpoint):
+    root, schema, manifest, _ = root_fixture(tmp_path, ownership="current")
+    active, task = consumer_fixture(root)
+    originals = active.read_bytes(), task.read_bytes()
+    plan = adoption.plan_schema_adoption(root, consumers=[active], migrate_consumers=True); receipt = apply(plan)
+    task_applied = task.read_bytes()
+    trigger = active if checkpoint == "between-members" else task
+    changed_path = {"schema": schema, "manifest": manifest}[dependency]
+    original_atomic = adoption._atomic
+    changed = False
+    dependency_after = None
+    def writer(path, data):
+        nonlocal changed, dependency_after
+        original_atomic(path, data)
+        if path == trigger and not changed:
+            changed = True
+            changed_path.write_bytes(changed_path.read_bytes() + b"\n")
+            dependency_after = changed_path.read_bytes()
+    monkeypatch.setattr(adoption, "_atomic", writer)
+    with pytest.raises(adoption.SchemaAdoptionError) as exc:
+        adoption.rollback_schema_transaction(root, receipt["journal"], expected_plan_sha256=plan["plan_sha256"])
+    assert exc.value.error_code == "rollback_dependency_divergence" and not exc.value.retryable
+    assert changed_path.read_bytes() == dependency_after and active.read_bytes() == originals[0]
+    assert task.read_bytes() == (task_applied if checkpoint == "between-members" else originals[1])
+    journal = json.loads(Path(receipt["journal"]).read_bytes())
+    assert journal["status"] == "recovery_required" and not journal["readback_verified"]
+
+
+@pytest.mark.parametrize("change", ["historical-bytes", "canonical-row"])
+def test_rollback_terminal_selection_readback_preserves_late_historical_or_canonical_changes(tmp_path, monkeypatch, change):
+    root, schema, manifest, _ = root_fixture(tmp_path)
+    historical, _ = consumer_fixture(root, historical=True)
+    originals = schema.read_bytes(), manifest.read_bytes()
+    plan = adoption.plan_schema_adoption(root, historical=[historical]); receipt = apply(plan)
+    original_atomic = adoption._atomic
+    changed = False
+    historical_after = None
+    def writer(path, data):
+        nonlocal changed, historical_after
+        original_atomic(path, data)
+        if path == manifest and data == originals[1] and not changed:
+            changed = True
+            if change == "historical-bytes":
+                historical.write_bytes(historical.read_bytes() + b"\n")
+                historical_after = historical.read_bytes()
+            else:
+                with connect(default_db_path(root)) as connection:
+                    work_items.upsert(connection, item_id="acme:app:fixture", title="Concurrent canonical metadata",
+                                      state="finished", domain="acme", project="app",
+                                      packet_path=historical.parent.relative_to(root).as_posix())
+    monkeypatch.setattr(adoption, "_atomic", writer)
+    with pytest.raises(adoption.SchemaAdoptionError) as exc:
+        adoption.rollback_schema_transaction(root, receipt["journal"], expected_plan_sha256=plan["plan_sha256"])
+    assert exc.value.error_code == ("consumer_divergence" if change == "historical-bytes" else "canonical_divergence")
+    assert (schema.read_bytes(), manifest.read_bytes()) == originals
+    if historical_after is not None: assert historical.read_bytes() == historical_after
+    assert json.loads(Path(receipt["journal"]).read_bytes())["status"] == "recovery_required"

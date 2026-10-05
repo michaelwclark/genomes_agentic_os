@@ -107,6 +107,13 @@ Final migration readback rechecks the unchanged schema and complete manifest.
 A concurrent prerequisite change refuses acceptance and restores only the known
 consumer writes, preserving the changed prerequisite for investigation.
 
+The transaction rechecks every target after durable journal preparation, each
+target immediately before writing it and final written identities. Failure
+compensation restores only bytes matching this operation's known results and
+skips exact original bytes. Unknown divergent targets survive with
+`recovery_required` diagnostics; safely restored members do not turn a partial
+recovery into acceptance.
+
 Existing stage rows, history, receipt references, frozen policies and unknown
 consumer fields survive. A missing production-release stage inside the selected
 workflow window receives `not_started`, empty receipt references and no verified
@@ -152,6 +159,14 @@ operator must investigate it without overwriting the divergence. Path traversal,
 symlink targets and external schema references are unsupported. Limits are 50
 selected consumers, 4 MiB per file/complete plan, and 100 diagnostics per consumer
 validation; truncation is explicit and cannot count as valid.
+
+Rollback rechecks each live member and its backup immediately before restoration.
+A late divergence leaves truthful recovery diagnostics. The owner, portfolio,
+task and projection locks serialize cooperating callers. Hash checkpoints detect
+the measured fixture races; they do not provide filesystem compare-and-swap or
+an atomic guarantee against arbitrary writers that ignore those locks.
+Scaffold and manual file writers do not acquire the adoption owner lock;
+operators must quiesce those writers during an acknowledged apply or rollback.
 
 Consumer rollback also verifies the unchanged installed schema and complete
 manifest, although that transaction did not write them. A changed or removed

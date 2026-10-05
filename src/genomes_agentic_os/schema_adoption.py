@@ -475,25 +475,52 @@ def _validate_journal_writes(root: Path, directory: Path, journal: Mapping[str, 
             raise SchemaAdoptionError("journal_identity", "journal manifest result differs from the frozen ownership operation")
 
 
-def _restore(root: Path, directory: Path, journal: dict[str, Any]) -> None:
-    """Check every old/new value before any rollback, preserving unknown edits."""
+def _restore(root: Path, directory: Path, journal: dict[str, Any], *, strict: bool = True,
+             plan: Mapping[str, Any] | None = None) -> None:
+    """Restore only own resulting bytes; public rollback prevalidates all rows."""
     for row in journal["writes"]:
         current = _digest(_read(_path(root, row["path"]), optional=True))
-        if current not in {row["before_sha256"], row["after_sha256"]}:
+        if strict and current not in {row["before_sha256"], row["after_sha256"]}:
             raise SchemaAdoptionError("rollback_divergence", "rollback refuses a concurrent or unknown target change")
         if row["before_sha256"] is not None:
             backup = _read(_path(root, directory / row["backup"]))
             if _digest(backup) != row["before_sha256"]:
                 raise SchemaAdoptionError("backup_divergence", "rollback backup identity differs")
-    for row in reversed(journal["writes"]):
-        path = _path(root, row["path"])
-        if row["before_sha256"] is None:
-            if path.exists():
+    unresolved: list[dict[str, str]] = []
+    try:
+        for row in reversed(journal["writes"]):
+            if plan is not None:
+                _migration_dependencies(root, plan, "rollback_dependency_divergence")
+            path = _path(root, row["path"])
+            current = _digest(_read(path, optional=True))
+            if current == row["before_sha256"]:
+                continue
+            if current != row["after_sha256"]:
+                if strict:
+                    raise SchemaAdoptionError("rollback_divergence", "rollback refuses a late unknown target change")
+                unresolved.append({"path": row["path"], "reason": "unknown_target_bytes_preserved"})
+                continue
+            if row["before_sha256"] is None:
                 path.unlink()
-        else:
-            _atomic(path, _read(_path(root, directory / row["backup"])))
-    if any(_digest(_read(_path(root, row["path"]), optional=True)) != row["before_sha256"] for row in journal["writes"]):
-        raise SchemaAdoptionError("rollback_readback", "rollback readback differs from exact original identities")
+            else:
+                backup = _read(_path(root, directory / row["backup"]))
+                if _digest(backup) != row["before_sha256"]:
+                    raise SchemaAdoptionError("backup_divergence", "rollback backup changed immediately before restoration")
+                _atomic(path, backup)
+        if plan is not None:
+            _migration_dependencies(root, plan, "rollback_dependency_divergence")
+            _rollback_consumers(root, plan)
+        for row in journal["writes"]:
+            if _digest(_read(_path(root, row["path"]), optional=True)) != row["before_sha256"]:
+                if not any(item["path"] == row["path"] for item in unresolved):
+                    unresolved.append({"path": row["path"], "reason": "restoration_readback_differs"})
+        if unresolved:
+            raise SchemaAdoptionError("rollback_readback", "known writes restored where safe; unknown target changes require manual recovery")
+    except (SchemaAdoptionError, OSError):
+        journal.update(status="recovery_required", readback_verified=False,
+                       recovery_diagnostics=unresolved or [{"reason": "restoration_interrupted_or_diverged"}])
+        _journal(root, directory / "journal.json", journal)
+        raise
     journal.update(status="rolled_back", restored_at=_now(), readback_verified=True)
     _journal(root, directory / "journal.json", journal)
 
@@ -505,6 +532,17 @@ def _migration_dependencies(root: Path, plan: Mapping[str, Any], error_code: str
             descriptor = plan[dependency]
             if _digest(_read(_path(root, descriptor["path"]), optional=True)) != descriptor["sha256"]:
                 raise SchemaAdoptionError(error_code, "transaction refuses a changed schema or manifest prerequisite")
+
+
+def _rollback_consumers(root: Path, plan: Mapping[str, Any]) -> None:
+    """Freeze diagnostic-only bytes and canonical authority across restoration."""
+    for row in plan["consumers"]:
+        path = _path(root, row["path"])
+        if (row["kind"] == "historical" or plan["kind"] == "schema_adoption") and _digest(_read(path)) != row["sha256"]:
+            raise SchemaAdoptionError("consumer_divergence", "rollback refuses a changed diagnostic-only selected consumer")
+        value = _object(_read(path), "consumer rollback identity")
+        if _canonical(root, path, value, active=row["kind"] == "active") != row["canonical"]:
+            raise SchemaAdoptionError("canonical_divergence", "rollback refuses changed canonical consumer authority")
 
 
 def apply_schema_plan(plan: Mapping[str, Any], *, expected_plan_sha256: str,
@@ -556,8 +594,19 @@ def apply_schema_plan(plan: Mapping[str, Any], *, expected_plan_sha256: str,
             _validate_journal_writes(root, directory, journal, frozen)
             journal["status"] = "applying"
             _journal(root, directory / "journal.json", journal)
-            for path, data in writes:
+            # Durable preparation is itself a time boundary. Read all original
+            # target hashes again before any target mutation, then immediately
+            # before each write. Cooperative writers hold the same locks;
+            # these checkpoints also detect measured noncooperating changes.
+            if any(_digest(_read(_path(root, row["path"]), optional=True)) != row["before_sha256"] for row in journal["writes"]):
+                raise SchemaAdoptionError("stale_plan", "target identity changed after durable preparation")
+            for (path, data), row in zip(writes, journal["writes"]):
+                _migration_dependencies(root, frozen, "apply_dependency_divergence")
+                if _digest(_read(path, optional=True)) != row["before_sha256"]:
+                    raise SchemaAdoptionError("stale_plan", "target identity changed immediately before its write")
                 _atomic(path, data)
+                if _digest(_read(path)) != row["after_sha256"]:
+                    raise SchemaAdoptionError("apply_readback", "target identity changed immediately after its write")
             for row in frozen["consumers"]:
                 path = _path(root, row["path"])
                 value = _object(_read(path), "consumer readback")
@@ -573,9 +622,10 @@ def apply_schema_plan(plan: Mapping[str, Any], *, expected_plan_sha256: str,
             _journal(root, directory / "journal.json", journal)
         except BaseException:
             try:
-                _restore(root, directory, journal)
-            except (SchemaAdoptionError, OSError):
-                journal.update(status="recovery_required", readback_verified=False)
+                _restore(root, directory, journal, strict=False)
+            except (SchemaAdoptionError, OSError) as recovery_error:
+                journal.update(status="recovery_required", readback_verified=False,
+                               recovery_failure=getattr(recovery_error, "error_code", "restoration_io_failure"))
                 _journal(root, directory / "journal.json", journal)
             raise
     validation_readback = []
@@ -612,13 +662,7 @@ def rollback_schema_transaction(root: str | Path, journal_path: str | Path, *, e
         for row in journal["writes"]:
             if _digest(_read(_path(target, row["path"]), optional=True)) not in {row["before_sha256"], row["after_sha256"]}:
                 raise SchemaAdoptionError("rollback_divergence", "rollback refuses a concurrent or unknown target change")
-        for row in plan["consumers"]:
-            consumer_path = _path(target, row["path"])
-            if (row["kind"] == "historical" or plan["kind"] == "schema_adoption") and _digest(_read(consumer_path)) != row["sha256"]:
-                raise SchemaAdoptionError("consumer_divergence", "rollback refuses a changed diagnostic-only selected consumer")
-            value = _object(_read(consumer_path), "consumer rollback identity")
-            if _canonical(target, consumer_path, value, active=row["kind"] == "active") != row["canonical"]:
-                raise SchemaAdoptionError("canonical_divergence", "rollback refuses changed canonical consumer authority")
-        _restore(target, path.parent, journal)
+        _rollback_consumers(target, plan)
+        _restore(target, path.parent, journal, plan=plan)
     return {"schema": "schema-adoption-receipt/v1", "status": "rolled_back", "journal": str(path),
             "plan_sha256": expected_plan_sha256, "readback_verified": True, "whole_root_health_claimed": False}
