@@ -6,6 +6,7 @@ import json
 import os
 import plistlib
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -61,10 +62,18 @@ def inherited_live_runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     live_root.mkdir()
     backend = live_root / "execution-fabric.yml"
     backend.write_text("backend: remote\n", encoding="utf-8")
+    path_trap = live_root / "path-trap"
+    path_marker = live_root / "path-hijack.log"
+    for command in ("launchctl", "systemctl"):
+        _write_executable(
+            path_trap / command,
+            f"#!/bin/sh\nprintf '{command} %s\\n' \"$*\" >>{shlex.quote(str(path_marker))}\nexit 97\n",
+        )
+    _write_executable(path_trap / "id", "#!/bin/sh\nprintf '501\\n'\n")
     runtime = live_root / "runtime.env"
     runtime.write_text(
-        f"printf 'backend: changed\\n' > '{backend}'\n"
-        "FABRIC_LOS_SECURITY_WORKER_ENABLED=true\n",
+        f"printf 'backend: changed\\n' > {shlex.quote(str(backend))}\n"
+        f"PATH={shlex.quote(str(path_trap))}\n",
         encoding="utf-8",
     )
     before = {path: path.read_bytes() for path in (backend, runtime)}
@@ -73,15 +82,17 @@ def inherited_live_runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         "FABRIC_RUNTIME_ENV_FILE": str(runtime),
         "FABRIC_OS_ROOT": str(live_root),
         "FABRIC_RUNTIME_STATE_DIR": str(live_root / "state"),
+        "FABRIC_LOS_SECURITY_SCHEDULES_ENABLED": "true",
         "FABRIC_API_TOKEN_FILE": str(live_root / "token"),
         "WITNESS_ENV_FILE": str(runtime),
         "AGENTIC_OS_ROOT": str(live_root),
         "AGENTIC_OS_EXECUTION_FABRIC_API_BASE": "https://operator.invalid",
     }.items():
         monkeypatch.setenv(name, value)
-    yield
+    yield {"before": before, "path_marker": path_marker}
     assert {path: path.read_bytes() for path in before} == before
     assert not (live_root / "state").exists()
+    assert not path_marker.exists()
 
 
 def test_deployment_assets_are_discoverable_from_one_focused_root() -> None:
@@ -1865,11 +1876,12 @@ def test_shell_assets_are_syntax_valid(tmp_path: Path) -> None:
     )
     scripts.extend(sorted((DEPLOY / "witness/bin").glob("*.sh")))
     assert scripts
+    env = _isolated_environment(tmp_path)
     for script in scripts:
         subprocess.run(
             ["sh", "-n", str(script)],
             check=True,
-            env=_isolated_environment(tmp_path),
+            env=env,
         )
 
 
@@ -1988,6 +2000,24 @@ printf 'systemctl %s\n' "$*" >>"$ACTIVATION_LOG"
     )
 
 
+def test_linux_activation_regression_guard_rejects_inherited_schedule_flag(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    inherited_live_runtime,
+) -> None:
+    """The Linux runtime override must not mask other inherited activation flags."""
+    monkeypatch.setattr(
+        sys.modules[__name__], "_isolated_environment", lambda _: dict(os.environ)
+    )
+    with pytest.raises(subprocess.CalledProcessError) as failure:
+        test_linux_activation_is_explicit_preflight_gated_and_repeatable(
+            tmp_path, inherited_live_runtime
+        )
+    assert failure.value.returncode == 69
+    assert "installed LOS security schedule reconciler is unavailable" in failure.value.stderr
+    assert "systemctl daemon-reload" in (tmp_path / "activation.log").read_text()
+
+
 def test_macos_activation_preflights_before_restarting_loaded_jobs(
     tmp_path: Path,
     inherited_live_runtime,
@@ -2091,6 +2121,32 @@ esac
     assert len([line for line in lines if line.startswith("bootout ")]) == len(
         suffixes
     )
+
+
+def test_macos_activation_regression_guard_detects_sourced_path_hijack(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    inherited_live_runtime,
+) -> None:
+    """Restored inheritance can reach only disposable service-manager traps."""
+    monkeypatch.setattr(
+        sys.modules[__name__], "_isolated_environment", lambda _: dict(os.environ)
+    )
+    try:
+        with pytest.raises(subprocess.CalledProcessError) as failure:
+            test_macos_activation_preflights_before_restarting_loaded_jobs(
+                tmp_path, inherited_live_runtime
+            )
+        assert failure.value.returncode == 97
+        assert "launchctl bootstrap" in inherited_live_runtime["path_marker"].read_text()
+        backend = tmp_path / "operator-runtime/execution-fabric.yml"
+        assert backend.read_text() == "backend: changed\n"
+    finally:
+        # Undo only this test's intentional negative-control mutations, so the
+        # fixture still checks every other inherited-state side effect.
+        for path, data in inherited_live_runtime["before"].items():
+            path.write_bytes(data)
+        inherited_live_runtime["path_marker"].unlink(missing_ok=True)
 
 
 def test_macos_personal_activation_starts_only_client_plane_after_preflight(
