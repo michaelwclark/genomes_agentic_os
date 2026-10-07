@@ -1582,15 +1582,74 @@ def _validate_health_stage_source(
         validate_delivery_policy(evidence, "release_propagation")
         return payload
     expected_state = _DELIVERY_STAGE_RECEIPT_STATES.get(stage)
+    deferred_develop = (
+        stage == "develop"
+        and expected_state == "local_validation"
+        and payload.get("status") == "deferred_to_ci"
+    )
     if not (
         expected_state
         and payload.get("schema") == "development-stage-evidence/v1"
         and payload.get("state") == expected_state
-        and payload.get("status") in {"verified", "passed", "completed", "not_required"}
+        and (
+            payload.get("status") in {"verified", "passed", "completed", "not_required"}
+            or deferred_develop
+        )
         and str(payload.get("summary") or "").strip()
         and str(payload.get("verified_at") or "").strip()
     ):
         raise AutoDevStateError(f"{stage} delivery receipt is malformed or not terminal")
+    if deferred_develop:
+        from .development_delivery import (
+            DevelopmentDeliveryError,
+            validate_local_validation_ci_deferral,
+        )
+
+        current = read_auto_dev_state(work_item / "autodev.json")
+        _validate_delivery_stage_task_binding(current, work_item, stage, path)
+        task_ref = current.get("delivery", {}).get("task_state_ref")
+        try:
+            validate_local_validation_ci_deferral(
+                payload, _read_json(Path(task_ref).expanduser().resolve()),
+                require_frozen=True,
+            )
+        except DevelopmentDeliveryError as exc:
+            raise AutoDevStateError(str(exc)) from exc
+    structured = payload.get("evidence")
+    if stage == "review_self" and isinstance(structured, Mapping):
+        coordination_ref = structured.get("review_coordination_receipt")
+        if coordination_ref:
+            from .development_delivery import (
+                DevelopmentDeliveryError,
+                validate_policy_approved_unavailable_review,
+            )
+            from .review_coordination import (
+                ReviewCoordinationError,
+                assert_exact_head_review_receipt,
+                load_review_receipt,
+            )
+
+            coordination_path = _resolve_health_receipt(coordination_ref, work_item)
+            try:
+                if coordination_path is None:
+                    raise AutoDevStateError("review_self coordination receipt is missing")
+                coordinated = load_review_receipt(coordination_path)
+                if coordinated.get("outcome") == "unavailable":
+                    current = read_auto_dev_state(work_item / "autodev.json")
+                    _validate_delivery_stage_task_binding(current, work_item, stage, path)
+                    task_ref = current["delivery"]["task_state_ref"]
+                    task = _read_json(Path(task_ref).expanduser().resolve())
+                    assert_exact_head_review_receipt(
+                        coordination_path,
+                        head_sha=str(structured.get("subject_revision") or ""),
+                        repository=str(structured.get("repository") or ""),
+                        pull_request=str(structured.get("pull_request") or ""),
+                        policy_fingerprint=task.get("policy_fingerprint"),
+                        require_clean=False,
+                    )
+                    validate_policy_approved_unavailable_review(coordinated, task)
+            except (DevelopmentDeliveryError, ReviewCoordinationError) as exc:
+                raise AutoDevStateError(str(exc)) from exc
     validate_delivery_policy(payload, "deploy" if stage == "deploy" else stage)
     return payload
 
