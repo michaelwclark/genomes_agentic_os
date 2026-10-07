@@ -222,14 +222,16 @@ def test_flat_family_refresh_integrates_with_immutable_wrapper(tmp_path, monkeyp
     assert (Path(prior).read_bytes(), wrapper.read_bytes()) == original
 
 
-@pytest.mark.parametrize("policy,profile_base,task_base,review_number,review_base", [
-    ("continue_with_receipt", "main", None, 54, "main"),
-    ("block", "main", None, 54, "main"),
-    ("continue_with_receipt", "develop", "hotfix/v10.0.1", 54, "hotfix/v10.0.1"),
-    ("continue_with_receipt", "develop", "hotfix/v10.0.1", 55, "develop"),
+@pytest.mark.parametrize("policy,profile_base,task_base,review_number,review_base,seed_kind", [
+    ("continue_with_receipt", "main", None, 54, "main", None),
+    ("block", "main", None, 54, "main", None),
+    ("continue_with_receipt", "develop", "hotfix/v10.0.1", 54, "hotfix/v10.0.1", None),
+    ("continue_with_receipt", "develop", "hotfix/v10.0.1", 55, "develop", None),
+    ("continue_with_receipt", "main", None, 54, "main", "prior_request"),
+    ("continue_with_receipt", "develop", "hotfix/v10.0.1", 55, "develop", "initial_pr_create"),
 ])
 def test_real_runner_and_downstream_keep_unavailable_honest(
-    tmp_path, monkeypatch, policy, profile_base, task_base, review_number, review_base,
+    tmp_path, monkeypatch, policy, profile_base, task_base, review_number, review_base, seed_kind,
 ):
     task, root, repo, base = _task(tmp_path, monkeypatch, review_policy=policy,
                                  profile_base=profile_base, task_base=task_base)
@@ -268,6 +270,35 @@ def test_real_runner_and_downstream_keep_unavailable_honest(
         "reviewer_selection_source": "project-policy", "repo_path": str(repo),
         "target_branch": task_base or profile_base,
     }
+    native_seed = None
+    seed_bytes = None
+    if seed_kind == "prior_request":
+        source.update({"head_sha": "c" * 40, "policy_fingerprint": "d" * 64,
+                       "review_policy": {"reviewer_mode": "reciprocal_model_family",
+                                         "reviewer_transport": "claude_cli", "review_unavailable_policy": "block"}})
+        native_seed = work_item / "artifacts/finishing-touches/canonical-seed/review-request.json"
+        native_seed.parent.mkdir(parents=True)
+        native_seed.write_text(json.dumps(source))
+        seed_bytes = native_seed.read_bytes()
+    elif seed_kind == "initial_pr_create":
+        native_seed = work_item / "artifacts/auto-dev-pr-create/pull-request-provider-readback.json"
+        native_seed.parent.mkdir(parents=True, exist_ok=True)
+        original_provider = {"number": 54, "url": "https://github.com/acme/app/pull/54", "state": "OPEN",
+                             "baseRefName": task_base, "headRefOid": "c" * 40,
+                             "headRefName": "feature/cc-54"}
+        native_provider = native_seed.parent / "original-primary.json"
+        native_provider.write_text(json.dumps(original_provider))
+        native_seed.write_text(json.dumps({
+            "number": 54, "url": original_provider["url"], "state": "OPEN", "repository": "acme/app",
+            "base_branch": task_base, "base_sha": base, "head_sha": "c" * 40,
+            "provider_readback": {"path": "auto-dev-pr-create/original-primary.json",
+                                  "sha256": hashlib.sha256(native_provider.read_bytes()).hexdigest()},
+        }))
+        seed_bytes = native_seed.read_bytes()
+        manifest_path = work_item / "autodev.json"
+        manifest = json.loads(manifest_path.read_text())
+        manifest["subject_revision"] = head  # Fixture: current packet, historical primary.
+        manifest_path.write_text(json.dumps(manifest))
     provider = {
         "number": review_number, "url": f"https://github.com/acme/app/pull/{review_number}", "state": "OPEN",
         "headRefOid": head, "headRefName": "feature/cc-54", "baseRefOid": base, "baseRefName": review_base,
@@ -283,7 +314,8 @@ def test_real_runner_and_downstream_keep_unavailable_honest(
         "native": provider["current_target_readback"],
     })
     monkeypatch.setattr(runner, "resolve_os_root", lambda _explicit: root)
-    monkeypatch.setattr(runner, "prior_request", lambda *_args: source)
+    if seed_kind is None:
+        monkeypatch.setattr(runner, "prior_request", lambda *_args: source)
     monkeypatch.setattr(runner, "provider_pr", lambda *_args: provider)
     monkeypatch.setattr(runner, "git_head", lambda *_args: head)
     monkeypatch.setattr(runner, "git_repository", lambda *_args: "acme/app")
@@ -312,6 +344,17 @@ def test_real_runner_and_downstream_keep_unavailable_honest(
     request = json.loads((Path(receipt["review"]["review_run_dir"]) / "review-request.json").read_text())
     assert request["selected_review_authority"]["task_primary_base_branch"] == (task_base or profile_base)
     assert request["source_family_authority"]["number"] == review_number
+    if seed_kind is not None:
+        provenance = request["source_seed_provenance"]
+        assert provenance["kind"] == seed_kind
+        assert provenance["sha256"] == hashlib.sha256(seed_bytes).hexdigest()
+        assert Path(provenance["ref"]).read_bytes() == seed_bytes
+        assert provenance["original_request"]["head_sha"] == "c" * 40
+        assert request["policy_fingerprint"] == task.read()["policy_fingerprint"]
+        if seed_kind == "prior_request":
+            assert provenance["original_request"]["review_policy"]["review_unavailable_policy"] == "block"
+            assert provenance["original_policy_fingerprint"] == "d" * 64
+            assert "review_policy" not in request
     assert invoked[0][invoked[0].index("--model") + 1] == "claude-fable-5"
     assert "claude-fable-5" in invoked[0][-1]
     assert receipt["budget"]["full_reviews_used"] == 0
@@ -383,6 +426,66 @@ def test_real_runner_and_downstream_keep_unavailable_honest(
         profile_path.write_text(profile_path.read_text() + "\n# drift\n")
         with pytest.raises(delivery.DevelopmentDeliveryError, match="authority or exact subject"):
             delivery.validate_policy_approved_unavailable_review(receipt, task.read())
+
+
+def test_legacy_seed_requires_native_hash_identity_and_primary_provider_link(tmp_path, monkeypatch):
+    task, _root, repo, base = _task(tmp_path, monkeypatch)
+    value = task.read()
+    packet = Path(value["work_item"])
+    seed = {"work_item_id": "CC-54", "head_sha": "c" * 40, "base_sha": base,
+            "target_branch": "main", "pr_number": 54, "repo_path": str(repo),
+            "policy_fingerprint": "d" * 64,
+            "review_policy": {"reviewer_mode": "reciprocal_model_family", "reviewer_transport": "claude_cli",
+                              "review_unavailable_policy": "block"}}
+    member = {"repository": value["repository"]["id"], "number": 54, "head_sha": "b" * 40}
+    def native_source(original, label):
+        path = packet / "artifacts/finishing-touches" / label / "review-request.json"
+        path.parent.mkdir(parents=True)
+        path.write_text(json.dumps(original))
+        return {**original, "_native_source": {"kind": "prior_request", "ref": str(path),
+                                                "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}}
+    original = native_source(seed, "original")
+    immutable = Path(original["_native_source"]["ref"]).read_bytes()
+    proof = delivery.historical_review_seed_provenance(original, value, member)
+    assert proof["original_request"] == seed
+    assert proof["original_policy_fingerprint"] == "d" * 64
+    for key, wrong in {"work_item_id": "CC-55", "repository": "foreign/repo", "target_branch": "develop",
+                       "source_branch": "foreign", "repo_path": str(tmp_path / "foreign"),
+                       "reviewer_transport": "api", "selected_review_authority": {},
+                       "source_family_authority": {}, "head_sha": "b" * 40}.items():
+        source = native_source({**seed, key: wrong}, key)
+        with pytest.raises(delivery.DevelopmentDeliveryError, match="historical review seed"):
+            delivery.historical_review_seed_provenance(source, value, member)
+    with pytest.raises(delivery.DevelopmentDeliveryError, match="historical review seed"):
+        delivery.historical_review_seed_provenance({**seed}, value, member)
+    corrupted = {**proof, "sha256": "0" * 64}
+    with pytest.raises(delivery.DevelopmentDeliveryError, match="provenance or identity"):
+        delivery.validate_historical_review_seed_provenance(corrupted, value, member)
+    # Same-head explicit block remains current authority and is rejected by the
+    # runner's ordinary policy resolution rather than being rematerialized.
+    current = {**seed, "head_sha": member["head_sha"], "policy_fingerprint": value["policy_fingerprint"]}
+    runner = _load_runner()
+    with pytest.raises(runner.ReviewError, match="contradictory"):
+        runner.review_unavailable_policy(current, {"review": {"opposing_harness": {"unavailable_policy": "continue_with_receipt"}}})
+    provider = packet / "artifacts/auto-dev-pr-create/original-primary.json"
+    provider.parent.mkdir(parents=True)
+    provider.write_text(json.dumps({"number": 54, "url": "https://github.com/acme/app/pull/54", "state": "OPEN",
+                                   "baseRefName": "main", "headRefOid": "c" * 40, "headRefName": "feature/cc-54"}))
+    readback = provider.parent / "pull-request-provider-readback.json"
+    readback.write_text(json.dumps({"repository": "acme/app", "number": 54, "url": "https://github.com/acme/app/pull/54",
+                                   "state": "OPEN", "base_branch": "main", "base_sha": base, "head_sha": "c" * 40,
+                                   "provider_readback": {"path": "auto-dev-pr-create/original-primary.json",
+                                                         "sha256": hashlib.sha256(provider.read_bytes()).hexdigest()}}))
+    sibling = {**member, "number": 55}
+    sibling_proof = delivery.historical_review_seed_provenance(original, value, sibling)
+    assert sibling_proof["original_primary_readback"]["provider_sha256"] == hashlib.sha256(provider.read_bytes()).hexdigest()
+    foreign = native_source({**seed, "pr_number": 99}, "foreign-pr")
+    with pytest.raises(delivery.DevelopmentDeliveryError, match="primary provider identity"):
+        delivery.historical_review_seed_provenance(foreign, value, sibling)
+    provider.write_text(provider.read_text().replace('"feature/cc-54"', '"foreign"'))
+    with pytest.raises(delivery.DevelopmentDeliveryError, match="provider proof is missing or changed"):
+        delivery.validate_historical_review_seed_provenance(sibling_proof, value, sibling)
+    assert Path(original["_native_source"]["ref"]).read_bytes() == immutable
 
 
 def test_review_family_selects_only_one_integrity_bound_member(tmp_path, monkeypatch):

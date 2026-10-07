@@ -46,6 +46,7 @@ from genomes_agentic_os.development_delivery import (  # noqa: E402
     select_development_repository,
     selected_review_profile_authority,
     verified_review_family_member,
+    historical_review_seed_provenance,
 )
 from genomes_agentic_os.review_verdicts import reconcile_json_verdict  # noqa: E402
 
@@ -371,7 +372,10 @@ def prior_request(work_item: Path, ticket: str) -> dict[str, Any] | None:
     for path in requests:
         value = json.loads(path.read_text(encoding="utf-8"))
         if str(value.get("work_item_id", "")).upper() == ticket.upper():
-            return value
+            return {**value, "_native_source": {
+                "kind": "prior_request", "ref": str(path.resolve()),
+                "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            }}
     return None
 
 
@@ -406,11 +410,12 @@ def initial_request(work_item: Path, ticket: str, worktree: Path) -> dict[str, A
     if readback["state"] != "OPEN":
         raise ReviewError("PR Create provider readback is not OPEN")
     subject_revision = str(manifest.get("subject_revision") or "")
-    if subject_revision and subject_revision != str(readback["head_sha"]):
+    delivery = manifest.get("delivery") or {}
+    historical_subject = bool(subject_revision and subject_revision != str(readback["head_sha"]))
+    if historical_subject and not delivery.get("task_state_ref"):
         raise ReviewError(
             "PR Create provider readback head does not match the packet subject revision"
         )
-    delivery = manifest.get("delivery") or {}
     supplied_policy_fingerprint = str(delivery.get("policy_fingerprint") or "")
     if len(supplied_policy_fingerprint) != 64:
         raise ReviewError("packet delivery policy fingerprint is missing or invalid")
@@ -436,6 +441,11 @@ def initial_request(work_item: Path, ticket: str, worktree: Path) -> dict[str, A
         "policy_fingerprint": supplied_policy_fingerprint,
         "request_origin": "auto-dev-pr-create-provider-readback",
         "provider_readback_ref": str(readback_path.relative_to(work_item)),
+        "_native_source": {
+            "kind": "initial_pr_create", "ref": str(readback_path.resolve()),
+            "sha256": hashlib.sha256(readback_path.read_bytes()).hexdigest(),
+            "historical_subject": historical_subject,
+        },
     }
 
 
@@ -716,8 +726,6 @@ def main() -> int:
                 )
             )
             return 2
-        unavailable_policy = review_unavailable_policy(source, selected_profile)
-        model = review_model(selected_profile, source)
         selected_review_authority = None
         source_family_authority = None
         manifest_path = work_item / "autodev.json"
@@ -731,8 +739,6 @@ def main() -> int:
                 selected_review_authority = selected_review_profile_authority(
                     task, selected_profile, profile_path, args.repository,
                 )
-                if policy != selected_review_authority["task_policy_fingerprint"]:
-                    raise ReviewError("review request policy does not bind its immutable task authority")
                 repository = git_repository(worktree)
                 if "git:github.com/" + repository != task["repository"]["id"]:
                     raise ReviewError("review worktree repository does not bind the selected task")
@@ -743,6 +749,19 @@ def main() -> int:
                 source_family_authority = verified_review_family_member(
                     task, head_sha=head, source_branch=source_branch,
                 )
+                if source.get("head_sha") != head or (source.get("_native_source") or {}).get("historical_subject"):
+                    provenance = historical_review_seed_provenance(source, task, source_family_authority)
+                    obsolete = {"_native_source", "review_policy", "effective_policy", "review_unavailable_policy",
+                                "effective_policy_context", "family_receipt_ref", "validation_evidence"}
+                    source = {key: value for key, value in source.items() if key not in obsolete}
+                    source.update({
+                        "source_seed_provenance": provenance,
+                        "policy_fingerprint": selected_review_authority["task_policy_fingerprint"],
+                        "reviewer_selection_source": "verified_current_task_profile_and_family",
+                    })
+                    policy = source["policy_fingerprint"]
+                if policy != selected_review_authority["task_policy_fingerprint"]:
+                    raise ReviewError("review request policy does not bind its immutable task authority")
                 source = {
                     **source,
                     "source_seed_pr_number": source["pr_number"],
@@ -752,6 +771,9 @@ def main() -> int:
                     "head_sha": head, "source_worktree_branch": source_branch,
                     "request_origin": "verified_current_pr_family",
                 }
+        unavailable_policy = review_unavailable_policy(source, selected_profile)
+        model = review_model(selected_profile, source)
+        source = {key: value for key, value in source.items() if key != "_native_source"}
         pr_number = int(source["pr_number"])
         provider = provider_pr(pr_number, worktree)
         if provider["headRefOid"] != head:

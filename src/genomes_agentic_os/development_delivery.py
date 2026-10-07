@@ -9808,6 +9808,134 @@ def _verified_review_family_member_from_descriptor(
     return matches[0]
 
 
+def historical_review_seed_provenance(
+    source: Mapping[str, Any], task: Mapping[str, Any], member: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Bind a legacy, different-head context seed without making it policy."""
+
+    native = source.get("_native_source")
+    if not isinstance(native, Mapping):
+        raise DevelopmentDeliveryError("historical review seed lacks native provenance")
+    original = {key: deepcopy(value) for key, value in source.items() if key != "_native_source"}
+    proof = {
+        "schema": "historical-review-seed-provenance/v1",
+        "kind": native.get("kind"), "ref": native.get("ref"), "sha256": native.get("sha256"),
+        "original_request": original,
+        "original_policy_fingerprint": original.get("policy_fingerprint"),
+    }
+    if original.get("pr_number") != member.get("number") or native.get("kind") == "initial_pr_create":
+        readback = Path(str(task["work_item"])) / "artifacts/auto-dev-pr-create/pull-request-provider-readback.json"
+        value = _read_mapping(readback)
+        descriptor = value.get("provider_readback")
+        if not isinstance(descriptor, Mapping):
+            raise DevelopmentDeliveryError("historical primary review seed lacks native provider proof")
+        provider_path = Path(str(task["work_item"])) / "artifacts" / str(descriptor.get("path") or "")
+        proof["original_primary_readback"] = {
+            "ref": str(readback.resolve()), "sha256": hashlib.sha256(readback.read_bytes()).hexdigest(),
+            "provider_ref": str(provider_path.resolve()), "provider_sha256": descriptor.get("sha256"),
+        }
+    validate_historical_review_seed_provenance(proof, task, member)
+    return proof
+
+
+def validate_historical_review_seed_provenance(
+    proof: Mapping[str, Any], task: Mapping[str, Any], member: Mapping[str, Any],
+) -> None:
+    """Keep historical request/provider bytes and primary identity fail closed."""
+
+    original = proof.get("original_request")
+    work_item = Path(str(task["work_item"])).resolve()
+    path = Path(str(proof.get("ref") or "")).expanduser()
+    kind = proof.get("kind")
+    repository = str(task["repository"]["id"])
+    provider_repository = repository.removeprefix("git:github.com/")
+    if not (
+        proof.get("schema") == "historical-review-seed-provenance/v1"
+        and isinstance(original, Mapping) and kind in {"prior_request", "initial_pr_create"}
+        and path.is_absolute() and not path.is_symlink() and path.is_file()
+        and proof.get("sha256") == hashlib.sha256(path.read_bytes()).hexdigest()
+        and str(original.get("work_item_id") or "").upper() == str(task.get("ticket") or "").upper()
+        and re.fullmatch(r"[a-fA-F0-9]{40}", str(original.get("head_sha") or ""))
+        and original.get("head_sha") != member.get("head_sha")
+        and type(original.get("pr_number")) is int and original["pr_number"] > 0
+        and original.get("target_branch") == task["repository"]["base_branch"]
+        and original.get("repository", provider_repository) in {provider_repository, repository}
+        and original.get("source_branch", task["worktree"]["branch"]) == task["worktree"]["branch"]
+        and original.get("source_worktree_branch", task["worktree"]["branch"]) == task["worktree"]["branch"]
+        and original.get("reviewer_transport") in {None, "claude_cli"}
+        and original.get("selected_review_authority") is None and original.get("source_family_authority") is None
+        and not original.get("effective_policy")
+        and re.fullmatch(r"[a-fA-F0-9]{64}", str(original.get("policy_fingerprint") or ""))
+        and proof.get("original_policy_fingerprint") == original.get("policy_fingerprint")
+        and member.get("repository") == repository
+    ):
+        raise DevelopmentDeliveryError("historical review seed provenance or identity is invalid")
+    frozen = frozen_selected_task_profile(task)
+    if frozen.get("review") or frozen.get("opposing_harness"):
+        raise DevelopmentDeliveryError("historical review seed cannot override frozen review authority")
+    legacy_policy = original.get("review_policy")
+    if legacy_policy is not None and not (
+        isinstance(legacy_policy, Mapping)
+        and set(legacy_policy) <= {"reviewer_mode", "reviewer_transport", "review_unavailable_policy", "unavailable_policy"}
+        and legacy_policy.get("reviewer_transport", "claude_cli") == "claude_cli"
+        and legacy_policy.get("reviewer_mode", "reciprocal_model_family") == "reciprocal_model_family"
+        and all(legacy_policy.get(key) in {None, "block", "continue_with_receipt"}
+                for key in ("review_unavailable_policy", "unavailable_policy"))
+    ):
+        raise DevelopmentDeliveryError("historical review seed carries unsupported policy authority")
+    policies = [original.get("review_unavailable_policy")]
+    if isinstance(legacy_policy, Mapping):
+        policies.extend(legacy_policy.get(key) for key in ("review_unavailable_policy", "unavailable_policy"))
+    supplied = [value for value in policies if value is not None]
+    if any(value not in {"block", "continue_with_receipt"} for value in supplied) or len(set(supplied)) > 1:
+        raise DevelopmentDeliveryError("historical review seed policy aliases conflict")
+    if kind == "prior_request":
+        if not (
+            path.resolve().is_relative_to(work_item / "artifacts/finishing-touches")
+            and path.name == "review-request.json" and _read_mapping(path) == dict(original)
+            and Path(str(original.get("repo_path") or "")).resolve() == Path(str(task["worktree"]["path"])).resolve()
+        ):
+            raise DevelopmentDeliveryError("historical review seed does not bind its native request")
+    elif path.resolve() != work_item / "artifacts/auto-dev-pr-create/pull-request-provider-readback.json":
+        raise DevelopmentDeliveryError("historical review seed does not bind primary PR Create")
+    primary = proof.get("original_primary_readback")
+    if original["pr_number"] != member["number"] or kind == "initial_pr_create":
+        if not isinstance(primary, Mapping):
+            raise DevelopmentDeliveryError("historical sibling review lacks original primary provenance")
+        primary_path = Path(str(primary.get("ref") or ""))
+        provider_path = Path(str(primary.get("provider_ref") or ""))
+        if not (
+            primary_path.resolve() == work_item / "artifacts/auto-dev-pr-create/pull-request-provider-readback.json"
+            and primary_path.is_file() and not primary_path.is_symlink()
+            and hashlib.sha256(primary_path.read_bytes()).hexdigest() == primary.get("sha256")
+            and provider_path.resolve().is_relative_to(work_item / "artifacts/auto-dev-pr-create")
+            and provider_path.is_file() and not provider_path.is_symlink()
+            and hashlib.sha256(provider_path.read_bytes()).hexdigest() == primary.get("provider_sha256")
+        ):
+            raise DevelopmentDeliveryError("historical primary provider proof is missing or changed")
+        readback, provider = _read_mapping(primary_path), _read_mapping(provider_path)
+        descriptor = readback.get("provider_readback") or {}
+        def native_aliases_match(graph_key: str, bridge_key: str, expected: Any) -> bool:
+            aliases = [provider[key] for key in (graph_key, bridge_key) if key in provider]
+            return bool(aliases) and all(value == expected for value in aliases)
+        if not (
+            readback.get("repository") in {provider_repository, repository}
+            and readback.get("state") == "OPEN" and str(provider.get("state") or "").upper() == "OPEN"
+            and readback.get("number") == provider.get("number") == original["pr_number"]
+            and readback.get("url") == provider.get("url") == f"https://github.com/{provider_repository}/pull/{original['pr_number']}"
+            and readback.get("base_branch") == original["target_branch"]
+            and native_aliases_match("baseRefName", "base", original["target_branch"])
+            and readback.get("base_sha") == original.get("base_sha")
+            and readback.get("head_sha") == original["head_sha"]
+            and native_aliases_match("headRefOid", "head_sha", original["head_sha"])
+            and native_aliases_match("headRefName", "head", task["worktree"]["branch"])
+            and provider.get("head_repo_full_name", provider_repository) == provider_repository
+            and descriptor.get("sha256") == primary["provider_sha256"]
+            and (work_item / "artifacts" / str(descriptor.get("path") or "")).resolve() == provider_path.resolve()
+        ):
+            raise DevelopmentDeliveryError("historical primary provider identity conflicts")
+
+
 def read_current_github_review_target(
     task: Mapping[str, Any], subject: Mapping[str, Any],
     number: int,
@@ -9918,6 +10046,8 @@ def validate_policy_approved_unavailable_review(
         task, head_sha=str(subject["head_sha"]),
         source_branch=str(request.get("source_worktree_branch") or ""),
     )
+    if request.get("source_seed_provenance") is not None:
+        validate_historical_review_seed_provenance(request["source_seed_provenance"], task, family)
     frozen_family = request.get("source_family_authority")
     if not isinstance(frozen_family, Mapping):
         raise DevelopmentDeliveryError("unavailable review lacks immutable selected family authority")
