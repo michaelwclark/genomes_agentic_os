@@ -1655,6 +1655,7 @@ def _validate_health_stage_source(
                         completion = recorded_post_provider_merge_evidence(task)
                     validate_policy_approved_unavailable_review(
                         coordinated, task, post_provider_merge=completion,
+                        eligibility_receipt=structured.get("unavailable_review_eligibility"),
                     )
             except (DevelopmentDeliveryError, ReviewCoordinationError) as exc:
                 raise AutoDevStateError(str(exc)) from exc

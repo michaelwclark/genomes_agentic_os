@@ -10010,6 +10010,7 @@ def _immutable_delivery_evidence(task: Mapping[str, Any], state: str) -> dict[st
 def read_completed_github_review_transition(
     task: Mapping[str, Any], subject: Mapping[str, Any], number: int,
     source_branch: str, completion: Mapping[str, Any],
+    *, expected_repository_id: str | None = None,
 ) -> dict[str, Any]:
     """Prove an owned squash transition without admitting stale OPEN readiness."""
 
@@ -10082,7 +10083,7 @@ def read_completed_github_review_transition(
         raise DevelopmentDeliveryError("post-provider completion native proof identity conflicts")
     owner, name = repository.split("/", 1)
     query = """query($owner:String!,$name:String!,$number:Int!,$merge:GitObjectID!){repository(owner:$owner,name:$name){
-      nameWithOwner object(oid:$merge){... on Commit{oid parents(first:2){nodes{oid} pageInfo{hasNextPage}}}}
+      id nameWithOwner url object(oid:$merge){... on Commit{oid parents(first:2){nodes{oid} pageInfo{hasNextPage}}}}
       pullRequest(number:$number){number url state headRefOid headRefName baseRefName baseRef{name target{oid}}
         author{login} mergedBy{login} mergedAt mergeCommit{oid}}}}"""
     try:
@@ -10096,6 +10097,10 @@ def read_completed_github_review_transition(
         current = observed["baseRef"]["target"]["oid"]
         parents = commit["parents"]
         if not (native["nameWithOwner"] == repository and observed["number"] == number and observed["url"] == url
+                and (expected_repository_id is None or (
+                    native.get("id") == expected_repository_id
+                    and native.get("url") == "https://github.com/" + repository
+                ))
                 and observed["state"] == "MERGED" and observed["headRefOid"] == head and observed["headRefName"] == source_branch
                 and observed["baseRefName"] == observed["baseRef"]["name"] == branch
                 and observed["author"]["login"] == authority["author_identity"].removeprefix("github:")
@@ -10123,14 +10128,39 @@ def read_completed_github_review_transition(
 def validate_policy_approved_unavailable_review(
     review_receipt: Mapping[str, Any], task: Mapping[str, Any], *,
     post_provider_merge: Mapping[str, Any] | None = None,
+    eligibility_receipt: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Consume unavailable evidence without changing the default CLEAN contract."""
+
+    if eligibility_receipt is not None:
+        from .review_eligibility import validate_unavailable_review_eligibility
+
+        return validate_unavailable_review_eligibility(
+            eligibility_receipt, review_receipt, task,
+            post_provider_merge=post_provider_merge,
+        )
+    return _validate_unavailable_review_authority(
+        review_receipt, task, post_provider_merge=post_provider_merge,
+    )
+
+
+def _validate_unavailable_review_authority(
+    review_receipt: Mapping[str, Any], task: Mapping[str, Any], *,
+    post_provider_merge: Mapping[str, Any] | None = None,
+    pending_checks: bool = False,
+    authority_only: bool = False,
+) -> dict[str, Any]:
+    """Shared immutable authority checks; pending checks never imply readiness."""
 
     review = review_receipt.get("review")
     if not isinstance(review, Mapping) or not (
         review_receipt.get("outcome") == "unavailable"
         and review.get("readback_verified") is True
-        and review.get("deterministic_review_downgraded") is True
+        and (review.get("deterministic_review_downgraded") is True or (
+            pending_checks and review.get("deterministic_review_downgraded") is False
+            and review.get("decision") == "pending_checks"
+            and review.get("failure_code") == "cli_timeout"
+        ))
         and review.get("review_unavailable_policy") == "continue_with_receipt"
         and review.get("failure_code") in {
             "cli_not_found", "cli_runtime_failed", "cli_output_invalid", "cli_timeout",
@@ -10210,7 +10240,20 @@ def validate_policy_approved_unavailable_review(
         and decision.get("review_downgraded") is True
         and decision.get("active_blocker_count") == 0
         and decision.get("decision") == review.get("decision")
-        and str(decision.get("decision") or "").startswith("ready_")
+        and (str(decision.get("decision") or "").startswith("ready_") if not pending_checks else (
+            decision.get("decision") == "pending_checks"
+            and decision.get("pr_check_status") == plan.get("pr_check_status") == "pending"
+            and decision.get("validation_status") == plan.get("validation_status") == "passed"
+            and decision.get("severe_unapproved_count") == 0
+            and plan.get("model_identity_status") == "proven"
+            and plan.get("copilot_status") in {"not_applicable", "resolved"}
+            and plan.get("external_output_status") == "clean"
+            and plan.get("user_decision_blocker") is False
+            and type(plan.get("loop_count")) is int and type(plan.get("loop_limit")) is int
+            and 0 <= plan["loop_count"] <= plan["loop_limit"]
+            and review.get("deterministic_review_downgraded") is False
+            and review.get("failure_code") == runtime.get("failure_code") == "cli_timeout"
+        ))
         and not (run_dir / "review-ledger.jsonl").read_text().strip()
         and runtime.get("schema") == "opposing-review-runtime/v1"
         and runtime.get("transport") == "claude_cli"
@@ -10241,6 +10284,8 @@ def validate_policy_approved_unavailable_review(
             and (observed_branch.get("target") or {}).get("oid") == subject["base_sha"]
         ):
             raise DevelopmentDeliveryError("unavailable review native provider identity no longer matches")
+    if authority_only:
+        return {"request": request, "subject": subject, "family": family}
     if post_provider_merge is not None:
         return read_completed_github_review_transition(
             task, subject, request["pr_number"], family["source_branch"], post_provider_merge,
@@ -10704,6 +10749,7 @@ def run_development_stage(
                     if review_payload.get("outcome") != "clean":
                         current_target = validate_policy_approved_unavailable_review(
                             review_payload, task_value,
+                            eligibility_receipt=evidence.get("unavailable_review_eligibility"),
                         )
                         payload["evidence"] = {
                             **evidence, "review_current_target_readback": current_target,
