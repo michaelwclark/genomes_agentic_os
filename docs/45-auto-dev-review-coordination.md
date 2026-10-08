@@ -89,6 +89,20 @@ change reviewer identity, or restart Auto-Dev to manufacture a fresh budget.
 
 ## Invalidation, recovery, and override
 
+### Authority-bound historical request context
+
+A different-head prior native request may supply context for the same task and
+PR only after its raw request hash, selected profile/frozen task authority, and
+historical family wrapper/evidence have been revalidated. Both authority objects
+must agree with their immutable sources, including the original head, target,
+branch, repository and policy. Partial, corrupt, cross-task or conflicting
+authority fails closed. Legacy requests retain their existing validation.
+
+The current family and provider subject are selected independently. Historical
+review results, unavailable decisions and approval are never inherited by the
+new head. This context admission does not invoke a reviewer, change coordinator
+keys, grant readiness or reset the shared review budget.
+
 ### CI completing after a timed-out review
 
 A frozen `continue_with_receipt` task may have a genuine `unavailable` /

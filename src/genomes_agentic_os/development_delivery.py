@@ -9811,7 +9811,7 @@ def _verified_review_family_member_from_descriptor(
 def historical_review_seed_provenance(
     source: Mapping[str, Any], task: Mapping[str, Any], member: Mapping[str, Any],
 ) -> dict[str, Any]:
-    """Bind a legacy, different-head context seed without making it policy."""
+    """Bind a native different-head context seed without making it current policy."""
 
     native = source.get("_native_source")
     if not isinstance(native, Mapping):
@@ -9836,6 +9836,70 @@ def historical_review_seed_provenance(
         }
     validate_historical_review_seed_provenance(proof, task, member)
     return proof
+
+
+def _validate_historical_bound_review_authority(
+    original: Mapping[str, Any], task: Mapping[str, Any], member: Mapping[str, Any],
+) -> None:
+    """Revalidate a prior native request's authority without reusing its result."""
+
+    authority = original.get("selected_review_authority")
+    family = original.get("source_family_authority")
+    if not (isinstance(authority, Mapping) and isinstance(family, Mapping)):
+        raise DevelopmentDeliveryError("historical review seed native authority is incomplete")
+    profile_path = Path(str(task.get("profile_source") or "")).expanduser().resolve()
+    selector = authority.get("repository_selector")
+    selected = select_development_repository(_read_mapping(profile_path), selector)
+    actual = selected_review_profile_authority(task, selected, profile_path, selector)
+    opposing = actual["opposing_harness"]
+    if not (
+        dict(authority) == actual
+        and original.get("policy_fingerprint") == task.get("policy_fingerprint")
+        and original.get("request_origin") == "verified_current_pr_family"
+        and original.get("reviewer_selection_source") in {
+            "auto-dev-review-self-opposing-model", "verified_current_task_profile_and_family",
+        }
+        and original.get("review_unavailable_policy") == opposing.get("unavailable_policy")
+        and original.get("reviewer_transport") == opposing.get("transport", "claude_cli")
+        and original.get("reviewer_model") == original.get("selected_reviewer_model")
+        == opposing.get("model", "opus")
+    ):
+        raise DevelopmentDeliveryError("historical review seed native selected authority conflicts")
+    wrapper = Path(str(family.get("wrapper_ref") or "")).expanduser()
+    evidence = Path(str(family.get("evidence_ref") or "")).expanduser()
+    task_stages = Path(str(task["policy_receipt"])).resolve().parent / "tasks" / _slug(str(task["ticket"])) / "stages"
+    evidence_root = Path(str(task["work_item"])).resolve() / "artifacts/development-delivery/evidence"
+    if not (
+        Path(str(task["policy_receipt"])).resolve().parent.name == task.get("run_id")
+        and wrapper.is_absolute() and not wrapper.is_symlink() and wrapper.resolve().is_relative_to(task_stages)
+        and evidence.is_absolute() and not evidence.is_symlink() and evidence.resolve().is_relative_to(evidence_root)
+    ):
+        raise DevelopmentDeliveryError("historical review seed native family is outside its task")
+    historical = _verified_review_family_member_from_descriptor(
+        task, {"ref": str(wrapper), "sha256": family.get("wrapper_sha256")},
+        head_sha=str(original["head_sha"]), source_branch=str(task["worktree"]["branch"]),
+    )
+    current = verified_review_family_member(
+        task, head_sha=str(member.get("head_sha") or ""), source_branch=str(task["worktree"]["branch"]),
+    )
+    details = _read_mapping(evidence).get("evidence") or {}
+    historical_targets = [target for target in details.get("targets", []) if isinstance(target, Mapping)
+                          and target.get("head_sha") == original["head_sha"]
+                          and target.get("source_branch", task["worktree"]["branch"]) == task["worktree"]["branch"]]
+    base_aliases = [target[key] for target in historical_targets for key in ("base_sha", "actual_target_ref_sha") if key in target]
+    if not (
+        dict(family) == historical and dict(member) == current
+        and historical["repository"] == current["repository"]
+        and historical["number"] == original["pr_number"] == current["number"]
+        and historical["base_branch"] == original["target_branch"] == current["base_branch"]
+        and details.get("ticket") == task["ticket"]
+        and details.get("repository") == task["repository"]["id"]
+        and details.get("canonical_run_policy_fingerprint") == task["policy_fingerprint"]
+        and len(historical_targets) == 1 and base_aliases
+        and re.fullmatch(r"[a-fA-F0-9]{40}", str(original.get("base_sha") or ""))
+        and all(value == original["base_sha"] for value in base_aliases)
+    ):
+        raise DevelopmentDeliveryError("historical review seed native family or original subject conflicts")
 
 
 def validate_historical_review_seed_provenance(
@@ -9863,7 +9927,6 @@ def validate_historical_review_seed_provenance(
         and original.get("source_branch", task["worktree"]["branch"]) == task["worktree"]["branch"]
         and original.get("source_worktree_branch", task["worktree"]["branch"]) == task["worktree"]["branch"]
         and original.get("reviewer_transport") in {None, "claude_cli"}
-        and original.get("selected_review_authority") is None and original.get("source_family_authority") is None
         and not original.get("effective_policy")
         and re.fullmatch(r"[a-fA-F0-9]{64}", str(original.get("policy_fingerprint") or ""))
         and proof.get("original_policy_fingerprint") == original.get("policy_fingerprint")
@@ -9898,6 +9961,10 @@ def validate_historical_review_seed_provenance(
             raise DevelopmentDeliveryError("historical review seed does not bind its native request")
     elif path.resolve() != work_item / "artifacts/auto-dev-pr-create/pull-request-provider-readback.json":
         raise DevelopmentDeliveryError("historical review seed does not bind primary PR Create")
+    if original.get("selected_review_authority") is not None or original.get("source_family_authority") is not None:
+        if kind != "prior_request":
+            raise DevelopmentDeliveryError("historical review seed native authority requires a prior request")
+        _validate_historical_bound_review_authority(original, task, member)
     primary = proof.get("original_primary_readback")
     if original["pr_number"] != member["number"] or kind == "initial_pr_create":
         if not isinstance(primary, Mapping):
