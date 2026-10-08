@@ -9463,6 +9463,99 @@ def reopen_auto_dev_item(
     }
 
 
+def _normalize_exact_legacy_flat_family_identity(
+    details: Mapping[str, Any], *, task: Mapping[str, Any],
+    expected_repository: str, expected_base_branch: str,
+    expected_source_branch: str, pull_request_prefix: str,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Bind the historical flat family through its referenced native readback."""
+
+    repository = expected_repository.removeprefix("git:github.com/")
+    number = details.get("pull_request")
+    head = details.get("head_sha")
+    targets = details.get("targets")
+    if not (
+        expected_repository.startswith("git:github.com/")
+        and expected_base_branch and expected_source_branch
+        and details.get("schema") == "auto-dev-pr-create-family/v1"
+        and details.get("family_complete") is True
+        and details.get("readback_verified") is True
+        and details.get("repository") == repository
+        and details.get("base_branch") == expected_base_branch
+        and type(number) is int and number > 0
+        and isinstance(head, str) and re.fullmatch(r"[a-fA-F0-9]{40}", head)
+        and details.get("source_sha") == head
+        and details.get("subject_revision") == head
+        and details.get("ticket") == task.get("ticket")
+        and isinstance(targets, list) and len(targets) == 1
+        and isinstance(targets[0], Mapping)
+        and all(targets[0].get(key) == details.get(key) for key in (
+            "ticket", "repository", "base_branch", "pull_request", "head_sha", "source_sha",
+        ))
+        and all(details.get(key) in (None, "") for key in (
+            "source_head_sha", "provider", "source_branch", "source", "family",
+        ))
+    ):
+        raise DevelopmentDeliveryError("legacy flat family does not exactly bind the selected task")
+    url = f"https://github.com/{repository}/pull/{number}"
+    target = targets[0]
+    optional_target_authority = {
+        "provider": "github", "source_branch": expected_source_branch,
+        "source_head_sha": head, "source_head": head, "subject_revision": head,
+        "readback_verified": True, "provider_readback_verified": True,
+        "family_complete": True,
+    }
+    if any(
+        key in target and (
+            target[key] != expected
+            or isinstance(expected, bool) and target[key] is not expected
+        )
+        for key, expected in optional_target_authority.items()
+    ):
+        raise DevelopmentDeliveryError("legacy flat family target authority conflicts")
+    if details.get("pull_request_url") != url or target.get("pull_request_url") != url:
+        raise DevelopmentDeliveryError("legacy flat family PR URL does not bind its repository")
+    refs = details.get("receipt_refs")
+    target_refs = target.get("provider_readback_refs")
+    if not (
+        isinstance(refs, list) and isinstance(target_refs, list)
+        and all(isinstance(ref, str) and ref for ref in refs + target_refs)
+    ):
+        raise DevelopmentDeliveryError("legacy flat family lacks native readback provenance")
+    matches = []
+    for ref in sorted(set(refs).intersection(target_refs)):
+        candidate = Path(ref).expanduser()
+        if not candidate.is_file():
+            continue
+        try:
+            raw = candidate.read_bytes()
+            native = json.loads(raw)
+        except (OSError, ValueError):
+            continue
+        if not isinstance(native, Mapping) or "headRefOid" not in native:
+            continue
+        if not (
+            type(native.get("number")) is int and native["number"] == number
+            and native.get("url") == url and native.get("state") == "OPEN"
+            and native.get("baseRefName") == expected_base_branch
+            and native.get("headRefName") == expected_source_branch
+            and native.get("headRefOid") == head
+        ):
+            raise DevelopmentDeliveryError("legacy flat family native readback identity conflicts")
+        matches.append({"ref": str(candidate.resolve()), "sha256": hashlib.sha256(raw).hexdigest()})
+    if len(matches) != 1:
+        raise DevelopmentDeliveryError("legacy flat family requires one unambiguous native readback")
+    identity = {
+        "repository": expected_repository, "base_branch": expected_base_branch,
+        "provider": "github", "pull_request": f"{pull_request_prefix}{number}",
+        "source_branch": expected_source_branch, "source_head_sha": head,
+    }
+    return {**details, **identity}, {
+        "source": "exact_flat_family_with_native_readback",
+        "native_readback": matches[0], "normalized_identity": identity,
+    }
+
+
 def _normalize_exact_legacy_family_identity(
     details: Mapping[str, Any],
     *,
@@ -9562,6 +9655,779 @@ def _normalize_exact_legacy_family_identity(
         },
     }
     return normalized, provenance
+
+
+def frozen_selected_task_profile(task: Mapping[str, Any]) -> Mapping[str, Any]:
+    """Read the integrity-checked selected repository policy pinned to this task."""
+
+    policy_ref = str(task.get("policy_receipt") or "").strip()
+    if not policy_ref:
+        raise DevelopmentDeliveryError("pinned effective policy receipt reference is missing")
+    policy_path = Path(policy_ref).expanduser()
+    if not policy_path.is_file():
+        raise DevelopmentDeliveryError("pinned effective policy receipt is missing")
+    policies = _read_mapping(policy_path)
+    profile = _validate_effective_policy_snapshot(policies, require_selected_profile=True)
+    repository = task.get("repository")
+    if not (
+        isinstance(repository, Mapping) and isinstance(profile, Mapping)
+        and profile.get("repository_id") == repository.get("id")
+        and policies.get("fingerprint") == task.get("policy_fingerprint")
+    ):
+        raise DevelopmentDeliveryError("pinned selected repository validation policy is invalid")
+    return profile
+
+
+def selected_review_profile_authority(
+    task: Mapping[str, Any], selected_profile: Mapping[str, Any],
+    profile_path: Path, repository_selector: str | None,
+) -> dict[str, Any]:
+    """Freeze current review settings separately from validation-only old policies."""
+
+    frozen_selected_task_profile(task)
+    if profile_path.resolve() != Path(str(task.get("profile_source") or "")).expanduser().resolve():
+        raise DevelopmentDeliveryError("review profile source does not match the selected task")
+    selected = select_development_repository(_read_mapping(profile_path), repository_selector)
+    repository = task["repository"]
+    if not (
+        _normalized_repository_identity(selected.get("repository") or {}) == repository.get("id")
+        and selected.get("review") == selected_profile.get("review")
+        and selected.get("repository") == selected_profile.get("repository")
+    ):
+        raise DevelopmentDeliveryError("review profile does not bind the selected repository")
+    opposing = (selected.get("review") or {}).get("opposing_harness")
+    if not isinstance(opposing, Mapping):
+        raise DevelopmentDeliveryError("selected profile lacks opposing-harness authority")
+    policy_path = Path(str(task["policy_receipt"])).expanduser().resolve()
+    return {
+        "schema": "selected-opposing-review-authority/v1",
+        "profile_ref": str(profile_path.resolve()),
+        "profile_sha256": hashlib.sha256(profile_path.read_bytes()).hexdigest(),
+        "repository": repository["id"],
+        "task_primary_base_branch": repository["base_branch"],
+        "repository_selector": repository_selector,
+        "opposing_harness": deepcopy(dict(opposing)),
+        "task_policy_ref": str(policy_path),
+        "task_policy_sha256": hashlib.sha256(policy_path.read_bytes()).hexdigest(),
+        "task_policy_fingerprint": task["policy_fingerprint"],
+    }
+
+
+def verified_review_family_member(
+    task: Mapping[str, Any], *, head_sha: str, source_branch: str,
+) -> dict[str, Any]:
+    """Select one target from the task's immutable current PR family."""
+
+    descriptor = (task.get("stage_receipts") or {}).get("release_propagation") or {}
+    return _verified_review_family_member_from_descriptor(
+        task, descriptor, head_sha=head_sha, source_branch=source_branch,
+    )
+
+
+def _verified_review_family_member_from_descriptor(
+    task: Mapping[str, Any], descriptor: Mapping[str, Any], *,
+    head_sha: str, source_branch: str,
+) -> dict[str, Any]:
+    """Keep the selected immutable provenance valid across metadata refreshes."""
+
+    wrapper_path = Path(str(descriptor.get("ref") or "")).expanduser()
+    if not wrapper_path.is_absolute():
+        wrapper_path = Path(str(task.get("work_item") or "")) / wrapper_path
+    if not wrapper_path.is_file() or descriptor.get("sha256") != hashlib.sha256(wrapper_path.read_bytes()).hexdigest():
+        raise DevelopmentDeliveryError("review family wrapper is missing or changed")
+    wrapper = _read_mapping(wrapper_path)
+    evidence_path = Path(str(wrapper.get("receipt") or "")).expanduser()
+    if not evidence_path.is_absolute():
+        evidence_path = Path(str(task.get("work_item") or "")) / evidence_path
+    if not evidence_path.is_file():
+        raise DevelopmentDeliveryError("review family evidence is missing")
+    payload = _read_mapping(evidence_path)
+    canonical_hash = _json_sha256(payload)
+    if not (
+        wrapper.get("schema") == "development-stage-receipt/v1"
+        and wrapper.get("stage") == "release_propagation"
+        and wrapper.get("evidence_sha256") == canonical_hash
+        and payload.get("schema") == "development-stage-evidence/v1"
+        and payload.get("state") == "release_propagation"
+        and payload.get("status") in {"passed", "verified", "completed"}
+    ):
+        raise DevelopmentDeliveryError("review family immutable evidence binding is invalid")
+    details = payload.get("evidence")
+    targets = details.get("targets") if isinstance(details, Mapping) else None
+    repository = str(task["repository"]["id"])
+    if not repository.startswith("git:github.com/") or not isinstance(targets, list):
+        raise DevelopmentDeliveryError("review requires a selected GitHub target family")
+    provider_repository = repository.removeprefix("git:github.com/")
+    prefix = f"github:{provider_repository}#"
+    matches = []
+    for member in targets:
+        if not isinstance(member, Mapping):
+            raise DevelopmentDeliveryError("review family target is malformed")
+        aliases = [member[key] for key in ("head_sha", "source_head_sha", "source_sha") if key in member]
+        if head_sha not in aliases:
+            continue
+        if "source_branch" in member and member["source_branch"] != source_branch:
+            continue
+        number = member.get("number")
+        qualified = member.get("pull_request")
+        if qualified is not None:
+            if not isinstance(qualified, str) or not qualified.startswith(prefix) or not re.fullmatch(r"[1-9][0-9]*", qualified.removeprefix(prefix)):
+                raise DevelopmentDeliveryError("review family PR identity is not repository-qualified")
+            parsed = int(qualified.removeprefix(prefix))
+            if number is not None and (type(number) is not int or number != parsed):
+                raise DevelopmentDeliveryError("review family PR number aliases conflict")
+            number = parsed
+        url = f"https://github.com/{provider_repository}/pull/{number}"
+        urls = [member[key] for key in ("url", "pull_request_url") if key in member]
+        verified = member.get("provider_readback_verified") is True or (
+            member.get("terminal_disposition") == "provider_verified_pr_exists"
+            and details.get("readback_verified") is True
+        )
+        if not (
+            type(number) is int and number > 0 and urls and all(value == url for value in urls)
+            and member.get("classification") == "pr_required" and verified
+            and aliases and all(value == head_sha for value in aliases)
+            and re.fullmatch(r"[a-fA-F0-9]{40}", head_sha)
+            and isinstance(member.get("base_branch"), str) and member["base_branch"]
+            and member.get("repository", repository) == repository
+            and member.get("provider", "github") == "github"
+            and member.get("source_branch", source_branch) == source_branch
+            and member.get("ticket", task.get("ticket")) == task.get("ticket")
+            and all(member[key] is True for key in ("readback_verified", "provider_readback_verified") if key in member)
+        ):
+            raise DevelopmentDeliveryError("review family target identity conflicts")
+        matches.append({
+            "repository": repository, "number": number, "url": url,
+            "base_branch": member["base_branch"], "source_branch": source_branch,
+            "head_sha": head_sha, "wrapper_ref": str(wrapper_path.resolve()),
+            "wrapper_sha256": descriptor["sha256"],
+            "evidence_ref": str(evidence_path.resolve()), "evidence_sha256": canonical_hash,
+        })
+    if len(matches) != 1:
+        raise DevelopmentDeliveryError("review family requires one matching worktree head and branch")
+    return matches[0]
+
+
+def historical_review_seed_provenance(
+    source: Mapping[str, Any], task: Mapping[str, Any], member: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Bind a native different-head context seed without making it current policy."""
+
+    native = source.get("_native_source")
+    if not isinstance(native, Mapping):
+        raise DevelopmentDeliveryError("historical review seed lacks native provenance")
+    original = {key: deepcopy(value) for key, value in source.items() if key != "_native_source"}
+    proof = {
+        "schema": "historical-review-seed-provenance/v1",
+        "kind": native.get("kind"), "ref": native.get("ref"), "sha256": native.get("sha256"),
+        "original_request": original,
+        "original_policy_fingerprint": original.get("policy_fingerprint"),
+    }
+    if original.get("pr_number") != member.get("number") or native.get("kind") == "initial_pr_create":
+        readback = Path(str(task["work_item"])) / "artifacts/auto-dev-pr-create/pull-request-provider-readback.json"
+        value = _read_mapping(readback)
+        descriptor = value.get("provider_readback")
+        if not isinstance(descriptor, Mapping):
+            raise DevelopmentDeliveryError("historical primary review seed lacks native provider proof")
+        provider_path = Path(str(task["work_item"])) / "artifacts" / str(descriptor.get("path") or "")
+        proof["original_primary_readback"] = {
+            "ref": str(readback.resolve()), "sha256": hashlib.sha256(readback.read_bytes()).hexdigest(),
+            "provider_ref": str(provider_path.resolve()), "provider_sha256": descriptor.get("sha256"),
+        }
+    validate_historical_review_seed_provenance(proof, task, member)
+    return proof
+
+
+def _validate_historical_bound_review_authority(
+    original: Mapping[str, Any], task: Mapping[str, Any], member: Mapping[str, Any],
+) -> None:
+    """Revalidate a prior native request's authority without reusing its result."""
+
+    authority = original.get("selected_review_authority")
+    family = original.get("source_family_authority")
+    if not (isinstance(authority, Mapping) and isinstance(family, Mapping)):
+        raise DevelopmentDeliveryError("historical review seed native authority is incomplete")
+    profile_path = Path(str(task.get("profile_source") or "")).expanduser().resolve()
+    selector = authority.get("repository_selector")
+    selected = select_development_repository(_read_mapping(profile_path), selector)
+    actual = selected_review_profile_authority(task, selected, profile_path, selector)
+    opposing = actual["opposing_harness"]
+    if not (
+        dict(authority) == actual
+        and original.get("policy_fingerprint") == task.get("policy_fingerprint")
+        and original.get("request_origin") == "verified_current_pr_family"
+        and original.get("reviewer_selection_source") in {
+            "auto-dev-review-self-opposing-model", "verified_current_task_profile_and_family",
+        }
+        and original.get("review_unavailable_policy") == opposing.get("unavailable_policy")
+        and original.get("reviewer_transport") == opposing.get("transport", "claude_cli")
+        and original.get("reviewer_model") == original.get("selected_reviewer_model")
+        == opposing.get("model", "opus")
+    ):
+        raise DevelopmentDeliveryError("historical review seed native selected authority conflicts")
+    wrapper = Path(str(family.get("wrapper_ref") or "")).expanduser()
+    evidence = Path(str(family.get("evidence_ref") or "")).expanduser()
+    task_stages = Path(str(task["policy_receipt"])).resolve().parent / "tasks" / _slug(str(task["ticket"])) / "stages"
+    evidence_root = Path(str(task["work_item"])).resolve() / "artifacts/development-delivery/evidence"
+    if not (
+        Path(str(task["policy_receipt"])).resolve().parent.name == task.get("run_id")
+        and wrapper.is_absolute() and not wrapper.is_symlink() and wrapper.resolve().is_relative_to(task_stages)
+        and evidence.is_absolute() and not evidence.is_symlink() and evidence.resolve().is_relative_to(evidence_root)
+    ):
+        raise DevelopmentDeliveryError("historical review seed native family is outside its task")
+    historical = _verified_review_family_member_from_descriptor(
+        task, {"ref": str(wrapper), "sha256": family.get("wrapper_sha256")},
+        head_sha=str(original["head_sha"]), source_branch=str(task["worktree"]["branch"]),
+    )
+    current = verified_review_family_member(
+        task, head_sha=str(member.get("head_sha") or ""), source_branch=str(task["worktree"]["branch"]),
+    )
+    details = _read_mapping(evidence).get("evidence") or {}
+    historical_targets = [target for target in details.get("targets", []) if isinstance(target, Mapping)
+                          and target.get("head_sha") == original["head_sha"]
+                          and target.get("source_branch", task["worktree"]["branch"]) == task["worktree"]["branch"]]
+    base_aliases = [target[key] for target in historical_targets for key in ("base_sha", "actual_target_ref_sha") if key in target]
+    if not (
+        dict(family) == historical and dict(member) == current
+        and historical["repository"] == current["repository"]
+        and historical["number"] == original["pr_number"] == current["number"]
+        and historical["base_branch"] == original["target_branch"] == current["base_branch"]
+        and details.get("ticket") == task["ticket"]
+        and details.get("repository") == task["repository"]["id"]
+        and details.get("canonical_run_policy_fingerprint") == task["policy_fingerprint"]
+        and len(historical_targets) == 1 and base_aliases
+        and re.fullmatch(r"[a-fA-F0-9]{40}", str(original.get("base_sha") or ""))
+        and all(value == original["base_sha"] for value in base_aliases)
+    ):
+        raise DevelopmentDeliveryError("historical review seed native family or original subject conflicts")
+
+
+def validate_historical_review_seed_provenance(
+    proof: Mapping[str, Any], task: Mapping[str, Any], member: Mapping[str, Any],
+) -> None:
+    """Keep historical request/provider bytes and primary identity fail closed."""
+
+    original = proof.get("original_request")
+    work_item = Path(str(task["work_item"])).resolve()
+    path = Path(str(proof.get("ref") or "")).expanduser()
+    kind = proof.get("kind")
+    repository = str(task["repository"]["id"])
+    provider_repository = repository.removeprefix("git:github.com/")
+    if not (
+        proof.get("schema") == "historical-review-seed-provenance/v1"
+        and isinstance(original, Mapping) and kind in {"prior_request", "initial_pr_create"}
+        and path.is_absolute() and not path.is_symlink() and path.is_file()
+        and proof.get("sha256") == hashlib.sha256(path.read_bytes()).hexdigest()
+        and str(original.get("work_item_id") or "").upper() == str(task.get("ticket") or "").upper()
+        and re.fullmatch(r"[a-fA-F0-9]{40}", str(original.get("head_sha") or ""))
+        and original.get("head_sha") != member.get("head_sha")
+        and type(original.get("pr_number")) is int and original["pr_number"] > 0
+        and original.get("target_branch") == task["repository"]["base_branch"]
+        and original.get("repository", provider_repository) in {provider_repository, repository}
+        and original.get("source_branch", task["worktree"]["branch"]) == task["worktree"]["branch"]
+        and original.get("source_worktree_branch", task["worktree"]["branch"]) == task["worktree"]["branch"]
+        and original.get("reviewer_transport") in {None, "claude_cli"}
+        and not original.get("effective_policy")
+        and re.fullmatch(r"[a-fA-F0-9]{64}", str(original.get("policy_fingerprint") or ""))
+        and proof.get("original_policy_fingerprint") == original.get("policy_fingerprint")
+        and member.get("repository") == repository
+    ):
+        raise DevelopmentDeliveryError("historical review seed provenance or identity is invalid")
+    frozen = frozen_selected_task_profile(task)
+    if frozen.get("review") or frozen.get("opposing_harness"):
+        raise DevelopmentDeliveryError("historical review seed cannot override frozen review authority")
+    legacy_policy = original.get("review_policy")
+    if legacy_policy is not None and not (
+        isinstance(legacy_policy, Mapping)
+        and set(legacy_policy) <= {"reviewer_mode", "reviewer_transport", "review_unavailable_policy", "unavailable_policy"}
+        and legacy_policy.get("reviewer_transport", "claude_cli") == "claude_cli"
+        and legacy_policy.get("reviewer_mode", "reciprocal_model_family") == "reciprocal_model_family"
+        and all(legacy_policy.get(key) in {None, "block", "continue_with_receipt"}
+                for key in ("review_unavailable_policy", "unavailable_policy"))
+    ):
+        raise DevelopmentDeliveryError("historical review seed carries unsupported policy authority")
+    policies = [original.get("review_unavailable_policy")]
+    if isinstance(legacy_policy, Mapping):
+        policies.extend(legacy_policy.get(key) for key in ("review_unavailable_policy", "unavailable_policy"))
+    supplied = [value for value in policies if value is not None]
+    if any(value not in {"block", "continue_with_receipt"} for value in supplied) or len(set(supplied)) > 1:
+        raise DevelopmentDeliveryError("historical review seed policy aliases conflict")
+    if kind == "prior_request":
+        if not (
+            path.resolve().is_relative_to(work_item / "artifacts/finishing-touches")
+            and path.name == "review-request.json" and _read_mapping(path) == dict(original)
+            and Path(str(original.get("repo_path") or "")).resolve() == Path(str(task["worktree"]["path"])).resolve()
+        ):
+            raise DevelopmentDeliveryError("historical review seed does not bind its native request")
+    elif path.resolve() != work_item / "artifacts/auto-dev-pr-create/pull-request-provider-readback.json":
+        raise DevelopmentDeliveryError("historical review seed does not bind primary PR Create")
+    if original.get("selected_review_authority") is not None or original.get("source_family_authority") is not None:
+        if kind != "prior_request":
+            raise DevelopmentDeliveryError("historical review seed native authority requires a prior request")
+        _validate_historical_bound_review_authority(original, task, member)
+    primary = proof.get("original_primary_readback")
+    if original["pr_number"] != member["number"] or kind == "initial_pr_create":
+        if not isinstance(primary, Mapping):
+            raise DevelopmentDeliveryError("historical sibling review lacks original primary provenance")
+        primary_path = Path(str(primary.get("ref") or ""))
+        provider_path = Path(str(primary.get("provider_ref") or ""))
+        if not (
+            primary_path.resolve() == work_item / "artifacts/auto-dev-pr-create/pull-request-provider-readback.json"
+            and primary_path.is_file() and not primary_path.is_symlink()
+            and hashlib.sha256(primary_path.read_bytes()).hexdigest() == primary.get("sha256")
+            and provider_path.resolve().is_relative_to(work_item / "artifacts/auto-dev-pr-create")
+            and provider_path.is_file() and not provider_path.is_symlink()
+            and hashlib.sha256(provider_path.read_bytes()).hexdigest() == primary.get("provider_sha256")
+        ):
+            raise DevelopmentDeliveryError("historical primary provider proof is missing or changed")
+        readback, provider = _read_mapping(primary_path), _read_mapping(provider_path)
+        descriptor = readback.get("provider_readback") or {}
+        def native_aliases_match(graph_key: str, bridge_key: str, expected: Any) -> bool:
+            aliases = [provider[key] for key in (graph_key, bridge_key) if key in provider]
+            return bool(aliases) and all(value == expected for value in aliases)
+        if not (
+            readback.get("repository") in {provider_repository, repository}
+            and readback.get("state") == "OPEN" and str(provider.get("state") or "").upper() == "OPEN"
+            and readback.get("number") == provider.get("number") == original["pr_number"]
+            and readback.get("url") == provider.get("url") == f"https://github.com/{provider_repository}/pull/{original['pr_number']}"
+            and readback.get("base_branch") == original["target_branch"]
+            and native_aliases_match("baseRefName", "base", original["target_branch"])
+            and readback.get("base_sha") == original.get("base_sha")
+            and readback.get("head_sha") == original["head_sha"]
+            and native_aliases_match("headRefOid", "head_sha", original["head_sha"])
+            and native_aliases_match("headRefName", "head", task["worktree"]["branch"])
+            and provider.get("head_repo_full_name", provider_repository) == provider_repository
+            and descriptor.get("sha256") == primary["provider_sha256"]
+            and (work_item / "artifacts" / str(descriptor.get("path") or "")).resolve() == provider_path.resolve()
+        ):
+            raise DevelopmentDeliveryError("historical primary provider identity conflicts")
+
+
+def read_current_github_review_target(
+    task: Mapping[str, Any], subject: Mapping[str, Any],
+    number: int,
+    source_branch: str | None = None,
+) -> dict[str, Any]:
+    """Read the actual current target for the new unavailable-only gate."""
+
+    repository = str(task["repository"]["id"])
+    if not repository.startswith("git:github.com/"):
+        raise DevelopmentDeliveryError("unavailable review requires a verified GitHub repository")
+    owner, name = repository.removeprefix("git:github.com/").split("/", 1)
+    query = """
+query($owner:String!,$name:String!,$number:Int!){
+  repository(owner:$owner,name:$name){
+    nameWithOwner
+    pullRequest(number:$number){
+      number url state headRefOid headRefName baseRefName baseRef{name target{oid}}
+    }
+  }
+}
+"""
+    try:
+        completed = subprocess.run([
+            "gh", "api", "graphql", "-f", "query=" + query,
+            "-F", "owner=" + owner, "-F", "name=" + name,
+            "-F", "number=" + str(number),
+        ], capture_output=True, text=True, check=False, timeout=30)
+        if completed.returncode:
+            raise DevelopmentDeliveryError("unavailable review current provider readback failed")
+        native = json.loads(completed.stdout)["data"]["repository"]
+    except DevelopmentDeliveryError:
+        raise
+    except (OSError, ValueError, KeyError, TypeError, subprocess.TimeoutExpired) as exc:
+        raise DevelopmentDeliveryError("unavailable review current provider readback is unavailable") from exc
+    observed = native.get("pullRequest") if isinstance(native, Mapping) else None
+    branch = observed.get("baseRef") if isinstance(observed, Mapping) else None
+    target = branch.get("target") if isinstance(branch, Mapping) else None
+    if not (
+        isinstance(native, Mapping) and native.get("nameWithOwner") == f"{owner}/{name}"
+        and isinstance(observed, Mapping) and observed.get("state") == "OPEN"
+        and type(observed.get("number")) is int and observed["number"] == number
+        and observed.get("url") == f"https://github.com/{owner}/{name}/pull/{number}"
+        and observed.get("headRefOid") == subject["head_sha"]
+        and observed.get("baseRefName") == subject["base_branch"]
+        and (source_branch is None or observed.get("headRefName") == source_branch)
+        and isinstance(branch, Mapping) and branch.get("name") == observed["baseRefName"]
+        and isinstance(target, Mapping) and target.get("oid") == subject["base_sha"]
+    ):
+        raise DevelopmentDeliveryError("unavailable review current provider target or head changed")
+    return {"schema": "unavailable-review-current-target/v1", "read_at": utc_now(), "native": native}
+
+
+def recorded_post_provider_merge_evidence(task: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Read a completed transition, never infer completion from active Ready."""
+
+    if task.get("state") not in FORWARD_STATES or FORWARD_STATES.index(str(task["state"])) < FORWARD_STATES.index("merged"):
+        return None
+    return _immutable_delivery_evidence(task, "merged")
+
+
+def _immutable_delivery_evidence(task: Mapping[str, Any], state: str) -> dict[str, Any]:
+    for row in reversed(task.get("receipts") or []):
+        if not isinstance(row, Mapping) or row.get("state") != state:
+            continue
+        path = Path(str(row.get("ref") or "")).expanduser()
+        if not (path.is_file() and not path.is_symlink() and row.get("sha256") == hashlib.sha256(path.read_bytes()).hexdigest()):
+            raise DevelopmentDeliveryError("post-provider completion immutable " + state + " evidence changed")
+        return _read_mapping(path)
+    raise DevelopmentDeliveryError("post-provider completion lacks immutable " + state + " evidence")
+
+
+def read_completed_github_review_transition(
+    task: Mapping[str, Any], subject: Mapping[str, Any], number: int,
+    source_branch: str, completion: Mapping[str, Any],
+    *, expected_repository_id: str | None = None,
+) -> dict[str, Any]:
+    """Prove an owned squash transition without admitting stale OPEN readiness."""
+
+    frozen_selected_task_profile(task)
+    evidence = completion.get("evidence")
+    if not (completion.get("schema") == "development-stage-evidence/v1" and completion.get("state") == "merged"
+            and completion.get("status") == "completed" and isinstance(evidence, Mapping)):
+        raise DevelopmentDeliveryError("post-provider completion requires typed merged evidence")
+    ready = _immutable_delivery_evidence(task, "ready_for_merge")
+    try:
+        authority = validate_pull_request_authority(task, evidence, "merged")
+        ready_authority = validate_pull_request_authority(task, ready.get("evidence") or {}, "ready_for_merge")
+        if not same_pull_request_authority(authority, ready_authority):
+            raise AutoDevStateError("post-provider completion PR authority changed")
+        validate_auto_dev_readiness_authority(
+            task["autodev_path"], evidence.get("readiness_authority") or {},
+            expected_subject=str(subject["head_sha"]), expected_pull_request=ready_authority,
+        )
+    except (AutoDevStateError, KeyError) as exc:
+        raise DevelopmentDeliveryError("post-provider completion readiness authority invalid: " + str(exc)) from exc
+    repository = str(task["repository"]["id"]).removeprefix("git:github.com/")
+    merge = str(evidence.get("merge_sha") or "")
+    base, head = str(subject["base_sha"]), str(subject["head_sha"])
+    branch = str(subject["base_branch"])
+    url = f"https://github.com/{repository}/pull/{number}"
+    if not (task["repository"]["id"] == "git:github.com/" + repository
+            and authority["repository"] == task["repository"]["id"]
+            and authority["pull_request"] == f"github:{repository}#{number}"
+            and authority["base_branch"] == branch
+            and (ready.get("subject_revision") or (ready.get("evidence") or {}).get("subject_revision")) == completion.get("subject_revision") == head
+            and evidence.get("source_head_sha") == head and evidence.get("reviewed_base_sha") == base
+            and evidence.get("base_sha") == base and evidence.get("merge_parents") == [base]
+            and evidence.get("source_branch") == source_branch and evidence.get("merge_method") == "squash"
+            and evidence.get("provider_state_after") == "MERGED" and evidence.get("readback_verified") is True
+            and re.fullmatch(r"[0-9a-f]{40}", merge) and merge not in {head, base}):
+        raise DevelopmentDeliveryError("post-provider completion subject or transition conflicts")
+    artifacts = {}
+    work_item = Path(str(task.get("work_item") or "")).resolve()
+    for key in ("native_provider_readback", "native_premerge_guard", "native_merge_command"):
+        descriptor = evidence.get(key)
+        path = Path(str(descriptor.get("ref") or "")) if isinstance(descriptor, Mapping) else Path("")
+        if not (path.is_file() and not path.is_symlink() and path.resolve().is_relative_to(work_item / "artifacts")
+                and hashlib.sha256(path.read_bytes()).hexdigest() == descriptor.get("sha256")):
+            raise DevelopmentDeliveryError("post-provider completion native proof missing or changed: " + key)
+        artifacts[key] = _read_mapping(path)
+    after, guard, command = (artifacts[k] for k in ("native_provider_readback", "native_premerge_guard", "native_merge_command"))
+    pr = after.get("pull_request") or {}
+    before = guard.get("provider_before") or {}
+    native_before = guard.get("native_current_target_and_threads") or {}
+    before_pr = native_before.get("pullRequest") or {}
+    actor = guard.get("actor") or {}
+    if not (after.get("readback_verified") is True and after.get("provider") == "github"
+            and after.get("repository") == guard.get("repository") == repository
+            and pr.get("number") == guard.get("pull_request") == before.get("number") == before_pr.get("number") == number
+            and pr.get("url") == before.get("url") == url and pr.get("state") == "MERGED"
+            and pr.get("headRefOid") == after.get("accepted_source_head") == guard.get("source_head") == before.get("headRefOid") == before_pr.get("headRefOid") == head
+            and pr.get("headRefName") == before.get("headRefName") == source_branch
+            and pr.get("baseRefName") == before.get("baseRefName") == before_pr.get("baseRefName") == branch
+            and (pr.get("mergeCommit") or {}).get("oid") == after.get("merge_commit_sha") == merge
+            and after.get("reviewed_target_before_merge") == guard.get("reviewed_base") == base
+            and after.get("merge_commit_parents") == [base] and after.get("method") == "squash"
+            and before.get("state") == before_pr.get("state") == "OPEN"
+            and native_before.get("nameWithOwner") == repository
+            and ((before_pr.get("baseRef") or {}).get("target") or {}).get("oid") == base
+            and (before.get("author") or {}).get("login") == authority["author_identity"].removeprefix("github:")
+            and guard.get("canonical_premerge_gates_verified") is True and guard.get("all_threads_resolved") is True
+            and guard.get("quality_gate_waiver") is False and command.get("exit_code") == 0
+            and actor.get("login") and actor.get("permission") in {"ADMIN", "MAINTAIN", "WRITE"}
+            and pr.get("mergedAt") == evidence.get("merged_at")):
+        raise DevelopmentDeliveryError("post-provider completion native proof identity conflicts")
+    owner, name = repository.split("/", 1)
+    query = """query($owner:String!,$name:String!,$number:Int!,$merge:GitObjectID!){repository(owner:$owner,name:$name){
+      id nameWithOwner url object(oid:$merge){... on Commit{oid parents(first:2){nodes{oid} pageInfo{hasNextPage}}}}
+      pullRequest(number:$number){number url state headRefOid headRefName baseRefName baseRef{name target{oid}}
+        author{login} mergedBy{login} mergedAt mergeCommit{oid}}}}"""
+    try:
+        response = subprocess.run(["gh", "api", "graphql", "-f", "query=" + query,
+            "-F", "owner=" + owner, "-F", "name=" + name, "-F", "number=" + str(number), "-f", "merge=" + merge],
+            capture_output=True, text=True, check=False, timeout=30)
+        if response.returncode:
+            raise ValueError("provider failed")
+        native = json.loads(response.stdout)["data"]["repository"]
+        observed, commit = native["pullRequest"], native["object"]
+        current = observed["baseRef"]["target"]["oid"]
+        parents = commit["parents"]
+        if not (native["nameWithOwner"] == repository and observed["number"] == number and observed["url"] == url
+                and (expected_repository_id is None or (
+                    native.get("id") == expected_repository_id
+                    and native.get("url") == "https://github.com/" + repository
+                ))
+                and observed["state"] == "MERGED" and observed["headRefOid"] == head and observed["headRefName"] == source_branch
+                and observed["baseRefName"] == observed["baseRef"]["name"] == branch
+                and observed["author"]["login"] == authority["author_identity"].removeprefix("github:")
+                and observed["mergedBy"]["login"] == actor["login"] and observed["mergedAt"] == pr["mergedAt"]
+                and observed["mergeCommit"]["oid"] == commit["oid"] == merge
+                and parents["nodes"] == [{"oid": base}] and parents["pageInfo"]["hasNextPage"] is False
+                and re.fullmatch(r"[0-9a-f]{40}", current)):
+            raise ValueError("provider identity or parent changed")
+        ancestry = None
+        if current != merge:
+            compared = subprocess.run(["gh", "api", f"repos/{repository}/compare/{merge}...{current}"],
+                capture_output=True, text=True, check=False, timeout=30)
+            ancestry = json.loads(compared.stdout)
+            if not (compared.returncode == 0 and ancestry.get("status") == "ahead" and ancestry.get("behind_by") == 0
+                    and type(ancestry.get("ahead_by")) is int and ancestry["ahead_by"] > 0
+                    and (ancestry.get("base_commit") or {}).get("sha") == merge
+                    and (ancestry.get("merge_base_commit") or {}).get("sha") == merge):
+                raise ValueError("current target is not a native-proven merge descendant")
+    except (OSError, ValueError, KeyError, TypeError, subprocess.TimeoutExpired) as exc:
+        raise DevelopmentDeliveryError("post-provider completion current native transition is invalid") from exc
+    return {"schema": "unavailable-review-completed-transition/v1", "read_at": utc_now(),
+            "native": native, "ancestry": ancestry}
+
+
+def validate_policy_approved_unavailable_review(
+    review_receipt: Mapping[str, Any], task: Mapping[str, Any], *,
+    post_provider_merge: Mapping[str, Any] | None = None,
+    eligibility_receipt: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Consume unavailable evidence without changing the default CLEAN contract."""
+
+    if eligibility_receipt is not None:
+        from .review_eligibility import validate_unavailable_review_eligibility
+
+        return validate_unavailable_review_eligibility(
+            eligibility_receipt, review_receipt, task,
+            post_provider_merge=post_provider_merge,
+        )
+    return _validate_unavailable_review_authority(
+        review_receipt, task, post_provider_merge=post_provider_merge,
+    )
+
+
+def _validate_unavailable_review_authority(
+    review_receipt: Mapping[str, Any], task: Mapping[str, Any], *,
+    post_provider_merge: Mapping[str, Any] | None = None,
+    pending_checks: bool = False,
+    authority_only: bool = False,
+) -> dict[str, Any]:
+    """Shared immutable authority checks; pending checks never imply readiness."""
+
+    review = review_receipt.get("review")
+    if not isinstance(review, Mapping) or not (
+        review_receipt.get("outcome") == "unavailable"
+        and review.get("readback_verified") is True
+        and (review.get("deterministic_review_downgraded") is True or (
+            pending_checks and review.get("deterministic_review_downgraded") is False
+            and review.get("decision") == "pending_checks"
+            and review.get("failure_code") == "cli_timeout"
+        ))
+        and review.get("review_unavailable_policy") == "continue_with_receipt"
+        and review.get("failure_code") in {
+            "cli_not_found", "cli_runtime_failed", "cli_output_invalid", "cli_timeout",
+        }
+        and review.get("reviewer_status") in {"unavailable", "runtime_failure"}
+        and not review.get("findings")
+    ):
+        raise DevelopmentDeliveryError("unavailable review lacks typed policy-approved continuation")
+    artifacts = review.get("unavailable_review_artifacts")
+    required = {
+        "review-request.json", "validation-plan.json", "model-receipt.md",
+        "readiness-decision.json", "review-ledger.jsonl",
+        "provider-readback-before.json", "provider-readback-after.json",
+        "reviewer-runtime-receipt.json",
+    }
+    if not (
+        isinstance(artifacts, Mapping) and required <= set(artifacts)
+        and set(artifacts) <= required | {"reviewer-response.md"}
+    ):
+        raise DevelopmentDeliveryError("unavailable review lacks hashed native runner artifacts")
+    run_dir = Path(str(review.get("review_run_dir") or "")).expanduser().resolve()
+    payloads: dict[str, Any] = {}
+    for name in sorted(artifacts):
+        path = run_dir / name
+        if not path.is_file() or artifacts[name] != hashlib.sha256(path.read_bytes()).hexdigest():
+            raise DevelopmentDeliveryError("unavailable review native artifact changed: " + name)
+        if name.endswith(".json"):
+            payloads[name] = _read_mapping(path)
+    request = payloads["review-request.json"]
+    plan = payloads["validation-plan.json"]
+    decision = payloads["readiness-decision.json"]
+    runtime = payloads["reviewer-runtime-receipt.json"]
+    authority = request.get("selected_review_authority")
+    if not isinstance(authority, Mapping):
+        raise DevelopmentDeliveryError("unavailable review lacks frozen selected review authority")
+    profile_path = Path(str(task.get("profile_source") or "")).expanduser().resolve()
+    selected = select_development_repository(
+        _read_mapping(profile_path), authority.get("repository_selector"),
+    )
+    actual_authority = selected_review_profile_authority(
+        task, selected, profile_path, authority.get("repository_selector"),
+    )
+    opposing = actual_authority["opposing_harness"]
+    subject = review_receipt["subject"]
+    family = verified_review_family_member(
+        task, head_sha=str(subject["head_sha"]),
+        source_branch=str(request.get("source_worktree_branch") or ""),
+    )
+    if request.get("source_seed_provenance") is not None:
+        validate_historical_review_seed_provenance(request["source_seed_provenance"], task, family)
+    frozen_family = request.get("source_family_authority")
+    if not isinstance(frozen_family, Mapping):
+        raise DevelopmentDeliveryError("unavailable review lacks immutable selected family authority")
+    original_family = _verified_review_family_member_from_descriptor(
+        task, {"ref": frozen_family.get("wrapper_ref"), "sha256": frozen_family.get("wrapper_sha256")},
+        head_sha=str(subject["head_sha"]), source_branch=str(request.get("source_worktree_branch") or ""),
+    )
+    identity_keys = ("repository", "number", "url", "base_branch", "source_branch", "head_sha")
+    if not (
+        dict(authority) == actual_authority
+        and opposing.get("unavailable_policy") == "continue_with_receipt"
+        and opposing.get("transport", "claude_cli") == "claude_cli"
+        and request.get("selected_reviewer_model") == opposing.get("model", "opus")
+        and request.get("reviewer_model") == request.get("selected_reviewer_model")
+        and review.get("selected_reviewer_model") == request.get("selected_reviewer_model")
+        and request.get("run_id") == run_dir.name
+        and request.get("head_sha") == subject.get("head_sha")
+        and request.get("base_sha") == subject.get("base_sha")
+        and request.get("policy_fingerprint") == task.get("policy_fingerprint")
+        and subject.get("policy_fingerprint") == task.get("policy_fingerprint")
+        and dict(frozen_family) == original_family
+        and all(family[key] == original_family[key] for key in identity_keys)
+        and request.get("pr_number") == family["number"]
+        and subject.get("base_branch") == family["base_branch"]
+        and plan.get("review_unavailable_policy") == "continue_with_receipt"
+        and plan.get("reviewer_status") == review.get("reviewer_status")
+        and decision.get("review_downgraded") is True
+        and decision.get("active_blocker_count") == 0
+        and decision.get("decision") == review.get("decision")
+        and (str(decision.get("decision") or "").startswith("ready_") if not pending_checks else (
+            decision.get("decision") == "pending_checks"
+            and decision.get("pr_check_status") == plan.get("pr_check_status") == "pending"
+            and decision.get("validation_status") == plan.get("validation_status") == "passed"
+            and decision.get("severe_unapproved_count") == 0
+            and plan.get("model_identity_status") == "proven"
+            and plan.get("copilot_status") in {"not_applicable", "resolved"}
+            and plan.get("external_output_status") == "clean"
+            and plan.get("user_decision_blocker") is False
+            and type(plan.get("loop_count")) is int and type(plan.get("loop_limit")) is int
+            and 0 <= plan["loop_count"] <= plan["loop_limit"]
+            and review.get("deterministic_review_downgraded") is False
+            and review.get("failure_code") == runtime.get("failure_code") == "cli_timeout"
+        ))
+        and not (run_dir / "review-ledger.jsonl").read_text().strip()
+        and runtime.get("schema") == "opposing-review-runtime/v1"
+        and runtime.get("transport") == "claude_cli"
+        and runtime.get("model") == request.get("selected_reviewer_model")
+        and runtime.get("failure_code") == review.get("failure_code")
+        and runtime.get("started_at") and runtime.get("completed_at")
+    ):
+        raise DevelopmentDeliveryError("unavailable review authority or exact subject no longer matches")
+    if "reviewer-response.md" in artifacts and (run_dir / "reviewer-response.md").read_text().strip() != str(review.get("response") or "").strip():
+        raise DevelopmentDeliveryError("unavailable review response no longer matches")
+    for name in ("provider-readback-before.json", "provider-readback-after.json"):
+        provider = payloads[name]
+        observed = provider.get("current_target_readback") or {}
+        observed_branch = observed.get("baseRef") or {}
+        expected_url = "https://github.com/" + str(task["repository"]["id"]).removeprefix("git:github.com/") + "/pull/" + str(request["pr_number"])
+        if not (
+            provider.get("state") == "OPEN" and provider.get("url") == expected_url
+            and provider.get("headRefOid") == subject["head_sha"]
+            and provider.get("baseRefTargetOid") == subject["base_sha"]
+            and provider.get("baseRefName") == family["base_branch"]
+            and provider.get("headRefName") == family["source_branch"]
+            and type(provider.get("number")) is int
+            and provider.get("number") == request["pr_number"]
+            and all(observed.get(field) == provider.get(field) for field in (
+                "number", "url", "state", "headRefOid", "headRefName", "baseRefName", "baseRefOid",
+            ))
+            and observed_branch.get("name") == family["base_branch"]
+            and (observed_branch.get("target") or {}).get("oid") == subject["base_sha"]
+        ):
+            raise DevelopmentDeliveryError("unavailable review native provider identity no longer matches")
+    if authority_only:
+        return {"request": request, "subject": subject, "family": family}
+    if post_provider_merge is not None:
+        return read_completed_github_review_transition(
+            task, subject, request["pr_number"], family["source_branch"], post_provider_merge,
+        )
+    return read_current_github_review_target(
+        task, subject, request["pr_number"], family["source_branch"],
+    )
+
+
+def validate_local_validation_ci_deferral(
+    payload: Mapping[str, Any],
+    task_value: Mapping[str, Any],
+    *,
+    require_frozen: bool = False,
+) -> None:
+    """Validate the same bounded infrastructure deferral at delivery and health gates."""
+
+    evidence = payload.get("evidence")
+    if not (payload.get("state") == "local_validation" and payload.get("status") == "deferred_to_ci" and isinstance(evidence, Mapping)):
+        raise DevelopmentDeliveryError("CI deferral requires local_validation deferred_to_ci evidence")
+    unavailable = evidence.get("unavailable_check")
+    validation: Mapping[str, Any] = {}
+    policy_ref = str(task_value.get("policy_receipt") or "").strip()
+    policy_path = Path(policy_ref).expanduser() if policy_ref else None
+    if policy_path is not None:
+        validation = frozen_selected_task_profile(task_value)["validation"]
+    else:
+        # Compatibility is limited to tasks that predate policy
+        # receipts entirely. A missing or legacy run receipt may
+        # never fall through to mutable base repository policy.
+        if require_frozen or task_value.get("policy_fingerprint"):
+            raise DevelopmentDeliveryError(
+                "pinned effective policy receipt reference is missing"
+            )
+        profile_ref = str(task_value.get("profile_source") or "").strip()
+        profile_path = (
+            Path(profile_ref).expanduser() if profile_ref else None
+        )
+        profile = (
+            _read_mapping(profile_path)
+            if profile_path is not None and profile_path.is_file()
+            else {}
+        )
+        validation = (
+            profile.get("validation")
+            if isinstance(profile.get("validation"), Mapping)
+            else {}
+        )
+    if validation.get("ci_fallback_on_environment_failure") is not True:
+        raise DevelopmentDeliveryError(
+            "local_validation may defer to CI only when the pinned project "
+            "profile enables ci_fallback_on_environment_failure"
+        )
+    if not isinstance(unavailable, Mapping):
+        raise DevelopmentDeliveryError(
+            "deferred_to_ci local_validation requires evidence.unavailable_check"
+        )
+    if not all(
+        str(unavailable.get(key) or "").strip()
+        for key in ("command", "classification", "reason")
+    ):
+        raise DevelopmentDeliveryError(
+            "deferred_to_ci unavailable_check requires command, classification, and reason"
+        )
+    if unavailable.get("classification") not in {
+        "environment_unavailable",
+        "infrastructure",
+    }:
+        raise DevelopmentDeliveryError(
+            "deferred_to_ci is reserved for environment or infrastructure failures"
+        )
+    if not any(value == "passed" for key, value in evidence.items() if key != "unavailable_check"):
+        raise DevelopmentDeliveryError(
+            "deferred_to_ci local_validation requires at least one passed local check"
+        )
 
 
 def run_development_stage(
@@ -9812,85 +10678,7 @@ def run_development_stage(
                     "status=deferred_to_ci, not passed"
                 )
             if status == "deferred_to_ci":
-                task_value = state.read()
-                validation: Mapping[str, Any] = {}
-                policy_ref = str(task_value.get("policy_receipt") or "").strip()
-                policy_path = Path(policy_ref).expanduser() if policy_ref else None
-                if policy_path is not None:
-                    if not policy_path.is_file():
-                        raise DevelopmentDeliveryError(
-                            "pinned effective policy receipt is missing"
-                        )
-                    frozen_policies = _read_mapping(policy_path)
-                    frozen_profile = _validate_effective_policy_snapshot(
-                        frozen_policies,
-                        require_selected_profile=True,
-                    )
-                    task_repository = (
-                        task_value.get("repository")
-                        if isinstance(task_value.get("repository"), Mapping)
-                        else {}
-                    )
-                    if not (
-                        isinstance(frozen_profile, Mapping)
-                        and frozen_profile.get("repository_id")
-                        == task_repository.get("id")
-                        and frozen_policies.get("fingerprint")
-                        == task_value.get("policy_fingerprint")
-                    ):
-                        raise DevelopmentDeliveryError(
-                            "pinned selected repository validation policy is invalid"
-                        )
-                    validation = frozen_profile["validation"]
-                else:
-                    # Compatibility is limited to tasks that predate policy
-                    # receipts entirely. A missing or legacy run receipt may
-                    # never fall through to mutable base repository policy.
-                    if task_value.get("policy_fingerprint"):
-                        raise DevelopmentDeliveryError(
-                            "pinned effective policy receipt reference is missing"
-                        )
-                    profile_ref = str(task_value.get("profile_source") or "").strip()
-                    profile_path = (
-                        Path(profile_ref).expanduser() if profile_ref else None
-                    )
-                    profile = (
-                        _read_mapping(profile_path)
-                        if profile_path is not None and profile_path.is_file()
-                        else {}
-                    )
-                    validation = (
-                        profile.get("validation")
-                        if isinstance(profile.get("validation"), Mapping)
-                        else {}
-                    )
-                if validation.get("ci_fallback_on_environment_failure") is not True:
-                    raise DevelopmentDeliveryError(
-                        "local_validation may defer to CI only when the pinned project "
-                        "profile enables ci_fallback_on_environment_failure"
-                    )
-                if not isinstance(unavailable, Mapping):
-                    raise DevelopmentDeliveryError(
-                        "deferred_to_ci local_validation requires evidence.unavailable_check"
-                    )
-                if not all(
-                    str(unavailable.get(key) or "").strip()
-                    for key in ("command", "classification", "reason")
-                ):
-                    raise DevelopmentDeliveryError(
-                        "deferred_to_ci unavailable_check requires command, classification, and reason"
-                    )
-                if unavailable.get("classification") not in {
-                    "environment_unavailable",
-                    "infrastructure",
-                }:
-                    raise DevelopmentDeliveryError(
-                        "deferred_to_ci is reserved for environment or infrastructure failures"
-                    )
-                if not any(value == "passed" for key, value in evidence.items() if key != "unavailable_check"):
-                    raise DevelopmentDeliveryError(
-                        "deferred_to_ci local_validation requires at least one passed local check"
-                    )
+                validate_local_validation_ci_deferral(payload, state.read())
         elif status == "deferred_to_ci":
             raise DevelopmentDeliveryError(
                 "deferred_to_ci is valid only for local_validation"
@@ -10017,13 +10805,22 @@ def run_development_stage(
                         raise DevelopmentDeliveryError(
                             "ready_for_merge review_policy_fingerprint must be a lowercase SHA-256"
                         )
-                    assert_exact_head_review_receipt(
+                    review_payload = assert_exact_head_review_receipt(
                         coordination_path,
                         head_sha=str(evidence["subject_revision"]),
                         repository=ready_authority.get("repository"),
                         pull_request=ready_authority.get("pull_request"),
                         policy_fingerprint=review_policy_fingerprint or None,
+                        require_clean=False,
                     )
+                    if review_payload.get("outcome") != "clean":
+                        current_target = validate_policy_approved_unavailable_review(
+                            review_payload, task_value,
+                            eligibility_receipt=evidence.get("unavailable_review_eligibility"),
+                        )
+                        payload["evidence"] = {
+                            **evidence, "review_current_target_readback": current_target,
+                        }
                 except ReviewCoordinationError as exc:
                     raise DevelopmentDeliveryError(str(exc)) from exc
             pending_supersession = pending_subject_supersession(state.read())
@@ -10446,6 +11243,20 @@ def run_development_stage(
                     legacy_family_identity_normalization: dict[str, Any] | None = None
                     if (
                         not previous_details.get("source_head_sha")
+                        and previous_details.get("schema") == "auto-dev-pr-create-family/v1"
+                    ):
+                        (
+                            previous_details,
+                            legacy_family_identity_normalization,
+                        ) = _normalize_exact_legacy_flat_family_identity(
+                            previous_details, task=task_value,
+                            expected_repository=expected_repository,
+                            expected_base_branch=expected_base_branch,
+                            expected_source_branch=expected_source_branch,
+                            pull_request_prefix=pull_request_prefix,
+                        )
+                    if (
+                        not previous_details.get("source_head_sha")
                         and "family" in previous_details
                     ):
                         (
@@ -10844,7 +11655,12 @@ def run_development_stage(
     if autodev_ref and predecessor_target:
         _sync_auto_dev_projection(state.path)
         try:
-            require_auto_dev_predecessors(autodev_ref, predecessor_target)
+            completion = None
+            if normalized == "merge" and current.get("state") == "ready_for_merge" and receipts.get("merged"):
+                completion = _read_mapping(Path(str(receipts["merged"])).expanduser().resolve())
+            require_auto_dev_predecessors(
+                autodev_ref, predecessor_target, post_provider_merge=completion,
+            )
         except AutoDevStateError as exc:
             raise DevelopmentDeliveryError(str(exc)) from exc
     current_name = str(current.get("state"))

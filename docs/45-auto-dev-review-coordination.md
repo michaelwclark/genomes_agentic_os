@@ -89,6 +89,53 @@ change reviewer identity, or restart Auto-Dev to manufacture a fresh budget.
 
 ## Invalidation, recovery, and override
 
+### Authority-bound historical request context
+
+A different-head prior native request may supply context for the same task and
+PR only after its raw request hash, selected profile/frozen task authority, and
+historical family wrapper/evidence have been revalidated. Both authority objects
+must agree with their immutable sources, including the original head, target,
+branch, repository and policy. Partial, corrupt, cross-task or conflicting
+authority fails closed. Legacy requests retain their existing validation.
+
+The current family and provider subject are selected independently. Historical
+review results, unavailable decisions and approval are never inherited by the
+new head. This context admission does not invoke a reviewer, change coordinator
+keys, grant readiness or reset the shared review budget.
+
+### CI completing after a timed-out review
+
+A frozen `continue_with_receipt` task may have a genuine `unavailable` /
+`cli_timeout` attempt whose original decision is `pending_checks`. Once CI
+finishes, qualify that same immutable attempt with:
+
+```sh
+agentic-os develop review-eligibility TASK_STATE \
+  --coordination-receipt ORIGINAL_COORDINATION_RECEIPT \
+  --output-dir PACKET/artifacts/review-eligibility --json
+```
+
+The delivery program creates a separate hash-bound eligibility decision. It
+checks the frozen task/profile/family, full original runner artifact hashes,
+native clean source and complete diff, exact current GitHub head and target,
+all originally observed named checks plus every currently observed check, and
+fully paginated review threads. Every check must succeed and every thread must
+be resolved. Missing, ambiguous, changed, blocked-policy or non-timeout evidence
+fails closed. Approval status remains provider truth; this command grants no
+approval waiver or merge authority.
+
+Pass the returned `{ref, sha256}` as `evidence.unavailable_review_eligibility`
+alongside the original `review_coordination_receipt` in Ready evidence. Ready
+and downstream predecessor validation re-read current native provider gates.
+Open-PR eligibility expires after 15 minutes; qualifying it again creates new
+evidence without another model call. Genuine completed-merge consumption uses
+the separately verified provider transition and historical eligibility.
+
+Neither this command nor its consumers rewrite the original model result,
+pending decision, coordinator keys, findings, budget or lifecycle. The model
+outcome remains `unavailable`; it is never reported as `clean`. Existing clean
+and already-ready unavailable paths keep their original strict contracts.
+
 A head-only change keeps the chain and permits a delta. Base revision, policy
 fingerprint, normalized scope, or purpose drift invalidates chain reuse and may
 permit one new full review, subject to the absolute family limit. Repository or
