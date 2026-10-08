@@ -20,6 +20,7 @@ from genomes_agentic_os.review_coordination import (
 from test_development_delivery import (
     _advance_auto_dev_task_to_ready, _project, _record_standalone_stage,
     _repository, _stage_receipt, _git, _provider_authority,
+    _readiness_authority,
 )
 from test_opposing_model_review_runner import _load_runner
 
@@ -417,6 +418,46 @@ def test_real_runner_and_downstream_keep_unavailable_honest(
         assert json.loads(ready_snapshot.read_text())["evidence"]["review_current_target_readback"]["schema"] == "unavailable-review-current-target/v1"
         assert Path(ready_input).read_bytes() == original_input
         auto_dev._validate_health_stage_source(work_item, "review_self", "completed", ready_snapshot)
+        if seed_kind is None and task_base is None and profile_base == "main":
+            # Actual owner recording after a genuine provider transition must
+            # retain historical Ready, policy, coordination and attempt budgets.
+            _, completed_subject, completion, completed_native = _completed_transition_fixture(
+                tmp_path, monkeypatch, existing_task=task, existing_subject=head, existing_base=base,
+            )
+            monkeypatch.setattr(delivery.subprocess, "run", lambda command, **kwargs:
+                subprocess.CompletedProcess(command, 0, json.dumps({"data": {"repository": completed_native}}), ""))
+            historical_ready = ready_snapshot.read_bytes()
+            historical_attempt = receipt_path.read_bytes()
+            delivery.validate_policy_approved_unavailable_review(
+                receipt, task.read(), post_provider_merge=completion,
+            )
+            auto_dev._validate_health_stage_source(
+                work_item, "review_self", "completed", ready_snapshot, post_provider_merge=completion,
+            )
+            for completed_stage in ("qa", "validate_production_release"):
+                _record_standalone_stage(task, completed_stage, revision=head)
+            _record_standalone_stage(task, "review_others", revision=head, status="not_required")
+            merge_input = work_item / "artifacts/actual-transition-fixture.json"
+            merge_input.write_text(json.dumps({**completion, "summary": "Native fixture squash completed",
+                                               "verified_at": "2026-10-08T00:11:31Z"}))
+            delivery.run_development_stage(task.path, stage="merge", receipts={"merged": str(merge_input)},
+                                           idempotency_prefix="actual-transition:merge")
+            assert task.read()["state"] == "merged"
+            assert task.read()["subject_revision"] == head
+            assert task.read()["terminal_revision"] == completion["evidence"]["merge_sha"]
+            assert ready_snapshot.read_bytes() == historical_ready and receipt_path.read_bytes() == historical_attempt
+            assert load_review_receipt(receipt_path)["budget"]["full_reviews_used"] == 0
+            # Later health consumers use the hash-bound recorded Merge.
+            auto_dev._validate_health_stage_source(work_item, "review_self", "completed", ready_snapshot)
+            _record_standalone_stage(task, "release", revision=completion["evidence"]["merge_sha"])
+            auto_dev.require_auto_dev_predecessors(task.read()["autodev_path"], "deploy")
+            with pytest.raises(auto_dev.AutoDevStateError, match="restricted to Merge recording"):
+                auto_dev.require_auto_dev_predecessors(task.read()["autodev_path"], "deploy", post_provider_merge=completion)
+            recorded_merge = next(row for row in reversed(task.read()["receipts"]) if row["state"] == "merged")
+            Path(recorded_merge["ref"]).write_text("{}")
+            with pytest.raises(auto_dev.AutoDevStateError, match="immutable merged evidence changed"):
+                auto_dev._validate_health_stage_source(work_item, "review_self", "completed", ready_snapshot)
+            return
         def changed_target(*_args, **_kwargs):
             raise delivery.DevelopmentDeliveryError("unavailable review current provider target or head changed")
         monkeypatch.setattr(delivery, "read_current_github_review_target", changed_target)
@@ -627,6 +668,98 @@ def test_unavailable_live_guard_rejects_target_only_movement(monkeypatch, curren
     else:
         with pytest.raises(delivery.DevelopmentDeliveryError, match="target or head changed"):
             delivery.read_current_github_review_target(task, subject, 54)
+
+
+def _completed_transition_fixture(tmp_path, monkeypatch, *, existing_task=None, existing_subject=None, existing_base=None):
+    if existing_task is None:
+        task, _root, _repo, base = _task(tmp_path, monkeypatch)
+    else:
+        task, base = existing_task, existing_base
+    head, merge, timestamp = existing_subject or "b" * 40, "d" * 40, "2026-10-08T00:11:31Z"
+    if existing_task is None:
+        _advance_auto_dev_task_to_ready(task, subject_revision=head, pull_request="github:acme/app#54")
+    _record_standalone_stage(task, "finalize", revision=head, pull_request="github:acme/app#54")
+    packet = Path(task.read()["work_item"])
+    before = {"number": 54, "url": "https://github.com/acme/app/pull/54", "state": "OPEN",
+              "headRefOid": head, "headRefName": "feature/cc-54", "baseRefName": "main",
+              "author": {"login": "michaelwclark"}}
+    native_before = {"nameWithOwner": "acme/app", "pullRequest": {
+        **before, "baseRef": {"name": "main", "target": {"oid": base}}}}
+    pr = {**before, "state": "MERGED", "mergedAt": timestamp, "mergeCommit": {"oid": merge}}
+    artifacts = {
+        "native_provider_readback": {"readback_verified": True, "provider": "github", "repository": "acme/app",
+            "pull_request": pr, "accepted_source_head": head, "reviewed_target_before_merge": base,
+            "merge_commit_sha": merge, "merge_commit_parents": [base], "method": "squash"},
+        "native_premerge_guard": {"repository": "acme/app", "pull_request": 54, "source_head": head,
+            "reviewed_base": base, "actor": {"login": "michaelwclark", "permission": "ADMIN"},
+            "provider_before": before, "native_current_target_and_threads": native_before,
+            "canonical_premerge_gates_verified": True, "all_threads_resolved": True, "quality_gate_waiver": False},
+        "native_merge_command": {"exit_code": 0},
+    }
+    evidence = {**_provider_authority(task, pull_request="github:acme/app#54"),
+        "source_head_sha": head, "merge_sha": merge, "reviewed_base_sha": base, "base_sha": base,
+        "merge_parents": [base], "source_branch": "feature/cc-54", "merge_method": "squash",
+        "provider_state_after": "MERGED", "merged_at": timestamp,
+        "readiness_authority": _readiness_authority(task, subject_revision=head, pull_request="github:acme/app#54")}
+    for name, payload in artifacts.items():
+        path = packet / "artifacts" / (name + ".json")
+        path.write_text(json.dumps(payload))
+        evidence[name] = {"ref": str(path), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+    completion = {"schema": "development-stage-evidence/v1", "state": "merged", "status": "completed",
+                  "subject_revision": head, "evidence": evidence}
+    native = {"nameWithOwner": "acme/app", "pullRequest": {
+        **pr, "baseRef": {"name": "main", "target": {"oid": merge}}, "mergedBy": {"login": "michaelwclark"}},
+        "object": {"oid": merge, "parents": {"nodes": [{"oid": base}], "pageInfo": {"hasNextPage": False}}}}
+    return task, {"head_sha": head, "base_sha": base, "base_branch": "main"}, completion, native
+
+
+@pytest.mark.parametrize("mutation", [None, "repository", "head", "base_branch", "source_branch", "parent", "extra_parent",
+    "merge", "unmerged", "actor", "author", "diverged", "rewritten", "native_hash", "ready_hash", "finalize_hash",
+    "completion_head", "completion_base", "completion_repository", "completion_merge", "policy", "descendant"])
+def test_completed_transition_requires_exact_native_owned_merge(tmp_path, monkeypatch, mutation):
+    task, subject, completion, native = _completed_transition_fixture(tmp_path, monkeypatch)
+    if mutation == "repository": native["nameWithOwner"] = "wrong/app"
+    if mutation == "head": native["pullRequest"]["headRefOid"] = "e" * 40
+    if mutation == "base_branch": native["pullRequest"]["baseRefName"] = "develop"
+    if mutation == "source_branch": native["pullRequest"]["headRefName"] = "wrong"
+    if mutation == "parent": native["object"]["parents"]["nodes"][0]["oid"] = "e" * 40
+    if mutation == "extra_parent": native["object"]["parents"]["pageInfo"]["hasNextPage"] = True
+    if mutation == "merge": native["pullRequest"]["mergeCommit"]["oid"] = "e" * 40
+    if mutation == "unmerged": native["pullRequest"]["state"] = "OPEN"
+    if mutation == "actor": native["pullRequest"]["mergedBy"]["login"] = "wrong"
+    if mutation == "author": native["pullRequest"]["author"]["login"] = "wrong"
+    if mutation in {"descendant", "diverged", "rewritten"}: native["pullRequest"]["baseRef"]["target"]["oid"] = "e" * 40
+    if mutation == "native_hash": Path(completion["evidence"]["native_provider_readback"]["ref"]).write_text("{}")
+    if mutation == "ready_hash": Path(next(row["ref"] for row in reversed(task.read()["receipts"]) if row["state"] == "ready_for_merge")).write_text("{}")
+    if mutation == "finalize_hash": completion["evidence"]["readiness_authority"]["sha256"] = "0" * 64
+    if mutation == "completion_head": completion["evidence"]["source_head_sha"] = "e" * 40
+    if mutation == "completion_base": completion["evidence"]["reviewed_base_sha"] = "e" * 40
+    if mutation == "completion_repository": completion["evidence"]["repository"] = "git:github.com/wrong/app"
+    if mutation == "completion_merge": completion["evidence"]["merge_sha"] = "e" * 40
+    if mutation == "policy": Path(task.read()["policy_receipt"]).write_text("{}")
+    calls = []
+    def provider(command, **kwargs):
+        calls.append(command)
+        if "graphql" in command:
+            return subprocess.CompletedProcess(command, 0, json.dumps({"data": {"repository": native}}), "")
+        compare = {"status": "ahead", "behind_by": 0, "ahead_by": 1,
+                   "base_commit": {"sha": "d" * 40}, "merge_base_commit": {"sha": "d" * 40}}
+        if mutation == "diverged": compare["status"] = "diverged"
+        if mutation == "rewritten": compare["merge_base_commit"]["sha"] = "f" * 40
+        return subprocess.CompletedProcess(command, 0, json.dumps(compare), "")
+    monkeypatch.setattr(delivery.subprocess, "run", provider)
+    before = task.path.read_bytes()
+    if mutation not in {None, "descendant"}:
+        with pytest.raises(delivery.DevelopmentDeliveryError, match="post-provider completion|policy|fingerprint"):
+            delivery.read_completed_github_review_transition(task.read(), subject, 54, "feature/cc-54", completion)
+    else:
+        proof = delivery.read_completed_github_review_transition(task.read(), subject, 54, "feature/cc-54", completion)
+        assert proof["schema"] == "unavailable-review-completed-transition/v1"
+        assert len(calls) == (2 if mutation == "descendant" else 1)
+        # Default active readiness must still reject the genuine completed PR.
+        with pytest.raises(delivery.DevelopmentDeliveryError, match="target or head changed"):
+            delivery.read_current_github_review_target(task.read(), subject, 54, "feature/cc-54")
+    assert task.path.read_bytes() == before
 
 
 def test_unavailable_live_guard_fails_closed_on_provider_failure(monkeypatch):

@@ -9988,8 +9988,141 @@ query($owner:String!,$name:String!,$number:Int!){
     return {"schema": "unavailable-review-current-target/v1", "read_at": utc_now(), "native": native}
 
 
+def recorded_post_provider_merge_evidence(task: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Read a completed transition, never infer completion from active Ready."""
+
+    if task.get("state") not in FORWARD_STATES or FORWARD_STATES.index(str(task["state"])) < FORWARD_STATES.index("merged"):
+        return None
+    return _immutable_delivery_evidence(task, "merged")
+
+
+def _immutable_delivery_evidence(task: Mapping[str, Any], state: str) -> dict[str, Any]:
+    for row in reversed(task.get("receipts") or []):
+        if not isinstance(row, Mapping) or row.get("state") != state:
+            continue
+        path = Path(str(row.get("ref") or "")).expanduser()
+        if not (path.is_file() and not path.is_symlink() and row.get("sha256") == hashlib.sha256(path.read_bytes()).hexdigest()):
+            raise DevelopmentDeliveryError("post-provider completion immutable " + state + " evidence changed")
+        return _read_mapping(path)
+    raise DevelopmentDeliveryError("post-provider completion lacks immutable " + state + " evidence")
+
+
+def read_completed_github_review_transition(
+    task: Mapping[str, Any], subject: Mapping[str, Any], number: int,
+    source_branch: str, completion: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Prove an owned squash transition without admitting stale OPEN readiness."""
+
+    frozen_selected_task_profile(task)
+    evidence = completion.get("evidence")
+    if not (completion.get("schema") == "development-stage-evidence/v1" and completion.get("state") == "merged"
+            and completion.get("status") == "completed" and isinstance(evidence, Mapping)):
+        raise DevelopmentDeliveryError("post-provider completion requires typed merged evidence")
+    ready = _immutable_delivery_evidence(task, "ready_for_merge")
+    try:
+        authority = validate_pull_request_authority(task, evidence, "merged")
+        ready_authority = validate_pull_request_authority(task, ready.get("evidence") or {}, "ready_for_merge")
+        if not same_pull_request_authority(authority, ready_authority):
+            raise AutoDevStateError("post-provider completion PR authority changed")
+        validate_auto_dev_readiness_authority(
+            task["autodev_path"], evidence.get("readiness_authority") or {},
+            expected_subject=str(subject["head_sha"]), expected_pull_request=ready_authority,
+        )
+    except (AutoDevStateError, KeyError) as exc:
+        raise DevelopmentDeliveryError("post-provider completion readiness authority invalid: " + str(exc)) from exc
+    repository = str(task["repository"]["id"]).removeprefix("git:github.com/")
+    merge = str(evidence.get("merge_sha") or "")
+    base, head = str(subject["base_sha"]), str(subject["head_sha"])
+    branch = str(subject["base_branch"])
+    url = f"https://github.com/{repository}/pull/{number}"
+    if not (task["repository"]["id"] == "git:github.com/" + repository
+            and authority["repository"] == task["repository"]["id"]
+            and authority["pull_request"] == f"github:{repository}#{number}"
+            and authority["base_branch"] == branch
+            and (ready.get("subject_revision") or (ready.get("evidence") or {}).get("subject_revision")) == completion.get("subject_revision") == head
+            and evidence.get("source_head_sha") == head and evidence.get("reviewed_base_sha") == base
+            and evidence.get("base_sha") == base and evidence.get("merge_parents") == [base]
+            and evidence.get("source_branch") == source_branch and evidence.get("merge_method") == "squash"
+            and evidence.get("provider_state_after") == "MERGED" and evidence.get("readback_verified") is True
+            and re.fullmatch(r"[0-9a-f]{40}", merge) and merge not in {head, base}):
+        raise DevelopmentDeliveryError("post-provider completion subject or transition conflicts")
+    artifacts = {}
+    work_item = Path(str(task.get("work_item") or "")).resolve()
+    for key in ("native_provider_readback", "native_premerge_guard", "native_merge_command"):
+        descriptor = evidence.get(key)
+        path = Path(str(descriptor.get("ref") or "")) if isinstance(descriptor, Mapping) else Path("")
+        if not (path.is_file() and not path.is_symlink() and path.resolve().is_relative_to(work_item / "artifacts")
+                and hashlib.sha256(path.read_bytes()).hexdigest() == descriptor.get("sha256")):
+            raise DevelopmentDeliveryError("post-provider completion native proof missing or changed: " + key)
+        artifacts[key] = _read_mapping(path)
+    after, guard, command = (artifacts[k] for k in ("native_provider_readback", "native_premerge_guard", "native_merge_command"))
+    pr = after.get("pull_request") or {}
+    before = guard.get("provider_before") or {}
+    native_before = guard.get("native_current_target_and_threads") or {}
+    before_pr = native_before.get("pullRequest") or {}
+    actor = guard.get("actor") or {}
+    if not (after.get("readback_verified") is True and after.get("provider") == "github"
+            and after.get("repository") == guard.get("repository") == repository
+            and pr.get("number") == guard.get("pull_request") == before.get("number") == before_pr.get("number") == number
+            and pr.get("url") == before.get("url") == url and pr.get("state") == "MERGED"
+            and pr.get("headRefOid") == after.get("accepted_source_head") == guard.get("source_head") == before.get("headRefOid") == before_pr.get("headRefOid") == head
+            and pr.get("headRefName") == before.get("headRefName") == source_branch
+            and pr.get("baseRefName") == before.get("baseRefName") == before_pr.get("baseRefName") == branch
+            and (pr.get("mergeCommit") or {}).get("oid") == after.get("merge_commit_sha") == merge
+            and after.get("reviewed_target_before_merge") == guard.get("reviewed_base") == base
+            and after.get("merge_commit_parents") == [base] and after.get("method") == "squash"
+            and before.get("state") == before_pr.get("state") == "OPEN"
+            and native_before.get("nameWithOwner") == repository
+            and ((before_pr.get("baseRef") or {}).get("target") or {}).get("oid") == base
+            and (before.get("author") or {}).get("login") == authority["author_identity"].removeprefix("github:")
+            and guard.get("canonical_premerge_gates_verified") is True and guard.get("all_threads_resolved") is True
+            and guard.get("quality_gate_waiver") is False and command.get("exit_code") == 0
+            and actor.get("login") and actor.get("permission") in {"ADMIN", "MAINTAIN", "WRITE"}
+            and pr.get("mergedAt") == evidence.get("merged_at")):
+        raise DevelopmentDeliveryError("post-provider completion native proof identity conflicts")
+    owner, name = repository.split("/", 1)
+    query = """query($owner:String!,$name:String!,$number:Int!,$merge:GitObjectID!){repository(owner:$owner,name:$name){
+      nameWithOwner object(oid:$merge){... on Commit{oid parents(first:2){nodes{oid} pageInfo{hasNextPage}}}}
+      pullRequest(number:$number){number url state headRefOid headRefName baseRefName baseRef{name target{oid}}
+        author{login} mergedBy{login} mergedAt mergeCommit{oid}}}}"""
+    try:
+        response = subprocess.run(["gh", "api", "graphql", "-f", "query=" + query,
+            "-F", "owner=" + owner, "-F", "name=" + name, "-F", "number=" + str(number), "-f", "merge=" + merge],
+            capture_output=True, text=True, check=False, timeout=30)
+        if response.returncode:
+            raise ValueError("provider failed")
+        native = json.loads(response.stdout)["data"]["repository"]
+        observed, commit = native["pullRequest"], native["object"]
+        current = observed["baseRef"]["target"]["oid"]
+        parents = commit["parents"]
+        if not (native["nameWithOwner"] == repository and observed["number"] == number and observed["url"] == url
+                and observed["state"] == "MERGED" and observed["headRefOid"] == head and observed["headRefName"] == source_branch
+                and observed["baseRefName"] == observed["baseRef"]["name"] == branch
+                and observed["author"]["login"] == authority["author_identity"].removeprefix("github:")
+                and observed["mergedBy"]["login"] == actor["login"] and observed["mergedAt"] == pr["mergedAt"]
+                and observed["mergeCommit"]["oid"] == commit["oid"] == merge
+                and parents["nodes"] == [{"oid": base}] and parents["pageInfo"]["hasNextPage"] is False
+                and re.fullmatch(r"[0-9a-f]{40}", current)):
+            raise ValueError("provider identity or parent changed")
+        ancestry = None
+        if current != merge:
+            compared = subprocess.run(["gh", "api", f"repos/{repository}/compare/{merge}...{current}"],
+                capture_output=True, text=True, check=False, timeout=30)
+            ancestry = json.loads(compared.stdout)
+            if not (compared.returncode == 0 and ancestry.get("status") == "ahead" and ancestry.get("behind_by") == 0
+                    and type(ancestry.get("ahead_by")) is int and ancestry["ahead_by"] > 0
+                    and (ancestry.get("base_commit") or {}).get("sha") == merge
+                    and (ancestry.get("merge_base_commit") or {}).get("sha") == merge):
+                raise ValueError("current target is not a native-proven merge descendant")
+    except (OSError, ValueError, KeyError, TypeError, subprocess.TimeoutExpired) as exc:
+        raise DevelopmentDeliveryError("post-provider completion current native transition is invalid") from exc
+    return {"schema": "unavailable-review-completed-transition/v1", "read_at": utc_now(),
+            "native": native, "ancestry": ancestry}
+
+
 def validate_policy_approved_unavailable_review(
-    review_receipt: Mapping[str, Any], task: Mapping[str, Any],
+    review_receipt: Mapping[str, Any], task: Mapping[str, Any], *,
+    post_provider_merge: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Consume unavailable evidence without changing the default CLEAN contract."""
 
@@ -10108,6 +10241,10 @@ def validate_policy_approved_unavailable_review(
             and (observed_branch.get("target") or {}).get("oid") == subject["base_sha"]
         ):
             raise DevelopmentDeliveryError("unavailable review native provider identity no longer matches")
+    if post_provider_merge is not None:
+        return read_completed_github_review_transition(
+            task, subject, request["pr_number"], family["source_branch"], post_provider_merge,
+        )
     return read_current_github_review_target(
         task, subject, request["pr_number"], family["source_branch"],
     )
@@ -11405,7 +11542,12 @@ def run_development_stage(
     if autodev_ref and predecessor_target:
         _sync_auto_dev_projection(state.path)
         try:
-            require_auto_dev_predecessors(autodev_ref, predecessor_target)
+            completion = None
+            if normalized == "merge" and current.get("state") == "ready_for_merge" and receipts.get("merged"):
+                completion = _read_mapping(Path(str(receipts["merged"])).expanduser().resolve())
+            require_auto_dev_predecessors(
+                autodev_ref, predecessor_target, post_provider_merge=completion,
+            )
         except AutoDevStateError as exc:
             raise DevelopmentDeliveryError(str(exc)) from exc
     current_name = str(current.get("state"))
