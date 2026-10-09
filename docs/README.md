@@ -1,5 +1,8 @@
 # Genome's Agentic OS — Handbook
 
+Host reinstall inventory and inert preparation:
+[Fabric held restoration](development/fabric-held-restoration.md).
+
 The complete guide to installing, operating, and extending **Genome's Agentic OS** —
 a Python CLI (`agentic-os`) that scaffolds a domain-first filesystem "operating
 system" for AI-assisted work. It is a concrete implementation of the **Model

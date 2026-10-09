@@ -1,6 +1,7 @@
 include release/execution-fabric-manifest.yml
 include harness/config/execution-fabric.yml
 include schemas/execution-fabric.schema.json
+include docs/development/fabric-held-restoration.md
 recursive-include harness *
 recursive-include templates *
 recursive-include operating-manual *

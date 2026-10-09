@@ -1,5 +1,10 @@
 # Execution Fabric deployment
 
+For reinstall recovery, use the
+[held restoration runbook](../../docs/development/fabric-held-restoration.md)
+to inventory preserved data and stage verified inert assets. Inventory and
+staging do not grant authority to bootstrap or activate a primary.
+
 This directory is the portable deployment surface for the Agentic OS Execution
 Fabric. It keeps deployment mechanics separate from the generic control-plane
 service and from the one editable instance policy at
