@@ -46,6 +46,107 @@ from genomes_agentic_os.runtime_ops import runtime_init
 SOURCE_ROOT = Path(__file__).parents[1]
 
 
+def _cold_root(tmp_path):
+    root = _root(tmp_path)
+    path = root / "harness/config/execution-fabric.yml"
+    value = yaml.safe_load(path.read_text())
+    for queue in value["execution_fabric"]["queues"]:
+        if queue["id"] == "fabric_cold_recovery":
+            queue["enabled"] = True
+    for pool in value["execution_fabric"]["worker_pools"]:
+        if pool["id"] == "fabric_cold_recovery_workers":
+            pool["enabled"] = True
+    path.write_text(yaml.safe_dump(value, sort_keys=False))
+    return root
+
+
+def _cold_assignment():
+    return {"fabricEpoch": 7, "attemptId": "4d7729b4-6b99-4f74-a233-63828b9b2d73", "leaseToken": "34668958-8b81-492a-a7c2-45fbd1474cfb",
+            "task": {"id": "9b4bf200-4ac8-4a64-9969-07812e617d83", "taskType": "fabric.cold_canary", "queue": "fabric_cold_recovery",
+                     "namespace": "fabric_cold_recovery", "requiredCapabilities": ["fabric.cold_canary"],
+                     "payload": {"schema_version": "execution-fabric-cold-canary/v1", "recovery_id": "9b4bf200-4ac8-4a64-9969-07812e617d81",
+                                 "cluster_id": "isolated", "epoch": 7, "generation": 3}}}
+
+
+def test_cold_canary_actual_dispatch_cannot_call_process_or_provider(tmp_path, monkeypatch):
+    root = _cold_root(tmp_path)
+    def forbidden(*args, **kwargs):
+        pytest.fail("cold canary tried a process, provider, dispatcher or artifact operation")
+    monkeypatch.setattr(execution_fabric_remote.subprocess, "run", forbidden)
+    monkeypatch.setattr(execution_fabric_remote, "_run_prepared_worker_item", forbidden)
+    monkeypatch.setattr(execution_fabric_remote, "_publish_or_spool", forbidden)
+    outcome = execute_assignment(root, _cold_assignment())
+    assert outcome["effects"] == [] and outcome["artifacts"] == []
+    assert outcome["result"]["handler"] == "fabric_cold_canary_v1" and outcome["result"]["epoch"] == 7
+
+
+def test_cold_canary_default_route_and_pool_stay_disabled(tmp_path):
+    root = _root(tmp_path)
+    with pytest.raises(ValueError, match="disabled"):
+        execute_assignment(root, _cold_assignment())
+
+
+def test_cold_canary_route_cannot_replace_fixed_handler(tmp_path):
+    root = _cold_root(tmp_path)
+    path = root / "harness/config/execution-fabric.yml"
+    value = yaml.safe_load(path.read_text())
+    route = next(row for row in value["execution_fabric"]["task_routes"] if row["task_type"] == "fabric.cold_canary")
+    route["execution"]["domain_worker"] = "claude_task"
+    path.write_text(yaml.safe_dump(value, sort_keys=False))
+    with pytest.raises((ValueError, ExecutionFabricConfigError)):
+        execute_assignment(root, _cold_assignment())
+
+
+def test_cold_canary_rejects_process_local_handler_replacement(tmp_path, monkeypatch):
+    root = _cold_root(tmp_path)
+    monkeypatch.setitem(execution_fabric_remote._DOMAIN_WORKERS, "fabric_cold_canary_v1", lambda *args: pytest.fail("foreign handler ran"))
+    with pytest.raises(TaskExecutionError, match="identity differs"):
+        execute_assignment(root, _cold_assignment())
+
+
+def test_cold_canary_dedicated_worker_never_drains_or_publishes_spool(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    root = _cold_root(tmp_path)
+    def forbidden(*args, **kwargs):
+        pytest.fail("cold canary worker accessed artifact spool")
+    monkeypatch.setattr(execution_fabric_remote, "drain_artifact_spool", forbidden)
+    monkeypatch.setattr(execution_fabric_remote, "_publish_or_spool", forbidden)
+    class Client:
+        settings = SimpleNamespace(long_poll_seconds=0)
+        completed = []
+        sent = False
+        def register_worker(self, request):
+            assert request["metadata"]["coldCanaryHandler"] == "fabric_cold_canary_v1"
+            return {"registrationToken": "isolated", "fabricEpoch": 7}
+        def heartbeat(self, *args, **kwargs):
+            assert kwargs["artifact_spool_health"]["lastDrainAttempted"] == 0
+        def claim(self, **kwargs):
+            if not self.sent:
+                self.sent = True
+                return _cold_assignment()
+            return None
+        def complete_attempt(self, attempt_id, **kwargs):
+            self.completed.append(kwargs)
+        def fail_attempt(self, *args, **kwargs):
+            pytest.fail("fixed inert worker failed")
+    client = Client()
+    worker = RemoteFabricWorker(client, root=root, worker_id="isolated-canary", bootstrap_id="isolated", host_id="bigmac",
+                                queues=["fabric_cold_recovery"], capabilities=["fabric.cold_canary"], max_concurrency=1)
+    result = worker.work(max_tasks=1)
+    assert result["completed"] == 1 and result["failed"] == 0
+    assert client.completed[0]["effects"] == [] and "artifacts" not in client.completed[0]["result"]
+
+
+def test_cold_canary_worker_rejects_mixed_route_and_custom_executor(tmp_path):
+    root = _cold_root(tmp_path)
+    args = dict(root=root, worker_id="isolated-canary", bootstrap_id="isolated", host_id="bigmac",
+                capabilities=["fabric.cold_canary"], max_concurrency=1)
+    with pytest.raises(ValueError, match="sole fixed"):
+        RemoteFabricWorker(None, queues=["fabric_cold_recovery", "codex"], **args)
+    with pytest.raises(ValueError, match="sole fixed"):
+        RemoteFabricWorker(None, queues=["fabric_cold_recovery"], executor=lambda *args: {}, **args)
+
+
 def _root(tmp_path: Path, *, remote: bool = True) -> Path:
     root = tmp_path / "agentic_os"
     runtime_init(root)

@@ -1,5 +1,16 @@
 # Genome's Agentic OS — CLI Command Reference
 
+## Manual cold recovery
+
+`agentic-os runtime cold-recovery` provides `inspect`, `prepare`,
+`approve`, `apply`, `status`, `resume`, `canary`, `accept` and
+`initialize-anchor` for a dedicated offline recovery protocol.
+It defaults to validated dry run and uses fixed hash-qualified actor
+entrypoints. The independent anchor, external fence, closed signatures and
+held restored stores are mandatory. Ordinary standalone promotion/failback
+refusals remain. See [the operator runbook](../development/execution-fabric-cold-recovery.md).
+
+
 > Authoritative reference for `agentic-os`. Generated from
 > `src/genomes_agentic_os/cli.py` (argparse) plus the receipts written by
 > `docs/architecture/tools/validate-cli.sh` (statuses and real output).

@@ -3140,6 +3140,12 @@ def install_docs(root: str | Path) -> ScaffoldResult:
         harness_path(os_root, "config", "execution-fabric.yml"),
         result,
     )
+    # Fresh roots get an inert policy; updates preserve operator bindings.
+    copy_file(
+        harness_source_dir() / "config" / "execution-fabric-cold-recovery.json",
+        harness_path(os_root, "config", "execution-fabric-cold-recovery.json"),
+        result,
+    )
     copy_file(
         harness_source_dir() / "config" / "run-evidence.yml",
         harness_path(os_root, "config", "run-evidence.yml"),

@@ -256,7 +256,8 @@ export type AuditRecord = {
     | "failback_reseed_authorized"
     | "failback_planned"
     | "failback_rejected"
-    | "failback_committed";
+    | "failback_committed"
+    | "cold_recovery_committed";
   actor: string;
   occurredAt: string;
   previousLeader?: string;
@@ -419,4 +420,27 @@ export type PromotionMutation = LeadershipCasMutation & {
 export type FailbackCommitMutation = LeadershipCasMutation & {
   planTokenHash: string;
   nowEpoch: number;
+};
+
+/** Dedicated offline recovery receipts never authorize the HA endpoints. */
+export type ColdRecoveryReceipt = {
+  schemaVersion: "execution-fabric-cold-witness-receipt/v1";
+  recoveryId: string;
+  planSha256: string;
+  previousLeader: string;
+  currentLeader: string;
+  fabricEpoch: number;
+  generation: number;
+  originalDatabasePath: string;
+  targetDatabasePath: string;
+  newPublicKeySha256: string;
+  committedAt: string;
+  held: true;
+};
+export type ColdRecoveryMutation = {
+  expectedLeader: string;
+  expectedEpoch: number;
+  nextState: LeadershipState;
+  receipt: ColdRecoveryReceipt;
+  audit: AuditRecord;
 };

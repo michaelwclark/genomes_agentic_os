@@ -1,4 +1,6 @@
 import { readFileSync } from "node:fs";
+import type pg from "pg";
+import { PostgresReliabilityStore } from "../src/reliability.js";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -252,5 +254,18 @@ describe("independently runnable roles", () => {
       if (original === undefined) delete process.env.FABRIC_TEST_REPAIR_ACTIONS;
       else process.env.FABRIC_TEST_REPAIR_ACTIONS = original;
     }
+  });
+});
+
+describe("cold recovery reliability hold",()=>{
+  it("blocks alarm claim and operator replay before any write",async()=>{
+    const query=vi.fn(async(sql:string)=>({rows:sql.includes("SELECT cold_recovery_phase")?[{cold_recovery_phase:"CANARY_ADMITTED"}]:[],rowCount:0}));
+    const pool={query,connect:async()=>({query,release:()=>{}})} as unknown as pg.Pool;
+    const store=new PostgresReliabilityStore(pool,"bigmac");
+    await expect(store.claimAlarms("isolated",1,60)).rejects.toThrow(/cold recovery holds/);
+    await expect(store.replayEffect("effect","operator","replay")).rejects.toThrow(/cold recovery holds/);
+    await expect(store.deliverAlarm("alarm","consumer","claim",7,{})).rejects.toThrow(/cold recovery holds/);
+    await expect(store.acknowledgeFinding("finding","operator")).rejects.toThrow(/cold recovery holds/);
+    expect(query.mock.calls.filter(([sql])=>/^(INSERT|UPDATE|DELETE)/.test(sql))).toHaveLength(0);
   });
 });

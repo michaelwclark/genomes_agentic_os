@@ -11,6 +11,7 @@
     "build": "tsc -p tsconfig.build.json",
     "dev": "tsx watch src/main.ts",
     "start": "node dist/src/main.js",
+    "cold-recovery": "node dist/src/cold-recovery-main.js",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },

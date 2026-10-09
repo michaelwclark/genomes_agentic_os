@@ -50,6 +50,7 @@ execution_fabric:
     # global ceiling must not silently collapse that queue back to one.
     max_interactive_running: 2
     provider_limits:
+      local: 1
       codex: 2
       claude: 2
       non_llm: 4
@@ -339,6 +340,27 @@ execution_fabric:
         properties:
           command: {type: string}
       allowed_effect_types: []
+    - task_type: fabric.cold_canary
+      queue: fabric_cold_recovery
+      scheduling_class: background
+      execution:
+        remote_allowed: true
+        target: domain_worker
+        required_capability: fabric.cold_canary
+        command_template: null
+        domain_worker: fabric_cold_canary_v1
+      mutation_class: read_only
+      approval_class: policy_gated
+      payload:
+        additional_properties: false
+        required: [schema_version, recovery_id, cluster_id, epoch, generation]
+        properties:
+          schema_version: {type: string, enum: [execution-fabric-cold-canary/v1]}
+          recovery_id: {type: string, pattern: "^[a-f0-9-]{36}$"}
+          cluster_id: {type: string, pattern: "^.{1,128}$"}
+          epoch: {type: integer, minimum: 1, maximum: 9007199254740991}
+          generation: {type: integer, minimum: 1, maximum: 9007199254740991}
+      allowed_effect_types: []
   queues:
     - id: codex
       enabled: true
@@ -399,6 +421,14 @@ execution_fabric:
       concurrency:
         max_running: 4
         max_queued: 500
+    - id: fabric_cold_recovery
+      enabled: false
+      worker_pool: fabric_cold_recovery_workers
+      accepted_task_types: [fabric.cold_canary]
+      priority: 0
+      concurrency:
+        max_running: 1
+        max_queued: 1
   worker_pools:
     - id: codex_workers
       enabled: true
@@ -511,3 +541,18 @@ execution_fabric:
       retry:
         max_attempts: 3
         backoff_seconds: 60
+    - id: fabric_cold_recovery_workers
+      enabled: false
+      provider: local
+      queues: [fabric_cold_recovery]
+      capabilities: [fabric.cold_canary]
+      capacity:
+        min_workers: 0
+        max_workers: 1
+        max_tasks_per_worker: 1
+      lease:
+        timeout_seconds: 60
+        heartbeat_seconds: 10
+      retry:
+        max_attempts: 1
+        backoff_seconds: 0

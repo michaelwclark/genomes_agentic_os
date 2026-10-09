@@ -7,6 +7,8 @@ import type {
   ConfigDigestRotationPreparation,
   ConfigDigestRotationPreparationMutation,
   ConfigDigestRotationReceipt,
+  ColdRecoveryMutation,
+  ColdRecoveryReceipt,
   FailbackCommitMutation,
   FailbackPlan,
   LeadershipState,
@@ -80,6 +82,7 @@ export type WitnessStoreSnapshot = {
   configRotationAborts: ConfigDigestRotationAbortReceipt[];
   configRotationPreparations: ConfigDigestRotationPreparation[];
   audit: AuditRecord[];
+  coldRecoveries?: ColdRecoveryReceipt[];
 };
 
 function rotationCandidateEligible(
@@ -225,6 +228,7 @@ export class InMemoryWitnessStore implements WitnessStore {
     ConfigDigestRotationPreparation
   >();
   protected readonly audit: AuditRecord[] = [];
+  protected readonly coldRecoveries = new Map<string, ColdRecoveryReceipt>();
 
   protected didMutate(): void {}
 
@@ -243,6 +247,7 @@ export class InMemoryWitnessStore implements WitnessStore {
         ...this.configRotationPreparations.values(),
       ],
       audit: this.audit,
+      coldRecoveries: [...this.coldRecoveries.values()],
     });
   }
 
@@ -251,6 +256,10 @@ export class InMemoryWitnessStore implements WitnessStore {
       throw new Error("unsupported portable witness store schema");
     }
     this.state = snapshot.state ? structuredClone(snapshot.state) : undefined;
+    this.coldRecoveries.clear();
+    for (const item of snapshot.coldRecoveries ?? []) {
+      this.coldRecoveries.set(item.recoveryId, structuredClone(item));
+    }
     this.promotions.clear();
     for (const item of snapshot.promotions) {
       this.promotions.set(item.promotionId, structuredClone(item));
@@ -678,6 +687,31 @@ export class InMemoryWitnessStore implements WitnessStore {
   async appendAudit(audit: AuditRecord): Promise<void> {
     this.audit.push(structuredClone(audit));
     this.didMutate();
+  }
+
+  async getColdRecovery(recoveryId: string): Promise<ColdRecoveryReceipt | null> {
+    const receipt = this.coldRecoveries.get(recoveryId);
+    return receipt ? structuredClone(receipt) : null;
+  }
+
+  /** Invoked only by the authenticated offline cold coordinator. */
+  async commitColdRecovery(mutation: ColdRecoveryMutation): Promise<ColdRecoveryReceipt> {
+    const old = this.coldRecoveries.get(mutation.receipt.recoveryId);
+    if (old) {
+      if (old.planSha256 !== mutation.receipt.planSha256) {
+        throw new ConditionalWriteError("cold recovery identity has another plan");
+      }
+      return structuredClone(old);
+    }
+    const state = this.requireState();
+    if (state.authorityMode !== "standalone_primary" || state.currentLeader !== mutation.expectedLeader || state.fabricEpoch !== mutation.expectedEpoch || mutation.nextState.fabricEpoch <= state.fabricEpoch || mutation.nextState.authorityMode !== "standalone_primary" || mutation.nextState.currentLeader === state.currentLeader) {
+      throw new ConditionalWriteError("cold recovery authority changed or is not standalone");
+    }
+    this.state = structuredClone(mutation.nextState);
+    this.coldRecoveries.set(mutation.receipt.recoveryId, structuredClone(mutation.receipt));
+    this.audit.push(structuredClone(mutation.audit));
+    this.didMutate();
+    return structuredClone(mutation.receipt);
   }
 
   async listAudit(limit: number): Promise<AuditRecord[]> {
