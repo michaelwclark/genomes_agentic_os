@@ -315,6 +315,7 @@ def build(
         [
             ROOT / "deploy/execution-fabric",
             ROOT / "installers/execution-fabric",
+            ROOT / "docs/development/fabric-held-restoration.md",
             config,
             schema,
             STATIC_MANIFEST,
