@@ -104,6 +104,7 @@ def _qualification(plan: dict[str, Any]) -> tuple[Any, list[dict[str, Any]]]:
               (Path(plan["releaseRoot"]) / "bin/backup-health.sh", "backupHealthSha256"),
               (Path(plan["releaseRoot"]) / "bin/_lib.sh", "backupLibSha256"),
               (Path(plan["releaseRoot"]) / "bin/validate-backup-health-receipt.sh", "backupReceiptValidatorSha256"),
+              (Path(plan["backupSourceScript"]), "postgresBackupScriptSha256"),
               (Path(plan["node"]), "nodeSha256"))
     for actor, digest in actors:
         if not actor.is_file() or r.sha256(actor) != r._hash(qualified.get(digest)):
@@ -115,7 +116,7 @@ def _validate(plan: dict[str, Any]) -> None:
     r._closed(plan, {
         "schemaVersion", "sourceHost", "sourceRelease", "imageLockSha256", "policySha256",
         "qualificationFile", "captureTemplate", "exportPlan", "stagingRoot",
-        "releaseRoot", "backupHealthReceipt", "backupDirectory", "node",
+        "releaseRoot", "backupHealthReceipt", "backupDirectory", "backupSourceScript", "node",
     }, "daily plan")
     if plan["schemaVersion"] != PLAN:
         raise r.RecoverySetError("unsupported daily recovery plan")
@@ -123,7 +124,7 @@ def _validate(plan: dict[str, Any]) -> None:
     for name in ("imageLockSha256", "policySha256"):
         r._hash(plan[name])
     for name in ("qualificationFile", "captureTemplate", "exportPlan", "stagingRoot",
-                 "releaseRoot", "backupHealthReceipt", "backupDirectory"):
+                 "releaseRoot", "backupHealthReceipt", "backupDirectory", "backupSourceScript"):
         if not isinstance(plan[name], str) or not Path(plan[name]).is_absolute():
             raise r.RecoverySetError("daily input paths require exact absolute bindings")
     if not isinstance(plan["node"], str) or not Path(plan["node"]).is_absolute():
@@ -159,6 +160,9 @@ def _export(plan: dict[str, Any], working: Path, label: str, runner: Callable, *
         raise r.RecoverySetError("actual read-only export receipt did not qualify")
     if value.get("sourceHost") != plan["sourceHost"]:
         raise r.RecoverySetError("export source host differs")
+    if value.get("postgresSourceVerified") is not True:
+        raise r.RecoverySetError("export native PostgreSQL source provenance is unavailable")
+    r.postgres_source_identity(value.get("postgresSource"))
     return value
 
 
@@ -177,6 +181,7 @@ def _watermarks(template: dict[str, Any], working: Path, label: str,
     os_meta = template["componentMetadata"]["osAuthorities"]
     r._sqlite_snapshot(source_for("osAuthorities", os_meta["snapshot"]), os_path)
     return {"postgresWalLsn": exported["postgresWalLsn"],
+            "postgresSourceSha256": r._digest(r.postgres_source_identity(exported["postgresSource"])),
             "artifactInventorySha256": exported["versionInventorySha256"],
             "ledgerReferenceSha256": exported["ledgerReferenceSha256"],
             "witnessVersion": version, "witnessAuditSha256": r._digest(snapshot["audit"]),
@@ -280,11 +285,16 @@ def run_daily_recovery(plan_file: str | Path, *, apply: bool = False,
             backup = Path(plan["releaseRoot"]) / "bin/backup-health.sh"
             if not backup.is_file():
                 raise r.RecoverySetError("released PostgreSQL backup actor is unavailable")
-            runner([str(backup)])
+            expected_source_sha = r._hash(r._read(plan["qualificationFile"]).get("postgresBackupScriptSha256"))
+            runner([str(backup), "--require-source-provenance", "--source-script-sha256", expected_source_sha])
             health = r._read(plan["backupHealthReceipt"])
             if health.get("status") != "passed" or health.get("schemaVersion") != "execution-fabric-backup-health/v1":
                 raise r.RecoverySetError("fresh actual PostgreSQL restore proof is missing")
             _current(health.get("verifiedAt"), 600)
+            pg_source = r.verify_postgres_declaration(template["componentMetadata"]["postgres"],
+                                                      health.get("sourceIdentity"))
+            if health.get("sourceIdentityVerified") is not True:
+                raise r.RecoverySetError("fresh native PostgreSQL backup source identity is unverified")
             sidecar_name = health.get("restoreManifest", {}).get("file")
             dump_name = Path(health.get("backupFile", "")).name
             if not sidecar_name or Path(sidecar_name).name != sidecar_name or not dump_name.endswith(".dump"):
@@ -302,6 +312,8 @@ def run_daily_recovery(plan_file: str | Path, *, apply: bool = False,
                 {"dump": "postgres/ledger.dump", "receipt": "postgres/health.json",
                  "restoreManifest": "postgres/restore.json"})
             exported = _export(plan, working, "export-before", runner)
+            if r.postgres_source_identity(exported.get("postgresSource")) != pg_source:
+                raise r.RecoverySetError("backup and read-only export PostgreSQL sources differ")
             before = _watermarks(template, working, "before", exported)
             witness = template["componentMetadata"]["witness"]
             version, snapshot = r._witness_snapshot(working / "witness-before.db", witness["clusterId"])
@@ -332,6 +344,8 @@ def run_daily_recovery(plan_file: str | Path, *, apply: bool = False,
             _freeze_file(working / "export-before.json", evidence_dir / "export-before.json")
             captured = r.prepare_recovery_set(capture_plan, maintenance, capture, apply=True)
             after_export = _export(plan, working, "export-after", runner, watermark_only=True)
+            if r.postgres_source_identity(after_export.get("postgresSource")) != pg_source:
+                raise r.RecoverySetError("native PostgreSQL export source changed during capture")
             after = _watermarks(template, working, "after", after_export)
             if before != after:
                 raise r.RecoverySetError("actual source watermarks changed during daily capture")

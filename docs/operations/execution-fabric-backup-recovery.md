@@ -24,7 +24,14 @@ require separate successful snapshot receipts.
 Ordinary capture and collection never delete backup history. Retention apply requires a fresh
 custodian approval bound to the exact retention plan, repository and drill pins
 plus independent deletion-protection evidence. It forgets only named full snapshot
-IDs and never prunes. Collection removes only its own generated temporary
+IDs and never prunes. Custody receipts bind the native restic configuration ID,
+full snapshot ID, original source root, set tag, timestamp and metadata digest.
+The approval binds that repository ID as well as its canonical path. Before an
+apply, two unchanged native catalog/configuration readbacks must contain the
+retained sets, last good snapshot and every drill pin. Foreign repositories,
+legacy unbound custody receipts, mixed bindings and changed snapshot provenance
+refuse before forgetting. Unknown snapshots remain protected; survivor and
+repository identities are checked again after an admitted apply. Collection removes only its own generated temporary
 readback. Explicit plaintext staging/readback directories remain private and need
 the approved custodian cleanup procedure.
 
@@ -40,7 +47,7 @@ source/target overlap fail closed.
 
 | Component | Required componentMetadata |
 | --- | --- |
-| postgres | dump, receipt, restoreManifest relative paths; original systemId and integer majorVersion. Actual dump bytes match the real restore-health sidecars and run identity. |
+| postgres | dump, receipt, restoreManifest relative paths; native systemId, database, databaseOid and integer majorVersion. These declarations match actual source observations before and after the dump under the native source connection. Actual dump bytes match restore-health sidecars and run identity. |
 | witness | database, sentinel, backup, hostMarker, clusterId, version, leader, epoch, auditTailSha256, originalDatabasePath, originalBackupPath, signingPublicKey, signingPublicKeySha256. |
 | artifactStore | inventory with every available artifact payload, original object key and object version. Preserve versioned MinIO exports and metadata. |
 | workerSpools | inventory covering all pending and quarantined receipts and payloads with original owner bindings. |
@@ -97,7 +104,7 @@ for a reversible hold.
 The canonical daily_plan_file must equal the explicit --daily-plan argument.
 The private execution-fabric-recovery-daily/v1 input binds sourceHost,
 sourceRelease, imageLockSha256, policySha256, qualificationFile, captureTemplate,
-exportPlan, stagingRoot, releaseRoot, backupHealthReceipt, backupDirectory and an
+exportPlan, stagingRoot, releaseRoot, backupHealthReceipt, backupDirectory, backupSourceScript and an
 absolute node executable. Its schema is schemas/execution-fabric-recovery-daily.schema.json.
 The wrapper uses this coordinator only when complete sets are enabled.
 
@@ -105,7 +112,7 @@ Daily qualification uses execution-fabric-recovery-daily-qualification/v1,
 status=qualified, matching source identities, allWritersParticipate=true,
 qualifiedAt, an explicit independently approved validUntil, admissionModuleSha256,
 exportMainSha256, exportModuleSha256, backupHealthSha256, backupLibSha256,
-backupReceiptValidatorSha256, nodeSha256 and participants. Every participant has
+backupReceiptValidatorSha256, postgresBackupScriptSha256, nodeSha256 and participants. Every participant has
 role, absolute canonical root, exact reviewRoots, qualificationReceipt and
 qualificationSha256. Actual receipt bytes use
 execution-fabric-recovery-participant-qualification/v1 and bind qualified status,
@@ -126,7 +133,10 @@ inventory. Existing history remains untouched.
 
 The read-only export plan uses execution-fabric-recovery-export-plan/v1 with
 sourceHost, endpoint, bucket, region, credentialFile, readOnlyDatabaseRole,
-ownerBinding, maxVersions and maxBytes. Its private credential reference holds
+ownerBinding, maxVersions, maxBytes and expectedPostgresSource. The latter has
+exactly systemId, database, databaseOid and majorVersion and must match native
+source identity observations before and after the read-only export. It must also
+match the independently observed native dump source. Its private credential reference holds
 accessKeyId, secretAccessKey and databaseUrl. Use a qualified non-elevated PG
 read-only role and object permissions for ListBucketVersions, GetBucketVersioning,
 GetObjectVersion and GetObjectVersionTagging. No Put/Delete/versioning enable
@@ -244,3 +254,52 @@ effects or replace source history to make a drill pass.
 
 Keep backup validation distinct from merge, installed package, actual host runtime,
 eligible review/release and customer acceptance receipts.
+
+## Native source identity and read-only export role
+
+Complete capture requires the qualified installed postgres-backup.sh actor and
+its exact digest. The wrapper invokes backup-health.sh with
+--require-source-provenance and --source-script-sha256. The native actor observes
+pg_control_system(), current_database(), the database OID and server_version_num
+through its actual PGHOST/PGDATABASE/PGUSER/PGPASSFILE connection before the dump
+and after disposable restore/readback. Health and restore sidecar identities must
+agree. A template or image version cannot substitute for these observations.
+Legacy PG-only operation continues when complete recovery sets are disabled.
+
+An operator must separately provision and qualify a new export-only role on the
+exact intended database. Preserve existing roles and grants. A reviewed example
+for the public-schema installation is:
+
+```sql
+CREATE ROLE aos_recovery_export_reader LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE
+  NOREPLICATION NOBYPASSRLS;
+GRANT CONNECT ON DATABASE exact_fabric_database TO aos_recovery_export_reader;
+GRANT USAGE ON SCHEMA public TO aos_recovery_export_reader;
+GRANT SELECT ON TABLE public.fabric_artifacts TO aos_recovery_export_reader;
+GRANT EXECUTE ON FUNCTION pg_catalog.pg_control_system() TO aos_recovery_export_reader;
+```
+
+Set the password through an interactive approved secret-custody procedure, such
+as psql's \password command; never place its value in SQL artifacts, arguments or
+logs. Review effective memberships, inherited grants, schema CREATE and table
+write privileges as well as superuser, role/database creation, replication and
+row-security bypass flags. Verify the exact source identity and representative
+artifact queries in a read-only transaction under this new role. Compare those
+observations with the qualified capture template and native backup health.
+The exporter refuses inaccessible pg_control_system() and never grants access,
+switches credentials or falls back to an elevated role. The export credential
+file remains mode 0600 and separate from the approved backup/restore principal.
+Qualify the S3 principal separately for the listed read operations and all-version
+readback; the PostgreSQL fixture does not qualify deployed MinIO.
+
+The disposable helper tests/scripts/run-fabric-recovery-export.py accepts only
+--root for its exact source tree and --output for a new absolute private evidence
+directory. It requires locked Python dependencies, the built control plane and
+the cached immutable PostgreSQL image; --pull=never prevents an implicit pull.
+It creates a uniquely labelled resource-limited loopback fixture, compares actual
+dump/restore and non-elevated export observations, proves declaration, foreign
+database and missing-function-access refusals, and verifies removal of only its
+owned container and generated credential. Its S3 server is an empty loopback
+listing adapter. Native PostgreSQL provenance evidence, encrypted byte recovery,
+deployed all-version MinIO restore and production authority transfer remain
+separate qualifications.

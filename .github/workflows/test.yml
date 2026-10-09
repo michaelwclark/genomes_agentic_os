@@ -249,6 +249,39 @@ jobs:
       - name: Run witness OCI durability smoke
         run: tests/scripts/run-witness-oci-smoke.sh
 
+  recovery-export-provenance:
+    name: Recovery export native PostgreSQL provenance
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9
+        with:
+          python-version: "3.14"
+      - name: Install locked Python dependencies
+        run: uv sync --locked --extra dev
+      - name: Build the exact readonly export actor
+        run: |
+          npm ci --prefix services/execution-fabric-control-plane
+          npm run build --prefix services/execution-fabric-control-plane
+      - name: Fetch the accepted immutable disposable PostgreSQL image
+        run: docker pull docker.io/library/postgres@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193
+      - name: Qualify native source identity and readonly export refusals
+        run: |
+          provenance_output="$RUNNER_TEMP/fabric-recovery-provenance-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          PYTHONPATH="$GITHUB_WORKSPACE/src" .venv/bin/python tests/scripts/run-fabric-recovery-export.py \
+            --root "$GITHUB_WORKSPACE" --output "$provenance_output"
+      - name: Preserve the native PostgreSQL provenance receipt
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: recovery-export-postgres-provenance
+          path: ${{ runner.temp }}/fabric-recovery-provenance-*/terminal.json
+          if-no-files-found: warn
+
   secret-scan:
     runs-on: ubuntu-latest
     steps:

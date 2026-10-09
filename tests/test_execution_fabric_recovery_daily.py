@@ -9,7 +9,7 @@ import subprocess
 import pytest
 from genomes_agentic_os import execution_fabric_recovery as r
 from genomes_agentic_os import execution_fabric_recovery_daily as daily
-from test_execution_fabric_recovery_sets import capture, write
+from test_execution_fabric_recovery_sets import PG_SOURCE, capture, write
 
 
 @pytest.fixture
@@ -22,8 +22,10 @@ def daily_plan(capture, tmp_path):
             "captureTemplate": str(capture[0]), "exportPlan": str(tmp_path / "export-plan.json"),
             "stagingRoot": str(tmp_path / "daily-staging"), "releaseRoot": str(tmp_path / "release"),
             "backupHealthReceipt": str(source / "postgres/health.json"),
-            "backupDirectory": str(source / "postgres"), "node": "/fixture/node"}
-    write(Path(data["qualificationFile"]), {"schemaVersion": "isolated-test-fixture-only"})
+            "backupDirectory": str(source / "postgres"), "backupSourceScript": str(tmp_path / "source-backup.sh"), "node": "/fixture/node"}
+    script = write(Path(data["backupSourceScript"]), b"isolated-source-script-fixture")
+    write(Path(data["qualificationFile"]), {"schemaVersion": "isolated-test-fixture-only",
+                                          "postgresBackupScriptSha256": r.sha256(script)})
     write(Path(data["exportPlan"]), {"schemaVersion": "isolated-test-fixture-only"})
     return write(tmp_path / "daily-plan.json", data), data
 
@@ -127,7 +129,7 @@ def test_daily_qualification_refuses_changed_actor_or_participant_scope_before_h
         "admissionModuleSha256": "a" * 64, "nodeSha256": r.sha256(node),
         "backupHealthSha256": r.sha256(actor), "backupLibSha256": r.sha256(backup_lib),
         "backupReceiptValidatorSha256": r.sha256(validator), "exportMainSha256": r.sha256(export),
-        "exportModuleSha256": r.sha256(export_module)}
+        "exportModuleSha256": r.sha256(export_module), "postgresBackupScriptSha256": r.sha256(Path(plan["backupSourceScript"]))}
     if change == "node":
         write(node, b"changed-native-binary")
     elif change == "backup":
@@ -190,6 +192,7 @@ def test_success_generates_distinct_sets_and_restores_before_pointer_publication
         receipt = {"schemaVersion": "execution-fabric-recovery-export/v1",
                    "status": "watermark_verified" if watermark_only else "exported_bytes_verified",
                    "sourceHost": "genomesbox", "postgresWalLsn": "0/ABCD",
+                   "postgresSource": PG_SOURCE, "postgresSourceVerified": True,
                    "versionInventorySha256": "b" * 64, "ledgerReferenceSha256": "c" * 64}
         write(working / (label + ".json"), receipt)
         if not watermark_only:
@@ -214,7 +217,8 @@ def test_success_generates_distinct_sets_and_restores_before_pointer_publication
     assert (staging / second["relativePath"] / "manifest.json").is_file()
     assert json.loads((staging / "current-success.json").read_text()) == second
     assert fixture.events.index("resume") < fixture.events.index("guard-exit")
-    assert len(calls) == 2 and all(call == [str(backup_actor)] for call in calls)
+    assert len(calls) == 2 and all(call == [str(backup_actor), "--require-source-provenance",
+        "--source-script-sha256", r.sha256(Path(daily_plan[1]["backupSourceScript"]))] for call in calls)
     first_root = staging / first["relativePath"]
     verified = r.verify_recovery_set(first_root)
     assert verified["manifestSha256"] == first["manifestSha256"]
@@ -228,3 +232,23 @@ def test_success_generates_distinct_sets_and_restores_before_pointer_publication
         assert (proofs / proof).is_file()
     manifest = json.loads((first_root / "manifest.json").read_text())
     assert manifest["captureWindow"]["maintenanceReceiptSha256"] == r.sha256(proofs / "maintenance.json")
+
+
+@pytest.mark.parametrize("field", ["systemId", "database"])
+def test_daily_refuses_backup_export_native_source_mismatch_without_publication(daily_plan, capture, tmp_path, monkeypatch, field):
+    fixture = AdmissionFixture(tmp_path)
+    monkeypatch.setattr(daily, "_qualification", lambda _: (fixture, fixture_participants(tmp_path)))
+    write(Path(daily_plan[1]["releaseRoot"]) / "bin/backup-health.sh", b"fixture-only")
+    health_path = Path(daily_plan[1]["backupHealthReceipt"])
+    health = json.loads(health_path.read_text())
+    health.update(verifiedAt=datetime.now(timezone.utc).isoformat(), backupFile="ledger.dump",
+        restoreManifest={"file": "restore.json", "sha256": r.sha256(capture[2] / "postgres/restore.json")})
+    write(health_path, health)
+    foreign = dict(PG_SOURCE)
+    foreign[field] = "99999"
+    monkeypatch.setattr(daily, "_export", lambda *args, **kwargs: {"postgresSource": foreign})
+    with pytest.raises(r.RecoverySetError, match="sources differ"):
+        daily.run_daily_recovery(daily_plan[0], apply=True, runner=lambda _: None)
+    assert "resume" in fixture.events
+    staging = Path(daily_plan[1]["stagingRoot"])
+    assert not (staging / "current-success.json").exists() and not (staging / "sets").exists()

@@ -6,7 +6,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { exportRecoveryVersions, listVersions, type ExportOptions } from "../src/recovery-export.js";
 import { executeRecoveryExport } from "../src/recovery-export-main.js";
 const native = vi.hoisted(() => ({ client: undefined as any, queries: [] as string[], role: "readonly-recovery",
-  elevated: false, lsn: "0/ABCD", connectFailure: false, released: false, poolEnded: false, destroyed: false }));
+  elevated: false, lsn: "0/ABCD", connectFailure: false, released: false, poolEnded: false, destroyed: false,
+  systemId: "7432345656789123456", database: "execution_fabric", databaseOid: "16384", majorVersion: 17 }));
 vi.mock("@aws-sdk/client-s3", async importOriginal => ({
   ...await importOriginal<typeof import("@aws-sdk/client-s3")>(),
   S3Client: class {
@@ -22,6 +23,8 @@ vi.mock("pg", () => ({ default: { Pool: class {
         native.queries.push(text);
         if (text.includes("current_user AS role")) return { rows: [{ role: native.role }] };
         if (text.includes("rolsuper")) return { rows: [{ elevated: native.elevated }] };
+        if (text.includes("FROM pg_control_system()")) return { rows: [{ systemId: native.systemId,
+          database: native.database, databaseOid: native.databaseOid, serverVersionNum: native.majorVersion * 10000 + 6 }] };
         if (text.includes("pg_current_wal_lsn")) return { rows: [{ lsn: native.lsn }] };
         if (text.includes("FROM fabric_artifacts")) return { rows: [{ id: "original-artifact", task_id: "original-task",
           attempt_id: "attempt", object_key: "objects/key", storage_uri: "s3://rubicon-artifacts/objects/key",
@@ -126,9 +129,11 @@ describe("purpose-specific released recovery export entry", () => {
     await writeFile(plan, JSON.stringify({ schemaVersion: "execution-fabric-recovery-export-plan/v1",
       sourceHost: "genomesbox", endpoint: "http://fixture-minio.invalid:9000", bucket: "rubicon-artifacts",
       region: "us-east-1", credentialFile: credential, readOnlyDatabaseRole: "readonly-recovery",
+      expectedPostgresSource: { systemId: "7432345656789123456", database: "execution_fabric", databaseOid: "16384", majorVersion: 17 },
       ownerBinding: "original-bucket-owner", maxVersions: 100, maxBytes: 10000 }), { mode: 0o600 });
     Object.assign(native, { client: fixture(), queries: [], role: "readonly-recovery", elevated: false,
       lsn: "0/ABCD", connectFailure: false, released: false, poolEnded: false, destroyed: false });
+    Object.assign(native, { systemId: "7432345656789123456", database: "execution_fabric", databaseOid: "16384", majorVersion: 17 });
     vi.stubEnv("FABRIC_HOST_ID", "genomesbox");
     return { root, plan, credential, output: join(root, "new-output"), receipt: join(root, "new-receipt.json") };
   }
@@ -137,6 +142,7 @@ describe("purpose-specific released recovery export entry", () => {
     const result = await executeRecoveryExport(input.plan, input.output, input.receipt);
     expect(result.status).toBe("exported_bytes_verified");
     expect(result.authorityTransferAuthorized).toBe(false);
+    expect(result.postgresSourceVerified).toBe(true);
     expect(native.queries[0]).toBe("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
     expect(native.queries.some(query => /INSERT|UPDATE|DELETE|CREATE/.test(query))).toBe(false);
     expect(native.released && native.poolEnded && native.destroyed).toBe(true);
@@ -159,6 +165,14 @@ describe("purpose-specific released recovery export entry", () => {
     await expect(executeRecoveryExport(input.plan, input.output, input.receipt)).rejects.toThrow("role differs");
     await expect(readFile(input.receipt)).rejects.toThrow();
   });
+  it.each(["systemId", "database", "databaseOid", "majorVersion"] as const)("refuses changed actual PostgreSQL %s before object reads", async field => {
+    const input = await inputs();
+    if (field === "majorVersion") native.majorVersion = 16;
+    else native[field] = "99999";
+    await expect(executeRecoveryExport(input.plan, input.output, input.receipt)).rejects.toThrow("differs from native");
+    expect(native.client.calls).toHaveLength(0);
+    await expect(readFile(input.receipt)).rejects.toThrow();
+  });
   it("refuses exposed credential input and cleans native clients even when connection setup fails", async () => {
     const input = await inputs();
     await chmod(input.credential, 0o644);
@@ -166,7 +180,7 @@ describe("purpose-specific released recovery export entry", () => {
     expect(native.queries).toHaveLength(0);
     await chmod(input.credential, 0o600);
     native.connectFailure = true;
-    await expect(executeRecoveryExport(input.plan, input.output, input.receipt)).rejects.toThrow("fixture connection failure");
+    await expect(executeRecoveryExport(input.plan, input.output, input.receipt)).rejects.toThrow("readonly_connection: Error");
     expect(native.poolEnded && native.destroyed).toBe(true);
     expect(native.released).toBe(false);
   });

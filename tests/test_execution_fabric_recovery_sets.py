@@ -23,6 +23,8 @@ from genomes_agentic_os.cli import main
 
 
 SOURCE = Path(__file__).resolve().parents[1]
+PG_SOURCE = {"schemaVersion": "execution-fabric-postgres-source/v1", "systemId": "7432345656789123456",
+             "database": "execution_fabric", "databaseOid": "16384", "majorVersion": 17, "serverVersionNum": 170006}
 
 
 def write(path: Path, value) -> Path:
@@ -30,6 +32,24 @@ def write(path: Path, value) -> Path:
     path.write_bytes(value if isinstance(value, bytes) else json.dumps(value).encode())
     path.chmod(0o600)
     return path
+
+
+def custody_fixture(identity: str, verified: str, *, repository_id: str = "e" * 64) -> dict:
+    """Bound native-contract fixture; never qualifies an operational repository."""
+    set_id = "fixture-" + identity[-12:]
+    native = {"snapshotId": identity, "sourceRoot": "/isolated/fixture-source",
+              "tags": ["rubicon-recovery:" + set_id], "createdAt": verified}
+    return {"status": "encrypted_bytes_verified", "repositoryId": repository_id,
+            "snapshotId": identity, "manifestSha256": "a" * 64, "verifiedAt": verified,
+            "recoverySetId": set_id, "sourceRoot": native["sourceRoot"],
+            "sourceTag": native["tags"][0], "nativeSnapshot": native,
+            "snapshotMetadataSha256": r._digest(native)}
+
+
+def catalog_row(custody: dict) -> dict:
+    native = custody["nativeSnapshot"]
+    return {"id": native["snapshotId"], "paths": [native["sourceRoot"]],
+            "tags": native["tags"], "time": native["createdAt"]}
 
 
 @pytest.fixture
@@ -53,15 +73,17 @@ def capture(tmp_path: Path):
         "restoreDatabaseCreated": True, "restoreCompleted": True,
         "readbackCompleted": True, "restoreDatabaseDropped": True,
         "readbackManifestSha256": "4" * 64,
+        "sourceIdentityVerified": True, "sourceIdentityBefore": PG_SOURCE, "sourceIdentityAfter": PG_SOURCE,
     })
     add("postgres", "health.json", {
         "schemaVersion": "execution-fabric-backup-health/v1", "status": "passed",
         "runId": "backup-unit", "backupSha256": r.sha256(dump),
         "restoreManifest": {"sha256": r.sha256(sidecar)},
+        "sourceIdentityVerified": True, "sourceIdentity": PG_SOURCE,
     })
     metadata["postgres"] = {"dump": "postgres/ledger.dump", "receipt": "postgres/health.json",
                             "restoreManifest": "postgres/restore.json",
-                            "systemId": "original-system-123", "majorVersion": 17}
+                            **{name: PG_SOURCE[name] for name in ("systemId", "database", "databaseOid", "majorVersion")}}
 
     snapshot = {"schemaVersion": "execution-fabric-witness-store/v2",
                 "state": {"clusterId": "rubicon", "currentLeader": "genomesbox", "fabricEpoch": 7},
@@ -236,6 +258,26 @@ def test_pg_actual_dump_and_restore_provenance_are_required(capture, tmp_path, c
         r.prepare_recovery_set(capture[0], capture[1], tmp_path / "set", apply=True)
 
 
+@pytest.mark.parametrize("field", ["systemId", "database", "databaseOid", "majorVersion"])
+def test_pg_declared_source_must_match_actual_native_sidecar(capture, tmp_path, field):
+    plan = json.loads(capture[0].read_text())
+    plan["componentMetadata"]["postgres"][field] = 16 if field == "majorVersion" else "99999"
+    write(capture[0], plan)
+    with pytest.raises(r.RecoverySetError, match="differs from native source"):
+        r.prepare_recovery_set(capture[0], capture[1], tmp_path / "set", apply=True)
+
+
+def test_pg_native_before_after_source_cannot_differ(capture, tmp_path):
+    sidecar = json.loads((capture[2] / "postgres/restore.json").read_text())
+    sidecar["sourceIdentityAfter"]["database"] = "foreign_database"
+    path = write(capture[2] / "postgres/restore.json", sidecar)
+    health = json.loads((capture[2] / "postgres/health.json").read_text())
+    health["restoreManifest"]["sha256"] = r.sha256(path)
+    write(capture[2] / "postgres/health.json", health)
+    with pytest.raises(r.RecoverySetError, match="before/after provenance"):
+        r.prepare_recovery_set(capture[0], capture[1], tmp_path / "set", apply=True)
+
+
 @pytest.mark.parametrize("component", ["artifactStore", "workerSpools", "immutableReceipts"])
 def test_reference_closure_checks_actual_object_spool_and_receipt_payload(capture, tmp_path, component):
     inventory = json.loads((capture[2] / component / "inventory.json").read_text())
@@ -325,6 +367,12 @@ def test_encryption_exact_snapshot_is_restored_and_bytes_verified(capture, tmp_p
     seen = []
     def native_fixture(argv, **kwargs):
         seen.append(argv)
+        if "cat" in argv:
+            return subprocess.CompletedProcess(argv, 0, json.dumps({"id": "e" * 64}).encode())
+        if "snapshots" in argv:
+            return subprocess.CompletedProcess(argv, 0, json.dumps([{"id": "a" * 64,
+                "paths": [str(target)], "tags": ["rubicon-recovery:daily-unit"],
+                "time": datetime.now(timezone.utc).isoformat()}]).encode())
         if "backup" in argv:
             return subprocess.CompletedProcess(argv, 0, b'{"message_type":"summary","snapshot_id":"' + b"a" * 64 + b'"}\n')
         assert argv[argv.index("restore") + 1] == "a" * 64
@@ -459,10 +507,8 @@ def test_retention_preserves_last_good_and_drill_pin(tmp_path):
     receipts = tmp_path / "receipts"
     now = datetime.now(timezone.utc)
     for number in range(20):
-        write(receipts / f"{number}.json", {
-            "status": "encrypted_bytes_verified", "verifiedAt": (now - timedelta(days=number)).isoformat(),
-            "snapshotId": f"{number:064x}", "manifestSha256": "e" * 64,
-        })
+        write(receipts / f"{number}.json", custody_fixture(f"{number:064x}",
+              (now - timedelta(days=number)).isoformat()))
     pin = f"{19:064x}"
     plan = r.plan_retention(receipts, keep=2, weekly=0, monthly=0, pinned=(pin,))
     assert f"{0:064x}" in plan["retained"] and pin in plan["retained"]
@@ -474,31 +520,108 @@ def test_retention_preserves_last_good_and_drill_pin(tmp_path):
 def test_retention_apply_requires_exact_approved_plan_and_forgets_only_named_ids(tmp_path):
     receipts = tmp_path / "custody"
     now = datetime.now(timezone.utc)
+    catalog = {}
     for index in range(3):
-        write(receipts / (str(index) + ".json"), {"status": "encrypted_bytes_verified",
-            "snapshotId": f"{index:064x}", "manifestSha256": "a" * 64,
-            "verifiedAt": (now - timedelta(days=index)).isoformat()})
+        custody = custody_fixture(f"{index:064x}", (now - timedelta(days=index)).isoformat())
+        write(receipts / (str(index) + ".json"), custody)
+        catalog[custody["snapshotId"]] = catalog_row(custody)
+    unknown = "d" * 64
+    catalog[unknown] = {"id": unknown, "paths": ["/unreceipted/fixture"], "tags": [], "time": now.isoformat()}
     repository = tmp_path / "protected-repository"
     repository.mkdir(mode=0o700)
     password = write(tmp_path / "private-key", b"private-fixture-key")
     copy_receipt = write(tmp_path / "independent-copy.json", {"status": "verified", "fixtureOnly": True})
     plan = r.plan_retention(receipts, keep=1, weekly=0, monthly=0, pinned=(f"{2:064x}",))
     approval = {"schemaVersion": "execution-fabric-recovery-retention-approval/v1", "status": "verified",
-        "planSha256": plan["planSha256"], "repository": str(repository), "drillPinnedSnapshots": [f"{2:064x}"],
+        "planSha256": plan["planSha256"], "repository": str(repository), "repositoryId": "e" * 64,
+        "drillPinnedSnapshots": [f"{2:064x}"],
         "custodianIdentity": "independent-fixture-custodian", "independentDeletionProtectionVerified": True,
         "verifiedAt": now.isoformat(), "verificationReceipts": [{"path": str(copy_receipt), "sha256": r.sha256(copy_receipt)}]}
     approval_file = write(tmp_path / "approval.json", approval)
     calls = []
+    def fixture_native(argv):
+        calls.append(argv)
+        if "cat" in argv:
+            return subprocess.CompletedProcess(argv, 0, json.dumps({"id": "e" * 64}).encode())
+        if "snapshots" in argv:
+            return subprocess.CompletedProcess(argv, 0, json.dumps(list(catalog.values())).encode())
+        assert "forget" in argv
+        for identity in argv[argv.index("forget") + 1:]:
+            del catalog[identity]
+        return subprocess.CompletedProcess(argv, 0, b"")
     result = r.apply_retention(receipts, str(repository), password, approval_file, keep=1, weekly=0, monthly=0,
-        pinned=(f"{2:064x}",), apply=True, runner=lambda argv: calls.append(argv))
+        pinned=(f"{2:064x}",), apply=True, runner=fixture_native)
     assert result["status"] == "forgot_exact_snapshots" and result["prune"] is False
-    assert calls[0][-2:] == ["forget", f"{1:064x}"] and "prune" not in calls[0]
+    forget = [call for call in calls if "forget" in call]
+    assert len(forget) == 1 and forget[0][-2:] == ["forget", f"{1:064x}"]
+    assert not any("prune" in call for call in calls)
+    assert result["retainedReadbackVerified"] and unknown in result["preservedUnknownSnapshots"]
+    assert set(catalog) == {f"{0:064x}", f"{2:064x}", unknown}
     approval["planSha256"] = "f" * 64
     write(approval_file, approval)
     with pytest.raises(r.RecoverySetError, match="custodian retention approval"):
         r.apply_retention(receipts, str(repository), password, approval_file, keep=1, weekly=0, monthly=0,
-            pinned=(f"{2:064x}",), apply=True, runner=lambda argv: calls.append(argv))
-    assert len(calls) == 1
+            pinned=(f"{2:064x}",), apply=True, runner=fixture_native)
+    assert len([call for call in calls if "forget" in call]) == 1
+
+
+@pytest.mark.parametrize("change", ["foreign_repository", "missing_last_good", "missing_pin", "source_root", "catalog_changed"])
+def test_retention_native_preflight_refuses_provenance_or_survivor_gaps_before_forget(tmp_path, change):
+    now = datetime.now(timezone.utc)
+    receipts = tmp_path / "custody"
+    rows = {}
+    for index in range(3):
+        custody = custody_fixture(f"{index:064x}", (now - timedelta(days=index)).isoformat())
+        write(receipts / (str(index) + ".json"), custody)
+        rows[custody["snapshotId"]] = catalog_row(custody)
+    repo = tmp_path / "repo"
+    repo.mkdir(mode=0o700)
+    password = write(tmp_path / "key", b"fixture-only")
+    evidence = write(tmp_path / "independent-copy.json", {"fixtureOnly": True, "status": "verified"})
+    plan = r.plan_retention(receipts, keep=1, weekly=0, monthly=0, pinned=(f"{2:064x}",))
+    approval = write(tmp_path / "approval.json", {
+        "schemaVersion": "execution-fabric-recovery-retention-approval/v1", "status": "verified",
+        "repository": str(repo), "repositoryId": "e" * 64, "planSha256": plan["planSha256"],
+        "drillPinnedSnapshots": [f"{2:064x}"], "custodianIdentity": "fixture-custodian",
+        "independentDeletionProtectionVerified": True, "verifiedAt": now.isoformat(),
+        "verificationReceipts": [{"path": str(evidence), "sha256": r.sha256(evidence)}]})
+    if change == "missing_last_good":
+        del rows[f"{0:064x}"]
+    elif change == "missing_pin":
+        del rows[f"{2:064x}"]
+    elif change == "source_root":
+        rows[f"{0:064x}"]["paths"] = ["/foreign/source"]
+    calls, reads = [], 0
+    def fixture_native(argv):
+        nonlocal reads
+        calls.append(argv)
+        if "cat" in argv:
+            return subprocess.CompletedProcess(argv, 0, json.dumps({"id": ("d" if change == "foreign_repository" else "e") * 64}).encode())
+        assert "snapshots" in argv, "refusal must occur before any forget"
+        reads += 1
+        value = list(rows.values())
+        if change == "catalog_changed" and reads > 1:
+            value += [{"id": "b" * 64, "paths": ["/unknown"], "tags": [], "time": now.isoformat()}]
+        return subprocess.CompletedProcess(argv, 0, json.dumps(value).encode())
+    with pytest.raises(r.RecoverySetError):
+        r.apply_retention(receipts, str(repo), password, approval, keep=1, weekly=0, monthly=0,
+            pinned=(f"{2:064x}",), apply=True, runner=fixture_native)
+    assert not any("forget" in call or "prune" in call for call in calls)
+
+
+def test_retention_rejects_mixed_or_legacy_repository_receipts_before_native_actor(tmp_path):
+    receipts = tmp_path / "custody"
+    now = datetime.now(timezone.utc).isoformat()
+    write(receipts / "first.json", custody_fixture("a" * 64, now))
+    other = write(receipts / "foreign.json", custody_fixture("b" * 64, now, repository_id="d" * 64))
+    with pytest.raises(r.RecoverySetError, match="mix or substitute"):
+        r.plan_retention(receipts)
+    other.unlink()
+    legacy = custody_fixture("b" * 64, now)
+    del legacy["repositoryId"]
+    write(receipts / "legacy.json", legacy)
+    with pytest.raises(r.RecoverySetError, match="digest"):
+        r.plan_retention(receipts)
 
 
 def test_actual_cli_dry_actions_preserve_files_and_do_not_read_keys(capture, tmp_path, capsys, monkeypatch):
@@ -569,6 +692,21 @@ def test_native_restic_encrypted_exact_snapshot_roundtrip(capture, tmp_path):
     binary = os.environ["RUBICON_NATIVE_RESTIC"]
     # Canonical immutable history can have its own manifest filename and schema.
     plan = json.loads(capture[0].read_text())
+    native_pg = os.environ.get("RUBICON_NATIVE_PG_EVIDENCE")
+    native_pg_receipt = None
+    if native_pg:
+        evidence = Path(native_pg)
+        native_pg_receipt = json.loads((evidence / "terminal.json").read_text())
+        assert native_pg_receipt["status"] == "postgres_provenance_qualified"
+        assert native_pg_receipt["containerTeardownVerified"] and native_pg_receipt["dumpRestoreReadbackVerified"]
+        assert native_pg_receipt["nonElevatedReadonlyExportVerified"]
+        source = native_pg_receipt["sourceIdentity"]
+        for original, destination in (("native-ledger.dump", "ledger.dump"),
+                                      ("native-backup-health.json", "health.json"),
+                                      ("native-restore-sidecar.json", "restore.json")):
+            write(capture[2] / "postgres" / destination, (evidence / original).read_bytes())
+        plan["componentMetadata"]["postgres"].update({name: source[name] for name in
+            ("systemId", "database", "databaseOid", "majorVersion")})
     nested = write(capture[2] / "immutableReceipts/manifest.json", {"schemaVersion": "historical-receipt/v1",
         "originalOwner": "original-task:review"})
     plan["components"]["immutableReceipts"].append({"kind": "file", "source": str(nested),
@@ -599,7 +737,98 @@ def test_native_restic_encrypted_exact_snapshot_roundtrip(capture, tmp_path):
     assert not restored["authorityTransferAuthorized"]
     assert restored["applicationRestoreQualification"] == "required"
     assert json.loads((tmp_path / "recovery-receipts/daily-unit.json").read_text()) == custody
+    metrics_output = os.environ.get("RUBICON_NATIVE_RESTIC_RECEIPT_DIR")
+    if metrics_output:
+        destination = Path(metrics_output)
+        assert destination.is_absolute() and not destination.exists()
+        destination.mkdir(mode=0o700)
+        manifest = json.loads((target / "manifest.json").read_text())
+        write(destination / "native-roundtrip.json", {
+            "schemaVersion": "execution-fabric-native-encrypted-roundtrip-fixture/v1", "fixtureOnly": True,
+            "nativeRestic": binary, "repositoryId": custody["repositoryId"], "snapshotId": custody["snapshotId"],
+            "manifestSha256": captured["manifestSha256"], "components": sorted(manifest["components"]),
+            "fileCount": len(manifest["files"]), "payloadBytes": sum(row["bytes"] for row in manifest["files"]),
+            "encryptedReadbackVerified": True, "exactSnapshotIsolatedRestoreVerified": True,
+            "nativePostgresProvenanceReceiptSha256": r.sha256(Path(native_pg) / "terminal.json") if native_pg else None,
+            "nativePostgresDumpSha256": native_pg_receipt["backupSha256"] if native_pg_receipt else None,
+            "nativeMinioQualified": False, "productionRecoveryQualified": False,
+            "authorityTransferAuthorized": False, "applicationRestoreQualification": "required",
+        })
     # Actual encrypted repository data must not expose a captured plaintext canary.
     for data in (repository / "data").rglob("*"):
         if data.is_file():
             assert b"PGDMP-test-private-ledger" not in data.read_bytes()
+
+
+@pytest.mark.skipif(not os.environ.get("RUBICON_NATIVE_RESTIC"), reason="explicit native disposable restic catalog qualification")
+def test_native_retention_binds_two_repositories_and_preserves_all_catalog_snapshots(capture, tmp_path):
+    """Actual native identity/catalog validation; never issues forget or prune."""
+    binary = os.environ["RUBICON_NATIVE_RESTIC"]
+    source, _ = prepared(capture, tmp_path)
+    key = write(tmp_path / "private-custodian-key", os.urandom(32).hex().encode())
+    calls = []
+    def actual_native(argv, **kwargs):
+        calls.append(argv)
+        assert "forget" not in argv and "prune" not in argv
+        return r.native_command(argv, **kwargs)
+    custody = []
+    for name in ("first", "second"):
+        repo = tmp_path / name / "repository"
+        repo.mkdir(mode=0o700, parents=True)
+        r.native_command([binary, "--repo", str(repo), "--password-file", str(key), "init"])
+        custody.append(r.collect_recovery_set(source, str(repo), key, "daily-unit", restic=binary,
+            apply=True, runner=actual_native))
+    repo = tmp_path / "first/repository"
+    receipts = repo.parent / "recovery-receipts"
+    assert custody[0]["repositoryId"] != custody[1]["repositoryId"]
+    unknown = write(tmp_path / "unreceipted-private-fixture", b"unreceipted snapshot must survive")
+    prefix = [binary, "--repo", str(repo), "--password-file", str(key), "--json"]
+    actual_native(prefix + ["backup", str(unknown)])
+    catalog_before = r._catalog(prefix, actual_native)
+    copy_evidence = write(tmp_path / "independent-copy-fixture.json", {"fixtureOnly": True, "status": "verified"})
+    def approve(plan):
+        return write(tmp_path / "retention-approval.json", {
+            "schemaVersion": "execution-fabric-recovery-retention-approval/v1", "status": "verified",
+            "repository": str(repo), "repositoryId": custody[0]["repositoryId"], "planSha256": plan["planSha256"],
+            "drillPinnedSnapshots": sorted(set(plan["retained"]) - {plan["lastGood"]}),
+            "custodianIdentity": "isolated-fixture-only", "independentDeletionProtectionVerified": True,
+            "verifiedAt": datetime.now(timezone.utc).isoformat(),
+            "verificationReceipts": [{"path": str(copy_evidence), "sha256": r.sha256(copy_evidence)}]})
+    plan = r.plan_retention(receipts)
+    result = r.apply_retention(receipts, str(repo), key, approve(plan), restic=binary,
+        apply=True, runner=actual_native)
+    assert result["forgotSnapshots"] == [] and result["retainedReadbackVerified"]
+    assert set(r._catalog(prefix, actual_native)) == set(catalog_before)
+    assert len(result["preservedUnknownSnapshots"]) == 1
+    write(receipts / "foreign-repository.json", custody[1])
+    with pytest.raises(r.RecoverySetError, match="mix or substitute"):
+        r.apply_retention(receipts, str(repo), key, tmp_path / "not-read", restic=binary, apply=True, runner=actual_native)
+    (receipts / "foreign-repository.json").unlink()
+    pin = "f" * 64
+    pin_plan = r.plan_retention(receipts, pinned=(pin,))
+    with pytest.raises(r.RecoverySetError, match="lacks retained"):
+        r.apply_retention(receipts, str(repo), key, approve(pin_plan), pinned=(pin,), restic=binary,
+            apply=True, runner=actual_native)
+    forged = custody_fixture("a" * 64, datetime.now(timezone.utc).isoformat(),
+                             repository_id=custody[0]["repositoryId"])
+    write(receipts / "missing-last-good.json", forged)
+    missing_plan = r.plan_retention(receipts, keep=1, weekly=0, monthly=0)
+    with pytest.raises(r.RecoverySetError, match="lacks retained"):
+        r.apply_retention(receipts, str(repo), key, approve(missing_plan), keep=1, weekly=0, monthly=0,
+            restic=binary, apply=True, runner=actual_native)
+    assert set(r._catalog(prefix, actual_native)) == set(catalog_before)
+    metrics_output = os.environ.get("RUBICON_NATIVE_RESTIC_RECEIPT_DIR")
+    if metrics_output:
+        destination = Path(metrics_output)
+        assert destination.is_absolute()
+        destination.mkdir(mode=0o700, exist_ok=True)
+        write(destination / "native-retention-catalog.json", {
+            "schemaVersion": "execution-fabric-native-retention-catalog-fixture/v1", "fixtureOnly": True,
+            "repositoryIds": [row["repositoryId"] for row in custody],
+            "catalogBefore": sorted(catalog_before), "catalogAfter": sorted(r._catalog(prefix, actual_native)),
+            "unknownSnapshotsPreserved": result["preservedUnknownSnapshots"],
+            "lastGood": plan["lastGood"], "retainedReadbackVerified": result["retainedReadbackVerified"],
+            "actualMixedRepositoryRefused": True, "actualMissingPinnedSnapshotRefused": True,
+            "actualMissingLastGoodRefused": True, "nativeForgetInvocations": 0, "nativePruneInvocations": 0,
+            "productionRetentionAuthorized": False,
+        })

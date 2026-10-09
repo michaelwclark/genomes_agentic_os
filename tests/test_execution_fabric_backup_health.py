@@ -156,3 +156,29 @@ def test_validator_accepts_hash_bound_restore_manifest_and_rejects_tampering(
     failed = subprocess.run([str(VALIDATOR)], env=env, text=True, capture_output=True)
     assert failed.returncode == 75
     assert "hash does not match" in failed.stderr
+
+
+@pytest.mark.skipif(shutil.which("jq") is None, reason="jq is required")
+def test_complete_set_validator_requires_matching_native_source_and_preserves_legacy_mode(tmp_path):
+    receipt, runtime = _receipt_fixture(tmp_path)
+    env = {**os.environ, "FABRIC_RUNTIME_ENV_FILE": str(runtime), "FABRIC_RECOVERY_REQUIRE_PG_PROVENANCE": "1"}
+    failed = subprocess.run([str(VALIDATOR)], env=env, text=True, capture_output=True)
+    assert failed.returncode == 75 and "source PostgreSQL" in failed.stderr
+    identity = {"schemaVersion": "execution-fabric-postgres-source/v1", "systemId": "7432345656789123456",
+                "database": "execution_fabric", "databaseOid": "16384", "majorVersion": 17, "serverVersionNum": 170006}
+    manifest = receipt.parent / "backup-health.restore-manifest.json"
+    sidecar = json.loads(manifest.read_text())
+    sidecar.update(sourceIdentityVerified=True, sourceIdentityBefore=identity, sourceIdentityAfter=identity)
+    manifest.write_text(json.dumps(sidecar))
+    health = json.loads(receipt.read_text())
+    health.update(sourceIdentityVerified=True, sourceIdentity=identity)
+    health["restoreManifest"]["sha256"] = hashlib.sha256(manifest.read_bytes()).hexdigest()
+    receipt.write_text(json.dumps(health))
+    passed = subprocess.run([str(VALIDATOR)], env=env, text=True, capture_output=True)
+    assert passed.returncode == 0, passed.stderr
+    sidecar["sourceIdentityAfter"] = {**identity, "databaseOid": "99999"}
+    manifest.write_text(json.dumps(sidecar))
+    health["restoreManifest"]["sha256"] = hashlib.sha256(manifest.read_bytes()).hexdigest()
+    receipt.write_text(json.dumps(health))
+    rejected = subprocess.run([str(VALIDATOR)], env=env, text=True, capture_output=True)
+    assert rejected.returncode == 75 and "source PostgreSQL" in rejected.stderr

@@ -106,6 +106,8 @@
             "restoreManifest",
             "dump",
             "systemId",
+            "database",
+            "databaseOid",
             "majorVersion"
           ],
           "properties": {
@@ -123,7 +125,15 @@
             },
             "systemId": {
               "type": "string",
+              "pattern": "^[1-9][0-9]*$"
+            },
+            "database": {
+              "type": "string",
               "minLength": 1
+            },
+            "databaseOid": {
+              "type": "string",
+              "pattern": "^[1-9][0-9]*$"
             },
             "majorVersion": {
               "type": "integer",

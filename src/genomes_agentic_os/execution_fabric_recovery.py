@@ -489,15 +489,38 @@ def _verify_authorities(root: Path, manifest: dict[str, Any]) -> None:
         or not custody.get("custodianIdentity") or not custody.get("recoveryKeyRef")
         or not custody.get("testedAt")):
         raise RecoverySetError("decryption/signing secret custody evidence is incomplete")
+def postgres_source_identity(value: Any) -> dict[str, Any]:
+    source = _closed(value, {"schemaVersion", "systemId", "database", "databaseOid", "majorVersion", "serverVersionNum"},
+                     "actual PostgreSQL source")
+    if (source["schemaVersion"] != "execution-fabric-postgres-source/v1"
+        or not isinstance(source["systemId"], str) or not re.fullmatch(r"[1-9][0-9]*", source["systemId"])
+        or not isinstance(source["databaseOid"], str) or not re.fullmatch(r"[1-9][0-9]*", source["databaseOid"])
+        or not isinstance(source["database"], str) or not source["database"]
+        or type(source["majorVersion"]) is not int or source["majorVersion"] < 10
+        or type(source["serverVersionNum"]) is not int
+        or source["serverVersionNum"] // 10000 != source["majorVersion"]):
+        raise RecoverySetError("actual PostgreSQL native source identity is invalid")
+    return source
+
+
+def verify_postgres_declaration(declaration: dict[str, Any], observed: Any) -> dict[str, Any]:
+    actual = postgres_source_identity(observed)
+    if any(declaration.get(name) != actual[name] for name in ("systemId", "database", "databaseOid", "majorVersion")):
+        raise RecoverySetError("declared PostgreSQL system/database/version differs from native source")
+    return actual
+
+
 def _verify_postgres(root: Path, manifest: dict[str, Any]) -> None:
     component = _closed(manifest["components"]["postgres"],
-                        {"receipt", "restoreManifest", "dump", "systemId", "majorVersion"}, "postgres")
+                        {"receipt", "restoreManifest", "dump", "systemId", "database", "databaseOid", "majorVersion"}, "postgres")
     receipt = _read(_bound(root, manifest, "postgres", component["receipt"]))
     sidecar_path = _bound(root, manifest, "postgres", component["restoreManifest"])
     sidecar = _read(sidecar_path)
     dump = _bound(root, manifest, "postgres", component["dump"])
-    if not component["systemId"] or type(component["majorVersion"]) is not int or component["majorVersion"] < 1:
-        raise RecoverySetError("PostgreSQL source system/version binding is missing")
+    actual = verify_postgres_declaration(component, receipt.get("sourceIdentity"))
+    if (receipt.get("sourceIdentityVerified") is not True or sidecar.get("sourceIdentityVerified") is not True
+        or sidecar.get("sourceIdentityBefore") != actual or sidecar.get("sourceIdentityAfter") != actual):
+        raise RecoverySetError("native PostgreSQL source before/after provenance differs")
     if (receipt.get("schemaVersion") != "execution-fabric-backup-health/v1"
         or receipt.get("status") != "passed"
         or receipt.get("runId") != sidecar.get("runId")
@@ -693,6 +716,72 @@ def _password(path: str | Path) -> Path:
     return result
 
 
+def _native_json(prefix: list[str], command: list[str], runner: Callable) -> Any:
+    response = runner(prefix + command)
+    try:
+        return json.loads(response.stdout)
+    except (ValueError, TypeError, AttributeError):
+        raise RecoverySetError("native repository identity/catalog readback is invalid") from None
+
+
+def _repository_id(prefix: list[str], runner: Callable) -> str:
+    value = _native_json(prefix, ["cat", "config"], runner)
+    if not isinstance(value, dict):
+        raise RecoverySetError("native repository config identity is unavailable")
+    return _hash(value.get("id"))
+
+
+def _catalog(prefix: list[str], runner: Callable) -> dict[str, dict[str, Any]]:
+    rows = _native_json(prefix, ["snapshots"], runner)
+    if not isinstance(rows, list):
+        raise RecoverySetError("native snapshot catalog must be an array")
+    result = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            raise RecoverySetError("native snapshot catalog identity is malformed")
+        identity = _hash(row.get("id"))
+        if identity in result:
+            raise RecoverySetError("native snapshot catalog identity is ambiguous")
+        result[identity] = row
+    return result
+
+
+def _snapshot_binding(row: dict[str, Any]) -> dict[str, Any]:
+    identity = _hash(row.get("id"))
+    paths, tags = row.get("paths"), row.get("tags")
+    try:
+        datetime.fromisoformat(row["time"].replace("Z", "+00:00"))
+        if (not isinstance(paths, list) or len(paths) != 1 or not isinstance(paths[0], str)
+            or not PurePosixPath(paths[0]).is_absolute() or not isinstance(tags, list)
+            or any(not isinstance(tag, str) or not tag for tag in tags) or len(tags) != len(set(tags))):
+            raise ValueError
+        _relative(paths[0].lstrip("/"))
+    except (ValueError, TypeError, KeyError, AttributeError):
+        raise RecoverySetError("native recovery snapshot source/tag/time binding is invalid") from None
+    return {"snapshotId": identity, "sourceRoot": paths[0], "tags": sorted(tags), "createdAt": row["time"]}
+
+
+def _custody_binding(receipt: dict[str, Any]) -> dict[str, Any]:
+    repository_id = _hash(receipt.get("repositoryId"))
+    identity = _hash(receipt.get("snapshotId"))
+    _hash(receipt.get("manifestSha256"))
+    set_id = _identity(receipt.get("recoverySetId"))
+    binding = _closed(receipt.get("nativeSnapshot"), {"snapshotId", "sourceRoot", "tags", "createdAt"},
+                      "custody native snapshot")
+    observed = _snapshot_binding({"id": binding["snapshotId"], "paths": [binding["sourceRoot"]],
+                                  "tags": binding["tags"], "time": binding["createdAt"]})
+    if (binding != observed or identity != binding["snapshotId"]
+        or receipt.get("sourceRoot") != binding["sourceRoot"]
+        or receipt.get("sourceTag") != "rubicon-recovery:" + set_id
+        or receipt["sourceTag"] not in binding["tags"]):
+        raise RecoverySetError("custody source snapshot identity differs")
+    if _digest(binding) != _hash(receipt.get("snapshotMetadataSha256")):
+        raise RecoverySetError("custody native snapshot byte binding differs")
+    return {"repositoryId": repository_id, "snapshotId": identity,
+            "manifestSha256": receipt["manifestSha256"], "snapshotMetadataSha256": receipt["snapshotMetadataSha256"],
+            "recoverySetId": set_id, "sourceRoot": binding["sourceRoot"]}
+
+
 def collect_recovery_set(source_dir: str | Path, repository: str,
                          password_file: str | Path, set_id: str, *,
                          restic: str = "restic", verify_target: str | Path | None = None,
@@ -717,10 +806,11 @@ def collect_recovery_set(source_dir: str | Path, repository: str,
     repo = Path(repository).expanduser().absolute()
     if not repo.is_dir() or repo.is_symlink():
         raise RecoverySetError("custodian repository must be initialized separately")
-    source = Path(source_dir).absolute()
+    source = Path(source_dir).expanduser().absolute()
     if repo.is_relative_to(source) or source.is_relative_to(repo):
         raise RecoverySetError("repository and recovery set overlap")
     prefix = [restic, "--repo", str(repo), "--password-file", str(password), "--json"]
+    repository_id = _repository_id(prefix, runner)
     output = runner(prefix + ["backup", "--tag", "rubicon-recovery:" + set_id, str(source)])
     try:
         messages = [json.loads(line) for line in output.stdout.decode().splitlines() if line.strip()]
@@ -730,6 +820,12 @@ def collect_recovery_set(source_dir: str | Path, repository: str,
             raise ValueError
     except (ValueError, KeyError, IndexError):
         raise RecoverySetError("native encryption did not return an exact snapshot identity") from None
+    catalog = _catalog(prefix, runner)
+    if snapshot_id not in catalog:
+        raise RecoverySetError("native encrypted snapshot is absent from its repository catalog")
+    binding = _snapshot_binding(catalog[snapshot_id])
+    if binding["sourceRoot"] != str(source) or "rubicon-recovery:" + set_id not in binding["tags"]:
+        raise RecoverySetError("native encrypted snapshot source/set tag differs")
     if verify_target is None:
         private = Path(tempfile.mkdtemp(prefix="rubicon-restore-"))
         private.rmdir()
@@ -742,6 +838,8 @@ def collect_recovery_set(source_dir: str | Path, repository: str,
         restored_receipt = verify_recovery_set(restored)
         if restored_receipt["manifestSha256"] != verified["manifestSha256"]:
             raise RecoverySetError("encrypted restore manifest identity differs")
+        if _repository_id(prefix, runner) != repository_id:
+            raise RecoverySetError("native repository identity changed during collection")
     finally:
         # Only this invocation's generated temporary readback is removed.
         # Explicit targets remain private for the separately owned application drill.
@@ -751,6 +849,9 @@ def collect_recovery_set(source_dir: str | Path, repository: str,
         "schemaVersion": "execution-fabric-recovery-custody/v1",
         "status": "encrypted_bytes_verified", "recoverySetId": set_id,
         "manifestSha256": verified["manifestSha256"], "snapshotId": snapshot_id,
+        "repositoryId": repository_id, "sourceRoot": str(source),
+        "sourceTag": "rubicon-recovery:" + set_id, "nativeSnapshot": binding,
+        "snapshotMetadataSha256": _digest(binding),
         "verifiedAt": datetime.now(timezone.utc).isoformat(),
         "fileCount": verified["fileCount"], "authorityTransferAuthorized": False,
         "independentDeletionProtectionVerified": False,
@@ -801,15 +902,20 @@ def restore_recovery_set_isolated(repository: str, password_file: str | Path,
 
 def plan_retention(receipts_dir: str | Path, *, keep: int = 14,
                    weekly: int = 4, monthly: int = 3,
-                   pinned: tuple[str, ...] = ()) -> dict[str, Any]:
+                   pinned: tuple[str, ...] = (), repository_id: str | None = None) -> dict[str, Any]:
     if keep < 1 or weekly < 0 or monthly < 0:
         raise RecoverySetError("retention must preserve at least one verified set")
     receipts = []
+    bindings = {}
+    repositories = set()
     for path in Path(receipts_dir).glob("*.json"):
         receipt = _read(path)
         if receipt.get("status") == "encrypted_bytes_verified":
-            _hash(receipt.get("snapshotId"))
-            _hash(receipt.get("manifestSha256"))
+            binding = _custody_binding(receipt)
+            repositories.add(binding["repositoryId"])
+            if binding["snapshotId"] in bindings and bindings[binding["snapshotId"]] != binding:
+                raise RecoverySetError("custody snapshot provenance is ambiguous")
+            bindings[binding["snapshotId"]] = binding
             try:
                 receipt["_time"] = datetime.fromisoformat(receipt["verifiedAt"].replace("Z", "+00:00"))
             except (KeyError, ValueError, TypeError):
@@ -817,6 +923,8 @@ def plan_retention(receipts_dir: str | Path, *, keep: int = 14,
             receipts.append(receipt)
     if not receipts:
         raise RecoverySetError("retention requires at least one byte-verified custody receipt")
+    if len(repositories) != 1 or (repository_id is not None and repositories != {_hash(repository_id)}):
+        raise RecoverySetError("retention cannot mix or substitute native repository identities")
     for identity in pinned:
         _hash(identity)
     receipts.sort(key=lambda r: r["_time"], reverse=True)
@@ -835,6 +943,8 @@ def plan_retention(receipts_dir: str | Path, *, keep: int = 14,
     retained.add(receipts[0]["snapshotId"])
     plan = {
         "schemaVersion": "execution-fabric-recovery-retention/v1", "status": "planned",
+        "repositoryId": next(iter(repositories)),
+        "verifiedReceiptsSha256": _digest(sorted(bindings.values(), key=lambda value: value["snapshotId"])),
         "daily": keep, "weekly": weekly, "monthly": monthly,
         "retained": sorted(retained),
         "remove": sorted({r["snapshotId"] for r in receipts} - retained),
@@ -856,6 +966,7 @@ def apply_retention(receipts_dir: str | Path, repository: str, password_file: st
     if (not repo.is_dir() or repo.is_symlink()
         or proof.get("schemaVersion") != "execution-fabric-recovery-retention-approval/v1"
         or proof.get("status") != "verified" or proof.get("planSha256") != plan["planSha256"]
+        or proof.get("repositoryId") != plan["repositoryId"]
         or proof.get("repository") != str(repo)
         or proof.get("drillPinnedSnapshots") != sorted(pinned)
         or not proof.get("custodianIdentity")
@@ -876,10 +987,34 @@ def apply_retention(receipts_dir: str | Path, repository: str, password_file: st
         if path.is_symlink() or not path.is_file() or sha256(path) != _hash(reference["sha256"]):
             raise RecoverySetError("retention independent custody proof bytes differ")
     password = _password(password_file)
-    if plan["remove"]:
-        runner([restic, "--repo", str(repo), "--password-file", str(password),
-                "--json", "forget", *plan["remove"]])
+    prefix = [restic, "--repo", str(repo), "--password-file", str(password), "--json"]
+    if _repository_id(prefix, runner) != plan["repositoryId"]:
+        raise RecoverySetError("actual native repository differs from receipt/approval provenance")
+    before = _catalog(prefix, runner)
+    if not set(plan["retained"]).issubset(before) or plan["lastGood"] not in before:
+        raise RecoverySetError("actual repository lacks retained/last-good/drill-pinned snapshots")
+    for path in Path(receipts_dir).glob("*.json"):
+        custody = _read(path)
+        if custody.get("status") == "encrypted_bytes_verified" and custody["snapshotId"] in before:
+            if _digest(_snapshot_binding(before[custody["snapshotId"]])) != custody["snapshotMetadataSha256"]:
+                raise RecoverySetError("actual catalog source snapshot provenance differs from custody receipt")
+    # A fresh second read detects concurrent tag/catalog edits before the actor.
+    if _repository_id(prefix, runner) != plan["repositoryId"] or _digest(_catalog(prefix, runner)) != _digest(before):
+        raise RecoverySetError("native repository/catalog changed before retention")
+    remove = sorted(set(plan["remove"]) & set(before))
+    unknown = sorted(set(before) - set(plan["remove"]) - set(plan["retained"]))
+    if remove:
+        runner(prefix + ["forget", *remove])
+    after = _catalog(prefix, runner)
+    survivors = set(before) - set(remove)
+    if (_repository_id(prefix, runner) != plan["repositoryId"] or not survivors.issubset(after)
+        or any(_digest(after[identity]) != _digest(before[identity]) for identity in survivors)
+        or set(remove) & set(after)):
+        raise RecoverySetError("retention native survivor readback failed")
     receipt = {**plan, "status": "forgot_exact_snapshots", "prune": False,
+               "forgotSnapshots": remove, "alreadyAbsentSnapshots": sorted(set(plan["remove"]) - set(before)),
+               "preservedUnknownSnapshots": unknown, "catalogBeforeSha256": _digest(before),
+               "catalogAfterSha256": _digest(after), "retainedReadbackVerified": True,
                "approvalSha256": sha256(Path(maintenance_receipt)),
                "verifiedAt": datetime.now(timezone.utc).isoformat()}
     _write(Path(receipts_dir) / ("retention-" + uuid4().hex + ".json"), receipt)

@@ -16,6 +16,7 @@
     "releaseRoot",
     "backupHealthReceipt",
     "backupDirectory",
+    "backupSourceScript",
     "node"
   ],
   "properties": {
@@ -63,6 +64,10 @@
       "pattern": "^/"
     },
     "backupDirectory": {
+      "type": "string",
+      "pattern": "^/"
+    },
+    "backupSourceScript": {
       "type": "string",
       "pattern": "^/"
     },
