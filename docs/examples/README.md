@@ -11,3 +11,5 @@ not carry live state.
 | [`personal/`](personal/README.md) | Personal administration and private-context routing. |
 
 Copy ideas and conventions, not hard-coded identifiers or state.
+
+Operator email voice profiles and opt-in setup: [../operator-profiles/README.md](../operator-profiles/README.md).
