@@ -57,7 +57,7 @@ export const coldAnchorSchema = z.object({
 }).strict();
 const signed = <T extends z.ZodTypeAny>(schema: T) => z.object({payload: schema, signature: z.string().min(1)}).strict();
 export const coldRestoreInputSchema = z.object({
-  schemaVersion:z.literal("execution-fabric-cold-restore-input/v1"), recoverySetId:z.string().uuid(),
+  schemaVersion:z.literal("execution-fabric-cold-restore-input/v1"), recoverySetId:z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$(?![\s\S])/),
   manifestSha256:hash, restoreReceiptSha256:hash, sourceRelease:z.string().min(1), imageLockSha256:hash,
   capturedAt:stamp, commonWatermark:z.string().min(1), custodyReceiptSha256:hash,
   witness:z.object({clusterId:z.string().min(1),version:counter,leader:host,epoch:counter,auditTailSha256:hash,databaseSha256:hash,sentinelSha256:hash,backupSha256:hash,hostMarkerSha256:hash,originalDatabasePath:path,originalBackupPath:path,signingPublicKeySha256:hash}).strict(),

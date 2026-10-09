@@ -22,7 +22,7 @@ function fixture() {
   const originalAnchor={schemaVersion:"execution-fabric-recovery-anchor/v1",clusterId:policy.clusterId,leader:"genomesbox",generation:2,highestEpoch:6,publicKeySha256:"1".repeat(64),lastReceiptSha256:"c".repeat(64),pending:null};
   const payload={schema_version:"execution-fabric-cold-canary/v1" as const,recovery_id:"9b4bf200-4ac8-4a64-9969-07812e617d81",cluster_id:policy.clusterId,epoch:7,generation:3};
   const plan:ColdPlan={schemaVersion:"execution-fabric-cold-recovery-plan/v1",recoveryId:"9b4bf200-4ac8-4a64-9969-07812e617d81",direction:"recovery",clusterId:policy.clusterId,sourceHost:"genomesbox",targetHost:"bigmac",expectedEpoch:4,nextEpoch:7,generation:3,anchorSha256:digest(originalAnchor),policySha256:digest(policy),restoreInputSha256:"d".repeat(64),manifestSha256:"e".repeat(64),restoreReceiptSha256:"f".repeat(64),snapshotVersion:3,originalDatabasePath:"/isolated/original.sqlite",originalBackupPath:"/isolated/original.sqlite.backup",targetDatabasePath:"/isolated/target.sqlite",databaseSha256:"2".repeat(64),sentinelSha256:"3".repeat(64),backupSha256:"4".repeat(64),hostMarkerSha256:"5".repeat(64),oldPublicKeySha256:originalAnchor.publicKeySha256,newPublicKeySha256:"6".repeat(64),candidateConfigDigest:"7".repeat(64),newPgSystemId:"12345",timelineId:1,walPosition:0,createdAt:stamp(-1),expiresAt:stamp(500),canary:{taskId:"c86c6c43-e638-4d37-a0f6-9e423ff7d764",workerId:"isolated-canary",taskType:"fabric.cold_canary",queue:"fabric_cold_recovery",namespace:"fabric_cold_recovery",payload,payloadSha256:digest(payload)}};
-  const restoreInput={schemaVersion:"execution-fabric-cold-restore-input/v1",recoverySetId:"3ebd266b-2f8d-4b85-9e6d-cd908a232eb0",manifestSha256:plan.manifestSha256,restoreReceiptSha256:plan.restoreReceiptSha256,sourceRelease:"0.10.1",imageLockSha256:"f".repeat(64),capturedAt:stamp(-5),commonWatermark:"isolated-quiescent-watermark",custodyReceiptSha256:"b".repeat(64),witness:{clusterId:plan.clusterId,version:plan.snapshotVersion,leader:plan.sourceHost,epoch:plan.expectedEpoch,auditTailSha256:"a".repeat(64),databaseSha256:plan.databaseSha256,sentinelSha256:plan.sentinelSha256,backupSha256:plan.backupSha256,hostMarkerSha256:plan.hostMarkerSha256,originalDatabasePath:plan.originalDatabasePath,originalBackupPath:plan.originalBackupPath,signingPublicKeySha256:plan.oldPublicKeySha256},postgres:{dumpSha256:"d".repeat(64),restoreReadbackSha256:"e".repeat(64),systemId:plan.newPgSystemId,majorVersion:17},artifacts:{inventorySha256:"f".repeat(64),verifiedReferences:true},osAuthority:{snapshotSha256:"a".repeat(64),immutableReceiptInventorySha256:"b".repeat(64)}};
+  const restoreInput={schemaVersion:"execution-fabric-cold-restore-input/v1",recoverySetId:"20261009T230000Z-012345abcdef",manifestSha256:plan.manifestSha256,restoreReceiptSha256:plan.restoreReceiptSha256,sourceRelease:"0.10.1",imageLockSha256:"f".repeat(64),capturedAt:stamp(-5),commonWatermark:"isolated-quiescent-watermark",custodyReceiptSha256:"b".repeat(64),witness:{clusterId:plan.clusterId,version:plan.snapshotVersion,leader:plan.sourceHost,epoch:plan.expectedEpoch,auditTailSha256:"a".repeat(64),databaseSha256:plan.databaseSha256,sentinelSha256:plan.sentinelSha256,backupSha256:plan.backupSha256,hostMarkerSha256:plan.hostMarkerSha256,originalDatabasePath:plan.originalDatabasePath,originalBackupPath:plan.originalBackupPath,signingPublicKeySha256:plan.oldPublicKeySha256},postgres:{dumpSha256:"d".repeat(64),restoreReadbackSha256:"e".repeat(64),systemId:plan.newPgSystemId,majorVersion:17},artifacts:{inventorySha256:"f".repeat(64),verifiedReferences:true},osAuthority:{snapshotSha256:"a".repeat(64),immutableReceiptInventorySha256:"b".repeat(64)}};
   plan.restoreInputSha256=digest(restoreInput);
   const signed=(payload:unknown,key=signer.privateKey)=>({payload,signature:sign(null,Buffer.from(canonical(payload)),key).toString("base64")});
   const fence=signed({schemaVersion:"execution-fabric-external-fence/v1",recoveryId:plan.recoveryId,clusterId:plan.clusterId,sourceHost:plan.sourceHost,sourceBootId:"original-boot",durable:true,highestGeneration:2,highestEpoch:6,coveredWriterScopes:["witness","postgres","producer","provider"],evidenceSha256:"8".repeat(64),issuedAt:stamp(-1),expiresAt:stamp(500)},fenceKey.privateKey);
@@ -48,6 +48,27 @@ function poolFixture(f:ReturnType<typeof fixture>, overrides:Record<string,unkno
   return {pool,query};
 }
 describe("cold recovery held control plane (isolated unit seams)",()=>{
+  function rebindSetId(f:ReturnType<typeof fixture>,recoverySetId:string):void {
+    f.request.restoreInput.recoverySetId=recoverySetId;f.plan.restoreInputSha256=digest(f.request.restoreInput);
+    f.request.approval=f.signed({...f.request.approval.payload as Record<string,unknown>,planSha256:digest(f.plan)});
+    f.anchor.pending.planSha256=digest(f.plan);
+  }
+  it.each(["20261009T230000Z-012345abcdef","3ebd266b-2f8d-4b85-9e6d-cd908a232eb0","A","a_B.c-d","A"+"x".repeat(127)])("authorizes original bounded manifest set ID without aliases: %s",(setId)=>{
+    const f=fixture();rebindSetId(f,setId);
+    expect(authorizeColdRequest(f.request,f.policy,f.anchor).plan.restoreInputSha256).toBe(digest(f.request.restoreInput));
+    expect(f.request.restoreInput.recoverySetId).toBe(setId);
+  });
+  it.each(["","../escape","/absolute","a/b","a\\b",".hidden","_leading","-leading","white space","a\n","a\r","a\u2028","a\0","é","💥","A"+"x".repeat(128)])("unsafe or oversized set ID refuses before PostgreSQL: %j",async(setId)=>{
+    const f=fixture(),p=poolFixture(f);rebindSetId(f,setId);
+    await expect(runColdLedgerOperation(p.pool,"accept",f.request,f.policy,f.anchor)).rejects.toThrow();
+    expect(p.pool.connect).not.toHaveBeenCalled();
+  });
+  it.each(["recoveryId","taskId"])("transition %s still requires UUID before PostgreSQL",async(field)=>{
+    const f=fixture(),p=poolFixture(f);
+    if(field==="recoveryId")f.plan.recoveryId="20261009T230000Z-012345abcdef";else f.plan.canary.taskId="20261009T230000Z-012345abcdef";
+    await expect(runColdLedgerOperation(p.pool,"accept",f.request,f.policy,f.anchor)).rejects.toThrow(/uuid/);
+    expect(p.pool.connect).not.toHaveBeenCalled();
+  });
   it.each([
     {status:"queued"},
     {attempt_status:"failed"},
@@ -140,6 +161,7 @@ describe.skipIf(process.env.FABRIC_COLD_INTEGRATION_TESTS!=="1")("disposable Pos
       const migrations=await pool.query("SELECT version FROM fabric_schema_migrations ORDER BY version");
       expect(migrations.rows.some((r)=>r.version==="016_cold_recovery")).toBe(true);
       const f=fixture(), nextKey=generateKeyPairSync("ed25519"), oldKey=generateKeyPairSync("ed25519");
+      expect(f.request.restoreInput.recoverySetId).toBe("20261009T230000Z-012345abcdef");
       // Dynamically import only the reviewed built sibling store; no alternate service actor.
       const storeModule=await import(pathToFileURL(join(serviceRoot,"execution-fabric-leadership-witness/dist/src/sqlite-store.js")).href);
       const original=join(root,"original.sqlite"), target=join(root,"target.sqlite");
@@ -226,7 +248,7 @@ describe.skipIf(process.env.FABRIC_COLD_INTEGRATION_TESTS!=="1")("disposable Pos
       expect((await pool.query("SELECT count(*)::int AS count FROM fabric_artifacts WHERE task_id=$1",[f.plan.canary.taskId])).rows[0].count).toBe(0);
       expect(blockedObject.send).not.toHaveBeenCalled();
       const receiptFile=process.env.FABRIC_COLD_TEST_RECEIPT_FILE;
-      if(receiptFile)privateFile(receiptFile,{schemaVersion:"execution-fabric-isolated-cold-qualification/v1",databaseName:url.pathname.slice(1),migrationVersions:migrations.rows.map((r)=>r.version),recoveryId:f.plan.recoveryId,epoch:7,generation:3,canaryTaskId:f.plan.canary.taskId,quarantine:counts,providerOrObjectCalls:0,canaryHandler:"fabric_cold_canary_v1",canaryExecutor:"execute_assignment",canaryResultVerified:true,accepted:true,scope:"disposable local fixture only; no production fencing, backup/RPO or installed release qualification"});
+      if(receiptFile)privateFile(receiptFile,{schemaVersion:"execution-fabric-isolated-cold-qualification/v1",databaseName:url.pathname.slice(1),migrationVersions:migrations.rows.map((r)=>r.version),recoveryId:f.plan.recoveryId,recoverySetId:f.request.restoreInput.recoverySetId,epoch:7,generation:3,canaryTaskId:f.plan.canary.taskId,quarantine:counts,providerOrObjectCalls:0,canaryHandler:"fabric_cold_canary_v1",canaryExecutor:"execute_assignment",canaryResultVerified:true,accepted:true,scope:"disposable local fixture only; no production fencing, backup/RPO or installed release qualification"});
     } finally {await pool.end();rmSync(root,{recursive:true,force:true});}
   },90_000);
 });

@@ -25,6 +25,7 @@ class ColdRecoveryError(ValueError):
 ACTIONS = {"inspect", "prepare", "approve", "apply", "status", "resume", "canary", "accept", "initialize-anchor"}
 PHASES = ("PREPARED", "APPROVED", "RESERVED", "LEDGER_HELD", "WITNESS_COMMITTED_HELD", "LEDGER_COMMITTED_HELD", "ANCHOR_COMMITTED", "CANARY_ADMITTED", "ACCEPTED")
 HEX = re.compile(r"^[a-f0-9]{64}$")
+RECOVERY_SET_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 PLAN_KEYS = {"schemaVersion", "recoveryId", "direction", "clusterId", "sourceHost", "targetHost", "expectedEpoch", "nextEpoch", "generation", "anchorSha256", "policySha256", "restoreInputSha256", "manifestSha256", "restoreReceiptSha256", "snapshotVersion", "originalDatabasePath", "originalBackupPath", "targetDatabasePath", "databaseSha256", "sentinelSha256", "backupSha256", "hostMarkerSha256", "oldPublicKeySha256", "newPublicKeySha256", "candidateConfigDigest", "newPgSystemId", "timelineId", "walPosition", "createdAt", "expiresAt", "canary"}
 POLICY_KEYS = {"schemaVersion", "enabled", "clusterId", "allowedHosts", "recoveryPublicKeyPem", "fencePublicKeyPem", "maxApprovalSeconds", "witnessActorSha256", "controlPlaneActorSha256"}
 REQUEST_KEYS = {"plan", "restoreInput", "approval", "fence", "signingPrivateKeyFile", "hostMarkerFile", "baseline", "authorityProof", "policySha256"}
@@ -267,10 +268,8 @@ def _restore_binding(request: dict[str, Any], plan: dict[str, Any]) -> None:
     w = _closed(r["witness"], {"clusterId", "version", "leader", "epoch", "auditTailSha256", "databaseSha256", "sentinelSha256", "backupSha256", "hostMarkerSha256", "originalDatabasePath", "originalBackupPath", "signingPublicKeySha256"}, "restored witness")
     if r["schemaVersion"] != "execution-fabric-cold-restore-input/v1" or digest(r) != plan["restoreInputSha256"] or not isinstance(r["commonWatermark"], str) or not r["commonWatermark"] or not isinstance(r["sourceRelease"], str) or not r["sourceRelease"]:
         raise ColdRecoveryError("consistent isolated restore proof is missing or differs")
-    try:
-        UUID(r["recoverySetId"])
-    except (ValueError, TypeError, AttributeError) as exc:
-        raise ColdRecoveryError("recovery set identity is invalid") from exc
+    if not isinstance(r["recoverySetId"], str) or not RECOVERY_SET_ID.fullmatch(r["recoverySetId"]):
+        raise ColdRecoveryError("recovery set identity is invalid")
     _time(r["capturedAt"])
     if not isinstance(w["auditTailSha256"], str) or not HEX.fullmatch(w["auditTailSha256"]):
         raise ColdRecoveryError("restored witness audit closure is missing")

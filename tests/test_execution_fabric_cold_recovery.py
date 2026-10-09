@@ -50,7 +50,7 @@ def packet(tmp_path):
     anchor = {"schemaVersion": "execution-fabric-recovery-anchor/v1", "clusterId": policy["clusterId"], "leader": "genomesbox", "generation": 7, "highestEpoch": 12, "publicKeySha256": "1"*64, "pending": None, "lastReceiptSha256": "c"*64}
     original = str(root / "original.sqlite")
     restored = {
-        "schemaVersion": "execution-fabric-cold-restore-input/v1", "recoverySetId": str(uuid4()),
+        "schemaVersion": "execution-fabric-cold-restore-input/v1", "recoverySetId": "20261009T230000Z-012345abcdef",
         "manifestSha256": "d"*64, "restoreReceiptSha256": "e"*64, "sourceRelease": "0.10.1",
         "imageLockSha256": "f"*64, "capturedAt": stamp(-20), "commonWatermark": "quiesced-closure-12",
         "witness": {"clusterId": policy["clusterId"], "version": 3, "leader": "genomesbox", "epoch": 10, "auditTailSha256": "a"*64, "databaseSha256": "2"*64, "sentinelSha256": "3"*64, "backupSha256": "4"*64, "hostMarkerSha256": "5"*64, "originalDatabasePath": original, "originalBackupPath": original+".backup", "signingPublicKeySha256": anchor["publicKeySha256"]},
@@ -92,6 +92,51 @@ def actor_receipt(request, operation, witness=False):
     if not witness:
         result.update(operation=operation, residualQuarantine=True)
     return result
+
+
+def rebind_set_id(packet, recovery_set_id):
+    request = packet["request"]
+    request["restoreInput"]["recoverySetId"] = recovery_set_id
+    request["plan"]["restoreInputSha256"] = cr.digest(request["restoreInput"])
+    request["approval"] = packet["signed"]({**request["approval"]["payload"], "planSha256": cr.digest(request["plan"])}, 0)
+
+
+@pytest.mark.parametrize("recovery_set_id", ["20261009T230000Z-012345abcdef", "3ebd266b-2f8d-4b85-9e6d-cd908a232eb0", "A", "a_B.c-d", "A" + "x" * 127])
+def test_original_manifest_set_id_grammar_is_interoperable(packet, recovery_set_id, monkeypatch):
+    rebind_set_id(packet, recovery_set_id)
+    schema = json.loads((Path(__file__).parents[1]/"schemas/execution-fabric-cold-recovery.schema.json").read_text())
+    jsonschema.validate(packet["request"], schema)
+    monkeypatch.setattr(cr, "_actor", lambda *args: pytest.fail("dry-run launched an actor"))
+    before = packet["paths"]["anchor_file"].read_bytes()
+    assert packet["run"]("prepare", dry_run=True)["ok"] is True
+    assert packet["request"]["restoreInput"]["recoverySetId"] == recovery_set_id
+    assert packet["paths"]["anchor_file"].read_bytes() == before
+    assert not packet["paths"]["journal_dir"].exists()
+
+
+@pytest.mark.parametrize("recovery_set_id", ["", "../escape", "/absolute", "a/b", "a\\b", ".hidden", "_leading", "-leading", "white space", "a\n", "a\r", "a\u2028", "a\x00", "é", "💥", "A" + "x" * 128, None, 42, True])
+def test_unsafe_manifest_set_id_refuses_schema_and_coordinator_before_mutation(packet, recovery_set_id, monkeypatch):
+    rebind_set_id(packet, recovery_set_id)
+    schema = json.loads((Path(__file__).parents[1]/"schemas/execution-fabric-cold-recovery.schema.json").read_text())
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(packet["request"], schema)
+    monkeypatch.setattr(cr, "_actor", lambda *args: pytest.fail("invalid set ID launched an actor"))
+    before = packet["paths"]["anchor_file"].read_bytes()
+    with pytest.raises(cr.ColdRecoveryError, match="recovery set identity"):
+        packet["run"]("prepare", dry_run=True)
+    assert packet["paths"]["anchor_file"].read_bytes() == before
+    assert not packet["paths"]["journal_dir"].exists()
+
+
+@pytest.mark.parametrize("field", ["recoveryId", "taskId"])
+def test_transition_and_task_ids_remain_uuids(packet, field):
+    plan = packet["request"]["plan"]
+    if field == "recoveryId":
+        plan[field] = "20261009T230000Z-012345abcdef"
+    else:
+        plan["canary"][field] = "20261009T230000Z-012345abcdef"
+    with pytest.raises(cr.ColdRecoveryError, match="identity|task"):
+        cr.validate_plan(plan, packet["policy"], dt.datetime.now(dt.timezone.utc))
 
 
 def test_dry_run_prepares_no_lock_journal_or_actor(packet, monkeypatch):

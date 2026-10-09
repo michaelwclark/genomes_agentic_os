@@ -33,7 +33,7 @@ async function fixture() {
   const now=Date.now(), stamp=(offset:number)=>new Date(now+offset*1000).toISOString();
   const payload={schema_version:"execution-fabric-cold-canary/v1" as const,recovery_id:"9b4bf200-4ac8-4a64-9969-07812e617d81",cluster_id:policy.clusterId,epoch:7,generation:3};
   const plan:ColdPlan={schemaVersion:"execution-fabric-cold-recovery-plan/v1",recoveryId:"9b4bf200-4ac8-4a64-9969-07812e617d81",direction:"recovery",clusterId:policy.clusterId,sourceHost:"genomesbox",targetHost:"bigmac",expectedEpoch:4,nextEpoch:7,generation:3,anchorSha256:digest(initialAnchor),policySha256:digest(policy),restoreInputSha256:"d".repeat(64),manifestSha256:"e".repeat(64),restoreReceiptSha256:"f".repeat(64),snapshotVersion:version,originalDatabasePath:original,originalBackupPath:original+".backup",targetDatabasePath:target,databaseSha256:fileHash(target),sentinelSha256:fileHash(target+".initialized"),backupSha256:fileHash(target+".backup"),hostMarkerSha256:fileHash(marker),oldPublicKeySha256:initialAnchor.publicKeySha256,newPublicKeySha256:keyHash(nextKey.publicKey),candidateConfigDigest:"1".repeat(64),newPgSystemId:"12345",timelineId:1,walPosition:0,createdAt:stamp(-1),expiresAt:stamp(500),canary:{taskId:"c86c6c43-e638-4d37-a0f6-9e423ff7d764",workerId:"isolated-canary",taskType:"fabric.cold_canary",queue:"fabric_cold_recovery",namespace:"fabric_cold_recovery",payload,payloadSha256:digest(payload)}};
-  const restoreInput={schemaVersion:"execution-fabric-cold-restore-input/v1",recoverySetId:"3ebd266b-2f8d-4b85-9e6d-cd908a232eb0",manifestSha256:plan.manifestSha256,restoreReceiptSha256:plan.restoreReceiptSha256,sourceRelease:"0.10.1",imageLockSha256:"f".repeat(64),capturedAt:stamp(-5),commonWatermark:"isolated-quiescent-watermark",custodyReceiptSha256:"b".repeat(64),witness:{clusterId:plan.clusterId,version:plan.snapshotVersion,leader:plan.sourceHost,epoch:plan.expectedEpoch,auditTailSha256:"a".repeat(64),databaseSha256:plan.databaseSha256,sentinelSha256:plan.sentinelSha256,backupSha256:plan.backupSha256,hostMarkerSha256:plan.hostMarkerSha256,originalDatabasePath:plan.originalDatabasePath,originalBackupPath:plan.originalBackupPath,signingPublicKeySha256:plan.oldPublicKeySha256},postgres:{dumpSha256:"d".repeat(64),restoreReadbackSha256:"e".repeat(64),systemId:plan.newPgSystemId,majorVersion:17},artifacts:{inventorySha256:"f".repeat(64),verifiedReferences:true},osAuthority:{snapshotSha256:"a".repeat(64),immutableReceiptInventorySha256:"b".repeat(64)}};
+  const restoreInput={schemaVersion:"execution-fabric-cold-restore-input/v1",recoverySetId:"20261009T230000Z-012345abcdef",manifestSha256:plan.manifestSha256,restoreReceiptSha256:plan.restoreReceiptSha256,sourceRelease:"0.10.1",imageLockSha256:"f".repeat(64),capturedAt:stamp(-5),commonWatermark:"isolated-quiescent-watermark",custodyReceiptSha256:"b".repeat(64),witness:{clusterId:plan.clusterId,version:plan.snapshotVersion,leader:plan.sourceHost,epoch:plan.expectedEpoch,auditTailSha256:"a".repeat(64),databaseSha256:plan.databaseSha256,sentinelSha256:plan.sentinelSha256,backupSha256:plan.backupSha256,hostMarkerSha256:plan.hostMarkerSha256,originalDatabasePath:plan.originalDatabasePath,originalBackupPath:plan.originalBackupPath,signingPublicKeySha256:plan.oldPublicKeySha256},postgres:{dumpSha256:"d".repeat(64),restoreReadbackSha256:"e".repeat(64),systemId:plan.newPgSystemId,majorVersion:17},artifacts:{inventorySha256:"f".repeat(64),verifiedReferences:true},osAuthority:{snapshotSha256:"a".repeat(64),immutableReceiptInventorySha256:"b".repeat(64)}};
   plan.restoreInputSha256=digest(restoreInput);
   const signed = (payload: unknown, key=operator.privateKey) => ({payload,signature:sign(null,Buffer.from(canonical(payload)),key).toString("base64")});
   const fence=signed({schemaVersion:"execution-fabric-external-fence/v1",recoveryId:plan.recoveryId,clusterId:policy.clusterId,sourceHost:"genomesbox",sourceBootId:"original-boot",durable:true,highestGeneration:2,highestEpoch:6,coveredWriterScopes:["witness","postgres","producer","provider"],evidenceSha256:"2".repeat(64),issuedAt:stamp(-1),expiresAt:stamp(500)},fencer.privateKey);
@@ -42,6 +42,29 @@ async function fixture() {
   return {root,original,target,policy,anchor,request,plan,marker,signingPrivateKeyFile,signed,fence,stamp,fencer};
 }
 describe("offline standalone cold authority",()=>{
+  function rebindSetId(f:Awaited<ReturnType<typeof fixture>>,recoverySetId:string):void {
+    const input=f.request.restoreInput as {recoverySetId:string};input.recoverySetId=recoverySetId;
+    f.plan.restoreInputSha256=digest(input);
+    f.request.approval=f.signed({...((f.request.approval as {payload:Record<string,unknown>}).payload),planSha256:digest(f.plan)});
+    f.anchor.pending.planSha256=digest(f.plan);
+  }
+  it.each(["20261009T230000Z-012345abcdef","3ebd266b-2f8d-4b85-9e6d-cd908a232eb0","A","a_B.c-d","A"+"x".repeat(127)])("authorizes original bounded manifest set ID without aliases: %s",async(setId)=>{
+    const f=await fixture();rebindSetId(f,setId);
+    expect(authorizeColdRequest(f.request,f.policy,f.anchor).plan.restoreInputSha256).toBe(digest(f.request.restoreInput));
+    expect((f.request.restoreInput as {recoverySetId:string}).recoverySetId).toBe(setId);
+  });
+  it.each(["","../escape","/absolute","a/b","a\\b",".hidden","_leading","-leading","white space","a\n","a\r","a\u2028","a\0","é","💥","A"+"x".repeat(128)])("unsafe or oversized set ID refuses before authority write: %j",async(setId)=>{
+    const f=await fixture(),before=["",".initialized",".backup"].map((suffix)=>fileHash(f.target+suffix));
+    rebindSetId(f,setId);
+    await expect(commitColdWitness(f.request,f.policy,f.anchor)).rejects.toThrow();
+    expect(["",".initialized",".backup"].map((suffix)=>fileHash(f.target+suffix))).toEqual(before);
+  });
+  it.each(["recoveryId","taskId"])("transition %s still requires UUID before authority write",async(field)=>{
+    const f=await fixture(),before=fileHash(f.target);
+    if(field==="recoveryId")f.plan.recoveryId="20261009T230000Z-012345abcdef";else f.plan.canary.taskId="20261009T230000Z-012345abcdef";
+    await expect(commitColdWitness(f.request,f.policy,f.anchor)).rejects.toThrow(/uuid/);
+    expect(fileHash(f.target)).toBe(before);
+  });
   it("ordinary startup refuses relocated sentinel; verified commit rotates epoch and preserves history",async()=>{
     const f=await fixture();
     expect(()=>new SqliteWitnessStore(f.target,"isolated-fabric")).toThrow(/bootstrap marker|storage identity|does not match|sentinel/);
