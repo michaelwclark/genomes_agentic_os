@@ -1,0 +1,441 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://genomes.ai/schemas/execution-fabric-recovery-set.schema.json",
+  "title": "Execution Fabric complete recovery set",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "recoverySetId",
+    "status",
+    "capturedAt",
+    "sourceHost",
+    "sourceRelease",
+    "imageLockSha256",
+    "policySha256",
+    "commonWatermark",
+    "captureWindow",
+    "components",
+    "files",
+    "fileInventorySha256"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "execution-fabric-recovery-set/v1"
+    },
+    "recoverySetId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+    },
+    "status": {
+      "const": "local_capture_complete"
+    },
+    "capturedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "sourceHost": {
+      "type": "string",
+      "minLength": 1
+    },
+    "sourceRelease": {
+      "type": "string",
+      "minLength": 1
+    },
+    "imageLockSha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "policySha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "commonWatermark": {
+      "type": "string",
+      "minLength": 1
+    },
+    "captureWindow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "maintenanceReceiptSha256",
+        "maintenanceRunId",
+        "beforeWatermarks",
+        "afterWatermarks"
+      ],
+      "properties": {
+        "maintenanceReceiptSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "maintenanceRunId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "beforeWatermarks": {
+          "type": "object",
+          "minProperties": 1
+        },
+        "afterWatermarks": {
+          "type": "object",
+          "minProperties": 1
+        }
+      }
+    },
+    "components": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "postgres",
+        "witness",
+        "artifactStore",
+        "workerSpools",
+        "immutableReceipts",
+        "osAuthorities",
+        "configuration",
+        "releaseAssets",
+        "sourceRecovery",
+        "credentialEscrow"
+      ],
+      "properties": {
+        "postgres": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "receipt",
+            "restoreManifest",
+            "dump",
+            "systemId",
+            "majorVersion"
+          ],
+          "properties": {
+            "receipt": {
+              "type": "string",
+              "pattern": "^[A-Za-z][A-Za-z0-9_-]*/[^\\\\]+$"
+            },
+            "restoreManifest": {
+              "type": "string",
+              "pattern": "^[A-Za-z][A-Za-z0-9_-]*/[^\\\\]+$"
+            },
+            "dump": {
+              "type": "string",
+              "pattern": "^[A-Za-z][A-Za-z0-9_-]*/[^\\\\]+$"
+            },
+            "systemId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "majorVersion": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        },
+        "witness": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "database",
+            "sentinel",
+            "backup",
+            "hostMarker",
+            "clusterId",
+            "version",
+            "leader",
+            "epoch",
+            "auditTailSha256",
+            "originalDatabasePath",
+            "originalBackupPath",
+            "signingPublicKey",
+            "signingPublicKeySha256"
+          ],
+          "properties": {
+            "database": {
+              "type": "string",
+              "pattern": "^[A-Za-z][A-Za-z0-9_-]*/[^\\\\]+$"
+            },
+            "sentinel": {
+              "type": "string",
+              "pattern": "^[A-Za-z][A-Za-z0-9_-]*/[^\\\\]+$"
+            },
+            "backup": {
+              "type": "string",
+              "pattern": "^[A-Za-z][A-Za-z0-9_-]*/[^\\\\]+$"
+            },
+            "hostMarker": {
+              "type": "string",
+              "pattern": "^[A-Za-z][A-Za-z0-9_-]*/[^\\\\]+$"
+            },
+            "clusterId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "version": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "leader": {
+              "type": "string",
+              "minLength": 1
+            },
+            "epoch": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "auditTailSha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "originalDatabasePath": {
+              "type": "string",
+              "pattern": "^/"
+            },
+            "originalBackupPath": {
+              "type": "string",
+              "pattern": "^/"
+            },
+            "signingPublicKey": {
+              "type": "string",
+              "pattern": "^[A-Za-z][A-Za-z0-9_-]*/[^\\\\]+$"
+            },
+            "signingPublicKeySha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            }
+          }
+        },
+        "artifactStore": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "inventory"
+          ],
+          "properties": {
+            "inventory": {
+              "type": "string",
+              "pattern": "^[A-Za-z][A-Za-z0-9_-]*/[^\\\\]+$"
+            }
+          }
+        },
+        "workerSpools": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "inventory"
+          ],
+          "properties": {
+            "inventory": {
+              "type": "string",
+              "pattern": "^[A-Za-z][A-Za-z0-9_-]*/[^\\\\]+$"
+            }
+          }
+        },
+        "immutableReceipts": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "inventory"
+          ],
+          "properties": {
+            "inventory": {
+              "type": "string",
+              "pattern": "^[A-Za-z][A-Za-z0-9_-]*/[^\\\\]+$"
+            }
+          }
+        },
+        "osAuthorities": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "snapshot",
+            "authorityId"
+          ],
+          "properties": {
+            "snapshot": {
+              "type": "string",
+              "pattern": "^[A-Za-z][A-Za-z0-9_-]*/[^\\\\]+$"
+            },
+            "authorityId": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "configuration": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "authorities"
+          ],
+          "properties": {
+            "authorities": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "runtimeEnv",
+                "hosts",
+                "fabricPolicy",
+                "installerState"
+              ],
+              "properties": {
+                "runtimeEnv": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z][A-Za-z0-9_-]*/[^\\\\]+$"
+                },
+                "hosts": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z][A-Za-z0-9_-]*/[^\\\\]+$"
+                },
+                "fabricPolicy": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z][A-Za-z0-9_-]*/[^\\\\]+$"
+                },
+                "installerState": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z][A-Za-z0-9_-]*/[^\\\\]+$"
+                }
+              }
+            }
+          }
+        },
+        "releaseAssets": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "authorities"
+          ],
+          "properties": {
+            "authorities": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "imageLock",
+                "releaseManifest"
+              ],
+              "properties": {
+                "imageLock": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z][A-Za-z0-9_-]*/[^\\\\]+$"
+                },
+                "releaseManifest": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z][A-Za-z0-9_-]*/[^\\\\]+$"
+                }
+              }
+            }
+          }
+        },
+        "sourceRecovery": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "authorities"
+          ],
+          "properties": {
+            "authorities": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "bundle",
+                "dirtyPatch"
+              ],
+              "properties": {
+                "bundle": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z][A-Za-z0-9_-]*/[^\\\\]+$"
+                },
+                "dirtyPatch": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z][A-Za-z0-9_-]*/[^\\\\]+$"
+                }
+              }
+            }
+          }
+        },
+        "credentialEscrow": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "authorities"
+          ],
+          "properties": {
+            "authorities": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "secretsBundle",
+                "custodyMetadata"
+              ],
+              "properties": {
+                "secretsBundle": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z][A-Za-z0-9_-]*/[^\\\\]+$"
+                },
+                "custodyMetadata": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z][A-Za-z0-9_-]*/[^\\\\]+$"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "files": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "relativePath",
+          "component",
+          "sha256",
+          "bytes",
+          "mode",
+          "sourceBinding"
+        ],
+        "properties": {
+          "relativePath": {
+            "type": "string",
+            "pattern": "^[A-Za-z][A-Za-z0-9_-]*/[^\\\\]+$"
+          },
+          "component": {
+            "enum": [
+              "postgres",
+              "witness",
+              "artifactStore",
+              "workerSpools",
+              "immutableReceipts",
+              "osAuthorities",
+              "configuration",
+              "releaseAssets",
+              "sourceRecovery",
+              "credentialEscrow"
+            ]
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "bytes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "mode": {
+            "const": "0600"
+          },
+          "sourceBinding": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "fileInventorySha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    }
+  },
+  "$comment": "File hashes are actual bytes. Runtime also checks witness history/sentinel bindings, dump/restore provenance, every artifact key/version/spool/receipt reference, source/owner bindings and protected paths. Manifest contains private path metadata; CLI results contain only digests and safe summaries. No authority transfer or application restore qualification is implied."
+}

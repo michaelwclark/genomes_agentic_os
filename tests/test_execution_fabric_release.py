@@ -225,6 +225,10 @@ def test_release_builder_emits_digest_locked_portable_assets(tmp_path: Path) -> 
             "release-generated/execution-fabric-image-lock.json"
             in archive.getnames()
         )
+        for relative in ["schemas/execution-fabric-recovery-set.schema.json","schemas/execution-fabric-recovery-daily.schema.json","docs/operations/execution-fabric-backup-recovery.md"]:
+            member = archive.extractfile(relative)
+            assert member is not None, relative
+            assert member.read() == (ROOT / relative).read_bytes()
     assert "execution-fabric-image-lock.json" in (
         tmp_path / "SHA256SUMS"
     ).read_text(encoding="utf-8")

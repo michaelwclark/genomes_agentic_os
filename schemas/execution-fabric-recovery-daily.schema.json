@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Qualified complete daily recovery coordinator input",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "sourceHost",
+    "sourceRelease",
+    "imageLockSha256",
+    "policySha256",
+    "qualificationFile",
+    "captureTemplate",
+    "exportPlan",
+    "stagingRoot",
+    "releaseRoot",
+    "backupHealthReceipt",
+    "backupDirectory",
+    "node"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "execution-fabric-recovery-daily/v1"
+    },
+    "sourceHost": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+    },
+    "sourceRelease": {
+      "type": "string",
+      "minLength": 1
+    },
+    "imageLockSha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "policySha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "qualificationFile": {
+      "type": "string",
+      "pattern": "^/"
+    },
+    "captureTemplate": {
+      "type": "string",
+      "pattern": "^/"
+    },
+    "exportPlan": {
+      "type": "string",
+      "pattern": "^/"
+    },
+    "stagingRoot": {
+      "type": "string",
+      "pattern": "^/"
+    },
+    "releaseRoot": {
+      "type": "string",
+      "pattern": "^/"
+    },
+    "backupHealthReceipt": {
+      "type": "string",
+      "pattern": "^/"
+    },
+    "backupDirectory": {
+      "type": "string",
+      "pattern": "^/"
+    },
+    "node": {
+      "type": "string",
+      "pattern": "^/"
+    }
+  },
+  "$comment": "Qualification is independent and source bound; full writer/role participation plus released producer-admission protocol is required before any hold/actor. Runtime fails closed on absent dependencies. Fresh run output and successful manifest pointer are distinct from encryption/application/authority acceptance."
+}
