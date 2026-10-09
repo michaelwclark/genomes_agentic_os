@@ -15,7 +15,7 @@ from uuid import uuid4
 
 from . import execution_fabric_recovery as r
 
-ROLES = {"api", "scheduler", "workers", "artifactWriters", "witness", "osWriters"}
+ROLES = r.RECOVERY_ROLES
 PLAN = "execution-fabric-recovery-daily/v1"
 
 
@@ -265,6 +265,7 @@ def run_daily_recovery(plan_file: str | Path, *, apply: bool = False,
         for participant in participants:
             by_root.setdefault(participant["root"], []).append(participant)
         with ExitStack() as guards:
+            holding_sha_by_root = {}
             for root, owned_participants in sorted(by_root.items()):
                 inventory = module.producer_inventory(root)["producers"]
                 hold = module.pause_producers(root, hold_id=hold_id, owner=owner,
@@ -280,6 +281,7 @@ def run_daily_recovery(plan_file: str | Path, *, apply: bool = False,
                     raise r.RecoverySetError("actual retained writer barrier did not qualify")
                 index = len(paused) - 1
                 _freeze_file(hold["receipt"], evidence_dir / ("holding-" + str(index) + ".json"))
+                holding_sha_by_root[root] = r.sha256(evidence_dir / ("holding-" + str(index) + ".json"))
                 r._write(evidence_dir / ("guard-" + str(index) + ".json"), evidence)
             # Fixed supported PG actor; missing tools/permissions stop without alternate APIs.
             backup = Path(plan["releaseRoot"]) / "bin/backup-health.sh"
@@ -330,11 +332,20 @@ def run_daily_recovery(plan_file: str | Path, *, apply: bool = False,
                              for index, _ in enumerate(paused)]
             receipt_paths += [{"path": str(working / "export-before.json"),
                                "sha256": r.sha256(working / "export-before.json")}]
-            proof = {"schemaVersion": "execution-fabric-recovery-quiescence/v1", "status": "verified",
+            receipt_paths += [{"path": str(evidence_dir / ("participant-" + str(index) + ".json")),
+                               "sha256": participant["qualificationSha256"]}
+                              for index, participant in enumerate(participants)]
+            held_identities = {role: [
+                {"root": participant["root"], "maintenanceRunId": hold_id,
+                 "qualificationReceiptSha256": participant["qualificationSha256"],
+                 "admissionReceiptSha256": holding_sha_by_root[participant["root"]]}
+                for participant in sorted(participants, key=lambda item: item["root"])
+                if participant["role"] == role] for role in sorted(ROLES)}
+            proof = {"schemaVersion": "execution-fabric-recovery-quiescence/v2", "status": "verified",
                 "sourceHost": plan["sourceHost"], "policySha256": plan["policySha256"],
                 "commonWatermark": template["commonWatermark"], "maintenanceRunId": hold_id,
                 "beforeWatermarks": before, "afterWatermarks": before,
-                "heldRoleIdentities": {p["role"]: p["root"] + ":" + hold_id for p in participants},
+                "heldRoleIdentities": held_identities,
                 "verifiedAt": datetime.now(timezone.utc).isoformat(), "verificationReceipts": receipt_paths}
             capture_plan = working / "capture-plan.json"
             maintenance = working / "maintenance.json"

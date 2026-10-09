@@ -44,15 +44,16 @@ class AdmissionFixture:
         self.events = []
         self.stale_restore = stale_restore
         self.refuse_guard = refuse_guard
-        self.hold = None
+        self.holds = {}
     def producer_inventory(self, root):
         return {"producers": [{"kind": "schedule", "id": "original-producer", "owner": "original-owner",
                               "definition_hash": "a" * 64, "enabled": True}]}
     def pause_producers(self, root, **kwargs):
         self.events.append("pause")
-        self.hold = {"status": "holding", "readback_verified": True, "receipt": str(self.root / "hold.json")}
-        r._write(Path(self.hold["receipt"]), {"status": "holding", **kwargs})
-        return self.hold
+        hold = {"status": "holding", "readback_verified": True, "receipt": str(Path(root) / "hold.json")}
+        r._write(Path(hold["receipt"]), {"status": "holding", "root": root, **kwargs})
+        self.holds[root] = hold
+        return hold
     def admission_receipt_binding(self, root, **kwargs):
         self.events.append("binding")
         return {"root": root, "hold_id": kwargs["hold_id"], "owner": kwargs["owner"]}
@@ -71,7 +72,7 @@ class AdmissionFixture:
         self.events.append("resume")
         if self.stale_restore:
             raise r.RecoverySetError("fixture changed original definition, hold preserved")
-        r._write(Path(self.hold["receipt"]), {"status": "restored", "readback_verified": True})
+        r._write(Path(self.holds[root]["receipt"]), {"status": "restored", "readback_verified": True})
         return {"status": "restored", "readback_verified": True}
 
 
@@ -97,7 +98,7 @@ def test_daily_dry_run_never_loads_admission_or_creates_output(daily_plan, monke
     assert not Path(daily_plan[1]["stagingRoot"]).exists()
 
 
-@pytest.mark.parametrize("change", ["node", "backup", "scope", "duplicate", "expired", "root"])
+@pytest.mark.parametrize("change", ["node", "backup", "scope", "duplicate", "expired", "root", "additional-root"])
 def test_daily_qualification_refuses_changed_actor_or_participant_scope_before_holds(daily_plan, tmp_path, monkeypatch, change):
     path, plan = daily_plan
     root = tmp_path / "qualified-fixture-root"
@@ -140,11 +141,26 @@ def test_daily_qualification_refuses_changed_actor_or_participant_scope_before_h
         participants.append(dict(participants[0]))
     elif change == "expired":
         qualified["validUntil"] = (now - timedelta(days=1)).isoformat()
+    elif change == "additional-root":
+        second_root = tmp_path / "second-qualified-worker-root"
+        write(second_root / ".agentic_root", b"fixture-only")
+        original = next(p for p in participants if p["role"] == "workers")
+        evidence = json.loads(Path(original["qualificationReceipt"]).read_text())
+        evidence["root"] = str(second_root)
+        receipt = write(tmp_path / "second-worker-qualification.json", evidence)
+        participants.append({**original, "root": str(second_root),
+                             "qualificationReceipt": str(receipt), "qualificationSha256": r.sha256(receipt)})
     else:
         (root / ".agentic_root").unlink()
     write(Path(plan["qualificationFile"]), qualified)
     monkeypatch.setattr(daily, "_installed_admission", lambda _: object())
     calls = []
+    if change == "additional-root":
+        _, admitted = daily._qualification(plan)
+        assert len(admitted) == 7
+        assert {p["root"] for p in admitted if p["role"] == "workers"} == {str(root), str(second_root)}
+        assert not Path(plan["stagingRoot"]).exists()
+        return
     with pytest.raises(r.RecoverySetError, match="unqualified|unavailable|invalid|expired"):
         daily.run_daily_recovery(path, apply=True, runner=lambda *args: calls.append(args))
     assert not calls and not Path(plan["stagingRoot"]).exists()
@@ -175,9 +191,15 @@ def test_daily_failure_preserves_last_good_pointer_and_reports_stale_hold(daily_
     assert "resume" in fixture.events
 
 
-def test_success_generates_distinct_sets_and_restores_before_pointer_publication(daily_plan, capture, tmp_path, monkeypatch):
+@pytest.mark.parametrize("worker_roots", [1, 2])
+def test_success_generates_distinct_sets_and_restores_before_pointer_publication(daily_plan, capture, tmp_path, monkeypatch, worker_roots):
     fixture = AdmissionFixture(tmp_path)
     participants = fixture_participants(tmp_path)
+    if worker_roots == 2:
+        second_root = tmp_path / "additional-worker-root"
+        receipt = write(second_root / "participant-fixture.json", {"role": "workers", "root": str(second_root)})
+        participants.append({"role": "workers", "root": str(second_root), "reviewRoots": [],
+                             "qualificationReceipt": str(receipt), "qualificationSha256": r.sha256(receipt)})
     monkeypatch.setattr(daily, "_qualification", lambda plan: (fixture, participants))
     template = json.loads(capture[0].read_text())
     backup_actor = Path(daily_plan[1]["releaseRoot"]) / "bin/backup-health.sh"
@@ -232,6 +254,21 @@ def test_success_generates_distinct_sets_and_restores_before_pointer_publication
         assert (proofs / proof).is_file()
     manifest = json.loads((first_root / "manifest.json").read_text())
     assert manifest["captureWindow"]["maintenanceReceiptSha256"] == r.sha256(proofs / "maintenance.json")
+    maintenance = json.loads((proofs / "maintenance.json").read_text())
+    identities = maintenance["heldRoleIdentities"]
+    assert maintenance["schemaVersion"] == "execution-fabric-recovery-quiescence/v2"
+    assert manifest["captureWindow"]["heldRoleIdentities"] == identities
+    assert len(identities["workers"]) == worker_roots
+    assert {item["root"] for item in identities["workers"]} == {p["root"] for p in participants if p["role"] == "workers"}
+    assert fixture.events.count("resume") == worker_roots * 2
+    for role, bindings in identities.items():
+        for binding in bindings:
+            assert binding["maintenanceRunId"] == maintenance["maintenanceRunId"]
+            participant = next(p for p in participants if p["role"] == role and p["root"] == binding["root"])
+            assert binding["qualificationReceiptSha256"] == participant["qualificationSha256"]
+            index = sorted({p["root"] for p in participants}).index(binding["root"])
+            assert binding["admissionReceiptSha256"] == r.sha256(proofs / ("holding-" + str(index) + ".json"))
+            assert json.loads((Path(binding["root"]) / "hold.json").read_text())["status"] == "restored"
 
 
 @pytest.mark.parametrize("field", ["systemId", "database"])

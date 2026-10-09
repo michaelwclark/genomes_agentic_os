@@ -13,6 +13,7 @@ from pathlib import Path, PurePosixPath
 import re
 import shutil
 import sqlite3
+import stat
 import subprocess
 import tarfile
 import tempfile
@@ -22,6 +23,7 @@ from typing import Any, Callable
 from uuid import uuid4
 
 MANIFEST = "execution-fabric-recovery-set/v1"
+RECOVERY_ROLES = {"api", "scheduler", "workers", "artifactWriters", "witness", "osWriters"}
 COMPONENTS = (
     "postgres", "witness", "artifactStore", "workerSpools", "osAuthorities",
     "immutableReceipts", "configuration", "releaseAssets", "sourceRecovery",
@@ -130,8 +132,69 @@ def _sqlite_snapshot(source: Path, destination: Path) -> None:
     os.chmod(destination, 0o600)
 
 
+def _held_role_identities(value: Any, hold_id: str) -> None:
+    """Validate every role/root binding without requiring original roots off-host."""
+    if (not isinstance(hold_id, str) or not hold_id
+        or not isinstance(value, dict) or set(value) != RECOVERY_ROLES):
+        raise RecoverySetError("complete held role identity bindings are required")
+    for identities in value.values():
+        if not isinstance(identities, list) or not identities:
+            raise RecoverySetError("held role identity list is empty or invalid")
+        roots = set()
+        for identity in identities:
+            _closed(identity, {"root", "maintenanceRunId", "qualificationReceiptSha256",
+                               "admissionReceiptSha256"}, "held role identity")
+            root = identity["root"]
+            if (not isinstance(root, str) or not Path(root).is_absolute() or root in roots
+                or identity["maintenanceRunId"] != hold_id):
+                raise RecoverySetError("held role root/owner identity is invalid")
+            roots.add(root)
+            _hash(identity["qualificationReceiptSha256"])
+            _hash(identity["admissionReceiptSha256"])
+
+
+def _maintenance_bytes(path: str | Path) -> bytes:
+    """Read at most 4 MiB from the exact regular proof file, never a symlink/FIFO."""
+    if not hasattr(os, "O_NOFOLLOW"):
+        raise RecoverySetError("no-follow maintenance proof inspection is unavailable")
+    try:
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(descriptor, "rb") as stream:
+            info = os.fstat(stream.fileno())
+            limit = 4 * 1024 * 1024
+            if not stat.S_ISREG(info.st_mode) or info.st_size > limit:
+                raise RecoverySetError("maintenance proof is not a bounded regular file")
+            snapshot = stream.read(limit + 1)
+    except OSError:
+        raise RecoverySetError("maintenance proof is unavailable or unsafe") from None
+    if len(snapshot) > limit:
+        raise RecoverySetError("maintenance proof exceeds the bounded byte limit")
+    return snapshot
+
+
+def _maintenance_snapshot(path: str | Path) -> tuple[bytes, dict[str, Any]]:
+    snapshot = _maintenance_bytes(path)
+    try:
+        proof = json.loads(snapshot.decode("utf-8"))
+    except (UnicodeError, ValueError):
+        raise RecoverySetError("maintenance proof snapshot is invalid JSON") from None
+    if not isinstance(proof, dict):
+        raise RecoverySetError("maintenance proof snapshot must be an object")
+    return snapshot, proof
+
+
+def _unchanged_maintenance(path: str | Path, snapshot: bytes) -> None:
+    if _maintenance_bytes(path) != snapshot:
+        raise RecoverySetError("maintenance proof changed during capture")
+
+
 def _maintenance(plan: dict[str, Any], proof: dict[str, Any]) -> None:
-    if (proof.get("schemaVersion") != "execution-fabric-recovery-quiescence/v1"
+    version = proof.get("schemaVersion")
+    if version == "execution-fabric-recovery-quiescence/v2":
+        _closed(proof, {"schemaVersion", "status", "sourceHost", "policySha256", "commonWatermark",
+                       "maintenanceRunId", "beforeWatermarks", "afterWatermarks", "heldRoleIdentities",
+                       "verifiedAt", "verificationReceipts"}, "maintenance proof")
+    if (version not in ("execution-fabric-recovery-quiescence/v1", "execution-fabric-recovery-quiescence/v2")
         or proof.get("status") != "verified"
         or proof.get("sourceHost") != plan.get("sourceHost")
         or proof.get("policySha256") != plan.get("policySha256")
@@ -157,6 +220,13 @@ def _maintenance(plan: dict[str, Any], proof: dict[str, Any]) -> None:
         path = Path(receipt["path"])
         if not path.is_file() or path.is_symlink() or sha256(path) != _hash(receipt["sha256"]):
             raise RecoverySetError("maintenance verification receipt bytes mismatch")
+    if version == "execution-fabric-recovery-quiescence/v2":
+        _held_role_identities(proof["heldRoleIdentities"], proof["maintenanceRunId"])
+        verified = {receipt["sha256"] for receipt in proof["verificationReceipts"]}
+        if any(identity[field] not in verified
+               for identities in proof["heldRoleIdentities"].values() for identity in identities
+               for field in ("qualificationReceiptSha256", "admissionReceiptSha256")):
+            raise RecoverySetError("held role identity lacks byte-verified qualification/admission receipts")
 
 
 def _validate_plan(plan: dict[str, Any]) -> None:
@@ -272,6 +342,9 @@ def verify_recovery_set(root: str | Path) -> dict[str, Any]:
         or not manifest["sourceHost"] or not manifest["sourceRelease"]
         or not manifest["commonWatermark"]):
         raise RecoverySetError("recovery manifest omits required authority components")
+    window = manifest["captureWindow"]
+    if isinstance(window, dict) and "heldRoleIdentities" in window:
+        _held_role_identities(window["heldRoleIdentities"], window.get("maintenanceRunId"))
     entries = manifest["files"]
     if not isinstance(entries, list) or not entries or _digest(entries) != manifest["fileInventorySha256"]:
         raise RecoverySetError("file inventory digest is invalid")
@@ -541,7 +614,8 @@ def prepare_recovery_set(capture_plan: str | Path, maintenance_receipt: str | Pa
     _validate_plan(plan)
     if not apply:
         return plan_recovery_set(capture_plan)
-    proof = _read(maintenance_receipt)
+    proof_bytes, proof = _maintenance_snapshot(maintenance_receipt)
+    proof_sha256 = hashlib.sha256(proof_bytes).hexdigest()
     _maintenance(plan, proof)
     root = _empty_target(output)
     try:
@@ -558,7 +632,8 @@ def prepare_recovery_set(capture_plan: str | Path, maintenance_receipt: str | Pa
                 if original.is_relative_to(root) or root.is_relative_to(original):
                     raise RecoverySetError("capture source and target overlap")
                 _copy_source(original, _inside(root, relative), source["kind"])
-        _maintenance(plan, _read(maintenance_receipt))
+        _unchanged_maintenance(maintenance_receipt, proof_bytes)
+        _maintenance(plan, proof)
         files = _inventory(root, plan["components"])
         manifest = {
             "schemaVersion": MANIFEST, "recoverySetId": plan["recoverySetId"],
@@ -568,7 +643,7 @@ def prepare_recovery_set(capture_plan: str | Path, maintenance_receipt: str | Pa
             "imageLockSha256": plan["imageLockSha256"], "policySha256": plan["policySha256"],
             "commonWatermark": plan["commonWatermark"],
             "captureWindow": {
-                "maintenanceReceiptSha256": sha256(Path(maintenance_receipt)),
+                "maintenanceReceiptSha256": proof_sha256,
                 "maintenanceRunId": proof["maintenanceRunId"],
                 "beforeWatermarks": proof["beforeWatermarks"],
                 "afterWatermarks": proof["afterWatermarks"],
@@ -576,16 +651,27 @@ def prepare_recovery_set(capture_plan: str | Path, maintenance_receipt: str | Pa
             "components": plan["componentMetadata"],
             "files": files, "fileInventorySha256": _digest(files),
         }
+        if proof["schemaVersion"] == "execution-fabric-recovery-quiescence/v2":
+            manifest["captureWindow"]["heldRoleIdentities"] = proof["heldRoleIdentities"]
         if set(manifest["components"]) != set(COMPONENTS):
             raise RecoverySetError("component metadata is incomplete")
+        # Validate only the retained snapshot; comparison reads never supply new bindings/digests.
+        _maintenance(plan, proof)
+        _unchanged_maintenance(maintenance_receipt, proof_bytes)
         _write(root / "manifest.json", manifest)
         verified = verify_recovery_set(root)
         _verify_postgres(root, manifest)
         receipt = {**verified, "status": "local_capture_complete",
                    "offhostCustodyVerified": False}
+        _maintenance(plan, proof)
+        _unchanged_maintenance(maintenance_receipt, proof_bytes)
         _write(root / "capture.receipt.json", receipt)
+        _unchanged_maintenance(maintenance_receipt, proof_bytes)
         return receipt
     except Exception:
+        # Only this operation's new staging root is owned; never retain a success artifact on refusal.
+        (root / "manifest.json").unlink(missing_ok=True)
+        (root / "capture.receipt.json").unlink(missing_ok=True)
         # Never erase another root or replace the last successful recovery set.
         _write(root / "failed.receipt.json", {
             "schemaVersion": "execution-fabric-recovery-failure/v1",

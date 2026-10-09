@@ -4,6 +4,7 @@ import argparse
 import base64
 from contextlib import closing
 from datetime import datetime, timedelta, timezone
+import hashlib
 import io
 import json
 import os
@@ -210,6 +211,195 @@ def test_capture_has_real_wal_rows_private_bytes_and_closed_manifest(capture, tm
     assert json.loads((target / "witness/witness.db.initialized").read_text())["database"].startswith("/original/")
     assert all((target / entry["relativePath"]).stat().st_mode & 0o077 == 0 for entry in manifest["files"])
     assert "unit-private-bytes" not in json.dumps(receipt)
+
+
+def multi_root_maintenance(capture, tmp_path):
+    proof = json.loads(capture[1].read_text())
+    proof["schemaVersion"] = "execution-fabric-recovery-quiescence/v2"
+    hold = write(tmp_path / "held-admission.json", {"status": "isolated-fixture-only", "owner": "maint-unit"})
+    proof["verificationReceipts"].append({"path": str(hold), "sha256": r.sha256(hold)})
+    identities = {}
+    for role in sorted(r.RECOVERY_ROLES):
+        identities[role] = []
+        for index in range(2 if role == "workers" else 1):
+            qualification = write(tmp_path / (role + str(index) + "-qualified.json"),
+                                  {"status": "isolated-fixture-only", "role": role, "index": index})
+            proof["verificationReceipts"].append({"path": str(qualification), "sha256": r.sha256(qualification)})
+            identities[role].append({"root": "/original/" + role + str(index),
+                "maintenanceRunId": proof["maintenanceRunId"],
+                "qualificationReceiptSha256": r.sha256(qualification), "admissionReceiptSha256": r.sha256(hold)})
+    proof["heldRoleIdentities"] = identities
+    write(capture[1], proof)
+    return proof
+
+
+def test_capture_preserves_all_multi_root_roles_without_requiring_original_roots(capture, tmp_path):
+    proof = multi_root_maintenance(capture, tmp_path)
+    validated_bytes = capture[1].read_bytes()
+    target, _ = prepared(capture, tmp_path)
+    manifest = json.loads((target / "manifest.json").read_text())
+    assert manifest["captureWindow"]["maintenanceReceiptSha256"] == hashlib.sha256(validated_bytes).hexdigest()
+    assert manifest["captureWindow"]["heldRoleIdentities"] == proof["heldRoleIdentities"]
+    assert len(manifest["captureWindow"]["heldRoleIdentities"]["workers"]) == 2
+    schema = json.loads((SOURCE / "schemas/execution-fabric-recovery-set.schema.json").read_text())
+    Draft202012Validator(schema).validate(manifest)
+    assert r.verify_recovery_set(target)["manifestSha256"] == r.sha256(target / "manifest.json")
+
+
+@pytest.mark.parametrize("change", ["missing-role", "empty-list", "duplicate-root", "relative-root",
+                                   "foreign-hold", "open-identity", "unbound-qualification", "unbound-admission", "open-proof"])
+def test_v2_capture_refuses_incomplete_or_unbound_multi_root_identity_before_output(capture, tmp_path, change):
+    proof = multi_root_maintenance(capture, tmp_path)
+    identities = proof["heldRoleIdentities"]
+    binding = identities["workers"][0]
+    if change == "missing-role":
+        identities.pop("api")
+    elif change == "empty-list":
+        identities["workers"] = []
+    elif change == "duplicate-root":
+        identities["workers"].append(dict(binding))
+    elif change == "relative-root":
+        binding["root"] = "guessed-root"
+    elif change == "foreign-hold":
+        binding["maintenanceRunId"] = "foreign-owner"
+    elif change == "open-identity":
+        binding["guessedHost"] = "foreign-host"
+    elif change == "unbound-qualification":
+        binding["qualificationReceiptSha256"] = "e" * 64
+    elif change == "open-proof":
+        proof["guessedParticipants"] = ["unqualified"]
+    else:
+        binding["admissionReceiptSha256"] = "f" * 64
+    write(capture[1], proof)
+    target = tmp_path / "refused-set"
+    with pytest.raises(r.RecoverySetError, match="identity|identities|root|complete|proof"):
+        r.prepare_recovery_set(capture[0], capture[1], target, apply=True)
+    assert not target.exists()
+
+
+def test_verified_manifest_refuses_open_or_missing_v2_role_bindings(capture, tmp_path):
+    multi_root_maintenance(capture, tmp_path)
+    target, _ = prepared(capture, tmp_path)
+    manifest = json.loads((target / "manifest.json").read_text())
+    manifest["captureWindow"]["heldRoleIdentities"]["workers"] = []
+    write(target / "manifest.json", manifest)
+    with pytest.raises(r.RecoverySetError, match="identity list"):
+        r.verify_recovery_set(target)
+    schema = json.loads((SOURCE / "schemas/execution-fabric-recovery-set.schema.json").read_text())
+    assert list(Draft202012Validator(schema).iter_errors(manifest))
+
+
+def test_v2_role_proof_cannot_change_during_capture(capture, tmp_path, monkeypatch):
+    proof = multi_root_maintenance(capture, tmp_path)
+    original = r._copy_source
+    def change_once(*args):
+        original(*args)
+        proof["verifiedAt"] = datetime.now(timezone.utc).isoformat()
+        write(capture[1], proof)
+    monkeypatch.setattr(r, "_copy_source", change_once)
+    target = tmp_path / "changed-maintenance"
+    with pytest.raises(r.RecoverySetError, match="proof changed"):
+        r.prepare_recovery_set(capture[0], capture[1], target, apply=True)
+    assert not (target / "manifest.json").exists()
+
+
+@pytest.mark.parametrize("version", ["v1", "v2"])
+@pytest.mark.parametrize("change", ["sourceHost", "maintenanceRunId", "commonWatermark", "equivalent-json", "symlink"])
+def test_inventory_seam_cannot_bind_replaced_or_equivalent_proof_bytes(capture, tmp_path, monkeypatch, version, change):
+    if version == "v2":
+        multi_root_maintenance(capture, tmp_path)
+    original_bytes = capture[1].read_bytes()
+    original_proof = json.loads(original_bytes)
+    original_inventory = r._inventory
+    previous = write(tmp_path / "last-good.json", {"recoverySetId": "original-last-good"})
+    previous_bytes = previous.read_bytes()
+    authorities = [capture[2] / "witness/witness.db", capture[2] / "witness/witness.db.initialized",
+                   capture[2] / "osAuthorities/canonical.db"]
+    authority_hashes = {str(path): hashlib.sha256(path.read_bytes()).hexdigest() for path in authorities}
+    def inventory_then_replace(*args):
+        result = original_inventory(*args)
+        if change == "equivalent-json":
+            replacement = json.dumps(original_proof, separators=(",", ":")).encode() + b" \n"
+            assert replacement != original_bytes and json.loads(replacement) == original_proof
+            capture[1].write_bytes(replacement)
+        elif change == "symlink":
+            destination = tmp_path / "replacement-proof.json"
+            destination.write_bytes(original_bytes)
+            capture[1].unlink()
+            capture[1].symlink_to(destination)
+        else:
+            replacement = dict(original_proof)
+            replacement[change] = "foreign-owner-context"
+            write(capture[1], replacement)
+        return result
+    monkeypatch.setattr(r, "_inventory", inventory_then_replace)
+    target = tmp_path / "refused-inventory-replacement"
+    with pytest.raises(r.RecoverySetError, match="proof changed|proof is unavailable or unsafe"):
+        r.prepare_recovery_set(capture[0], capture[1], target, apply=True)
+    assert not (target / "manifest.json").exists() and not (target / "capture.receipt.json").exists()
+    assert json.loads((target / "failed.receipt.json").read_text())["status"] == "incomplete"
+    assert previous.read_bytes() == previous_bytes
+    assert {str(path): hashlib.sha256(path.read_bytes()).hexdigest() for path in authorities} == authority_hashes
+
+
+@pytest.mark.parametrize("boundary", ["verification", "success-receipt"])
+def test_final_result_refuses_proof_rewrite_and_removes_only_owned_success_artifacts(capture, tmp_path, monkeypatch, boundary):
+    proof = multi_root_maintenance(capture, tmp_path)
+    original_bytes = capture[1].read_bytes()
+    def replace():
+        replacement = json.dumps(proof, separators=(",", ":")).encode() + b" \n"
+        assert replacement != original_bytes
+        capture[1].write_bytes(replacement)
+    if boundary == "verification":
+        original = r._verify_postgres
+        def verify_then_replace(*args):
+            original(*args)
+            replace()
+        monkeypatch.setattr(r, "_verify_postgres", verify_then_replace)
+    else:
+        original = r._write
+        def write_then_replace(path, value):
+            original(path, value)
+            if path.name == "capture.receipt.json":
+                replace()
+        monkeypatch.setattr(r, "_write", write_then_replace)
+    target = tmp_path / "refused-final-rewrite"
+    with pytest.raises(r.RecoverySetError, match="proof changed"):
+        r.prepare_recovery_set(capture[0], capture[1], target, apply=True)
+    assert not (target / "manifest.json").exists() and not (target / "capture.receipt.json").exists()
+    assert json.loads((target / "failed.receipt.json").read_text())["status"] == "incomplete"
+
+
+def test_manifest_digest_never_rereads_mutable_proof_through_generic_hasher(capture, tmp_path, monkeypatch):
+    multi_root_maintenance(capture, tmp_path)
+    expected = hashlib.sha256(capture[1].read_bytes()).hexdigest()
+    original = r.sha256
+    def reject_mutable_proof_hash(path):
+        if Path(path) == capture[1]:
+            pytest.fail("manifest digest reread the mutable proof instead of validated bytes")
+        return original(path)
+    monkeypatch.setattr(r, "sha256", reject_mutable_proof_hash)
+    target, _ = prepared(capture, tmp_path)
+    assert json.loads((target / "manifest.json").read_text())["captureWindow"]["maintenanceReceiptSha256"] == expected
+
+
+@pytest.mark.parametrize("unsafe", ["symlink", "fifo", "oversized", "invalid-json", "nonobject"])
+def test_capture_requires_bounded_nofollow_regular_proof_before_output(capture, tmp_path, unsafe):
+    receipt = tmp_path / "unsafe-proof"
+    if unsafe == "symlink":
+        receipt.symlink_to(capture[1])
+    elif unsafe == "fifo":
+        os.mkfifo(receipt, 0o600)
+    elif unsafe == "oversized":
+        receipt.write_bytes(b" " * (4 * 1024 * 1024 + 1))
+    elif unsafe == "invalid-json":
+        receipt.write_bytes(b"\xff")
+    else:
+        receipt.write_bytes(b"[]")
+    target = tmp_path / "refused-unsafe-proof"
+    with pytest.raises(r.RecoverySetError, match="maintenance proof"):
+        r.prepare_recovery_set(capture[0], receipt, target, apply=True)
+    assert not target.exists()
 
 
 @pytest.mark.parametrize("component", r.COMPONENTS)

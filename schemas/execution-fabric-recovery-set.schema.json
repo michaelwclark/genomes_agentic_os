@@ -79,6 +79,19 @@
         "afterWatermarks": {
           "type": "object",
           "minProperties": 1
+        },
+        "heldRoleIdentities": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["api", "scheduler", "workers", "artifactWriters", "witness", "osWriters"],
+          "properties": {
+            "api": {"$ref": "#/$defs/heldRoleIdentities"},
+            "scheduler": {"$ref": "#/$defs/heldRoleIdentities"},
+            "workers": {"$ref": "#/$defs/heldRoleIdentities"},
+            "artifactWriters": {"$ref": "#/$defs/heldRoleIdentities"},
+            "witness": {"$ref": "#/$defs/heldRoleIdentities"},
+            "osWriters": {"$ref": "#/$defs/heldRoleIdentities"}
+          }
         }
       }
     },
@@ -447,5 +460,23 @@
       "pattern": "^[a-f0-9]{64}$"
     }
   },
-  "$comment": "File hashes are actual bytes. Runtime also checks witness history/sentinel bindings, dump/restore provenance, every artifact key/version/spool/receipt reference, source/owner bindings and protected paths. Manifest contains private path metadata; CLI results contain only digests and safe summaries. No authority transfer or application restore qualification is implied."
+  "$defs": {
+    "heldRoleIdentities": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["root", "maintenanceRunId", "qualificationReceiptSha256", "admissionReceiptSha256"],
+        "properties": {
+          "root": {"type": "string", "pattern": "^/"},
+          "maintenanceRunId": {"type": "string", "minLength": 1},
+          "qualificationReceiptSha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+          "admissionReceiptSha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+        }
+      }
+    }
+  },
+  "$comment": "File hashes are actual bytes. Runtime also checks witness history/sentinel bindings, dump/restore provenance, every artifact key/version/spool/receipt reference, source/owner bindings and protected paths. New quiescence/v2 capture windows preserve every role/root and byte-bound admission/qualification identity; legacy manifests remain readable. Manifest contains private path metadata; CLI results contain only digests and safe summaries. No authority transfer or application restore qualification is implied."
 }

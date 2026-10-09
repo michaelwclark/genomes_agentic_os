@@ -90,6 +90,18 @@ execution-fabric-recovery-quiescence/v1 receipt with status=verified, matching
 sourceHost, policySha256, commonWatermark, maintenanceRunId, beforeWatermarks,
 afterWatermarks, nonempty heldRoleIdentities, verifiedAt and byte-bound
 verificationReceipts (path, sha256). Before and after watermarks must agree.
+
+New daily captures emit execution-fabric-recovery-quiescence/v2. Each of the six
+heldRoleIdentities entries is a nonempty list; every qualified role/root is
+preserved, including workers from multiple roots. Each closed binding contains
+root, maintenanceRunId, qualificationReceiptSha256 and admissionReceiptSha256.
+Both digests must name actual byte-verified verificationReceipts. The new
+manifest's captureWindow preserves the same bindings, so collection and off-host
+verification retain their original provenance without requiring those source
+paths to exist on the custodian. Legacy v1 receipts and immutable manifests
+remain readable. Multiple roots do not establish remote-host participation;
+each actual host, writer and installed barrier still needs independent
+qualification before daily activation.
 The proof expires after ten minutes and is rechecked after copying.
 
 A schedule or a hand-authored assertion does not establish live quiescence.
