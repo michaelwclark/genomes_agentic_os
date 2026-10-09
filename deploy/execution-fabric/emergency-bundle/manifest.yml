@@ -4,6 +4,7 @@ owner: genomes_agentic_os
 description: Warm-standby recovery inputs for a fenced genomesbox to bigmac promotion.
 canonical_configs:
   - harness/config/execution-fabric.yml
+  - harness/config/execution-fabric-cold-recovery.json
   - config/hosts.yml
   - harness/config/hosts.yml
   - harness/registries/hosts-routing.yml
@@ -16,6 +17,8 @@ required_assets:
   - deploy/execution-fabric/helm/los-agents
   - deploy/execution-fabric/witness
   - installers/execution-fabric
+  - schemas/execution-fabric-cold-recovery.schema.json
+  - docs/development/execution-fabric-cold-recovery.md
 image_lock:
   file: execution-fabric-image-lock.json
   format: json

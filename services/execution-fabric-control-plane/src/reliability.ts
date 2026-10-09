@@ -236,6 +236,10 @@ function receiptFromRow(row: Record<string, unknown>): RepairReceipt {
 }
 
 export class PostgresReliabilityStore {
+  private async assertColdMutation(client?:pg.PoolClient):Promise<void> {
+    const result=await (client ?? this.pool).query("SELECT cold_recovery_phase FROM fabric_state WHERE singleton=true AND cold_recovery_phase IS NOT NULL AND cold_recovery_phase<>'ACCEPTED'");
+    if(result.rows[0]) throw new FencedError("cold recovery holds reliability and alarm mutations");
+  }
   constructor(
     private readonly pool: pg.Pool,
     private readonly hostId: string,
@@ -485,6 +489,7 @@ export class PostgresReliabilityStore {
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
+      await this.assertColdMutation(client);
       await client.query(
         "SELECT pg_advisory_xact_lock(hashtext('agentic-os-execution-fabric-observer'))",
       );
@@ -652,6 +657,7 @@ export class PostgresReliabilityStore {
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
+      await this.assertColdMutation(client);
       await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
         incidentKey,
       ]);
@@ -885,6 +891,7 @@ export class PostgresReliabilityStore {
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
+      await this.assertColdMutation(client);
       const state = await client.query<{
         current_epoch: string;
         leader_host_id: string | null;
@@ -972,6 +979,7 @@ export class PostgresReliabilityStore {
     afterVerification: Record<string, unknown>,
     errorSummary?: string,
   ): Promise<RepairReceipt> {
+    await this.assertColdMutation();
     const result = await this.pool.query<Record<string, unknown>>(
       `UPDATE fabric_repair_receipts
        SET status=$2,after_verification=$3::jsonb,error_summary=$4,
@@ -1076,6 +1084,7 @@ export class PostgresReliabilityStore {
     findingId: string,
     actor: string,
   ): Promise<HealthFinding> {
+    await this.assertColdMutation();
     const result = await this.pool.query<FindingRow>(
       `UPDATE fabric_health_findings
        SET status=CASE WHEN status='open' THEN 'acknowledged' ELSE status END,
@@ -1107,6 +1116,7 @@ export class PostgresReliabilityStore {
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
+      await this.assertColdMutation(client);
       await client.query(
         `UPDATE fabric_alarm_outbox
          SET attempt_count=attempt_count+1,
@@ -1123,7 +1133,8 @@ export class PostgresReliabilityStore {
            END,
            claimed_by=NULL,claim_token=NULL,claim_expires_at=NULL,
            last_error='alarm dispatcher claim expired',updated_at=now()
-         WHERE status='processing' AND claim_expires_at <= now()`,
+         WHERE status='processing' AND claim_expires_at <= now()
+           AND NOT EXISTS(SELECT 1 FROM fabric_cold_alarm_quarantine q WHERE q.alarm_id=fabric_alarm_outbox.id)`,
       );
       const candidates = await client.query<{
         id: string;
@@ -1140,6 +1151,8 @@ export class PostgresReliabilityStore {
          CROSS JOIN fabric_state s
          WHERE a.status='pending' AND a.available_at <= now()
            AND s.singleton=true AND a.fabric_epoch=s.current_epoch
+           AND (s.cold_recovery_phase IS NULL OR s.cold_recovery_phase='ACCEPTED')
+           AND NOT EXISTS(SELECT 1 FROM fabric_cold_alarm_quarantine q WHERE q.alarm_id=a.id)
          ORDER BY CASE severity WHEN 'critical' THEN 0 WHEN 'warning' THEN 1 ELSE 2 END,
            created_at,id
          FOR UPDATE SKIP LOCKED LIMIT $1`,
@@ -1184,6 +1197,7 @@ export class PostgresReliabilityStore {
     fabricEpoch: number,
     deliveryReceipt: Record<string, unknown>,
   ): Promise<void> {
+    await this.assertColdMutation();
     const result = await this.pool.query(
       `UPDATE fabric_alarm_outbox a
        SET status='delivered',delivered_at=now(),delivery_receipt=$5::jsonb,
@@ -1191,6 +1205,8 @@ export class PostgresReliabilityStore {
        FROM fabric_state s
        WHERE a.id=$1 AND a.claimed_by=$2 AND a.claim_token=$3
          AND a.fabric_epoch=$4 AND s.singleton=true AND s.current_epoch=$4
+         AND (s.cold_recovery_phase IS NULL OR s.cold_recovery_phase='ACCEPTED')
+         AND NOT EXISTS(SELECT 1 FROM fabric_cold_alarm_quarantine q WHERE q.alarm_id=a.id)
          AND a.status='processing' AND a.claim_expires_at > now()
        RETURNING a.id`,
       [
@@ -1211,6 +1227,7 @@ export class PostgresReliabilityStore {
     fabricEpoch: number,
     errorSummary: string,
   ): Promise<void> {
+    await this.assertColdMutation();
     const result = await this.pool.query(
       `UPDATE fabric_alarm_outbox a
        SET attempt_count=attempt_count+1,
@@ -1230,6 +1247,8 @@ export class PostgresReliabilityStore {
        FROM fabric_state s
        WHERE a.id=$1 AND a.claimed_by=$2 AND a.claim_token=$3
          AND a.fabric_epoch=$4 AND s.singleton=true AND s.current_epoch=$4
+         AND (s.cold_recovery_phase IS NULL OR s.cold_recovery_phase='ACCEPTED')
+         AND NOT EXISTS(SELECT 1 FROM fabric_cold_alarm_quarantine q WHERE q.alarm_id=a.id)
          AND a.status='processing' AND a.claim_expires_at > now()
        RETURNING a.id`,
       [alarmId, consumerId, claimToken, fabricEpoch, errorSummary],
@@ -1393,6 +1412,13 @@ export class PostgresReliabilityStore {
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
+      await this.assertColdMutation(client);
+      if(targetType==="effect" || targetType==="task") {
+        const table=targetType==="effect" ? "fabric_cold_effect_quarantine" : "fabric_cold_task_quarantine";
+        const column=targetType==="effect" ? "effect_id" : "task_id";
+        const held=await client.query(`SELECT 1 FROM ${table} WHERE ${column}=$1`,[targetId]);
+        if(held.rowCount) throw new FencedError("cold recovery holds restored delivery reconciliation");
+      }
       const existing = await client.query(
         "SELECT * FROM fabric_operator_receipts WHERE idempotency_key=$1",
         [idempotencyKey],

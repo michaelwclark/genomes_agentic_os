@@ -17,6 +17,7 @@
     "start:healer": "node dist/src/healer-main.js",
     "start:scheduler": "node dist/src/scheduler-main.js",
     "start:gateway": "node dist/src/gateway-main.js",
+    "cold-recovery": "node dist/src/cold-recovery-main.js",
     "test": "vitest run",
     "test:integration": "FABRIC_INTEGRATION_TESTS=1 vitest run tests/artifacts.integration.test.ts && FABRIC_INTEGRATION_TESTS=1 vitest run tests/integration.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"

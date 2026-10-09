@@ -30,6 +30,11 @@ import urllib.request
 from urllib.parse import urlsplit
 import yaml
 
+from .execution_fabric_cold_canary import (
+    CANARY_TASK_TYPE, CANARY_QUEUE, CANARY_NAMESPACE, CANARY_POOL,
+    CANARY_HANDLER, CANARY_CAPABILITY, cold_canary_worker,
+)
+
 from .execution_fabric_config import (
     ExecutionFabricConfigError,
     load_execution_fabric_config,
@@ -515,6 +520,14 @@ def validate_task_route(
     if route is None or str(route.get("queue") or "") != queue_name:
         raise ValueError(f"no canonical task route for {task_type!r} on {queue_name!r}")
     execution = dict(route.get("execution") or {})
+    if task_type == CANARY_TASK_TYPE:
+        if (queue_name != CANARY_QUEUE or pool_id != CANARY_POOL or pool.get("provider") != "local"
+                or pool.get("queues") != [CANARY_QUEUE] or pool.get("capabilities") != [CANARY_CAPABILITY]
+                or pool.get("capacity", {}).get("max_workers") != 1 or pool.get("capacity", {}).get("max_tasks_per_worker") != 1
+                or pool.get("retry", {}).get("max_attempts") != 1 or route.get("allowed_effect_types") != []
+                or execution.get("domain_worker") != CANARY_HANDLER or execution.get("target") != "domain_worker"
+                or execution.get("command_template") is not None or execution.get("required_capability") != CANARY_CAPABILITY):
+            raise ValueError("cold canary must keep its fixed inert handler and local pool")
     if remote and not execution.get("remote_allowed"):
         raise ValueError(f"task type {task_type!r} is local-only and cannot be remote")
     if payload is None:
@@ -3133,6 +3146,7 @@ register_domain_worker("codex_task", _codex_task_worker)
 register_domain_worker("claude_task", _claude_task_worker)
 register_domain_worker("team_pr_ai_review", _team_pr_ai_review_worker)
 register_domain_worker("los_fullsail_updater", _los_fullsail_updater_worker)
+register_domain_worker(CANARY_HANDLER, cold_canary_worker)
 
 
 def execute_assignment(root: str | Path, assignment: Mapping[str, Any]) -> dict[str, Any]:
@@ -3170,6 +3184,8 @@ def execute_assignment(root: str | Path, assignment: Mapping[str, Any]) -> dict[
     if route["domain_worker"]:
         worker_name = str(route["domain_worker"])
         handler = _DOMAIN_WORKERS.get(worker_name)
+        if str(task.get("taskType") or "") == CANARY_TASK_TYPE and handler is not cold_canary_worker:
+            raise TaskExecutionError("cold_canary_handler_changed", "fixed inert cold canary handler identity differs", retryable=False)
         if handler is None:
             raise TaskExecutionError(
                 "domain_worker_unavailable",
@@ -3277,6 +3293,10 @@ class RemoteFabricWorker:
         self.heartbeat_seconds = max(1, heartbeat_seconds)
         self.spool_drain_seconds = max(5, spool_drain_seconds)
         self.executor = executor
+        self.cold_canary_only = CANARY_QUEUE in self.queues
+        if self.cold_canary_only and (self.queues != [CANARY_QUEUE] or self.capabilities != [CANARY_CAPABILITY]
+                                     or max_concurrency != 1 or executor is not execute_assignment):
+            raise ValueError("cold canary worker must use the sole fixed route, capability and executor")
 
     def work(self, *, max_tasks: int | None = None) -> dict[str, Any]:
         registration = self.client.register_worker(
@@ -3290,6 +3310,7 @@ class RemoteFabricWorker:
                 "metadata": {
                     "runtime": "genomes-agentic-os-python",
                     "transport": "remote",
+                    **({"coldCanaryHandler": CANARY_HANDLER} if self.cold_canary_only else {}),
                 },
             }
         )
@@ -3313,7 +3334,9 @@ class RemoteFabricWorker:
                 },
             )
         record_health("online", [])
-        spool_retry = drain_artifact_spool(
+        empty_cold_spool = {"status": "healthy", "pending": 0, "due": 0, "quarantined": 0,
+                           "oldest_pending_at": None, "last_drain_at": _utc_now(), "last_drain_attempted": 0, "last_drain_published": 0}
+        spool_retry = {"health": empty_cold_spool} if self.cold_canary_only else drain_artifact_spool(
             self.client,
             self.root,
             worker_id=self.worker_id,
@@ -3336,7 +3359,7 @@ class RemoteFabricWorker:
             while max_tasks is None or completed + failed < max_tasks:
                 now = time.monotonic()
                 if now - last_heartbeat >= self.heartbeat_seconds:
-                    if now - last_spool_drain >= self.spool_drain_seconds:
+                    if not self.cold_canary_only and now - last_spool_drain >= self.spool_drain_seconds:
                         spool_retry = drain_artifact_spool(
                             self.client,
                             self.root,
@@ -3376,6 +3399,8 @@ class RemoteFabricWorker:
                     del active[future]
                     try:
                         outcome = future.result()
+                        if self.cold_canary_only and (outcome.get("effects") != [] or outcome.get("artifacts") != []):
+                            raise TaskExecutionError("cold_canary_io_refused", "cold canary returned effects or artifacts", retryable=False)
                         task_id = str((assignment.get("task") or {}).get("id") or "")
                         artifact_receipts = [
                             _publish_or_spool(
@@ -3399,7 +3424,8 @@ class RemoteFabricWorker:
                             for artifact in outcome.get("artifacts") or []
                         ]
                         result = dict(outcome.get("result") or {})
-                        result["artifacts"] = artifact_receipts
+                        if not self.cold_canary_only:
+                            result["artifacts"] = artifact_receipts
                         self.client.complete_attempt(
                             str(assignment["attemptId"]),
                             worker_id=self.worker_id,
@@ -3420,7 +3446,7 @@ class RemoteFabricWorker:
                         time.sleep(min(float(self.heartbeat_seconds), 5.0))
                         continue
                     except TaskExecutionError as exc:
-                        if exc.receipt_path and Path(exc.receipt_path).is_file():
+                        if not self.cold_canary_only and exc.receipt_path and Path(exc.receipt_path).is_file():
                             _publish_or_spool(
                                 self.client,
                                 self.root,

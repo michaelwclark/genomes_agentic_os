@@ -1,0 +1,876 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "execution-fabric-cold-recovery/v1",
+  "title": "Offline cold authority recovery; normal HA endpoints remain refused",
+  "$ref": "#/$defs/request",
+  "$defs": {
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schemaVersion": {
+          "const": "execution-fabric-cold-recovery-policy/v1"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "clusterId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "allowedHosts": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9._-]{1,128}$"
+          },
+          "minItems": 2,
+          "uniqueItems": true
+        },
+        "recoveryPublicKeyPem": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "fencePublicKeyPem": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "maxApprovalSeconds": {
+          "type": "integer",
+          "minimum": 60,
+          "maximum": 3600
+        },
+        "witnessActorSha256": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "controlPlaneActorSha256": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "enabled",
+        "clusterId",
+        "allowedHosts",
+        "recoveryPublicKeyPem",
+        "fencePublicKeyPem",
+        "maxApprovalSeconds",
+        "witnessActorSha256",
+        "controlPlaneActorSha256"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "enabled": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "recoveryPublicKeyPem": {
+                "type": "string",
+                "minLength": 1
+              },
+              "fencePublicKeyPem": {
+                "type": "string",
+                "minLength": 1
+              },
+              "witnessActorSha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "controlPlaneActorSha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "canary": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "taskId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "workerId": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9._-]{1,128}$"
+        },
+        "taskType": {
+          "const": "fabric.cold_canary"
+        },
+        "queue": {
+          "const": "fabric_cold_recovery"
+        },
+        "namespace": {
+          "const": "fabric_cold_recovery"
+        },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["schema_version", "recovery_id", "cluster_id", "epoch", "generation"],
+          "properties": {
+            "schema_version": {"const": "execution-fabric-cold-canary/v1"},
+            "recovery_id": {"type": "string", "format": "uuid"},
+            "cluster_id": {"type": "string", "minLength": 1, "maxLength": 128},
+            "epoch": {"type": "integer", "minimum": 1, "maximum": 9007199254740991},
+            "generation": {"type": "integer", "minimum": 1, "maximum": 9007199254740991}
+          }
+        },
+        "payloadSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      },
+      "required": [
+        "taskId",
+        "workerId",
+        "taskType",
+        "queue",
+        "namespace",
+        "payload",
+        "payloadSha256"
+      ]
+    },
+    "plan": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schemaVersion": {
+          "const": "execution-fabric-cold-recovery-plan/v1"
+        },
+        "recoveryId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "direction": {
+          "enum": [
+            "recovery",
+            "failback"
+          ]
+        },
+        "clusterId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sourceHost": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9._-]{1,128}$"
+        },
+        "targetHost": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9._-]{1,128}$"
+        },
+        "expectedEpoch": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "nextEpoch": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "anchorSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "policySha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "restoreInputSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "manifestSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "restoreReceiptSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "snapshotVersion": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "originalDatabasePath": {
+          "type": "string",
+          "pattern": "^/"
+        },
+        "originalBackupPath": {
+          "type": "string",
+          "pattern": "^/"
+        },
+        "targetDatabasePath": {
+          "type": "string",
+          "pattern": "^/"
+        },
+        "databaseSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "sentinelSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "backupSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "hostMarkerSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "oldPublicKeySha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "newPublicKeySha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "candidateConfigDigest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "newPgSystemId": {
+          "type": "string",
+          "pattern": "^[0-9]{1,32}$"
+        },
+        "timelineId": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "walPosition": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "canary": {
+          "$ref": "#/$defs/canary"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "recoveryId",
+        "direction",
+        "clusterId",
+        "sourceHost",
+        "targetHost",
+        "expectedEpoch",
+        "nextEpoch",
+        "generation",
+        "anchorSha256",
+        "policySha256",
+        "restoreInputSha256",
+        "manifestSha256",
+        "restoreReceiptSha256",
+        "snapshotVersion",
+        "originalDatabasePath",
+        "originalBackupPath",
+        "targetDatabasePath",
+        "databaseSha256",
+        "sentinelSha256",
+        "backupSha256",
+        "hostMarkerSha256",
+        "oldPublicKeySha256",
+        "newPublicKeySha256",
+        "candidateConfigDigest",
+        "newPgSystemId",
+        "timelineId",
+        "walPosition",
+        "createdAt",
+        "expiresAt",
+        "canary"
+      ]
+    },
+    "fence": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schemaVersion": {
+          "const": "execution-fabric-external-fence/v1"
+        },
+        "recoveryId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "clusterId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sourceHost": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9._-]{1,128}$"
+        },
+        "sourceBootId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "durable": {
+          "const": true
+        },
+        "highestGeneration": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "highestEpoch": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "coveredWriterScopes": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "witness",
+              "postgres",
+              "producer",
+              "provider"
+            ]
+          },
+          "minItems": 4,
+          "maxItems": 4,
+          "uniqueItems": true
+        },
+        "evidenceSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "issuedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "recoveryId",
+        "clusterId",
+        "sourceHost",
+        "sourceBootId",
+        "durable",
+        "highestGeneration",
+        "highestEpoch",
+        "coveredWriterScopes",
+        "evidenceSha256",
+        "issuedAt",
+        "expiresAt"
+      ]
+    },
+    "approval": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schemaVersion": {
+          "const": "execution-fabric-cold-recovery-approval/v1"
+        },
+        "planSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "policySha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "fenceSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "approvedBy": {
+          "type": "string",
+          "minLength": 1
+        },
+        "issuedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "planSha256",
+        "policySha256",
+        "fenceSha256",
+        "approvedBy",
+        "issuedAt",
+        "expiresAt"
+      ]
+    },
+    "anchor": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schemaVersion": {
+          "const": "execution-fabric-recovery-anchor/v1"
+        },
+        "clusterId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "leader": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9._-]{1,128}$"
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "highestEpoch": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "publicKeySha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "pending": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "recoveryId": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "planSha256": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                },
+                "generation": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 9007199254740991
+                },
+                "nextEpoch": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 9007199254740991
+                },
+                "targetHost": {
+                  "type": "string",
+                  "pattern": "^[a-zA-Z0-9._-]{1,128}$"
+                },
+                "phase": {
+                  "enum": [
+                    "RESERVED",
+                    "ANCHOR_COMMITTED"
+                  ]
+                }
+              },
+              "required": [
+                "recoveryId",
+                "planSha256",
+                "generation",
+                "nextEpoch",
+                "targetHost",
+                "phase"
+              ]
+            }
+          ]
+        },
+        "lastReceiptSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "clusterId",
+        "leader",
+        "generation",
+        "highestEpoch",
+        "publicKeySha256",
+        "pending",
+        "lastReceiptSha256"
+      ]
+    },
+    "baseline": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schemaVersion": {
+          "const": "execution-fabric-recovery-baseline/v1"
+        },
+        "clusterId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "leader": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9._-]{1,128}$"
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "highestEpoch": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "publicKeySha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "authorityProofSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "issuedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "clusterId",
+        "leader",
+        "generation",
+        "highestEpoch",
+        "publicKeySha256",
+        "authorityProofSha256",
+        "issuedAt",
+        "expiresAt"
+      ]
+    },
+    "signedApproval": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "payload": {
+          "$ref": "#/$defs/approval"
+        },
+        "signature": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9+/]+={0,2}$"
+        }
+      },
+      "required": [
+        "payload",
+        "signature"
+      ]
+    },
+    "signedFence": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "payload": {
+          "$ref": "#/$defs/fence"
+        },
+        "signature": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9+/]+={0,2}$"
+        }
+      },
+      "required": [
+        "payload",
+        "signature"
+      ]
+    },
+    "signedBaseline": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "payload": {
+          "$ref": "#/$defs/baseline"
+        },
+        "signature": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9+/]+={0,2}$"
+        }
+      },
+      "required": [
+        "payload",
+        "signature"
+      ]
+    },
+    "restoreInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schemaVersion": {
+          "const": "execution-fabric-cold-restore-input/v1"
+        },
+        "recoverySetId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "manifestSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "restoreReceiptSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "sourceRelease": {
+          "type": "string",
+          "minLength": 1
+        },
+        "imageLockSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "capturedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "commonWatermark": {
+          "type": "string",
+          "minLength": 1
+        },
+        "witness": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "clusterId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "version": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "leader": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9._-]{1,128}$"
+            },
+            "epoch": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "auditTailSha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "databaseSha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "sentinelSha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "backupSha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "hostMarkerSha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "originalDatabasePath": {
+              "type": "string",
+              "pattern": "^/"
+            },
+            "originalBackupPath": {
+              "type": "string",
+              "pattern": "^/"
+            },
+            "signingPublicKeySha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            }
+          },
+          "required": [
+            "clusterId",
+            "version",
+            "leader",
+            "epoch",
+            "auditTailSha256",
+            "databaseSha256",
+            "sentinelSha256",
+            "backupSha256",
+            "hostMarkerSha256",
+            "originalDatabasePath",
+            "originalBackupPath",
+            "signingPublicKeySha256"
+          ]
+        },
+        "postgres": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "dumpSha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "restoreReadbackSha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "systemId": {
+              "type": "string",
+              "pattern": "^[0-9]{1,32}$"
+            },
+            "majorVersion": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "dumpSha256",
+            "restoreReadbackSha256",
+            "systemId",
+            "majorVersion"
+          ]
+        },
+        "artifacts": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "inventorySha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "verifiedReferences": {
+              "const": true
+            }
+          },
+          "required": [
+            "inventorySha256",
+            "verifiedReferences"
+          ]
+        },
+        "osAuthority": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "snapshotSha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "immutableReceiptInventorySha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            }
+          },
+          "required": [
+            "snapshotSha256",
+            "immutableReceiptInventorySha256"
+          ]
+        },
+        "custodyReceiptSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "recoverySetId",
+        "manifestSha256",
+        "restoreReceiptSha256",
+        "sourceRelease",
+        "imageLockSha256",
+        "capturedAt",
+        "commonWatermark",
+        "witness",
+        "postgres",
+        "artifacts",
+        "osAuthority",
+        "custodyReceiptSha256"
+      ]
+    },
+    "request": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "plan": {
+          "$ref": "#/$defs/plan"
+        },
+        "restoreInput": {
+          "$ref": "#/$defs/restoreInput"
+        },
+        "approval": {
+          "$ref": "#/$defs/signedApproval"
+        },
+        "fence": {
+          "$ref": "#/$defs/signedFence"
+        },
+        "baseline": {
+          "$ref": "#/$defs/signedBaseline"
+        },
+        "authorityProof": {
+          "$ref": "#/$defs/signedBaseline"
+        },
+        "signingPrivateKeyFile": {
+          "type": "string",
+          "pattern": "^/"
+        },
+        "hostMarkerFile": {
+          "type": "string",
+          "pattern": "^/"
+        },
+        "policySha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      }
+    }
+  }
+}

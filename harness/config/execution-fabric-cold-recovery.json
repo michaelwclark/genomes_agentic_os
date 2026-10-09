@@ -1,0 +1,14 @@
+{
+  "schemaVersion": "execution-fabric-cold-recovery-policy/v1",
+  "enabled": false,
+  "clusterId": "configure-exact-cluster",
+  "allowedHosts": [
+    "genomesbox",
+    "bigmac"
+  ],
+  "recoveryPublicKeyPem": null,
+  "fencePublicKeyPem": null,
+  "maxApprovalSeconds": 3600,
+  "witnessActorSha256": null,
+  "controlPlaneActorSha256": null
+}

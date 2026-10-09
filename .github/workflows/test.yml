@@ -249,6 +249,43 @@ jobs:
       - name: Run witness OCI durability smoke
         run: tests/scripts/run-witness-oci-smoke.sh
 
+  cold-recovery-integration:
+    name: Fenced cold recovery on real PostgreSQL
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9
+        with:
+          python-version: '3.14'
+          enable-cache: true
+      - name: Install the locked Python qualification toolchain
+        run: uv sync --locked --extra dev
+      - name: Build the two exact source actors
+        run: |
+          npm ci --prefix services/execution-fabric-control-plane
+          npm run build --prefix services/execution-fabric-control-plane
+          npm ci --prefix services/execution-fabric-leadership-witness
+          npm run build --prefix services/execution-fabric-leadership-witness
+      - name: Fetch the accepted immutable disposable PostgreSQL image
+        run: docker pull docker.io/library/postgres@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193
+      - name: Qualify offline actors, quarantine, single canary and no-effects acceptance
+        run: |
+          .venv/bin/python tests/scripts/run-fabric-cold-recovery.py \
+            --source-root "$GITHUB_WORKSPACE" --output-parent "$RUNNER_TEMP"
+      - name: Preserve the cold database qualification receipt
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: cold-recovery-postgres-qualification
+          path: |
+            ${{ runner.temp }}/fabric-cold-recovery-*/DATABASE-QUALIFICATION.json
+            ${{ runner.temp }}/fabric-cold-recovery-*/RUN-RECEIPT.json
+          if-no-files-found: warn
+
   secret-scan:
     runs-on: ubuntu-latest
     steps:

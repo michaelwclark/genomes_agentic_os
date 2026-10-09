@@ -28,6 +28,7 @@ import type {
 export class ConflictError extends Error {}
 export class FencedError extends Error {}
 export class NotFoundError extends Error {}
+type ColdOperation = {kind:string;workerId?:string;taskId?:string;attemptId?:string;effects?:boolean;provider?:string;poolId?:string;registration?:WorkerRegistration};
 
 export type QueueSnapshot = {
   queue: string;
@@ -144,6 +145,7 @@ export type ClaimConstraints = WorkerConstraints & {
 };
 
 export type SystemSnapshot = {
+  coldRecoveryPhase?: string | null;
   fabricEpoch: number;
   leaderHostId: string | null;
   leaderLeaseExpiresAt: string | null;
@@ -292,6 +294,7 @@ export class PostgresLedger implements LedgerPort {
   private async transaction<T>(
     callback: (client: pg.PoolClient) => Promise<T>,
     requireLeadership = true,
+    coldOperation?: ColdOperation,
   ): Promise<T> {
     const client = await this.pool.connect();
     try {
@@ -299,6 +302,7 @@ export class PostgresLedger implements LedgerPort {
       if (requireLeadership && this.hostId) {
         await this.assertDatabaseLeadership(client);
       }
+      if (requireLeadership) await this.assertColdOperation(client, coldOperation);
       const result = await callback(client);
       await client.query("COMMIT");
       return result;
@@ -334,7 +338,8 @@ export class PostgresLedger implements LedgerPort {
       }
       const queued = await client.query<{ count: string }>(
         `SELECT count(*)::text AS count FROM fabric_tasks
-         WHERE queue_name = $1 AND status = 'queued'`,
+         WHERE queue_name = $1 AND status = 'queued'
+           AND NOT EXISTS (SELECT 1 FROM fabric_cold_task_quarantine q WHERE q.task_id=fabric_tasks.id)`,
         [input.queue],
       );
       if (Number(queued.rows[0]?.count ?? 0) >= constraints.queue.concurrency.max_queued) {
@@ -511,7 +516,7 @@ export class PostgresLedger implements LedgerPort {
         leaseExpiresAt: iso(row.lease_expires_at as string),
         fabricEpoch: epoch,
       };
-    });
+    }, true, { kind: "register", workerId: input.workerId, provider: constraints.pool.provider, poolId: constraints.pool.id, registration: input });
   }
 
   async heartbeat(
@@ -591,7 +596,7 @@ export class PostgresLedger implements LedgerPort {
         leaseExpiresAt: iso(row.lease_expires_at as string),
         fabricEpoch: epoch,
       };
-    });
+    }, true, { kind: "heartbeat", workerId });
   }
 
   async claim(
@@ -658,6 +663,8 @@ export class PostgresLedger implements LedgerPort {
       const task = await client.query(
         `SELECT t.* FROM fabric_tasks t
          WHERE t.status = 'queued' AND t.available_at <= now()
+           AND NOT EXISTS (SELECT 1 FROM fabric_cold_task_quarantine q WHERE q.task_id=t.id)
+           AND EXISTS (SELECT 1 FROM fabric_state cs WHERE cs.singleton=true AND (cs.cold_recovery_phase IS NULL OR cs.cold_recovery_phase='ACCEPTED' OR (cs.cold_recovery_phase='CANARY_ADMITTED' AND t.id=cs.cold_canary_task_id)))
            AND t.queue_name = ANY($1::text[])
            AND t.required_capabilities <@ $2::jsonb
            AND (
@@ -665,6 +672,7 @@ export class PostgresLedger implements LedgerPort {
              OR (
                SELECT count(*) FROM fabric_tasks running
                WHERE running.status='running'
+                 AND NOT EXISTS (SELECT 1 FROM fabric_cold_task_quarantine q WHERE q.task_id=running.id)
                  AND running.namespace=t.namespace
              ) < (($3::jsonb ->> t.namespace)::integer)
            )
@@ -682,6 +690,7 @@ export class PostgresLedger implements LedgerPort {
            (
              SELECT count(*) + 1 FROM fabric_tasks running
              WHERE running.status='running'
+               AND NOT EXISTS (SELECT 1 FROM fabric_cold_task_quarantine q WHERE q.task_id=running.id)
                AND running.namespace=t.namespace
            )::numeric /
              COALESCE(NULLIF(($4::jsonb ->> t.namespace)::numeric,0),1)
@@ -719,7 +728,7 @@ export class PostgresLedger implements LedgerPort {
            count(*) FILTER (
              WHERE status='running' AND scheduling_class='interactive'
            )::text AS interactive_running
-         FROM fabric_tasks`,
+         FROM fabric_tasks WHERE NOT EXISTS (SELECT 1 FROM fabric_cold_task_quarantine q WHERE q.task_id=fabric_tasks.id)`,
         [constraints.pool.queues[0], constraints.pool.provider],
       );
       const counts = running.rows[0];
@@ -802,7 +811,7 @@ export class PostgresLedger implements LedgerPort {
         ),
         fabricEpoch: epoch,
       };
-    });
+    }, true, { kind: "claim", workerId: input.workerId });
   }
 
   async complete(
@@ -924,7 +933,7 @@ export class PostgresLedger implements LedgerPort {
         input.fabricEpoch,
       );
       return taskFromRow(task.rows[0] as Record<string, unknown>);
-    });
+    }, true, { kind: "finish", workerId: input.workerId, attemptId, effects: succeeded && (input as AttemptCompletion).effects.length > 0 });
   }
 
   async claimEffects(
@@ -939,6 +948,7 @@ export class PostgresLedger implements LedgerPort {
       const candidates = await client.query(
         `SELECT * FROM fabric_effect_outbox
          WHERE status='pending' AND available_at <= now()
+           AND NOT EXISTS (SELECT 1 FROM fabric_cold_effect_quarantine q WHERE q.effect_id=fabric_effect_outbox.id)
            AND fabric_epoch=$1
            AND effect_type=ANY($2::text[])
          ORDER BY available_at,created_at,id
@@ -980,6 +990,8 @@ export class PostgresLedger implements LedgerPort {
          provider_receipt=$5::jsonb,delivered_at=now(),updated_at=now()
        FROM fabric_state s
        WHERE e.id=$1 AND e.claimed_by=$2 AND e.claim_token=$3
+         AND (s.cold_recovery_phase IS NULL OR s.cold_recovery_phase='ACCEPTED')
+         AND NOT EXISTS (SELECT 1 FROM fabric_cold_effect_quarantine q WHERE q.effect_id=e.id)
          AND e.fabric_epoch=$4 AND s.current_epoch=$4 AND s.singleton=true
          AND e.status='processing' AND e.claim_expires_at > now()
        RETURNING e.id`,
@@ -1004,6 +1016,8 @@ export class PostgresLedger implements LedgerPort {
          updated_at=now()
        FROM fabric_state s
        WHERE e.id=$1 AND e.claimed_by=$2 AND e.claim_token=$3
+         AND (s.cold_recovery_phase IS NULL OR s.cold_recovery_phase='ACCEPTED')
+         AND NOT EXISTS (SELECT 1 FROM fabric_cold_effect_quarantine q WHERE q.effect_id=e.id)
          AND e.fabric_epoch=$4 AND s.current_epoch=$4 AND s.singleton=true
          AND e.status='processing' AND e.claim_expires_at > now()
        RETURNING e.id`,
@@ -1081,6 +1095,7 @@ export class PostgresLedger implements LedgerPort {
            claim_token=NULL,claimed_at=NULL,claim_expires_at=NULL,
            available_at=now(),updated_at=now(),last_error='effect claim expired'
          WHERE status='processing' AND claim_expires_at <= now()
+           AND NOT EXISTS (SELECT 1 FROM fabric_cold_effect_quarantine q WHERE q.effect_id=fabric_effect_outbox.id)
          RETURNING status`,
       );
       return {
@@ -1098,6 +1113,8 @@ export class PostgresLedger implements LedgerPort {
     const result = await this.pool.query(
       `SELECT * FROM fabric_tasks
        WHERE status='queued' AND available_at <= now()
+         AND NOT EXISTS (SELECT 1 FROM fabric_cold_task_quarantine q WHERE q.task_id=fabric_tasks.id)
+         AND EXISTS (SELECT 1 FROM fabric_state s WHERE s.singleton=true AND (s.cold_recovery_phase IS NULL OR s.cold_recovery_phase='ACCEPTED' OR (s.cold_recovery_phase='CANARY_ADMITTED' AND fabric_tasks.id=s.cold_canary_task_id)))
          AND (delivery_published_at IS NULL OR delivery_published_at < now() - interval '1 minute')
        ORDER BY priority DESC,available_at,created_at,id LIMIT $1`,
       [limit],
@@ -1112,7 +1129,7 @@ export class PostgresLedger implements LedgerPort {
          WHERE id=$1 AND status='queued'`,
         [taskId],
       );
-    });
+    }, true, { kind: "publish", taskId });
   }
 
   async queueSnapshot(): Promise<QueueSnapshot[]> {
@@ -1392,6 +1409,7 @@ export class PostgresLedger implements LedgerPort {
         `SELECT current_epoch,leader_host_id,leader_lease_expires_at,
            leadership_cluster_id,leadership_receipt_id,
            leadership_fence_digest,leader_recovery_hold_until,
+           cold_recovery_phase,
            policy_fingerprint
          FROM fabric_state WHERE singleton=true`,
       ),
@@ -1406,6 +1424,7 @@ export class PostgresLedger implements LedgerPort {
     ]);
     const row = (state.rows[0] ?? {}) as Record<string, unknown>;
     return {
+      coldRecoveryPhase: row.cold_recovery_phase ? String(row.cold_recovery_phase) : null,
       fabricEpoch: Number(row.current_epoch ?? 1),
       leaderHostId: row.leader_host_id ? String(row.leader_host_id) : null,
       leaderLeaseExpiresAt: row.leader_lease_expires_at
@@ -1835,12 +1854,16 @@ export class PostgresLedger implements LedgerPort {
       const state = await client.query<{
         current_epoch: string;
         leader_host_id: string | null;
+        cold_recovery_phase: string | null;
       }>(
-        `SELECT current_epoch,leader_host_id FROM fabric_state
+        `SELECT current_epoch,leader_host_id,cold_recovery_phase FROM fabric_state
          WHERE singleton=true FOR UPDATE`,
       );
       const currentEpoch = Number(state.rows[0]?.current_epoch ?? 1);
       const currentLeader = state.rows[0]?.leader_host_id ?? null;
+      if (state.rows[0]?.cold_recovery_phase && state.rows[0].cold_recovery_phase !== "ACCEPTED" && input.fabricEpoch !== currentEpoch) {
+        throw new FencedError("offline cold recovery owns the held epoch transition");
+      }
       const leadershipChanged =
         input.fabricEpoch > currentEpoch ||
         currentLeader !== input.leaderHostId;
@@ -1884,7 +1907,7 @@ export class PostgresLedger implements LedgerPort {
            WHERE t.status='running' AND EXISTS (
              SELECT 1 FROM fabric_attempts a
              WHERE a.task_id=t.id AND a.status='fenced' AND a.fabric_epoch < $1
-           )`,
+           ) AND NOT EXISTS (SELECT 1 FROM fabric_cold_task_quarantine q WHERE q.task_id=t.id)`,
           [input.fabricEpoch],
         );
         await client.query(
@@ -1892,7 +1915,8 @@ export class PostgresLedger implements LedgerPort {
              claimed_by=NULL,claim_token=NULL,claimed_at=NULL,
              claim_expires_at=NULL,available_at=now(),updated_at=now(),
              last_error='effect re-fenced by leadership epoch advance'
-           WHERE status <> 'delivered' AND fabric_epoch < $1`,
+           WHERE status <> 'delivered' AND fabric_epoch < $1
+             AND NOT EXISTS (SELECT 1 FROM fabric_cold_effect_quarantine q WHERE q.effect_id=fabric_effect_outbox.id)`,
           [input.fabricEpoch],
         );
         await client.query(
@@ -1951,6 +1975,24 @@ export class PostgresLedger implements LedgerPort {
       throw new FencedError(
         "control plane is not the current unexpired PostgreSQL leader",
       );
+    }
+  }
+
+  private async assertColdOperation(client: pg.PoolClient, operation?: ColdOperation): Promise<void> {
+    const result = await client.query("SELECT cold_recovery_phase,cold_canary_task_id,cold_canary_worker_id,leader_host_id FROM fabric_state WHERE singleton=true AND cold_recovery_phase IS NOT NULL AND cold_recovery_phase <> 'ACCEPTED' FOR UPDATE");
+    const state = result.rows[0] as {cold_recovery_phase?: string; cold_canary_task_id?: string; cold_canary_worker_id?: string;leader_host_id?:string} | undefined;
+    const phase = state?.cold_recovery_phase;
+    if (!phase || phase === "ACCEPTED") return;
+    if (phase !== "CANARY_ADMITTED" || !operation || operation.effects) throw new FencedError("cold recovery holds ordinary mutations and all effects");
+    if (operation.kind === "publish" && operation.taskId === state?.cold_canary_task_id) return;
+    if (operation.workerId !== state?.cold_canary_worker_id || !["register","heartbeat","claim","finish"].includes(operation.kind)) throw new FencedError("only the approved cold canary worker is admitted");
+    if (operation.kind === "register") {
+      const r=operation.registration;
+      if(operation.provider!=="local" || operation.poolId!=="fabric_cold_recovery_workers" || !r || r.hostId!==state?.leader_host_id || r.maxConcurrency!==1 || r.queues.length!==1 || r.queues[0]!=="fabric_cold_recovery" || r.capabilities.length!==1 || r.capabilities[0]!=="fabric.cold_canary" || r.metadata.coldCanaryHandler!=="fabric_cold_canary_v1") throw new FencedError("cold canary requires the fixed local provider-free worker and target host");
+    }
+    if (operation.kind === "finish") {
+      const attempt = await client.query("SELECT task_id FROM fabric_attempts WHERE id=$1", [operation.attemptId]);
+      if (attempt.rows[0]?.task_id !== state?.cold_canary_task_id) throw new FencedError("attempt is not the declared cold canary");
     }
   }
 

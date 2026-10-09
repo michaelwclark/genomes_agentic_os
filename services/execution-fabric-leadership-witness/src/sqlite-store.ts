@@ -3,6 +3,9 @@ import {
   chmodSync,
   copyFileSync,
   existsSync,
+  openSync,
+  fsyncSync,
+  closeSync,
   mkdirSync,
   readFileSync,
   renameSync,
@@ -12,8 +15,11 @@ import {
 } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { assertVerifiedColdRequest, type VerifiedColdRequest } from "./cold-recovery.js";
 import type {
   AuditRecord,
+  ColdRecoveryMutation,
+  ColdRecoveryReceipt,
   CandidateRecord,
   ConfigDigestRotationAbortReceipt,
   ConfigDigestRotationPreparation,
@@ -44,6 +50,8 @@ export type SqliteWitnessOptions = {
   allowInitialBootstrap?: boolean;
   leaseDurationMs?: number;
   now?: () => number;
+  /** Only the dedicated offline verifier can construct this capability. */
+  coldAuthorization?: VerifiedColdRequest;
 };
 
 function snapshotFromJson(payload: string): WitnessStoreSnapshot {
@@ -57,6 +65,9 @@ function snapshotFromJson(payload: string): WitnessStoreSnapshot {
     throw new Error("portable witness state has an unsupported schema");
   }
   const record = decoded as Record<string, unknown>;
+  if (record.coldRecoveries !== undefined && !Array.isArray(record.coldRecoveries)) {
+    throw new Error("portable witness cold recovery receipts must be an array");
+  }
   for (const field of [
     "promotions",
     "candidates",
@@ -92,6 +103,7 @@ function quickCheck(database: DatabaseSync, label: string): void {
  * process before it can mutate authority.
  */
 export class SqliteWitnessStore extends InMemoryWitnessStore {
+  private readonly coldAuthorization: VerifiedColdRequest | undefined;
   private readonly database: DatabaseSync;
   private readonly ownerToken = randomUUID();
   private readonly now: () => number;
@@ -120,6 +132,13 @@ export class SqliteWitnessStore extends InMemoryWitnessStore {
     options: SqliteWitnessOptions = {},
   ) {
     super();
+    this.coldAuthorization = options.coldAuthorization;
+    if (this.coldAuthorization) {
+      assertVerifiedColdRequest(this.coldAuthorization);
+      if (this.coldAuthorization.plan.targetDatabasePath !== databasePath || this.coldAuthorization.plan.clusterId !== clusterId) {
+        throw new Error("cold relocation capability names another database");
+      }
+    }
     this.now = options.now ?? Date.now;
     this.leaseDurationMs = options.leaseDurationMs ?? 30_000;
     if (this.leaseDurationMs < 3_000) {
@@ -229,11 +248,14 @@ export class SqliteWitnessStore extends InMemoryWitnessStore {
     } catch {
       throw new Error("portable witness bootstrap sentinel is corrupt");
     }
+    const originalBinding = this.coldAuthorization && sentinel.database === this.coldAuthorization.plan.originalDatabasePath;
+    const expectedDatabase = originalBinding ? this.coldAuthorization!.plan.originalDatabasePath : this.databasePath;
+    const expectedBackup = originalBinding ? this.coldAuthorization!.plan.originalBackupPath : this.backupPath;
     if (
       sentinel.schemaVersion !== "execution-fabric-witness-bootstrap/v1" ||
       sentinel.clusterId !== this.clusterId ||
-      sentinel.database !== this.databasePath ||
-      sentinel.backup !== this.backupPath
+      sentinel.database !== expectedDatabase ||
+      sentinel.backup !== expectedBackup
     ) {
       throw new Error(
         "portable witness bootstrap sentinel does not match this cluster or database",
@@ -326,6 +348,8 @@ export class SqliteWitnessStore extends InMemoryWitnessStore {
     try {
       copyFileSync(this.databasePath, backupTemporary);
       chmodSync(backupTemporary, 0o600);
+      const backupFd = openSync(backupTemporary, "r");
+      try { fsyncSync(backupFd); } finally { closeSync(backupFd); }
       const backup = new DatabaseSync(backupTemporary, { readOnly: true });
       try {
         quickCheck(backup, "new portable witness recovery backup");
@@ -352,7 +376,11 @@ export class SqliteWitnessStore extends InMemoryWitnessStore {
         } satisfies BootstrapSentinel)}\n`,
         { mode: 0o600 },
       );
+      const sentinelFd = openSync(sentinelTemporary, "r");
+      try { fsyncSync(sentinelFd); } finally { closeSync(sentinelFd); }
       renameSync(sentinelTemporary, this.sentinelPath);
+      const directoryFd = openSync(dirname(this.databasePath), "r");
+      try { fsyncSync(directoryFd); } finally { closeSync(directoryFd); }
     } finally {
       for (const path of [backupTemporary, sentinelTemporary]) {
         try {
@@ -362,6 +390,26 @@ export class SqliteWitnessStore extends InMemoryWitnessStore {
         }
       }
     }
+  }
+
+  /** Recover forward after DB commit but before sentinel/backup atomic rename. */
+  override async commitColdRecovery(mutation: ColdRecoveryMutation): Promise<ColdRecoveryReceipt> {
+    if (!this.coldAuthorization) throw new Error("ordinary witness store cannot execute cold authority transfer");
+    assertVerifiedColdRequest(this.coldAuthorization);
+    const plan = this.coldAuthorization.plan, receipt = mutation.receipt, next = mutation.nextState;
+    if (mutation.expectedLeader !== plan.sourceHost || mutation.expectedEpoch !== plan.expectedEpoch || receipt.recoveryId !== plan.recoveryId || receipt.planSha256 !== this.coldAuthorization.anchor.pending?.planSha256 || receipt.generation !== plan.generation || receipt.newPublicKeySha256 !== plan.newPublicKeySha256 || receipt.originalDatabasePath !== plan.originalDatabasePath || receipt.targetDatabasePath !== this.databasePath || next.currentLeader !== plan.targetHost || next.fabricEpoch !== plan.nextEpoch || next.configDigest !== plan.candidateConfigDigest || next.upstreamSystemId !== plan.newPgSystemId || next.timelineId !== plan.timelineId || next.leaderWalPosition !== plan.walPosition) throw new Error("cold store mutation differs from verified authority plan");
+    return super.commitColdRecovery(mutation);
+  }
+
+  repairColdRecoveryArtifacts(auth: VerifiedColdRequest): void {
+    assertVerifiedColdRequest(auth);
+    const receipt = this.coldRecoveries.get(auth.plan.recoveryId);
+    if (!receipt || receipt.planSha256 !== auth.anchor.pending?.planSha256 || auth.plan.targetDatabasePath !== this.databasePath) {
+      throw new Error("cold recovery repair has no matching committed history");
+    }
+    this.assertStorageHealthy();
+    this.refreshLease();
+    this.writeRecoveryArtifacts();
   }
 
   private assertStorageHealthy(): void {
