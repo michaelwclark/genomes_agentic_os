@@ -1,5 +1,27 @@
 schema_version: 1
 execution_fabric:
+  # Whole-system recovery is separately qualified; existing PG backups continue.
+  recovery_sets:
+    enabled: false
+    primary_host_id: genomesbox
+    custodian_host_id: bigmac
+    remote_staging_root: null
+    local_staging_root: null
+    daily_plan_file: null
+    capture_plan_file: null
+    maintenance_receipt_file: null
+    staging_dir: null
+    repository: null
+    password_file: null
+    max_age_seconds: 86400
+    retention:
+      daily: 14
+      weekly: 4
+      monthly: 3
+    offsite:
+      enabled: false
+      repository: null
+      password_file: null
   # Personal installs may opt one exact host into a non-HA shared primary.
   # This never authorizes bigmac to promote the shared PostgreSQL ledger;
   # bigmac continues through transport.fallback when genomesbox is offline.

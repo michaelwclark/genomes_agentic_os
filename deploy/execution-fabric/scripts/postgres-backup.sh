@@ -54,6 +54,22 @@ manifest_temporary="$manifest.partial.$$"
 receipt_temporary="$receipt.partial.$$"
 restore_database="fabric_restore_$(printf '%s' "$timestamp" | tr -cd '0-9')_$$"
 restore_created=false
+source_identity_before=
+source_identity_after=
+
+observe_source_identity() {
+  psql --no-psqlrc --set=ON_ERROR_STOP=1 --dbname="$PGDATABASE" --tuples-only --no-align <<'SQL'
+SELECT json_build_object(
+  'schemaVersion', 'execution-fabric-postgres-source/v1',
+  'systemId', c.system_identifier::text,
+  'database', current_database(),
+  'databaseOid', d.oid::text,
+  'majorVersion', current_setting('server_version_num')::integer / 10000,
+  'serverVersionNum', current_setting('server_version_num')::integer
+)
+FROM pg_control_system() c JOIN pg_database d ON d.datname=current_database();
+SQL
+}
 
 cleanup() {
   status=$?
@@ -69,6 +85,14 @@ trap cleanup EXIT
 trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
+
+if [ "${FABRIC_RECOVERY_REQUIRE_PG_PROVENANCE:-0}" = 1 ]; then
+  source_identity_before=$(observe_source_identity)
+  [ -n "$source_identity_before" ] || {
+    echo "native source PostgreSQL identity is unavailable" >&2
+    exit 75
+  }
+fi
 
 pg_dump --format=custom --file="$temporary"
 pg_restore --list "$temporary" >"$archive_list"
@@ -144,20 +168,33 @@ SQL
   exit 75
 }
 
+source_manifest_fields=
+source_receipt_fields=
+if [ "${FABRIC_RECOVERY_REQUIRE_PG_PROVENANCE:-0}" = 1 ]; then
+  source_identity_after=$(observe_source_identity)
+  [ "$source_identity_before" = "$source_identity_after" ] || {
+    echo "native source PostgreSQL identity changed during backup" >&2
+    exit 75
+  }
+  source_manifest_fields=",\"sourceIdentityVerified\":true,\"sourceIdentityBefore\":$source_identity_before,\"sourceIdentityAfter\":$source_identity_after"
+  source_receipt_fields=",\"sourceIdentityVerified\":true,\"sourceIdentity\":$source_identity_before"
+fi
+
 mv "$temporary" "$complete"
 [ "$(sha256_file "$complete")" = "$backup_sha" ] || {
   echo "completed backup hash differs from verified backup" >&2
   exit 75
 }
+verified_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
 cat >"$manifest_temporary" <<EOF
-{"schemaVersion":"execution-fabric-postgres-restore-manifest/v1","runId":"$run_id","backupFile":"$(basename "$complete")","backupSha256":"$backup_sha","backupBytes":$backup_bytes,"archiveManifestSha256":"$archive_sha","archiveEntryCount":$archive_entries,"readbackManifestSha256":"$readback_sha","readbackLineCount":$readback_lines,"tableCount":$table_count,"restoreDatabaseCreated":true,"restoreCompleted":true,"readbackCompleted":true,"restoreDatabaseDropped":true}
+{"schemaVersion":"execution-fabric-postgres-restore-manifest/v1","runId":"$run_id","backupFile":"$(basename "$complete")","backupSha256":"$backup_sha","backupBytes":$backup_bytes,"archiveManifestSha256":"$archive_sha","archiveEntryCount":$archive_entries,"readbackManifestSha256":"$readback_sha","readbackLineCount":$readback_lines,"tableCount":$table_count,"restoreDatabaseCreated":true,"restoreCompleted":true,"readbackCompleted":true,"restoreDatabaseDropped":true$source_manifest_fields}
 EOF
 mv "$manifest_temporary" "$manifest"
 manifest_sha=$(sha256_file "$manifest")
 
 cat >"$receipt_temporary" <<EOF
-{"schemaVersion":"execution-fabric-backup-health/v1","status":"passed","runId":"$run_id","verifiedAt":"$verified_at","backupFile":"$(basename "$complete")","backupSha256":"$backup_sha","restoreManifestVerified":true,"restoreManifest":{"schemaVersion":"execution-fabric-postgres-restore-manifest/v1","file":"$manifest_name","sha256":"$manifest_sha"}}
+{"schemaVersion":"execution-fabric-backup-health/v1","status":"passed","runId":"$run_id","verifiedAt":"$verified_at","backupFile":"$(basename "$complete")","backupSha256":"$backup_sha","restoreManifestVerified":true,"restoreManifest":{"schemaVersion":"execution-fabric-postgres-restore-manifest/v1","file":"$manifest_name","sha256":"$manifest_sha"}$source_receipt_fields}
 EOF
 mv "$receipt_temporary" "$receipt"
 

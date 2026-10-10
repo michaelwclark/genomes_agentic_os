@@ -1,5 +1,19 @@
 # Genome's Agentic OS — CLI Command Reference
 
+## Complete recovery sets
+
+`agentic-os runtime recovery-set` provides `plan`, `prepare`, `pull`,
+`collect`, `verify`, `restore-plan`, `restore-isolated`,
+`retention-plan` and `retention-apply`. Mutation defaults to dry run.
+Use exact capture/maintenance plans, configured primary/custodian identities,
+an immutable snapshot and an empty isolated restore target.
+
+The default daily PostgreSQL backup continues. Whole-system capture and
+BigMac collection are dormant until all required authorities, maintenance
+holds, byte verification and independent custody qualify. See
+[the backup runbook](../operations/execution-fabric-backup-recovery.md).
+
+
 > Authoritative reference for `agentic-os`. Generated from
 > `src/genomes_agentic_os/cli.py` (argparse) plus the receipts written by
 > `docs/architecture/tools/validate-cli.sh` (statuses and real output).
