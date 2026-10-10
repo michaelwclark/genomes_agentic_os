@@ -51,6 +51,26 @@ TEMPLATE = ROOT / "harness/skills/auto-dev/templates/reviewer-prompt.md"
 CLAUDE_ENV_REMOVED = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
 CLAUDE_TOOLS = "Read,Grep,Glob,Bash(git diff),Bash(git diff *),Bash(git show),Bash(git show *),Bash(git status),Bash(git status *)"
 MAX_DIFF_CHARS = 40_000
+DIAGNOSTIC_WINDOW_BYTES = 8_192
+DIAGNOSTIC_SUMMARIES = {
+    "cli_argument_rejected": "The CLI reported an argument or option rejection.",
+    "cli_auth_required": "The CLI reported an authentication requirement.",
+    "cli_account_limited": "The CLI reported an account or rate limit.",
+    "cli_permission_refused": "The CLI reported a permission refusal.",
+    "cli_network_unavailable": "The CLI reported a connectivity failure.",
+    "cli_timeout": "The CLI exceeded the configured timeout.",
+    "cli_not_found": "The configured CLI executable was unavailable.",
+    "cli_launch_failed": "The CLI subprocess could not be launched.",
+    "cli_output_invalid": "The CLI output did not satisfy the review contract.",
+    "cli_process_exit_unknown": "The CLI failed without a recognized diagnostic category.",
+}
+DIAGNOSTIC_MARKERS = {
+    "cli_argument_rejected": r"(?:unknown|unrecognized|invalid|unexpected) (?:argument|option)",
+    "cli_auth_required": r"(?:not logged in|authentication (?:failed|required)|unauthorized|please log in)",
+    "cli_account_limited": r"(?:rate limit(?:ed| exceeded)?|usage limit reached|quota exceeded|you['’]ve hit your limit)",
+    "cli_permission_refused": r"(?:permission denied|operation not permitted)",
+    "cli_network_unavailable": r"(?:connection (?:refused|reset|failed)|network error|enotfound|econnreset|etimedout)",
+}
 PURPOSE_ALIASES = {
     "finalize",
     "merge-readiness",
@@ -76,6 +96,98 @@ def now() -> str:
 def write_json(path: Path, value: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def diagnostic_stream(value: str | bytes | None) -> tuple[dict[str, Any], str]:
+    """Count output with bounded temporary memory; never return raw receipt text."""
+    if isinstance(value, bytes):
+        byte_count = len(value)
+        window = value[:DIAGNOSTIC_WINDOW_BYTES]
+    elif isinstance(value, str):
+        byte_count = sum(
+            len(value[offset : offset + DIAGNOSTIC_WINDOW_BYTES].encode("utf-8", errors="replace"))
+            for offset in range(0, len(value), DIAGNOSTIC_WINDOW_BYTES)
+        )
+        window = value[:DIAGNOSTIC_WINDOW_BYTES].encode("utf-8", errors="replace")[
+            :DIAGNOSTIC_WINDOW_BYTES
+        ]
+    else:
+        byte_count = 0
+        window = b""
+    return (
+        {
+            "byte_count": byte_count,
+            "inspected_bytes": len(window),
+            "truncated": byte_count > len(window),
+            "content_suppressed": True,
+        },
+        window.decode("utf-8", errors="replace"),
+    )
+
+
+def failure_diagnostics(
+    *,
+    review_key: str,
+    head_sha: str,
+    failure_code: str,
+    stdout: str | bytes | None = None,
+    stderr: str | bytes | None = None,
+    returncode: int | None = None,
+    launch_failed: bool = False,
+) -> dict[str, Any]:
+    """Persist only closed categories and static summaries, not captured output.
+
+    Categories describe reported markers, never an independently proven cause.
+    Ambiguous or unknown output stays suppressed. Digests bind safe metadata,
+    never a token-bearing raw stream, command, prompt or exception string.
+    """
+    if failure_code not in {
+        "cli_not_found", "cli_timeout", "cli_output_invalid", "cli_runtime_failed"
+    }:
+        raise ValueError("unsupported diagnostic failure code")
+    stdout_info, stdout_window = diagnostic_stream(stdout)
+    stderr_info, stderr_window = diagnostic_stream(stderr)
+    category = {
+        "cli_not_found": "cli_not_found",
+        "cli_timeout": "cli_timeout",
+        "cli_output_invalid": "cli_output_invalid",
+    }.get(failure_code, "cli_process_exit_unknown")
+    if launch_failed:
+        category = "cli_launch_failed"
+    elif failure_code == "cli_runtime_failed":
+        # ANSI/control removal is bounded by two fixed byte windows.
+        marker_text = re.sub(
+            r"\x1b\[[0-?]*[ -/]*[@-~]", "", stderr_window + "\n" + stdout_window
+        )
+        marker_text = re.sub(r"[\x00-\x08\x0b-\x1f\x7f]", "", marker_text)
+        matches = [
+            name
+            for name, pattern in DIAGNOSTIC_MARKERS.items()
+            if re.search(pattern, marker_text, flags=re.IGNORECASE)
+        ]
+        if len(matches) == 1:
+            category = matches[0]
+    exit_code = returncode if type(returncode) is int else None
+    safe = {
+        "schema": "opposing-review-failure-diagnostics/v1",
+        "review_key": review_key,
+        "head_sha": head_sha,
+        "transport": "claude_cli",
+        "failure_code": failure_code,
+        "exit_code": exit_code,
+        "signal": -exit_code if exit_code is not None and exit_code < 0 else None,
+        "timeout": failure_code == "cli_timeout",
+        "category": category,
+        "summary": DIAGNOSTIC_SUMMARIES[category],
+        "stdout": stdout_info,
+        "stderr": stderr_info,
+        "window_bytes_per_stream": DIAGNOSTIC_WINDOW_BYTES,
+        "raw_output_retained": False,
+    }
+    safe["metadata_sha256"] = hashlib.sha256(
+        json.dumps(safe, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    return safe
 
 
 def project_identity(work_item: Path, os_root: Path) -> tuple[str, str]:
@@ -768,9 +880,13 @@ def main() -> int:
             parsed_outcome = "findings"
             verdict_structured = False
             findings: list[dict[str, Any]] = []
+            diagnostic: dict[str, Any] | None = None
             if not claude:
                 failure = "cli_not_found"
                 plan["reviewer_status"] = "unavailable"
+                diagnostic = failure_diagnostics(
+                    review_key=review_key, head_sha=head, failure_code=failure
+                )
             else:
                 env = os.environ.copy()
                 for key in CLAUDE_ENV_REMOVED:
@@ -796,23 +912,48 @@ def main() -> int:
                         timeout=args.timeout_seconds,
                         env=env,
                     )
+                except subprocess.TimeoutExpired as exc:
+                    failure = "cli_timeout"
+                    diagnostic = failure_diagnostics(
+                        review_key=review_key,
+                        head_sha=head,
+                        failure_code=failure,
+                        stdout=exc.stdout,
+                        stderr=exc.stderr,
+                    )
+                except OSError:
+                    failure = "cli_runtime_failed"
+                    diagnostic = failure_diagnostics(
+                        review_key=review_key,
+                        head_sha=head,
+                        failure_code=failure,
+                        launch_failed=True,
+                    )
+                except UnicodeError:
+                    failure = "cli_output_invalid"
+                    diagnostic = failure_diagnostics(
+                        review_key=review_key, head_sha=head, failure_code=failure
+                    )
+                else:
                     if completed.returncode:
                         failure = "cli_runtime_failed"
-                    elif not completed.stdout.strip():
+                    elif not isinstance(completed.stdout, str) or not completed.stdout.strip():
                         failure = "cli_output_invalid"
                     else:
                         response = completed.stdout.strip()
-                        parsed_outcome, verdict_structured = parse_review_verdict(response)
                         try:
+                            parsed_outcome, verdict_structured = parse_review_verdict(response)
                             findings = parse_structured_findings(response)
-                        except ReviewError:
+                        except (ReviewError, ValueError, RecursionError):
+                            # Expected JSON parser limits are invalid reviewer
+                            # output, not authority to retain exception text.
                             failure = "cli_output_invalid"
                         if not verdict_structured:
                             failure = "cli_output_invalid"
-                        (run_dir / "reviewer-response.md").write_text(
-                            response + "\n", encoding="utf-8"
-                        )
                         if failure is None:
+                            (run_dir / "reviewer-response.md").write_text(
+                                response + "\n", encoding="utf-8"
+                            )
                             events = ledger_events(findings)
                             (run_dir / "review-ledger.jsonl").write_text(
                                 "".join(
@@ -821,10 +962,37 @@ def main() -> int:
                                 ),
                                 encoding="utf-8",
                             )
-                except subprocess.TimeoutExpired:
-                    failure = "cli_timeout"
+                    if failure:
+                        diagnostic = failure_diagnostics(
+                            review_key=review_key,
+                            head_sha=head,
+                            failure_code=failure,
+                            stdout=completed.stdout,
+                            stderr=completed.stderr,
+                            returncode=completed.returncode,
+                        )
+                        # Invalid/nonzero output may echo credentials or the
+                        # prompt. It is not a usable reviewer response.
+                        response = ""
+                        findings = []
                 if failure:
                     plan["reviewer_status"] = "runtime_failure"
+
+            diagnostic_ref: dict[str, Any] | None = None
+            if diagnostic is not None:
+                diagnostic_path = run_dir / "reviewer-failure-diagnostics.json"
+                try:
+                    write_json(diagnostic_path, diagnostic)
+                    diagnostic_ref = {
+                        "artifact": diagnostic_path.name,
+                        "sha256": hashlib.sha256(diagnostic_path.read_bytes()).hexdigest(),
+                        "status": "recorded",
+                        "metadata": diagnostic,
+                    }
+                except OSError:
+                    # An optional diagnostic cannot turn failure into success
+                    # or replace it with an unsanitized filesystem exception.
+                    diagnostic_ref = {"status": "write_failed", "metadata": diagnostic}
 
             # The paid review is not terminal until provider and worktree still
             # prove the same exact head after the model returns.
@@ -863,6 +1031,7 @@ def main() -> int:
                 "review_run_dir": str(run_dir),
                 "reviewer_status": plan["reviewer_status"],
                 "failure_code": failure,
+                "failure_diagnostics": diagnostic_ref,
                 "decision": decision["decision"],
                 "response": response,
                 "parsed_outcome": parsed_outcome,

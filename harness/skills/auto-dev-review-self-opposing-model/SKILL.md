@@ -57,6 +57,23 @@ disagrees with `AGENTIC_OS_ROOT` fails closed.
    `readiness-decision.json`. A timeout, auth failure, empty output, or malformed
    output is a sanitized receipt-backed unavailable/runtime result, never a
    clean review. Honor the project's block policy.
+   CLI failures additionally produce `reviewer-failure-diagnostics.json` and
+   a reference in the review receipt. This closed diagnostic records the exact
+   review key/head, exit code or signal when available, stream byte counts,
+   whether inspection was truncated, a fixed category and a static summary.
+   Classification inspects at most the first 8,192 bytes of each captured
+   stream; ambiguous or unknown markers remain unclassified. Categories report
+   CLI markers and do not establish their underlying cause. No raw failure
+   output, exception message, command, prompt or environment value is retained
+   in diagnostic evidence. Hashes bind safe metadata and its artifact, rather
+   than credential-bearing output. Invalid/nonzero output is suppressed from
+   the reviewer response and findings; a valid successful response follows the
+   existing verdict/ledger path. JSON recursion and integer-conversion limit
+   failures follow the same closed invalid-output path without exception text.
+   A diagnostic write failure remains an
+   unavailable result with safe inline metadata. Reusing a sealed receipt does
+   not invoke the transport or reclassify it. Diagnostics grant no retry,
+   authentication, provider, merge or installation authority.
 7. Record the typed review-stage evidence only after the deterministic decision
    is clean and all exact-head CI/thread gates are satisfied. A post-PR clean
    review alone does not grant merge authority; `$auto-dev-merge` remains the

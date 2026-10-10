@@ -14,6 +14,450 @@ from pathlib import Path
 import pytest
 
 
+@pytest.fixture
+def offline_review(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """Execute the actual closure with all model/provider transports replaced."""
+    runner = _load_runner()
+    work_item = tmp_path / "work-item"
+    worktree = tmp_path / "worktree"
+    work_item.mkdir()
+    worktree.mkdir()
+    head = "b" * 40
+    key = "offline-diagnostic-key"
+    source = {
+        "work_item_id": "AGE-210",
+        "worktree": str(worktree),
+        "repo_path": str(worktree),
+        "implementation_summary": "Record closed failure metadata.",
+        "spec_source": "Offline diagnostic fixture",
+        "builder_model": "gpt-5.6",
+        "reviewer_model": "opus",
+        "selected_reviewer_model": "opus",
+        "reviewer_selection_source": "project-policy",
+        "target_branch": "main",
+        "base_sha": "a" * 40,
+        "head_sha": head,
+        "diff_hash": "d" * 64,
+        "pr_number": 42,
+        "mode": "post_pr",
+    }
+    provider = {
+        "number": 42,
+        "url": "https://example.test/acme/widgets/pull/42",
+        "state": "OPEN",
+        "headRefOid": head,
+        "baseRefName": "main",
+        "statusCheckRollup": [],
+    }
+    captured = {"calls": [], "provider_reads": 0}
+    options = {}
+
+    class FakeCoordinator:
+        def __init__(self, _root):
+            pass
+
+        def execute(self, subject, execute_review, **kwargs):
+            captured["subject"] = subject
+            captured["coordination_options"] = kwargs
+            reused = options.get("reused", False)
+            review = (
+                {"outcome": "unavailable", "failure_code": "prior_sealed_failure"}
+                if reused
+                else execute_review()
+            )
+            captured["review"] = review
+            return SimpleNamespace(
+                key=key,
+                receipt={"review": review, "outcome": review["outcome"]},
+                receipt_path=tmp_path / "coordination-receipt.json",
+                reused=reused,
+            )
+
+    def fake_provider(*_args):
+        captured["provider_reads"] += 1
+        result = dict(provider)
+        if options.get("changed_head") and captured["provider_reads"] > 1:
+            result["headRefOid"] = "e" * 40
+        return result
+
+    def fake_run(command, **kwargs):
+        assert command[0] == "/offline/claude", "unexpected executable"
+        captured["calls"].append((command, kwargs))
+        result = options["result"]
+        if isinstance(result, BaseException):
+            raise result
+        return result
+
+    monkeypatch.setattr(runner, "resolve_os_root", lambda _explicit: tmp_path)
+    monkeypatch.setattr(runner, "prior_request", lambda *_args: dict(source))
+    monkeypatch.setattr(runner, "project_identity", lambda *_args: ("acme", "widgets"))
+    monkeypatch.setattr(
+        runner, "load_development_profile",
+        lambda *_args: (
+            {"repository": {"root": str(worktree), "base_branch": "main"}},
+            tmp_path / "development.yml",
+        ),
+    )
+    monkeypatch.setattr(runner, "provider_pr", fake_provider)
+    monkeypatch.setattr(runner, "git_head", lambda _path: head)
+    monkeypatch.setattr(runner, "git_repository", lambda _path: "acme/widgets")
+    monkeypatch.setattr(runner, "stable_review_key", lambda _subject: key)
+    monkeypatch.setattr(runner, "diff_hash", lambda *_args: "d" * 64)
+    monkeypatch.setattr(runner, "render_prompt", lambda *_args: "Offline review prompt")
+    monkeypatch.setattr(runner, "ReviewCoordinator", FakeCoordinator)
+    monkeypatch.setattr(runner, "run", fake_run)
+    monkeypatch.setattr(
+        runner.shutil, "which",
+        lambda _name: None if options.get("missing_cli") else "/offline/claude",
+    )
+    monkeypatch.setattr(runner, "decide", lambda _path: {"decision": "ready_for_merge"})
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "fixture-api-key-private")
+    monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "fixture-oauth-private")
+    monkeypatch.setattr(
+        sys, "argv",
+        [
+            "run_opposing_model_review.py", "AGE-210", "--os-root", str(tmp_path),
+            "--work-item", str(work_item), "--worktree", str(worktree),
+            "--timeout-seconds", "7",
+        ],
+    )
+
+    def execute(result=None, **settings):
+        options.update(result=result, **settings)
+        if settings.get("diagnostic_write_fails"):
+            original_write = runner.write_json
+
+            def guarded_write(path, value):
+                if path.name == "reviewer-failure-diagnostics.json":
+                    raise OSError("fixture-oauth-private: /private/credential-path")
+                original_write(path, value)
+
+            monkeypatch.setattr(runner, "write_json", guarded_write)
+        exit_code = runner.main()
+        run_dir = work_item / "artifacts/finishing-touches/review-runs" / key
+        return SimpleNamespace(
+            runner=runner, exit_code=exit_code, run_dir=run_dir,
+            captured=captured, review=captured["review"], head=head, key=key,
+        )
+
+    execute.runner = runner
+    return execute
+
+
+@pytest.mark.parametrize(
+    ("marker", "category"),
+    [
+        ("Unknown option --private-value", "cli_argument_rejected"),
+        ("Authentication required", "cli_auth_required"),
+        ("You’ve hit your limit", "cli_account_limited"),
+        ("Operation not permitted", "cli_permission_refused"),
+        ("ECONNRESET", "cli_network_unavailable"),
+        ("unrecognized private failure", "cli_process_exit_unknown"),
+        ("Authentication failed; network error", "cli_process_exit_unknown"),
+        ("\x1b[31mPermission denied\x1b[0m\x00", "cli_permission_refused"),
+    ],
+)
+def test_failure_categories_suppress_secret_output(marker, category) -> None:
+    runner = _load_runner()
+    secret = "fixture-oauth-private"
+    result = runner.failure_diagnostics(
+        review_key="key", head_sha="b" * 40, failure_code="cli_runtime_failed",
+        stdout=secret, stderr=marker + " " + secret, returncode=-15,
+    )
+
+    assert result["category"] == category
+    assert result["exit_code"] == -15
+    assert result["signal"] == 15
+    assert result["raw_output_retained"] is False
+    assert secret not in json.dumps(result)
+    digest = result.pop("metadata_sha256")
+    assert digest == hashlib.sha256(
+        json.dumps(result, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
+def test_failure_metadata_is_bounded_and_counts_unicode_bytes() -> None:
+    runner = _load_runner()
+    output = "😀" * 300_000 + "fixture-oauth-private"
+    stderr = b"x" * 2_000_000 + b"authentication failed fixture-oauth-private"
+    result = runner.failure_diagnostics(
+        review_key="key", head_sha="b" * 40, failure_code="cli_runtime_failed",
+        stdout=output, stderr=stderr, returncode=1,
+    )
+
+    assert result["category"] == "cli_process_exit_unknown"
+    assert result["stdout"]["byte_count"] == len(output.encode())
+    assert result["stderr"]["byte_count"] == len(stderr)
+    for stream in ("stdout", "stderr"):
+        assert result[stream]["inspected_bytes"] == runner.DIAGNOSTIC_WINDOW_BYTES
+        assert result[stream]["truncated"] is True
+        assert result[stream]["content_suppressed"] is True
+    assert len(json.dumps(result).encode()) < 2_000
+    assert "fixture-oauth-private" not in json.dumps(result)
+
+
+def test_diagnostics_reject_open_failure_codes_without_echoing_them() -> None:
+    runner = _load_runner()
+    with pytest.raises(ValueError, match="^unsupported diagnostic failure code$"):
+        runner.failure_diagnostics(
+            review_key="key", head_sha="b" * 40,
+            failure_code="fixture-oauth-private",
+        )
+
+
+@pytest.mark.parametrize(
+    ("result", "failure", "category"),
+    [
+        (subprocess.CompletedProcess([], 3, "fixture-oauth-private", "Unknown option"), "cli_runtime_failed", "cli_argument_rejected"),
+        (subprocess.CompletedProcess([], -9, "", "fixture-oauth-private"), "cli_runtime_failed", "cli_process_exit_unknown"),
+        (subprocess.CompletedProcess([], 0, "", "fixture-oauth-private"), "cli_output_invalid", "cli_output_invalid"),
+        (subprocess.CompletedProcess([], 0, " \n", ""), "cli_output_invalid", "cli_output_invalid"),
+        (subprocess.CompletedProcess([], 0, None, ""), "cli_output_invalid", "cli_output_invalid"),
+        (subprocess.CompletedProcess([], 0, b"fixture-oauth-private", b""), "cli_output_invalid", "cli_output_invalid"),
+        (subprocess.CompletedProcess([], 0, "fixture-oauth-private\nAGENTIC_OS_REVIEW_VERDICT: MAYBE", ""), "cli_output_invalid", "cli_output_invalid"),
+        (subprocess.CompletedProcess([], 0, "```json\n[{\"id\":\"fixture-oauth-private\"}]\n```\nAGENTIC_OS_REVIEW_VERDICT: CLEAN", ""), "cli_output_invalid", "cli_output_invalid"),
+        (subprocess.TimeoutExpired(["fixture-oauth-private"], 7, output=b"fixture-oauth-private", stderr=b"fixture-api-key-private"), "cli_timeout", "cli_timeout"),
+        (OSError(13, "fixture-oauth-private: private path"), "cli_runtime_failed", "cli_launch_failed"),
+        (UnicodeDecodeError("utf8", b"\xff", 0, 1, "fixture-oauth-private"), "cli_output_invalid", "cli_output_invalid"),
+    ],
+    ids=["nonzero", "signal", "empty", "whitespace", "none", "bytes", "bad-verdict", "bad-findings", "timeout", "launch-error", "decode-error"],
+)
+def test_actual_failure_receipts_remain_unavailable_and_private(
+    offline_review, capsys, result, failure, category
+) -> None:
+    execution = offline_review(result)
+    diagnostic_path = execution.run_dir / "reviewer-failure-diagnostics.json"
+    diagnostic = json.loads(diagnostic_path.read_text())
+    reference = execution.review["failure_diagnostics"]
+
+    assert execution.exit_code == 2
+    assert execution.review["outcome"] == "unavailable"
+    assert execution.review["reviewer_status"] == "runtime_failure"
+    assert execution.review["failure_code"] == failure
+    assert execution.review["response"] == ""
+    assert execution.review["findings"] == []
+    assert execution.review["readback_verified"] is True
+    assert diagnostic["category"] == category
+    assert diagnostic["review_key"] == execution.key
+    assert diagnostic["head_sha"] == execution.head
+    assert reference["artifact"] == diagnostic_path.name
+    assert reference["sha256"] == hashlib.sha256(diagnostic_path.read_bytes()).hexdigest()
+    assert reference["metadata"] == diagnostic
+    assert not (execution.run_dir / "reviewer-response.md").exists()
+    assert (execution.run_dir / "review-ledger.jsonl").read_text() == ""
+    assert execution.captured["provider_reads"] == 2
+    serialized = capsys.readouterr().out + json.dumps(execution.review)
+    for path in execution.run_dir.iterdir():
+        serialized += path.read_text()
+    for secret in ("fixture-api-key-private", "fixture-oauth-private"):
+        assert secret not in serialized
+
+
+@pytest.mark.parametrize("verdict", ["CLEAN", "FINDINGS"])
+@pytest.mark.parametrize("parser_limit", ["nesting", "integer"])
+def test_parser_limit_output_completes_closed_unavailable_receipt(
+    offline_review, monkeypatch, capsys, verdict, parser_limit
+) -> None:
+    if parser_limit == "nesting":
+        # The accelerated decoder in Python 3.14 accepts deeply nested input.
+        # Exercise the stdlib recursive backend only for this fake response;
+        # production parsing and all other loads retain their normal backend.
+        depth = max(sys.getrecursionlimit() * 4, 10_000)
+        value = "[" * depth + "0" + "]" * depth
+        expected_error = RecursionError
+    else:
+        get_limit = getattr(sys, "get_int_max_str_digits", None)
+        if get_limit is None or get_limit() == 0:
+            pytest.skip("interpreter has no active integer-conversion limit")
+        value = "9" * (get_limit() + 1)
+        expected_error = ValueError
+    payload = '[{"id":"fixture-oauth-private","line":' + value + "}]"
+    if parser_limit == "nesting":
+        decoder = json.JSONDecoder()
+        decoder.scan_once = json.scanner.py_make_scanner(decoder)
+        original_loads = json.loads
+
+        def recursive_fixture_loads(raw, *args, **kwargs):
+            if raw == payload:
+                return decoder.decode(raw)
+            return original_loads(raw, *args, **kwargs)
+
+        monkeypatch.setattr(json, "loads", recursive_fixture_loads)
+    with pytest.raises(expected_error):
+        json.loads(payload)
+    response = "```json\n" + payload + "\n```\nAGENTIC_OS_REVIEW_VERDICT: " + verdict
+    runner = offline_review.runner
+    parser_calls = []
+    original_verdict = runner.parse_review_verdict
+    original_findings = runner.parse_structured_findings
+
+    def verdict_parser(text):
+        parser_calls.append("verdict")
+        return original_verdict(text)
+
+    def findings_parser(text):
+        parser_calls.append("findings")
+        return original_findings(text)
+
+    monkeypatch.setattr(runner, "parse_review_verdict", verdict_parser)
+    monkeypatch.setattr(runner, "parse_structured_findings", findings_parser)
+    execution = offline_review(subprocess.CompletedProcess([], 0, response, ""))
+    diagnostic_path = execution.run_dir / "reviewer-failure-diagnostics.json"
+    diagnostic = json.loads(diagnostic_path.read_text())
+
+    # CLEAN inspects JSON while reconciling its verdict; FINDINGS reaches the
+    # separate findings parser. Both actual limit paths must finish a receipt.
+    assert parser_calls == (["verdict"] if verdict == "CLEAN" else ["verdict", "findings"])
+    assert execution.exit_code == 2
+    assert execution.review["outcome"] == "unavailable"
+    assert execution.review["failure_code"] == "cli_output_invalid"
+    assert execution.review["reviewer_status"] == "runtime_failure"
+    assert execution.review["response"] == ""
+    assert execution.review["findings"] == []
+    assert execution.review["readback_verified"] is True
+    assert execution.captured["provider_reads"] == 2
+    assert diagnostic["category"] == "cli_output_invalid"
+    assert diagnostic["raw_output_retained"] is False
+    assert diagnostic["stdout"]["byte_count"] == len(response.encode())
+    assert execution.review["failure_diagnostics"]["sha256"] == hashlib.sha256(
+        diagnostic_path.read_bytes()
+    ).hexdigest()
+    assert (execution.run_dir / "review-ledger.jsonl").read_text() == ""
+    assert not (execution.run_dir / "reviewer-response.md").exists()
+    assert (execution.run_dir / "opposing-model-review-receipt.json").exists()
+    retained = capsys.readouterr().out
+    retained += "".join(path.read_text() for path in execution.run_dir.iterdir())
+    for suppressed in ("fixture-oauth-private", "maximum recursion depth", "Exceeds the limit", payload):
+        assert suppressed not in retained
+
+
+@pytest.mark.parametrize("failure_site", ["post_provider", "decision"])
+def test_parser_guard_does_not_hide_unrelated_state_failures(
+    offline_review, monkeypatch, failure_site
+) -> None:
+    runner = offline_review.runner
+    if failure_site == "post_provider":
+        original_provider = runner.provider_pr
+        reads = 0
+
+        def provider_failure(*args):
+            nonlocal reads
+            reads += 1
+            if reads == 2:
+                raise ValueError("unrelated state failure")
+            return original_provider(*args)
+
+        monkeypatch.setattr(runner, "provider_pr", provider_failure)
+    else:
+        def decision_failure(_path):
+            raise ValueError("unrelated state failure")
+
+        monkeypatch.setattr(runner, "decide", decision_failure)
+    response = "```json\n[]\n```\nAGENTIC_OS_REVIEW_VERDICT: CLEAN"
+
+    with pytest.raises(ValueError, match="^unrelated state failure$"):
+        offline_review(subprocess.CompletedProcess([], 0, response, ""))
+
+
+def test_actual_large_failure_retains_only_small_metadata(offline_review) -> None:
+    output = "x" * 2_000_000 + "fixture-oauth-private"
+    execution = offline_review(subprocess.CompletedProcess([], 1, output, output))
+    diagnostic = execution.review["failure_diagnostics"]["metadata"]
+
+    assert diagnostic["stdout"]["byte_count"] == len(output)
+    assert diagnostic["stdout"]["truncated"] is True
+    assert diagnostic["stderr"]["truncated"] is True
+    assert (execution.run_dir / "reviewer-failure-diagnostics.json").stat().st_size < 2_000
+    assert "fixture-oauth-private" not in json.dumps(execution.review)
+
+
+def test_missing_cli_receipt_records_closed_diagnostic_without_invocation(offline_review) -> None:
+    execution = offline_review(missing_cli=True)
+
+    assert execution.exit_code == 2
+    assert execution.review["outcome"] == "unavailable"
+    assert execution.review["reviewer_status"] == "unavailable"
+    assert execution.review["failure_code"] == "cli_not_found"
+    assert execution.review["failure_diagnostics"]["metadata"]["category"] == "cli_not_found"
+    assert execution.captured["calls"] == []
+
+
+def test_optional_diagnostic_write_failure_stays_safe_and_unavailable(
+    offline_review, capsys
+) -> None:
+    execution = offline_review(
+        subprocess.CompletedProcess([], 1, "", "fixture-oauth-private"),
+        diagnostic_write_fails=True,
+    )
+
+    assert execution.exit_code == 2
+    assert execution.review["failure_code"] == "cli_runtime_failed"
+    assert execution.review["outcome"] == "unavailable"
+    assert execution.review["failure_diagnostics"]["status"] == "write_failed"
+    assert not (execution.run_dir / "reviewer-failure-diagnostics.json").exists()
+    assert "fixture-oauth-private" not in capsys.readouterr().out
+    assert "/private/credential-path" not in json.dumps(execution.review)
+
+
+def test_post_review_head_mismatch_keeps_existing_readback_block(offline_review) -> None:
+    execution = offline_review(
+        subprocess.CompletedProcess([], 1, "", "Unknown option"), changed_head=True,
+    )
+
+    assert execution.exit_code == 2
+    assert execution.review["outcome"] == "unavailable"
+    assert execution.review["failure_code"] == "head_changed_after_review"
+    assert execution.review["readback_verified"] is False
+    assert execution.review["failure_diagnostics"]["metadata"]["failure_code"] == "cli_runtime_failed"
+
+
+def test_terminal_receipt_reuse_does_not_invoke_or_reclassify(offline_review) -> None:
+    execution = offline_review(reused=True)
+
+    assert execution.exit_code == 2
+    assert execution.review == {"outcome": "unavailable", "failure_code": "prior_sealed_failure"}
+    assert execution.captured["calls"] == []
+    assert execution.captured["provider_reads"] == 1
+    assert not (execution.run_dir / "reviewer-failure-diagnostics.json").exists()
+
+
+@pytest.mark.parametrize("verdict", ["CLEAN", "FINDINGS"])
+def test_successful_transport_preserves_command_auth_and_verdict_path(
+    offline_review, verdict
+) -> None:
+    findings = [] if verdict == "CLEAN" else [{
+        "id": "F1", "severity": "high", "category": "tests",
+        "file": "tests/example.py", "line": 1, "title": "Missing guard",
+        "detail": "A required guard is absent.", "suggested_fix": "Add guard.",
+        "blocking": True,
+    }]
+    response = "```json\n" + json.dumps(findings) + "\n```\nAGENTIC_OS_REVIEW_VERDICT: " + verdict
+    execution = offline_review(subprocess.CompletedProcess([], 0, response, "unused stderr"))
+    command, kwargs = execution.captured["calls"][0]
+
+    assert command == [
+        "/offline/claude", "-p", "--model", "opus", "--safe-mode",
+        "--permission-mode", "dontAsk", "--tools", "Read,Grep,Glob,Bash",
+        "--allowedTools", execution.runner.CLAUDE_TOOLS,
+        "--no-session-persistence", "Offline review prompt",
+    ]
+    assert kwargs["timeout"] == 7
+    assert "ANTHROPIC_API_KEY" not in kwargs["env"]
+    assert "ANTHROPIC_AUTH_TOKEN" not in kwargs["env"]
+    assert execution.review["failure_code"] is None
+    assert execution.review["failure_diagnostics"] is None
+    assert execution.review["reviewer_status"] == "available"
+    assert execution.review["readback_verified"] is True
+    assert execution.review["response"] == response
+    assert execution.review["outcome"] == ("clean" if verdict == "CLEAN" else "findings")
+    assert execution.exit_code == (0 if verdict == "CLEAN" else 2)
+    assert (execution.run_dir / "reviewer-response.md").read_text() == response + "\n"
+    assert not (execution.run_dir / "reviewer-failure-diagnostics.json").exists()
+    assert execution.captured["subject"].head_sha == execution.head
+    assert execution.captured["coordination_options"]["mode"] == "full"
+    assert execution.captured["provider_reads"] == 2
+
+
 def _load_runner():
     script = (
         Path(__file__).parents[1]
