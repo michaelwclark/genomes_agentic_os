@@ -2083,6 +2083,31 @@ require a `--preflight-check` that records complexity and performance evidence.
 Use `--progress-file` for semantic phase/item/file/byte progress.
 `agentic-os-quiet-run` is a compatibility launcher for this same command.
 
+`--expected-git-identity` accepts a closed JSON object with `repository`,
+`branch`, `head`, and `clean`, plus an optional `worktree`. For example:
+`'{"repository":"git@example.com:owner/repo.git","branch":"main","head":"<commit>","clean":true}'`.
+`clean` accepts JSON booleans or the legacy lowercase strings `"true"` and
+`"false"`; booleans are stored as those strings. Other types, unknown fields,
+or missing core fields are refused before creating a run or detaching its
+monitor. Omitted or empty objects preserve unguarded runs. A supplied worktree
+is resolved and must match the actual working directory; a four-field identity
+keeps its established four-field receipt shape.
+
+The monitor checks the exact repository, branch, commit, and cleanliness before
+dispatch and after execution. Each Git query has a 30-second timeout. An ordinary
+Git collection error, mismatch, checker exception, or preflight evidence-write
+error terminalizes the admitted run before launching its child. Receipts retain
+available observations and sanitized failure phase/category, and the monitor
+restores its signal handlers. Preflight refusals record that no child started
+and leave post-run invariants unqualified.
+
+If terminal publication itself fails, the monitor makes one finite independent
+attempt at the receipt, state, registry, event, and summary channels. It records
+an error with incomplete evidence wherever storage permits and exits nonzero;
+unwritable storage cannot guarantee a receipt. Exception messages are excluded
+from this failure evidence. A successful source test does not qualify an
+installed monitor or authorize retrying a previously held actor.
+
 ---
 
 ## 16. Plain-English SDLC orchestration: `auto-dev`
