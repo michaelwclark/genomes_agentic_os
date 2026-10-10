@@ -2,6 +2,17 @@
 
 Record local constraints, approval gates, safety boundaries, coding rules, and operating rules for this layer.
 
+## Email author voice
+
+Before drafting, rewriting or reviewing an email, including drafts in chat,
+load `harness/config/EMAIL_VOICE.md` from the installed OS root when present
+and applicable to the requested author. Follow its explicit preferences and
+final drafting check. Another author's profile and the current user request
+must not be overridden by an operator's voice. If no applicable profile exists,
+use the current request and do not invent a learned voice. Drafting never
+implies permission to send. Operator profiles are instance data, not customer
+scaffold defaults.
+
 ## Precedence
 
 - Active user instructions win.

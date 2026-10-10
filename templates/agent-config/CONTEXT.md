@@ -25,6 +25,12 @@ owns.
 | Review an automation | automation spec, permissions, tests | unrelated workflows |
 | Run SDLC work | Auto-Dev program, selected workflow, effective root/domain/project policy receipt | unrelated workflow policies and archived runs |
 
+## Email author context
+
+When composing email, load the applicable author profile at
+`<os-root>/harness/config/EMAIL_VOICE.md` when present. Keep operator and
+customer voices separate. See RULES.md for the drafting contract.
+
 ## Done Means
 
 - Work was routed to the correct local surface.
