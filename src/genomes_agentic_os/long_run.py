@@ -166,6 +166,10 @@ def _registry_entry(state: dict[str, Any]) -> dict[str, Any]:
         "checkpoint_strategy",
         "mutation_lock",
         "terminal_receipt",
+        "failure_phase",
+        "failure_category",
+        "terminal_evidence_incomplete",
+        "original_outcome_status",
     )
     return {key: state[key] for key in fields if key in state}
 
@@ -249,6 +253,79 @@ def _effective_budgets(root: Path, supplied: dict[str, Any]) -> dict[str, Any]:
     return values
 
 
+def _normalize_expected_git_identity(value: object) -> dict[str, str]:
+    """Validate before admission; only clean booleans gain a legacy string equivalent.
+
+    An omitted/empty object preserves unguarded runs. Other shapes raise a
+    value-free LongRunError before files or a detached monitor are created.
+    """
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise LongRunError("expected Git identity must be a JSON object")
+    if not value:
+        return {}
+    required = {"repository", "branch", "head", "clean"}
+    if not required.issubset(value) or set(value) - (required | {"worktree"}):
+        raise LongRunError("expected Git identity requires repository, branch, head and clean; only worktree is optional")
+    result: dict[str, str] = {}
+    for key in ("repository", "branch", "head", "worktree"):
+        if key not in value:
+            continue
+        item = value[key]
+        if not isinstance(item, str) or len(item) > 4096 or any(ord(char) < 32 for char in item):
+            raise LongRunError("expected Git identity string fields must be bounded strings without control characters")
+        if key != "branch" and not item:
+            raise LongRunError("expected Git identity repository, head and worktree must be nonempty")
+        result[key] = item
+    clean = value["clean"]
+    if type(clean) is bool:
+        result["clean"] = "true" if clean else "false"
+    elif isinstance(clean, str) and clean in {"true", "false"}:
+        result["clean"] = clean
+    else:
+        raise LongRunError("expected Git identity clean must be a boolean or lowercase true/false string")
+    if "worktree" in result:
+        result["worktree"] = str(Path(result["worktree"]).expanduser().resolve())
+    return result
+
+
+def _collect_git_identity(work_dir: str, expected: dict[str, str], observed: dict[str, str]) -> dict[str, str] | None:
+    """Collect exact bounded observations; retain completed fields on a later failure.
+
+    Git commands are read-only and individually time out after 30 seconds.
+    Captured diagnostic output is never persisted or interpolated into errors.
+    """
+    if not expected:
+        return None
+    commands = (
+        ("repository", ("config", "--get", "remote.origin.url")),
+        ("branch", ("branch", "--show-current")),
+        ("head", ("rev-parse", "HEAD")),
+        ("clean", ("status", "--porcelain")),
+    )
+    for key, args in commands:
+        result = subprocess.run(["git", *args], cwd=work_dir, text=True, capture_output=True, timeout=30)
+        if result.returncode:
+            raise LongRunError("expected Git identity could not be collected")
+        value = result.stdout.strip()
+        if key == "clean":
+            observed[key] = "true" if not value else "false"
+        elif len(value) > 4096 or any(ord(char) < 32 for char in value):
+            raise LongRunError("observed Git identity is not a bounded string")
+        else:
+            observed[key] = value
+    if "worktree" in expected:
+        observed["worktree"] = str(Path(work_dir).expanduser().resolve())
+    return observed
+
+
+def _assert_expected_git_identity(expected: dict[str, str], observed: dict[str, str] | None) -> None:
+    """Refuse every declared mismatch; absence only permits an unguarded run."""
+    if expected and (observed is None or expected != observed):
+        raise LongRunError("expected Git identity mismatch")
+
+
 def start_run(
     root: str | Path,
     *,
@@ -271,6 +348,8 @@ def start_run(
 ) -> dict[str, Any]:
     _validate_command(command)
     os_root = _root(root)
+    resolved_work_dir = str(Path(work_dir or os.getcwd()).expanduser().resolve())
+    expected_identity = _normalize_expected_git_identity(expected_git_identity)
     preflight = list(preflight_checks or [])
     post_checks = list(post_run_checks or [])
     config = _config(os_root)
@@ -319,7 +398,7 @@ def start_run(
         "shell": shell,
         "root": str(os_root),
         "run_dir": str(run_dir),
-        "work_dir": str(Path(work_dir or os.getcwd()).expanduser().resolve()),
+        "work_dir": resolved_work_dir,
         "created_at": created,
         "budgets": effective,
         "progress_file": str(Path(progress_file).expanduser().resolve()) if progress_file else None,
@@ -329,7 +408,7 @@ def start_run(
         "post_run_checks": post_checks,
         "collateral_processes": list(collateral_processes or configured_collateral),
         "environment_overrides": safe_environment,
-        "expected_git_identity": dict(expected_git_identity or {}),
+        "expected_git_identity": expected_identity,
     }
     atomic_json(run_dir / "command.json", payload)
     state = {
@@ -481,8 +560,10 @@ def _terminate_group(process: subprocess.Popen[bytes], *, grace_seconds: int = 2
             pass
 
 
-def _run_checks(checks: list[str], *, work_dir: str, phase: str) -> list[dict[str, Any]]:
-    results: list[dict[str, Any]] = []
+def _run_checks(
+    checks: list[str], *, work_dir: str, phase: str, results: list[dict[str, Any]] | None = None
+) -> list[dict[str, Any]]:
+    results = [] if results is None else results
     for command in checks:
         started = time.monotonic()
         try:
@@ -537,43 +618,73 @@ def monitor_run(run_dir_value: str | Path) -> int:
     run_dir = Path(run_dir_value).expanduser()
     command = json.loads((run_dir / "command.json").read_text(encoding="utf-8"))
     root = Path(command["root"])
-    budgets = command["budgets"]
     interrupted: list[int] = []
+    context: dict[str, Any] = {
+        "phase": "expected-git-identity-validation",
+        "checks": [],
+        "expected_git_identity": {},
+        "git_identity_pre": {},
+        "child_started": False,
+    }
+    prior: dict[int, Any] = {}
 
     def handle_signal(signum: int, _frame: Any) -> None:
         interrupted.append(signum)
 
-    prior = {number: signal.signal(number, handle_signal) for number in (signal.SIGINT, signal.SIGTERM)}
-
-    def restore_signal_handlers() -> None:
+    try:
+        for number in (signal.SIGINT, signal.SIGTERM):
+            prior[number] = signal.signal(number, handle_signal)
+        return _monitor_admitted_run(root, run_dir, command, interrupted, context)
+    except Exception:
+        phase = context["phase"]
+        safe_command = {**command, "expected_git_identity": context["expected_git_identity"]}
+        return _terminal_safely(
+            root, run_dir, safe_command,
+            status="failure" if phase in {"expected-git-identity-validation", "git-identity-assertion"} else "error",
+            exit_code=None,
+            reason=f"{phase}-failed",
+            checks=context["checks"],
+            extra={
+                "failure_phase": "preflight" if phase != "execute-setup" else "execute",
+                "failure_category": phase,
+                "git_identity_pre": context["git_identity_pre"] or None,
+                "child_started": context["child_started"],
+                "post_run_invariants_ok": None,
+            },
+        )
+    finally:
         for number, handler in prior.items():
             signal.signal(number, handler)
 
-    expected_git_identity = dict(command.get("expected_git_identity") or {})
 
-    def git_identity() -> dict[str, str] | None:
-        if not expected_git_identity:
-            return None
+def _monitor_admitted_run(
+    root: Path, run_dir: Path, command: dict[str, Any], interrupted: list[int], context: dict[str, Any]
+) -> int:
+    """Execute an admitted monitor with signal restoration owned by monitor_run.
 
-        def value(*args: str) -> str:
-            result = subprocess.run(["git", *args], cwd=command["work_dir"], text=True, capture_output=True)
-            if result.returncode: raise LongRunError("expected Git identity but work_dir is not a Git checkout")
-            return result.stdout.strip()
-        return {"repository": value("config", "--get", "remote.origin.url"), "branch": value("branch", "--show-current"), "head": value("rev-parse", "HEAD"), "clean": "true" if not value("status", "--porcelain") else "false"}
+    Preflight exceptions propagate to that single boundary before Popen. After
+    dispatch, the existing resource, cancellation and cleanup loop owns the child.
+    """
+    budgets = command["budgets"]
+    expected_git_identity = _normalize_expected_git_identity(command.get("expected_git_identity"))
+    command["expected_git_identity"] = expected_git_identity
+    context["expected_git_identity"] = expected_git_identity
 
-    def assert_expected_git_identity(observed: dict[str, str] | None) -> None:
-        if observed is not None and any(str(expected_git_identity.get(key, observed[key])) != observed[key] for key in observed):
-            raise LongRunError("expected Git identity mismatch")
-
-    pre_identity = git_identity()
+    context["phase"] = "git-identity-collection"
+    pre_identity = _collect_git_identity(command["work_dir"], expected_git_identity, context["git_identity_pre"])
+    context["phase"] = "preflight-state-write"
     _write_state(root, run_dir, {"status": "preflight", "phase": "preflight", "started_at": utc_now(), "expected_git_identity": expected_git_identity, "git_identity_pre": pre_identity})
-    assert_expected_git_identity(pre_identity)
-    preflight = _run_checks(command.get("preflight_checks") or [], work_dir=command["work_dir"], phase="preflight")
+    context["phase"] = "git-identity-assertion"
+    _assert_expected_git_identity(expected_git_identity, pre_identity)
+    context["phase"] = "preflight-checker"
+    preflight = _run_checks(command.get("preflight_checks") or [], work_dir=command["work_dir"], phase="preflight", results=context["checks"])
+    context["checks"] = preflight
+    context["phase"] = "preflight-evidence-write"
     atomic_json(run_dir / "preflight.json", {"checks": preflight, "ok": all(row["ok"] for row in preflight)})
     if interrupted:
         signalled_state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
         cancelled = signalled_state.get("status") == "cancelling"
-        result = _terminal(
+        return _terminal_safely(
             root,
             run_dir,
             command,
@@ -585,14 +696,12 @@ def monitor_run(run_dir_value: str | Path) -> int:
                 else f"monitor-received-{signal.Signals(interrupted[-1]).name}-during-preflight"
             ),
             checks=preflight,
+            extra={"child_started": False, "post_run_invariants_ok": None},
         )
-        restore_signal_handlers()
-        return result
     if any(not row["ok"] for row in preflight):
-        result = _terminal(root, run_dir, command, status="failure", exit_code=None, reason="preflight-check-failed", checks=preflight)
-        restore_signal_handlers()
-        return result
+        return _terminal_safely(root, run_dir, command, status="failure", exit_code=None, reason="preflight-check-failed", checks=preflight, extra={"failure_phase": "preflight", "failure_category": "preflight-checker", "child_started": False, "post_run_invariants_ok": None})
 
+    context["phase"] = "execute-setup"
     lock: MutationLock | None = None
     if command.get("mutation_lock"):
         lock_path = Path(command["mutation_lock"]).expanduser()
@@ -601,25 +710,25 @@ def monitor_run(run_dir_value: str | Path) -> int:
         lock = MutationLock(lock_path, run_id=command["id"], operation=command["kind"])
         try:
             lock.acquire()
-        except BaseException as exc:
-            result = _terminal(
+        except BaseException:
+            return _terminal_safely(
                 root,
                 run_dir,
                 command,
                 status="error",
                 exit_code=None,
-                reason=f"mutation-lock-acquire-failed: {type(exc).__name__}: {exc}",
+                reason="mutation-lock-acquire-failed",
                 checks=preflight,
+                extra={"child_started": False, "post_run_invariants_ok": None},
             )
-            restore_signal_handlers()
-            return result
     process: subprocess.Popen[bytes] | None = None
-    logger = _BoundedLog(
-        run_dir / "output.log",
-        max_bytes=int(float(budgets["max_log_mb"]) * 1024 * 1024),
-        rotations=int(budgets["log_rotations"]),
-    )
+    logger: _BoundedLog | None = None
     try:
+        logger = _BoundedLog(
+            run_dir / "output.log",
+            max_bytes=int(float(budgets["max_log_mb"]) * 1024 * 1024),
+            rotations=int(budgets["log_rotations"]),
+        )
         process = subprocess.Popen(
             command["command_display"] if command.get("shell") else command["command"],
             cwd=command["work_dir"],
@@ -631,6 +740,7 @@ def monitor_run(run_dir_value: str | Path) -> int:
             bufsize=0,
             env={**os.environ, **command.get("environment_overrides", {})},
         )
+        context["child_started"] = True
         assert process.stdout is not None
         os.set_blocking(process.stdout.fileno(), False)
         started_monotonic = time.monotonic()
@@ -750,12 +860,12 @@ def monitor_run(run_dir_value: str | Path) -> int:
 
         exit_code = process.poll()
         post_checks = _run_checks(command.get("post_run_checks") or [], work_dir=command["work_dir"], phase="post-run")
-        post_identity = git_identity()
+        post_identity = _collect_git_identity(command["work_dir"], expected_git_identity, {})
         _write_state(root, run_dir, {"expected_git_identity": expected_git_identity, "git_identity_post": post_identity})
-        assert_expected_git_identity(post_identity)
+        _assert_expected_git_identity(expected_git_identity, post_identity)
         if terminal_status == "success" and any(not row["ok"] for row in post_checks):
             terminal_status, terminal_reason = "failure", "post-run-invariant-failed"
-        return _terminal(
+        return _terminal_safely(
             root,
             run_dir,
             command,
@@ -763,17 +873,98 @@ def monitor_run(run_dir_value: str | Path) -> int:
             exit_code=exit_code,
             reason=terminal_reason,
             checks=[*preflight, *post_checks],
-            extra={"output_bytes": output_bytes, "log_rotations": logger.rotation_count},
+            extra={"output_bytes": output_bytes, "log_rotations": logger.rotation_count, "child_started": True},
         )
-    except BaseException as exc:
+    except BaseException:
         if process is not None:
             _terminate_group(process)
-        return _terminal(root, run_dir, command, status="error", exit_code=None, reason=f"{type(exc).__name__}: {exc}", checks=preflight)
+        return _terminal_safely(root, run_dir, command, status="error", exit_code=None, reason="monitor-execution-failed", checks=preflight, extra={"failure_phase": "execute", "failure_category": "monitor-execution", "child_started": process is not None, "post_run_invariants_ok": None})
     finally:
-        logger.close()
-        if lock is not None:
-            lock.release()
-        restore_signal_handlers()
+        try:
+            if logger is not None:
+                logger.close()
+        finally:
+            if lock is not None:
+                lock.release()
+
+
+def _terminal_safely(
+    root: Path,
+    run_dir: Path,
+    command: dict[str, Any],
+    *,
+    status: str,
+    exit_code: int | None,
+    reason: str,
+    checks: list[dict[str, Any]],
+    extra: dict[str, Any] | None = None,
+) -> int:
+    """Try normal terminal publication once, then one finite independent pass.
+
+    The fallback never recurses or copies exception text. It marks the outcome
+    error and the evidence incomplete, attempts each writable channel once and
+    returns nonzero even if the fallback succeeds. Unwritable storage cannot be
+    promised a receipt; the detached monitor's exit status still signals failure.
+    """
+    try:
+        return _terminal(root, run_dir, command, status=status, exit_code=exit_code,
+                         reason=reason, checks=checks, extra=extra)
+    except Exception:
+        pass
+    try:
+        prior_state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
+        if not isinstance(prior_state, dict):
+            prior_state = {}
+    except (OSError, ValueError):
+        prior_state = {}
+    finished = utc_now()
+    evidence = {
+        **(extra or {}),
+        "failure_category": "terminal-evidence-write",
+        "terminal_evidence_incomplete": True,
+        "original_outcome_status": status,
+    }
+    receipt = {
+        "schema": TERMINAL_SCHEMA,
+        "id": command["id"], "kind": command["kind"], "label": command["label"],
+        "status": "error", "exit_code": exit_code,
+        "reason": "terminal-evidence-write-failed",
+        "original_outcome_reason": reason,
+        "created_at": command["created_at"], "finished_at": finished,
+        "checkpoint_strategy": command["checkpoint_strategy"],
+        "budgets": command.get("budgets") or {}, "checks": checks,
+        "post_run_invariants_ok": None,
+        "expected_git_identity": command.get("expected_git_identity") or {},
+        "git_identity_pre": prior_state.get("git_identity_pre"),
+        "git_identity_post": prior_state.get("git_identity_post"),
+        "run_dir": str(run_dir), **evidence,
+    }
+    state = {
+        **prior_state,
+        "id": command["id"], "kind": command["kind"], "label": command["label"],
+        "created_at": command["created_at"], "updated_at": finished,
+        "finished_at": finished, "status": "error", "phase": "terminal",
+        "exit_code": exit_code, "terminal_reason": receipt["reason"],
+        "run_dir": str(run_dir), "terminal_receipt": None, **evidence,
+    }
+    terminal_path = run_dir / "terminal-receipt.json"
+    try:
+        atomic_json(terminal_path, receipt)
+        state["terminal_receipt"] = str(terminal_path)
+    except Exception:
+        pass
+    for publish in (
+        lambda: atomic_json(run_dir / "state.json", state),
+        lambda: update_registry(root, state),
+        lambda: _append_event(run_dir, "terminal-evidence-failed", status="error",
+                              original_outcome_status=status, reason=receipt["reason"]),
+        lambda: _write_summary(run_dir, command, state),
+    ):
+        try:
+            publish()
+        except Exception:
+            pass
+    return 2
 
 
 def _terminal(
