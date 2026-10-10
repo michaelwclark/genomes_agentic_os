@@ -8,9 +8,10 @@ machine.
 
 from __future__ import annotations
 
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from copy import deepcopy
 from datetime import datetime, timezone
+from functools import wraps
 import fcntl
 import hashlib
 import json
@@ -1026,10 +1027,50 @@ def _pending_subject_supersession(task: Mapping[str, Any]) -> Mapping[str, Any] 
     return None
 
 
-def sync_delivery_projection(task_state_path: str | Path) -> dict[str, Any] | None:
+@contextmanager
+def _delivery_publication_guard(task_ref: str | Path):
+    # Import lazily: Development Delivery owns the existing shared admission
+    # lock and imports this projection module during initialization.
+    from .development_delivery import DevelopmentDeliveryError, task_publication_guard
+    try:
+        with task_publication_guard(task_ref):
+            yield
+    except DevelopmentDeliveryError as exc:
+        raise AutoDevStateError(str(exc)) from exc
+
+
+@contextmanager
+def _auto_dev_publication_guard(state_path: Path, current: Mapping[str, Any]):
+    task_ref = str(current.get("delivery", {}).get("task_state_ref") or "").strip()
+    guard = (_delivery_publication_guard(task_ref) if task_ref else
+             _file_lock(state_path.with_suffix(state_path.suffix + ".lock")))
+    with guard:
+        if _read_json(state_path) != current:
+            raise AutoDevStateError("stage publication preflight changed; revalidate the current projection")
+        yield
+
+
+def _guard_projection_publication(function):
+    @wraps(function)
+    def publish(task_state_path, **kwargs):
+        if kwargs.get("_preview_task") is not None:
+            return function(task_state_path, **kwargs)
+        with _delivery_publication_guard(task_state_path):
+            return function(task_state_path, **kwargs)
+    return publish
+
+
+@_guard_projection_publication
+def sync_delivery_projection(
+    task_state_path: str | Path,
+    *,
+    _preview_task: Mapping[str, Any] | None = None,
+    _preview_existing: Mapping[str, Any] | None = None,
+) -> dict[str, Any] | None:
     """Refresh ``autodev.json`` from canonical delivery state when linked."""
     task_path = Path(task_state_path).expanduser().resolve()
-    task = _read_json(task_path)
+    preview = _preview_task is not None
+    task = dict(_preview_task) if preview else _read_json(task_path)
     work_item_raw = task.get("work_item")
     if not work_item_raw:
         return None
@@ -1037,8 +1078,18 @@ def sync_delivery_projection(task_state_path: str | Path) -> dict[str, Any] | No
     if not work_item.is_dir():
         return None
     state_path = Path(str(task.get("autodev_path") or work_item / "autodev.json")).expanduser().resolve()
-    with _file_lock(state_path.with_suffix(state_path.suffix + ".lock")):
-        existing = _read_json(state_path) if state_path.is_file() else {}
+    with nullcontext() if preview else _file_lock(state_path.with_suffix(state_path.suffix + ".lock")):
+        if not preview:
+            # A synchronizer may have waited behind a retarget. Its pre-lock
+            # task snapshot must never restore the older execution window.
+            task = _read_json(task_path)
+            latest_path = Path(str(task.get("autodev_path") or work_item / "autodev.json")).expanduser().resolve()
+            if latest_path != state_path or Path(str(task.get("work_item") or "")).expanduser().resolve() != work_item:
+                raise AutoDevStateError("delivery projection identity changed while waiting for its lock")
+            portfolio_path = task_path.parents[2] / "portfolio.json"
+            if portfolio_path.is_file() and "member_window_pending" in _read_json(portfolio_path):
+                raise AutoDevStateError("pending member-window operation requires exact receipt-backed completion")
+        existing = dict(_preview_existing or {}) if preview else _read_json(state_path) if state_path.is_file() else {}
         mode = str(task.get("auto_dev_mode") or existing.get("mode") or "single_stage")
         requested_stage = (
             task.get("requested_stage")
@@ -1193,6 +1244,10 @@ def sync_delivery_projection(task_state_path: str | Path) -> dict[str, Any] | No
             "created_at": existing.get("created_at") or _utc_now(),
             "updated_at": _utc_now(),
         }
+        if preview:
+            # The caller holds the authority locks and records this exact
+            # result in an immutable intent before publishing any file.
+            return value
         run_packet = _sync_auto_dev_program_run_packet(task, value, work_item)
         if run_packet is not None:
             value["run_packet"] = run_packet
@@ -1995,6 +2050,16 @@ def materialize_auto_dev_policy_decision(
     current: Mapping[str, Any],
 ) -> dict[str, str]:
     """Bind a not-required decision to the run policy and copy both into the packet."""
+
+    with _auto_dev_publication_guard(work_item / "autodev.json", current):
+        return _materialize_auto_dev_policy_decision(
+            decision_file, stage, work_item=work_item, current=current
+        )
+
+
+def _materialize_auto_dev_policy_decision(
+    decision_file: str | Path, stage: str, *, work_item: Path, current: Mapping[str, Any],
+) -> dict[str, str]:
 
     decision_path = Path(decision_file).expanduser().resolve()
     payload = _read_json(decision_path)
@@ -4435,137 +4500,141 @@ def record_auto_dev_stage(
         raise AutoDevStateError(f"{name} requires canonical delivery state {minimum} or later")
     if name == "health":
         _validate_health_evidence(evidence, structured, current, state_path, subject_revision)
-    canonical_evidence = json.loads(json.dumps(evidence))
-    canonical_structured = canonical_evidence.get("evidence")
-    proofs: list[dict[str, str]] = []
-    policy_snapshot: dict[str, str] | None = None
-    if name != "health" and status == "completed":
-        proofs = [
-            _materialize_stage_source(
-                source, work_item, stage=name, kind=f"proof-{index:02d}"
+    with _auto_dev_publication_guard(state_path, current):
+        canonical_evidence = json.loads(json.dumps(evidence))
+        canonical_structured = canonical_evidence.get("evidence")
+        proofs: list[dict[str, str]] = []
+        policy_snapshot: dict[str, str] | None = None
+        if name != "health" and status == "completed":
+            proofs = [
+                _materialize_stage_source(
+                    source, work_item, stage=name, kind=f"proof-{index:02d}"
+                )
+                for index, source in enumerate(proof_sources, start=1)
+            ]
+            canonical_structured["receipt_refs"] = [item["ref"] for item in proofs]
+        elif status == "not_required" and policy_source is not None:
+            # This publication already owns the task/projection guard. Re-entering
+            # the public wrapper would self-wait on an unlinked projection's
+            # non-reentrant file lock before its missing-task refusal.
+            policy_snapshot = _materialize_auto_dev_policy_decision(
+                policy_source,
+                name,
+                work_item=work_item,
+                current=current,
             )
-            for index, source in enumerate(proof_sources, start=1)
-        ]
-        canonical_structured["receipt_refs"] = [item["ref"] for item in proofs]
-    elif status == "not_required" and policy_source is not None:
-        policy_snapshot = materialize_auto_dev_policy_decision(
-            policy_source,
-            name,
-            work_item=work_item,
-            current=current,
-        )
-        canonical_structured["policy_ref"] = policy_snapshot["ref"]
-    stage_dir = work_item / "artifacts" / "auto-dev-orchestration" / "stages" / name
-    evidence_sha256 = hashlib.sha256(
-        json.dumps(canonical_evidence, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    ).hexdigest()
-    output = stage_dir / f"{evidence_sha256[:20]}.json"
-    latest = stage_dir / "latest.json"
-    receipt = {
-        "schema": "auto-dev-stage-receipt/v1",
-        "stage": name,
-        "status": status,
-        "evidence_ref": _portable_packet_ref(evidence_path, work_item),
-        "evidence_snapshot": canonical_evidence,
-        "evidence_sha256": evidence_sha256,
-        "subject_revision": subject_revision,
-        "idempotency_key": idempotency_key,
-        "recorded_at": _utc_now(),
-    }
-    if proofs:
-        receipt["proofs"] = proofs
-    if policy_snapshot is not None:
-        receipt["policy_snapshot"] = policy_snapshot
-    if name == "health":
-        receipt["terminal_revision"] = evidence_terminal_revision
-    created = False
-    promoted_latest = False
-    with _file_lock(stage_dir / ".lock"):
-        latest_before = _read_json(latest) if latest.is_file() else None
-        for prior_path in sorted(stage_dir.glob("*.json")):
-            if prior_path.name == "latest.json":
-                continue
-            prior = _read_json(prior_path)
-            if prior.get("idempotency_key") == idempotency_key:
-                if prior.get("evidence_sha256") != evidence_sha256:
-                    raise AutoDevStateError(f"{name} idempotency key already has different evidence")
-                receipt = prior
-                output = prior_path
-                break
-        if output.is_file():
-            existing = _read_json(output)
-            receipt = existing
-        else:
-            previous = latest_before
-            if previous:
-                receipt["supersedes"] = previous.get("receipt_ref") or str(latest)
-            receipt["receipt_ref"] = (
-                _portable_packet_ref(output, work_item)
-                if name == "health"
-                else str(output)
-            )
-            _atomic_json(output, receipt)
-            created = True
-            promoted_latest = True
-        if latest_before is None:
-            promoted_latest = True
-        elif (
-            latest_before.get("receipt_ref") == receipt.get("receipt_ref")
-            or latest_before.get("evidence_sha256") == receipt.get("evidence_sha256")
-        ):
-            promoted_latest = True
-        if promoted_latest:
-            _atomic_json(latest, receipt)
-    for stage_name in AUTO_DEV_STAGE_ORDER:
-        current.setdefault("stages", {}).setdefault(stage_name, _stage_row(stage_name))
-    if promoted_latest and subject_revision and name in TERMINAL_REVISION_STAGES:
-        current["terminal_revision"] = subject_revision
-        _atomic_json(state_path, current)
-    elif promoted_latest and subject_revision:
-        current["subject_revision"] = subject_revision
-        _atomic_json(state_path, current)
-    task_ref = current.get("delivery", {}).get("task_state_ref")
-    if task_ref and Path(str(task_ref)).expanduser().is_file():
+            canonical_structured["policy_ref"] = policy_snapshot["ref"]
+        stage_dir = work_item / "artifacts" / "auto-dev-orchestration" / "stages" / name
+        evidence_sha256 = hashlib.sha256(
+            json.dumps(canonical_evidence, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        output = stage_dir / f"{evidence_sha256[:20]}.json"
+        latest = stage_dir / "latest.json"
+        receipt = {
+            "schema": "auto-dev-stage-receipt/v1",
+            "stage": name,
+            "status": status,
+            "evidence_ref": _portable_packet_ref(evidence_path, work_item),
+            "evidence_snapshot": canonical_evidence,
+            "evidence_sha256": evidence_sha256,
+            "subject_revision": subject_revision,
+            "idempotency_key": idempotency_key,
+            "recorded_at": _utc_now(),
+        }
+        if proofs:
+            receipt["proofs"] = proofs
+        if policy_snapshot is not None:
+            receipt["policy_snapshot"] = policy_snapshot
         if name == "health":
-            _relink_moved_work_item(Path(str(task_ref)).expanduser().resolve(), state_path, current)
-        refreshed = sync_delivery_projection(str(task_ref))
-    else:
-        current["stages"][name].update(
-            {
-                "status": status,
-                "run_ref": _portable_packet_ref(output, work_item),
-                "receipt_refs": [_portable_packet_ref(output, work_item)],
-                "last_verified_at": receipt["recorded_at"],
-                "next_action": None,
-            }
-        )
-        current["current_stage"] = _next_stage(
-            current["stages"],
-            current.get("requested_stage"),
-            current["stage_order"],
-            start_stage=current.get("start_stage"),
-            completion_stage=current.get("completion_stage"),
-        )
-        current["status"] = (
-            "completed"
-            if current["current_stage"] is None
-            else "ready"
-        )
-        current["next_action"] = (
-            current["stages"][current["current_stage"]]["next_action"]
-            if current["current_stage"]
-            else None
-        )
-        current["updated_at"] = _utc_now()
-        _atomic_json(state_path, current)
-        refreshed = current
-    # Health is the packet-sealing stage. Its typed wrapper is the durable
-    # event; appending to the pre-existing packet event log after the
-    # pre-cleanup manifest would invalidate the immutable resume packet.
-    if created and name != "health":
-        _append_event(
-            work_item / "artifacts" / "auto-dev-orchestration" / "events.jsonl",
-            "auto_dev.stage.recorded",
-            {"stage": name, "status": status, "receipt": str(output)},
-        )
+            receipt["terminal_revision"] = evidence_terminal_revision
+        created = False
+        promoted_latest = False
+        with _file_lock(stage_dir / ".lock"):
+            latest_before = _read_json(latest) if latest.is_file() else None
+            for prior_path in sorted(stage_dir.glob("*.json")):
+                if prior_path.name == "latest.json":
+                    continue
+                prior = _read_json(prior_path)
+                if prior.get("idempotency_key") == idempotency_key:
+                    if prior.get("evidence_sha256") != evidence_sha256:
+                        raise AutoDevStateError(f"{name} idempotency key already has different evidence")
+                    receipt = prior
+                    output = prior_path
+                    break
+            if output.is_file():
+                existing = _read_json(output)
+                receipt = existing
+            else:
+                previous = latest_before
+                if previous:
+                    receipt["supersedes"] = previous.get("receipt_ref") or str(latest)
+                receipt["receipt_ref"] = (
+                    _portable_packet_ref(output, work_item)
+                    if name == "health"
+                    else str(output)
+                )
+                _atomic_json(output, receipt)
+                created = True
+                promoted_latest = True
+            if latest_before is None:
+                promoted_latest = True
+            elif (
+                latest_before.get("receipt_ref") == receipt.get("receipt_ref")
+                or latest_before.get("evidence_sha256") == receipt.get("evidence_sha256")
+            ):
+                promoted_latest = True
+            if promoted_latest:
+                _atomic_json(latest, receipt)
+        for stage_name in AUTO_DEV_STAGE_ORDER:
+            current.setdefault("stages", {}).setdefault(stage_name, _stage_row(stage_name))
+        if promoted_latest and subject_revision and name in TERMINAL_REVISION_STAGES:
+            current["terminal_revision"] = subject_revision
+            _atomic_json(state_path, current)
+        elif promoted_latest and subject_revision:
+            current["subject_revision"] = subject_revision
+            _atomic_json(state_path, current)
+        task_ref = current.get("delivery", {}).get("task_state_ref")
+        if task_ref and Path(str(task_ref)).expanduser().is_file():
+            if name == "health":
+                _relink_moved_work_item(Path(str(task_ref)).expanduser().resolve(), state_path, current)
+            refreshed = sync_delivery_projection(str(task_ref))
+        else:
+            current["stages"][name].update(
+                {
+                    "status": status,
+                    "run_ref": _portable_packet_ref(output, work_item),
+                    "receipt_refs": [_portable_packet_ref(output, work_item)],
+                    "last_verified_at": receipt["recorded_at"],
+                    "next_action": None,
+                }
+            )
+            current["current_stage"] = _next_stage(
+                current["stages"],
+                current.get("requested_stage"),
+                current["stage_order"],
+                start_stage=current.get("start_stage"),
+                completion_stage=current.get("completion_stage"),
+            )
+            current["status"] = (
+                "completed"
+                if current["current_stage"] is None
+                else "ready"
+            )
+            current["next_action"] = (
+                current["stages"][current["current_stage"]]["next_action"]
+                if current["current_stage"]
+                else None
+            )
+            current["updated_at"] = _utc_now()
+            _atomic_json(state_path, current)
+            refreshed = current
+        # Health is the packet-sealing stage. Its typed wrapper is the durable
+        # event; appending to the pre-existing packet event log after the
+        # pre-cleanup manifest would invalidate the immutable resume packet.
+        if created and name != "health":
+            _append_event(
+                work_item / "artifacts" / "auto-dev-orchestration" / "events.jsonl",
+                "auto_dev.stage.recorded",
+                {"stage": name, "status": status, "receipt": str(output)},
+            )
     return {"receipt": receipt, "state": refreshed}

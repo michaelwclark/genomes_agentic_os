@@ -10,6 +10,7 @@ from ..development_delivery import (
     DEVELOPMENT_POLICY_PLANES,
     DevelopmentDeliveryError,
     TaskState,
+    repair_development_member_windows,
     resolve_development_policy,
     run_development_stage,
     start_development_run,
@@ -104,6 +105,15 @@ def handle_heartbeat(args: argparse.Namespace) -> int:
         owner=args.owner,
         lease_minutes=args.lease_minutes,
         idempotency_key=args.idempotency_key,
+    )
+    _print(result, json_output=args.json)
+    return 0
+
+
+def handle_repair_member_windows(args: argparse.Namespace) -> int:
+    result = repair_development_member_windows(
+        args.portfolio, members=args.member, idempotency_key=args.idempotency_key,
+        repair_manifest=args.repair_manifest, apply=args.apply,
     )
     _print(result, json_output=args.json)
     return 0
@@ -222,6 +232,15 @@ def register(subparsers) -> None:
     recover.add_argument("--idempotency-key", required=True)
     _common_output(recover)
     recover.set_defaults(handler=handle_recover)
+
+    member_repair = sub.add_parser("repair-member-windows", help="Plan or replay the exact narrower-member legacy portfolio repair.")
+    member_repair.add_argument("--portfolio", required=True)
+    member_repair.add_argument("--member", action="append", required=True, help="Exact divergent member subset, repeated in portfolio order.")
+    member_repair.add_argument("--idempotency-key", required=True)
+    member_repair.add_argument("--repair-manifest", help="JSON containing the exact manifest emitted by a reviewed dry run.")
+    member_repair.add_argument("--apply", action="store_true", help="Apply only the reviewed exact source/file-hash-bound manifest.")
+    _common_output(member_repair)
+    member_repair.set_defaults(handler=handle_repair_member_windows)
 
     heartbeat = sub.add_parser("heartbeat", help="Renew a non-terminal task worker lease.")
     heartbeat.add_argument("state_file")

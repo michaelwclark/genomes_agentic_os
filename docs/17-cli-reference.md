@@ -160,10 +160,76 @@ adapter behavior, and compatibility commands.
 | `develop stage` | Preflight all typed `development-stage-evidence/v1` receipts for one named workflow stage, then apply its legal state transitions atomically. |
 | `develop fail` | Classify a failure and retry or block according to policy. |
 | `develop recover` | Resume a recorded recoverable failure. |
+| `develop repair-member-windows` | Preview or explicitly apply a source/file-hash-bound import of agreeing narrower member windows from a diverged legacy portfolio. Requires the exact member subset and operation key; apply additionally requires the reviewed manifest. |
 | `develop heartbeat` | Renew a non-terminal task lease. |
 | `develop policy` | Resolve one of the five nested Auto-Dev Markdown planes: workflow behavior, environment access, development standards, QA gates, or gitflow topology. |
 
 See [42 · Auto-Dev Program](42-auto-dev-program.md) for how these groups compose.
+
+Materialized multi-ticket portfolios keep independently authorized stage windows
+in the existing `portfolio.json` under `member_windows`. Selecting one packet
+can extend that member's window and change its dispatch focus. Sibling task,
+projection, owner, context, evidence and stage boundaries remain intact. The
+legacy `auto_dev` envelope stays as compatibility history; it cannot grant a
+sibling the selected member's later stages. A whole-portfolio resume validates
+and consumes each member's own window. Same-mode resumes retain frozen policy
+even if project defaults subsequently change.
+
+An interrupted retarget leaves `member_window_pending` and an immutable intent
+in that run's `member-window-operations/` directory. Replay the exact original
+request to finish its recorded original/result file replacements. Other
+retargets, task mutations, projection refreshes and stage/evidence publication
+refuse while it is pending. This includes standalone stage recording, policy
+snapshots, Release Propagation and revision-metadata replay. Any present pending
+key blocks publication, including empty, false or null values. Replay and repair
+admit only the exact supported marker shape,
+canonical intent identity, digest and original request; malformed markers refuse.
+The operations root must be a real run-local directory. Symlink and non-directory
+roots refuse before intent I/O. Publication and replay keep one directory descriptor,
+recheck its physical identity at publication boundaries, and read the intent and
+its digest from the same no-follow snapshot. Repair previews leave an absent
+operations directory absent; apply creates it through the admitted run directory.
+Publication shares the existing task admission lock; a stale standalone
+preflight must be revalidated before any proof, wrapper, latest pointer or event
+is written.
+Policy-based `not_required` evidence requires a nonempty linked delivery task.
+A missing link refuses without publishing policy snapshots or stage receipts;
+valid completed standalone evidence retains its existing unlinked projection path.
+Unknown intermediate bytes, changed evidence or a changed implementation
+refuse completion. Preserve the intent and obtain a reviewed repair; do not
+delete the marker or manually widen a task to make a comparison pass. Replay
+reconstructs canonical task/packet/projection targets and the exact evidence
+guard set before reading stored targets or deriving effects; an intent digest
+does not admit an alternate destination.
+
+For a historical legacy portfolio whose shared envelope was widened while a
+sibling's task and projection agree on their narrower window, first install the
+reviewed release and prepare a dry run against fresh canonical state:
+
+```sh
+agentic-os develop repair-member-windows --portfolio "$portfolio" \
+  --member AGE-224 --idempotency-key "$operation_key" --json > repair-plan.json
+```
+
+Repeat `--member` for every divergent member, in portfolio order. The command
+checks the complete membership, all task/projection identities, frozen policy
+and context, evidence bytes and implementation hashes. Preview creates no
+authority or intent files. Review the returned `manifest`, save that exact JSON
+object as `reviewed-manifest.json`, then apply it explicitly:
+
+```sh
+agentic-os develop repair-member-windows --portfolio "$portfolio" \
+  --member AGE-224 --idempotency-key "$operation_key" \
+  --repair-manifest reviewed-manifest.json --apply --json
+```
+
+Apply imports the already-agreeing member boundaries into the portfolio. It
+leaves task/projection bytes and qualified source/package receipts unchanged;
+it executes no workflow, provider or runtime operation. The result includes the
+immutable receipt path and SHA256. Reusing the same manifest and key completes
+an interrupted apply or reports an exact replay; stale, foreign or unsupported
+authority refuses before replacements. `develop recover` handles recorded
+failures and does not substitute for this explicit member-window repair.
 
 ### Versioned Object Library — `cli/library.py`
 
