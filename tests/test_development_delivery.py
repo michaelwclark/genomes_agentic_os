@@ -3,10 +3,14 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
+import sys
 import threading
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 
 import pytest
 import yaml
@@ -4206,6 +4210,1280 @@ def test_multi_ticket_run_can_resume_one_explicitly_selected_packet(
     selected_projection = read_auto_dev_state(selected_packet / "autodev.json")
     assert selected_projection["mode"] == "everything"
     assert selected_projection["requested_stage"] == "document"
+
+
+def _member_window_fixture(tmp_path, monkeypatch, *, count=3):
+    repo, base_sha = _repository(tmp_path)
+    root = tmp_path / "os"
+    project = _project(root, repo)
+    calls = []
+    def provision(**kwargs):
+        ticket = kwargs["ticket"]
+        calls.append(ticket)
+        return {"name": ticket.lower(), "path": f"/tmp/{ticket.lower()}",
+                "branch": f"feature/{ticket.lower()}", "base_sha": base_sha}
+    monkeypatch.setattr(delivery, "create_isolated_worktree", provision)
+    tickets = ["CC-ONE", "CC-TWO", "CC-THREE"][:count]
+    run = delivery.start_development_run(root, "acme", "app", tickets,
+        run_id="member-windows", requested_stage="develop", apply=True)
+    tasks = {row["ticket"]: TaskState(Path(row["state_ref"])) for row in run["tasks"]}
+    return root, project, tasks, calls
+
+
+def _member_retarget(root, tasks, ticket, stage="document", *, mode="single_stage"):
+    return delivery.start_development_run(root, "acme", "app", [ticket],
+        run_id="member-windows", auto_dev_mode=mode, requested_stage=stage,
+        selected_work_item=tasks[ticket].read()["work_item"],
+        provision_worktree=False, apply=True)
+
+
+def _member_authority_bytes(tasks):
+    return {str(path): path.read_bytes() for task in tasks.values()
+        for path in [task.path, Path(task.read()["autodev_path"]), Path(task.read()["work_item"]) / "SPEC.md"]}
+
+
+@pytest.mark.parametrize("count", [2, 3])
+def test_member_windows_preserve_siblings_and_every_resume(tmp_path, monkeypatch, count):
+    root, project, tasks, calls = _member_window_fixture(tmp_path, monkeypatch, count=count)
+    selected = tasks["CC-ONE"]
+    run_development_stage(selected.path, stage="readiness",
+        receipts={"planned": _stage_receipt(tmp_path, "planned")}, idempotency_prefix="member:readiness")
+    history = selected.read()["receipts"]
+    before = _member_authority_bytes(tasks)
+    result = _member_retarget(root, tasks, "CC-ONE", "document")
+    for other in list(tasks)[1:]:
+        for path in [tasks[other].path, Path(tasks[other].read()["autodev_path"]), Path(tasks[other].read()["work_item"]) / "SPEC.md"]:
+            assert path.read_bytes() == before[str(path)]
+    assert selected.read()["receipts"] == history
+    assert result["auto_dev"]["completion_stage"] == "develop"
+    assert selected.read()["auto_dev_completion_stage"] == "document"
+    before = _member_authority_bytes(tasks)
+    _member_retarget(root, tasks, "CC-TWO", "pr_create")
+    assert selected.path.read_bytes() == before[str(selected.path)]
+    assert Path(selected.read()["autodev_path"]).read_bytes() == before[selected.read()["autodev_path"]]
+    for ticket in tasks:
+        _member_retarget(root, tasks, ticket, "develop")
+    whole = delivery.start_development_run(root, "acme", "app", list(tasks),
+        run_id="member-windows", requested_stage="develop", provision_worktree=False, apply=True)
+    expected = {"CC-ONE": "document", "CC-TWO": "pr_create", "CC-THREE": "develop"}
+    for ticket, task in tasks.items():
+        assert task.read()["auto_dev_completion_stage"] == expected[ticket]
+        projection = read_auto_dev_state(task.read()["autodev_path"])
+        assert projection["completion_stage"] == expected[ticket]
+        assert whole["member_windows"]["members"][ticket]["auto_dev"]["completion_stage"] == expected[ticket]
+    assert read_auto_dev_state(selected.read()["autodev_path"])["stages"]["readiness"]["status"] == "completed"
+    assert calls == list(tasks)
+
+
+def test_member_windows_promote_only_selected_member_and_pin_same_mode(tmp_path, monkeypatch):
+    root, project, tasks, _ = _member_window_fixture(tmp_path, monkeypatch)
+    before = _member_authority_bytes(tasks)
+    _member_retarget(root, tasks, "CC-ONE", mode="everything")
+    _member_retarget(root, tasks, "CC-TWO", mode="default")
+    assert tasks["CC-ONE"].read()["auto_dev_completion_stage"] == "health"
+    assert tasks["CC-TWO"].read()["auto_dev_completion_stage"] == "pr_create"
+    assert tasks["CC-THREE"].path.read_bytes() == before[str(tasks["CC-THREE"].path)]
+    profile_path = project / "config/development.yml"
+    profile = yaml.safe_load(profile_path.read_text())
+    profile["auto_dev"] = {"default": {"start_stage": "groom", "completion_stage": "health"}}
+    profile_path.write_text(yaml.safe_dump(profile))
+    _member_retarget(root, tasks, "CC-TWO", mode="default")
+    assert tasks["CC-TWO"].read()["auto_dev_completion_stage"] == "pr_create"
+    _member_retarget(root, tasks, "CC-ONE", mode="default")
+    assert tasks["CC-ONE"].read()["auto_dev_mode"] == "everything"
+
+
+@pytest.mark.parametrize("cut", range(1, 7))
+def test_member_window_interruption_replays_only_recorded_effects(tmp_path, monkeypatch, cut):
+    root, _, tasks, _ = _member_window_fixture(tmp_path, monkeypatch, count=2)
+    sibling_before = _member_authority_bytes({"CC-TWO": tasks["CC-TWO"]})
+    atomic = delivery._atomic_json
+    publish = delivery._MemberWindowOperations.publish
+    calls = 0
+    def fail_once(path, value):
+        nonlocal calls
+        calls += 1
+        if calls == cut:
+            raise OSError("injected authority publication failure")
+        atomic(path, value)
+    def fail_intent(operations, path, value):
+        nonlocal calls
+        calls += 1
+        if calls == cut:
+            raise OSError("injected immutable intent publication failure")
+        publish(operations, path, value)
+    monkeypatch.setattr(delivery, "_atomic_json", fail_once)
+    monkeypatch.setattr(delivery._MemberWindowOperations, "publish", fail_intent)
+    with pytest.raises(OSError, match="injected"):
+        _member_retarget(root, tasks, "CC-ONE")
+    monkeypatch.setattr(delivery, "_atomic_json", atomic)
+    monkeypatch.setattr(delivery._MemberWindowOperations, "publish", publish)
+    # An intent-only retry must reuse its recorded timestamp, too.
+    monkeypatch.setattr(delivery, "utc_now", lambda: "2030-01-01T00:00:00Z")
+    result = _member_retarget(root, tasks, "CC-ONE")
+    assert "member_window_pending" not in result
+    assert tasks["CC-ONE"].read()["auto_dev_completion_stage"] == "document"
+    assert _member_authority_bytes({"CC-TWO": tasks["CC-TWO"]}) == sibling_before
+    ledger = tasks["CC-ONE"].path.parents[2] / "events.jsonl"
+    events = [json.loads(line) for line in ledger.read_text().splitlines()]
+    assert len([event for event in events if event["type"] == "development.portfolio.member_windows.updated"]) == 1
+
+
+def test_member_window_pending_refuses_other_request_and_unknown_bytes(tmp_path, monkeypatch):
+    root, _, tasks, _ = _member_window_fixture(tmp_path, monkeypatch, count=2)
+    atomic = delivery._atomic_json
+    target = Path(tasks["CC-ONE"].read()["autodev_path"])
+    def fail_projection(path, value):
+        if path == target:
+            raise OSError("injected projection failure")
+        atomic(path, value)
+    monkeypatch.setattr(delivery, "_atomic_json", fail_projection)
+    with pytest.raises(OSError):
+        _member_retarget(root, tasks, "CC-ONE")
+    monkeypatch.setattr(delivery, "_atomic_json", atomic)
+    before = _member_authority_bytes(tasks)
+    with pytest.raises(DevelopmentDeliveryError, match="different member-window operation"):
+        _member_retarget(root, tasks, "CC-TWO", "pr_create")
+    with pytest.raises(DevelopmentDeliveryError, match="pending member-window"):
+        tasks["CC-TWO"].heartbeat(owner="unexpected", lease_minutes=10, idempotency_key="pending-heartbeat")
+    with pytest.raises(AutoDevStateError, match="pending member-window"):
+        sync_delivery_projection(tasks["CC-ONE"].path)
+    assert _member_authority_bytes(tasks) == before
+    edited = tasks["CC-ONE"].read()
+    edited["unknown_edit"] = True
+    atomic(tasks["CC-ONE"].path, edited)
+    before = _member_authority_bytes(tasks)
+    portfolio = tasks["CC-ONE"].path.parents[2] / "portfolio.json"
+    portfolio_before = portfolio.read_bytes()
+    with pytest.raises(DevelopmentDeliveryError, match="stale or unknown partial"):
+        _member_retarget(root, tasks, "CC-ONE")
+    assert _member_authority_bytes(tasks) == before
+    assert portfolio.read_bytes() == portfolio_before
+
+
+def test_member_window_distinct_concurrent_retargets_keep_both_updates(tmp_path, monkeypatch):
+    root, _, tasks, _ = _member_window_fixture(tmp_path, monkeypatch)
+    barrier = threading.Barrier(2)
+    def retarget(ticket, stage):
+        barrier.wait(timeout=10)
+        return _member_retarget(root, tasks, ticket, stage)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(retarget, "CC-ONE", "document"), pool.submit(retarget, "CC-TWO", "pr_create")]
+        for future in futures:
+            future.result(timeout=30)
+    assert tasks["CC-ONE"].read()["auto_dev_completion_stage"] == "document"
+    assert tasks["CC-TWO"].read()["auto_dev_completion_stage"] == "pr_create"
+    assert tasks["CC-THREE"].read()["auto_dev_completion_stage"] == "develop"
+    _member_retarget(root, tasks, "CC-THREE", "develop")
+
+
+@pytest.mark.parametrize("same_member", [False, True])
+def test_member_window_separate_processes_serialize_authority(tmp_path, monkeypatch, same_member):
+    root, _, tasks, _ = _member_window_fixture(tmp_path, monkeypatch)
+    script = (
+        "import sys; from genomes_agentic_os.development_delivery import start_development_run; "
+        "start_development_run(sys.argv[1], 'acme', 'app', [sys.argv[2]], "
+        "run_id='member-windows', requested_stage=sys.argv[3], "
+        "selected_work_item=sys.argv[4], provision_worktree=False, apply=True)"
+    )
+    specs = [("CC-ONE", "document"), ("CC-ONE" if same_member else "CC-TWO", "pr_create")]
+    children = [subprocess.Popen([sys.executable, "-c", script, str(root), ticket, stage, tasks[ticket].read()["work_item"]], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) for ticket, stage in specs]
+    for child in children:
+        stdout, stderr = child.communicate(timeout=60)
+        assert child.returncode == 0, stderr
+    assert tasks["CC-ONE"].read()["auto_dev_completion_stage"] == ("pr_create" if same_member else "document")
+    assert tasks["CC-TWO"].read()["auto_dev_completion_stage"] == ("develop" if same_member else "pr_create")
+    assert tasks["CC-THREE"].read()["auto_dev_completion_stage"] == "develop"
+    _member_retarget(root, tasks, "CC-THREE", "develop")
+
+
+@pytest.mark.parametrize("after_append", [False, True])
+def test_member_window_event_failure_replays_exactly_once(tmp_path, monkeypatch, after_append):
+    root, _, tasks, _ = _member_window_fixture(tmp_path, monkeypatch, count=2)
+    append = delivery.append_event
+    def fail_event(*args, **kwargs):
+        if kwargs.get("event_type") == "development.portfolio.member_windows.updated":
+            if after_append:
+                append(*args, **kwargs)
+            raise OSError("injected event publication failure")
+        return append(*args, **kwargs)
+    monkeypatch.setattr(delivery, "append_event", fail_event)
+    with pytest.raises(OSError, match="injected event"):
+        _member_retarget(root, tasks, "CC-ONE")
+    monkeypatch.setattr(delivery, "append_event", append)
+    result = _member_retarget(root, tasks, "CC-ONE")
+    assert "member_window_pending" not in result
+    events = [json.loads(line) for line in (tasks["CC-ONE"].path.parents[2] / "events.jsonl").read_text().splitlines()]
+    assert len([event for event in events if event["type"] == "development.portfolio.member_windows.updated"]) == 1
+
+
+def _legacy_member_divergence(tmp_path, monkeypatch):
+    root, project, tasks, _ = _member_window_fixture(tmp_path, monkeypatch, count=2)
+    retained = tasks["CC-ONE"]
+    run_development_stage(retained.path, stage="readiness",
+        receipts={"planned": _stage_receipt(tmp_path, "planned")}, idempotency_prefix="legacy:readiness")
+    run_development_stage(retained.path, stage="implementation",
+        receipts={state: _stage_receipt(tmp_path, state) for state in ["implementing", "local_validation"]},
+        idempotency_prefix="legacy:implementation")
+    later = tasks["CC-TWO"].read()
+    later.update(auto_dev_completion_stage="pr_create", requested_stage="pr_create", goal="pr_create")
+    delivery._atomic_json(tasks["CC-TWO"].path, later)
+    sync_delivery_projection(tasks["CC-TWO"].path)
+    portfolio = retained.path.parents[2] / "portfolio.json"
+    current = json.loads(portfolio.read_text())
+    current["auto_dev"]["completion_stage"] = "pr_create"
+    current["auto_dev"]["goal"] = "pr_create"
+    delivery._atomic_json(portfolio, current)
+    return root, project, tasks, portfolio
+
+
+def test_member_window_repair_preserves_qualified_history_and_has_explicit_cli(tmp_path, monkeypatch, capsys):
+    root, _, tasks, portfolio = _legacy_member_divergence(tmp_path, monkeypatch)
+    before = _member_authority_bytes(tasks)
+    before_portfolio = portfolio.read_bytes()
+    args = ["develop", "repair-member-windows", "--portfolio", str(portfolio),
+            "--member", "CC-ONE", "--idempotency-key", "legacy-repair", "--json"]
+    assert main(args) == 0
+    plan = json.loads(capsys.readouterr().out)
+    assert plan["result"] == "planned"
+    assert portfolio.read_bytes() == before_portfolio
+    assert _member_authority_bytes(tasks) == before
+    manifest_path = tmp_path / "reviewed-member-manifest.json"
+    manifest_path.write_text(json.dumps(plan["manifest"]))
+    assert main([*args, "--apply"]) == 2
+    capsys.readouterr()
+    assert portfolio.read_bytes() == before_portfolio
+    assert main([*args, "--repair-manifest", str(manifest_path), "--apply"]) == 0
+    receipt = json.loads(capsys.readouterr().out)
+    assert _member_authority_bytes(tasks) == before
+    assert receipt["result"] == "completed"
+    assert hashlib.sha256(Path(receipt["receipt"]).read_bytes()).hexdigest() == receipt["receipt_sha256"]
+    assert main([*args, "--repair-manifest", str(manifest_path), "--apply"]) == 0
+    assert json.loads(capsys.readouterr().out)["result"] == "replayed"
+    for ticket in tasks:
+        _member_retarget(root, tasks, ticket, "develop")
+    assert tasks["CC-ONE"].read()["state"] == "local_validation"
+    assert tasks["CC-ONE"].read()["auto_dev_completion_stage"] == "develop"
+    assert tasks["CC-TWO"].read()["auto_dev_completion_stage"] == "pr_create"
+
+
+@pytest.mark.parametrize("changed", ["portfolio", "task", "projection", "context", "owner", "source", "policy", "receipt", "members", "implementation"])
+def test_member_window_repair_rejects_stale_or_foreign_manifest_without_mutation(tmp_path, monkeypatch, changed):
+    _, _, tasks, portfolio = _legacy_member_divergence(tmp_path, monkeypatch)
+    planned = delivery.repair_development_member_windows(portfolio, members=["CC-ONE"], idempotency_key="repair-guard")
+    manifest_path = tmp_path / "reviewed.json"
+    manifest = planned["manifest"]
+    if changed == "implementation":
+        manifest["source_proof"]["development_delivery.py"] = "0" * 64
+    elif changed == "members":
+        manifest["membership"] = ["CC-ONE", "FOREIGN"]
+    elif changed == "policy":
+        policy = portfolio.parent / "effective-policies.json"
+        policy.write_bytes(policy.read_bytes() + b"\n")
+    elif changed == "receipt":
+        task = tasks["CC-ONE"].read()
+        receipt = Path(task["receipts"][-1]["ref"])
+        receipt.write_bytes(receipt.read_bytes() + b"\n")
+    else:
+        path = portfolio if changed == "portfolio" else Path(tasks["CC-ONE"].read()["autodev_path"]) if changed == "projection" else tasks["CC-ONE"].path
+        current = json.loads(path.read_text())
+        if changed == "context":
+            current["context_selection"] = {"unqualified": True}
+        elif changed == "owner":
+            current["authorship"] = {"ours": ["github:foreign"]}
+        elif changed == "source":
+            current["source"]["key"] = "FOREIGN"
+        else:
+            current["unknown_edit"] = True
+        delivery._atomic_json(path, current)
+    manifest_path.write_text(json.dumps(manifest))
+    before = _member_authority_bytes(tasks)
+    portfolio_before = portfolio.read_bytes()
+    with pytest.raises(DevelopmentDeliveryError):
+        delivery.repair_development_member_windows(portfolio, members=["CC-ONE"], idempotency_key="repair-guard", repair_manifest=manifest_path, apply=True)
+    assert _member_authority_bytes(tasks) == before
+    assert portfolio.read_bytes() == portfolio_before
+    assert not (portfolio.parent / "member-window-operations").exists()
+
+
+def test_member_window_delayed_projection_sync_serializes_retarget_admission(tmp_path, monkeypatch):
+    root, _, tasks, _ = _member_window_fixture(tmp_path, monkeypatch, count=2)
+    original_lock = auto_dev._file_lock
+    original_read = auto_dev._read_json
+    original_admission = delivery._task_provisioning_admission_lock
+    stale_read = threading.Event()
+    release = threading.Event()
+    attempted = threading.Event()
+    thread_name = "delayed-projection"
+    def read(path):
+        value = original_read(path)
+        if threading.current_thread().name == thread_name and path == tasks["CC-ONE"].path and not stale_read.is_set():
+            stale_read.set()
+        return value
+    @contextmanager
+    def lock(path):
+        if threading.current_thread().name == thread_name:
+            assert release.wait(timeout=15)
+        with original_lock(path):
+            yield
+    monkeypatch.setattr(auto_dev, "_read_json", read)
+    monkeypatch.setattr(auto_dev, "_file_lock", lock)
+    @contextmanager
+    def admission(path):
+        if threading.current_thread().name.startswith("retarget-after-sync"):
+            attempted.set()
+        with original_admission(path):
+            yield
+    monkeypatch.setattr(delivery, "_task_provisioning_admission_lock", admission)
+    errors = []
+    def synchronize():
+        try:
+            sync_delivery_projection(tasks["CC-ONE"].path)
+        except Exception as exc:
+            errors.append(exc)
+    thread = threading.Thread(target=synchronize, name=thread_name)
+    thread.start()
+    assert stale_read.wait(timeout=10)
+    with ThreadPoolExecutor(max_workers=1, thread_name_prefix="retarget-after-sync") as pool:
+        future = pool.submit(_member_retarget, root, tasks, "CC-ONE", "pr_create")
+        try:
+            assert attempted.wait(timeout=10)
+            assert not future.done()
+        finally:
+            release.set()
+            thread.join(timeout=20)
+        future.result(timeout=20)
+    assert not thread.is_alive()
+    assert not errors
+    projection = read_auto_dev_state(tasks["CC-ONE"].read()["autodev_path"])
+    assert projection["completion_stage"] == "pr_create"
+    assert projection["stages"]["pr_create"]["status"] != "completed"
+
+
+@pytest.mark.parametrize("changed", [
+    "map_schema", "map_member_set", "map_identity", "map_window", "task_owner",
+    "task_context", "task_source", "task_state", "task_order", "projection_identity",
+    "projection_task_ref", "projection_window", "portfolio_policy", "policy_source",
+    "task_missing_worktree", "membership_rows", "membership_duplicate",
+    "portfolio_run_id", "portfolio_run_dir", "task_profile_source", "task_policy_sources",
+    "task_schema", "projection_schema", "projection_packet_identity",
+])
+def test_member_window_resume_refuses_unknown_independent_authority_without_writes(tmp_path, monkeypatch, changed):
+    root, _, tasks, _ = _member_window_fixture(tmp_path, monkeypatch, count=2)
+    _member_retarget(root, tasks, "CC-ONE", "develop")
+    task_path = tasks["CC-ONE"].path
+    projection_path = Path(tasks["CC-ONE"].read()["autodev_path"])
+    portfolio_path = task_path.parents[2] / "portfolio.json"
+    policy_path = portfolio_path.parent / "effective-policies.json"
+    if changed.startswith("map_") or changed.startswith("membership_") or changed.startswith("portfolio_"):
+        path = portfolio_path
+        value = json.loads(path.read_text())
+        if changed == "map_schema":
+            value["member_windows"]["schema"] = "unknown/v99"
+        elif changed == "map_member_set":
+            value["member_windows"]["members"].pop("CC-TWO")
+        elif changed == "map_identity":
+            value["member_windows"]["members"]["CC-ONE"]["identity"]["source"]["key"] = "FOREIGN"
+        elif changed == "map_window":
+            value["member_windows"]["members"]["CC-ONE"]["auto_dev"]["completion_stage"] = "health"
+        elif changed == "membership_rows":
+            value["tasks"].pop()
+        elif changed == "membership_duplicate":
+            value["tickets"].append("CC-ONE")
+        elif changed == "portfolio_run_id":
+            value["run_id"] = "foreign-run"
+        elif changed == "portfolio_run_dir":
+            value["run_dir"] = str(portfolio_path.parent / "foreign-run")
+        else:
+            value["policy_fingerprint"] = "0" * 64
+    elif changed == "policy_source":
+        path = policy_path
+        value = json.loads(path.read_text())
+        value["domain"] = "foreign"
+    elif changed.startswith("projection_"):
+        path = projection_path
+        value = json.loads(path.read_text())
+        if changed == "projection_identity":
+            value["canonical_work_id"] = "foreign:task"
+        elif changed == "projection_schema":
+            value["schema"] = "unknown/v99"
+        elif changed == "projection_packet_identity":
+            value["work_item_id"] = "foreign-packet"
+        elif changed == "projection_task_ref":
+            value["delivery"]["task_state_ref"] = str(tasks["CC-TWO"].path)
+        else:
+            value["completion_stage"] = "health"
+    else:
+        path = task_path
+        value = json.loads(path.read_text())
+        if changed == "task_owner":
+            value["authorship"] = {"ours": ["github:foreign"]}
+        elif changed == "task_context":
+            value["context_selection"] = {"unqualified": True}
+        elif changed == "task_source":
+            value["source"]["key"] = "FOREIGN"
+        elif changed == "task_state":
+            value["state"] = "unknown"
+        elif changed == "task_order":
+            value["auto_dev_stage_order"] = ["unknown"]
+        elif changed == "task_profile_source":
+            value["profile_source"] = str(tmp_path / "foreign-profile.yml")
+        elif changed == "task_policy_sources":
+            value["policy_sources"] = {"unqualified": ["foreign"]}
+        elif changed == "task_schema":
+            value["schema"] = "unknown/v99"
+        else:
+            value.pop("worktree")
+    delivery._atomic_json(path, value)
+    before = {str(p): p.read_bytes() for p in [portfolio_path, task_path, projection_path, policy_path, tasks["CC-TWO"].path, Path(tasks["CC-TWO"].read()["autodev_path"])]}
+    with pytest.raises(DevelopmentDeliveryError):
+        _member_retarget(root, tasks, "CC-ONE", "document")
+    assert all(Path(ref).read_bytes() == content for ref, content in before.items())
+
+
+@pytest.mark.parametrize("changed", ["receipt_digest", "unknown_shape", "task_owner", "portfolio_global_window", "new_effect_file"])
+def test_member_window_pending_intent_never_admits_unrecorded_effects(tmp_path, monkeypatch, changed):
+    root, _, tasks, _ = _member_window_fixture(tmp_path, monkeypatch, count=2)
+    portfolio_path = tasks["CC-ONE"].path.parents[2] / "portfolio.json"
+    atomic = delivery._atomic_json
+    target = Path(tasks["CC-ONE"].read()["autodev_path"])
+    def fail_projection(path, value):
+        if path == target:
+            raise OSError("injected projection failure")
+        atomic(path, value)
+    monkeypatch.setattr(delivery, "_atomic_json", fail_projection)
+    with pytest.raises(OSError):
+        _member_retarget(root, tasks, "CC-ONE")
+    monkeypatch.setattr(delivery, "_atomic_json", atomic)
+    portfolio = json.loads(portfolio_path.read_text())
+    intent_path = Path(portfolio["member_window_pending"]["intent_ref"])
+    intent = json.loads(intent_path.read_text())
+    if changed == "unknown_shape":
+        intent["unknown_override"] = True
+    elif changed == "task_owner":
+        intent["effects"][str(tasks["CC-ONE"].path)]["lease"]["owner"] = "foreign"
+    elif changed == "portfolio_global_window":
+        intent["desired_portfolio"]["auto_dev"]["completion_stage"] = "health"
+    elif changed == "new_effect_file":
+        intent["effects"][str(portfolio_path.parent / "unadmitted-authority.json")] = {"authority": True}
+    else:
+        intent["operation_id"] = "0" * 64
+    # Model a corrupt writer even rebinding its marker. Source validation must
+    # still reject unknown effects; a digest alone cannot grant authority.
+    atomic(intent_path, intent)
+    if changed != "receipt_digest":
+        portfolio["member_window_pending"]["intent_sha256"] = hashlib.sha256(intent_path.read_bytes()).hexdigest()
+        atomic(portfolio_path, portfolio)
+    before = _member_authority_bytes(tasks)
+    portfolio_before = portfolio_path.read_bytes()
+    with pytest.raises(DevelopmentDeliveryError):
+        _member_retarget(root, tasks, "CC-ONE")
+    assert _member_authority_bytes(tasks) == before
+    assert portfolio_path.read_bytes() == portfolio_before
+    assert not (portfolio_path.parent / "unadmitted-authority.json").exists()
+
+
+def _member_publication_bytes(tasks):
+    roots = [next(iter(tasks.values())).path.parents[2]]
+    roots.extend(Path(task.read()["work_item"]) for task in tasks.values())
+    return {str(path): path.read_bytes() for root in roots for path in root.rglob("*")
+            if path.is_file() and not path.name.endswith(".lock")}
+
+
+def _member_leave_pending(root, tasks, monkeypatch):
+    atomic = delivery._atomic_json
+    projection = Path(tasks["CC-ONE"].read()["autodev_path"])
+    def fail_projection(path, value):
+        if path == projection:
+            raise OSError("injected pending member publication")
+        atomic(path, value)
+    with monkeypatch.context() as fault:
+        fault.setattr(delivery, "_atomic_json", fail_projection)
+        with pytest.raises(OSError, match="injected pending"):
+            _member_retarget(root, tasks, "CC-ONE")
+
+
+def _member_standalone_evidence(tmp_path, stage):
+    proof = tmp_path / f"{stage}-proof.json"
+    proof.write_text(json.dumps({"qualified_fixture": stage}))
+    evidence = tmp_path / f"{stage}-evidence.json"
+    evidence.write_text(json.dumps({"schema": AUTO_DEV_STAGE_EVIDENCE_SCHEMA,
+        "stage": stage, "status": "completed", "summary": "Offline qualified fixture",
+        "verified_at": "2026-10-10T00:00:00Z", "subject_revision": "a" * 40,
+        "evidence": {"receipt_refs": [str(proof)]}}))
+    return evidence
+
+
+@pytest.mark.parametrize("marker_case", ["empty_object", "empty_list", "false", "zero", "empty_string", "null",
+    "unknown_schema", "extra_field", "missing_field", "foreign_ref", "relative_ref", "bad_digest",
+    "request_shape", "request_members", "request_kind"])
+def test_member_malformed_pending_marker_refuses_all_publication_and_replay(tmp_path, monkeypatch, marker_case):
+    root, _, tasks, _ = _member_window_fixture(tmp_path, monkeypatch, count=2)
+    task = tasks["CC-ONE"]
+    evidence = _member_standalone_evidence(tmp_path, "groom")
+    decision = _policy_decision(task, "document")
+    current = read_auto_dev_state(task.read()["autodev_path"])
+    _member_leave_pending(root, tasks, monkeypatch)
+    portfolio_path = task.path.parents[2] / "portfolio.json"
+    original = json.loads(portfolio_path.read_text())
+    corrupted = json.loads(json.dumps(original))
+    malformed = {"empty_object": {}, "empty_list": [], "false": False,
+                 "zero": 0, "empty_string": "", "null": None}
+    foreign = tmp_path / ("a" * 64 + ".json")
+    foreign.write_text(json.dumps({"unadmitted_fixture": True}))
+    marker = corrupted["member_window_pending"]
+    if marker_case in malformed:
+        corrupted["member_window_pending"] = malformed[marker_case]
+    elif marker_case == "unknown_schema":
+        marker["schema"] = "unknown-pending/v1"
+    elif marker_case == "extra_field":
+        marker["alternate_ref"] = str(foreign)
+    elif marker_case == "missing_field":
+        del marker["intent_sha256"]
+    elif marker_case == "foreign_ref":
+        marker["intent_ref"] = str(foreign)
+    elif marker_case == "relative_ref":
+        marker["intent_ref"] = "member-window-operations/" + Path(marker["intent_ref"]).name
+    elif marker_case == "bad_digest":
+        marker["intent_sha256"] = "not-a-qualified-digest"
+    elif marker_case == "request_shape":
+        marker["request"]["unknown"] = True
+    elif marker_case == "request_members":
+        marker["request"]["tickets"] = ["CC-ONE", {}]
+    else:
+        marker["request"]["kind"] = ["unknown"]
+    delivery._atomic_json(portfolio_path, corrupted)
+    before = _member_publication_bytes(tasks)
+    original_read = delivery._member_window_file_bytes
+    def admitted_read(path):
+        assert path != foreign, "malformed marker admitted a foreign intent read"
+        return original_read(path)
+    monkeypatch.setattr(delivery, "_member_window_file_bytes", admitted_read)
+    for publisher in ("heartbeat", "event", "standalone", "policy", "compatibility", "projection", "rollup", "mutation_lock"):
+        with pytest.raises((DevelopmentDeliveryError, AutoDevStateError), match="pending member-window"):
+            if publisher == "heartbeat":
+                task.heartbeat(owner="offline-marker-fixture", lease_minutes=1, idempotency_key="malformed-heartbeat")
+            elif publisher == "event":
+                task.emit(event_type="offline.marker.fixture", idempotency_key="malformed-event", payload={})
+            elif publisher == "standalone":
+                record_auto_dev_stage(task.read()["autodev_path"], stage="groom",
+                    evidence_file=evidence, idempotency_key="malformed-standalone")
+            elif publisher == "policy":
+                auto_dev.materialize_auto_dev_policy_decision(decision, "document",
+                    work_item=Path(task.read()["work_item"]), current=current)
+            elif publisher == "compatibility":
+                delivery._sync_auto_dev_projection(task.path)
+            elif publisher == "projection":
+                sync_delivery_projection(task.path)
+            elif publisher == "rollup":
+                delivery._refresh_portfolio_state(task.path)
+            else:
+                with task.mutation_lock():
+                    changed = task.read()
+                    changed["lease"] = {"owner": "unadmitted"}
+                    delivery._atomic_json(task.path, changed)
+        assert _member_publication_bytes(tasks) == before, publisher
+    with pytest.raises(DevelopmentDeliveryError, match="pending member-window"):
+        _member_retarget(root, tasks, "CC-ONE")
+    assert _member_publication_bytes(tasks) == before
+    with pytest.raises(DevelopmentDeliveryError, match="pending member-window"):
+        delivery.repair_development_member_windows(portfolio_path, members=["CC-ONE"],
+            idempotency_key="malformed-repair")
+    assert _member_publication_bytes(tasks) == before
+    assert foreign.read_text() == json.dumps({"unadmitted_fixture": True})
+    # Restore only this offline fixture's original qualified marker. Exact
+    # replay removes it through the supported operation, then publishers work.
+    delivery._atomic_json(portfolio_path, original)
+    completed = _member_retarget(root, tasks, "CC-ONE")
+    assert "member_window_pending" not in completed
+    renewed = task.heartbeat(owner="qualified-offline-fixture", lease_minutes=1,
+        idempotency_key="qualified-after-replay")
+    assert renewed["lease"]["owner"] == "qualified-offline-fixture"
+
+
+@pytest.mark.parametrize("stage", ["groom", "document", "qa"])
+def test_member_pending_standalone_record_refuses_before_any_publication(tmp_path, monkeypatch, stage):
+    root, _, tasks, _ = _member_window_fixture(tmp_path, monkeypatch, count=2)
+    evidence = _member_standalone_evidence(tmp_path, stage)
+    _member_leave_pending(root, tasks, monkeypatch)
+    before = _member_publication_bytes(tasks)
+    with pytest.raises(AutoDevStateError, match="pending member-window"):
+        record_auto_dev_stage(tasks["CC-ONE"].read()["autodev_path"], stage=stage,
+            evidence_file=evidence, idempotency_key=f"pending-{stage}")
+    assert _member_publication_bytes(tasks) == before
+    _member_retarget(root, tasks, "CC-ONE")
+    assert "member_window_pending" not in json.loads((tasks["CC-ONE"].path.parents[2] / "portfolio.json").read_text())
+
+
+@pytest.mark.parametrize("pause_at", ["predecessor", "publication"])
+def test_member_release_record_preflight_race_refuses_before_snapshot_or_wrapper(tmp_path, monkeypatch, pause_at):
+    root, _, tasks, _ = _member_window_fixture(tmp_path, monkeypatch, count=2)
+    task = tasks["CC-ONE"]
+    value = task.read()
+    value["state"] = "local_validation"
+    delivery._atomic_json(task.path, value)
+    sync_delivery_projection(task.path)
+    receipt = tmp_path / "family-receipt.json"
+    receipt.write_text(json.dumps({"schema": "development-stage-evidence/v1",
+        "state": "release_propagation", "status": "verified", "summary": "Offline family receipt",
+        "verified_at": "2026-10-10T00:00:00Z", "evidence": {"readback_verified": True}}))
+    admitted, proceed = threading.Event(), threading.Event()
+    def paused_predecessors(*args, **kwargs):
+        if pause_at == "predecessor":
+            admitted.set()
+            assert proceed.wait(10)
+    monkeypatch.setattr(delivery, "require_auto_dev_predecessors", paused_predecessors)
+    original_guard = delivery.task_publication_guard
+    evidence_dir = Path(task.read()["work_item"]) / "artifacts" / "development-delivery" / "evidence"
+    @contextmanager
+    def paused_publication(path):
+        if threading.current_thread().name.startswith("release-record"):
+            # Validation has published its typed snapshot, but the direct
+            # wrapper/task publication has not been admitted yet.
+            if pause_at == "publication" and any(evidence_dir.glob("release_propagation-*.json")):
+                admitted.set()
+                assert proceed.wait(10)
+        with original_guard(path):
+            yield
+    monkeypatch.setattr(delivery, "task_publication_guard", paused_publication)
+    with ThreadPoolExecutor(max_workers=1, thread_name_prefix="release-record") as pool:
+        future = pool.submit(run_development_stage, task.path, stage="release_propagation",
+            receipts={"release_propagation": str(receipt)}, idempotency_prefix="raced-family")
+        try:
+            assert admitted.wait(10)
+            _member_leave_pending(root, tasks, monkeypatch)
+            before = _member_publication_bytes(tasks)
+        finally:
+            proceed.set()
+        with pytest.raises(DevelopmentDeliveryError, match="pending member-window"):
+            future.result(timeout=10)
+    assert _member_publication_bytes(tasks) == before
+    _member_retarget(root, tasks, "CC-ONE")
+
+
+@pytest.mark.parametrize("entrypoint", ["stage", "compatibility_helper"])
+def test_member_pending_compatibility_sync_never_appends_failure_event(tmp_path, monkeypatch, entrypoint):
+    root, _, tasks, _ = _member_window_fixture(tmp_path, monkeypatch, count=2)
+    task = tasks["CC-ONE"]
+    value = task.read()
+    value["state"] = "local_validation"
+    delivery._atomic_json(task.path, value)
+    sync_delivery_projection(task.path)
+    receipt = tmp_path / "pending-family.json"
+    receipt.write_text(json.dumps({"schema": "development-stage-evidence/v1",
+        "state": "release_propagation", "status": "verified", "summary": "Offline pending-stage fixture",
+        "verified_at": "2026-10-10T00:00:00Z", "evidence": {"readback_verified": True}}))
+    _member_leave_pending(root, tasks, monkeypatch)
+    before = _member_publication_bytes(tasks)
+    with pytest.raises(DevelopmentDeliveryError, match="pending member-window"):
+        if entrypoint == "stage":
+            run_development_stage(task.path, stage="release_propagation",
+                receipts={"release_propagation": str(receipt)}, idempotency_prefix="already-pending-family")
+        else:
+            delivery._sync_auto_dev_projection(task.path)
+    assert _member_publication_bytes(tasks) == before
+    _member_retarget(root, tasks, "CC-ONE")
+
+
+def test_member_pending_policy_materialization_refuses_before_snapshot_writes(tmp_path, monkeypatch):
+    root, _, tasks, _ = _member_window_fixture(tmp_path, monkeypatch, count=2)
+    task = tasks["CC-ONE"]
+    decision = _policy_decision(task, "document")
+    current = read_auto_dev_state(task.read()["autodev_path"])
+    _member_leave_pending(root, tasks, monkeypatch)
+    before = _member_publication_bytes(tasks)
+    with pytest.raises(AutoDevStateError, match="pending member-window"):
+        auto_dev.materialize_auto_dev_policy_decision(decision, "document",
+            work_item=Path(task.read()["work_item"]), current=current)
+    assert _member_publication_bytes(tasks) == before
+    _member_retarget(root, tasks, "CC-ONE")
+
+
+def _unlinked_stage_fixture(tmp_path, monkeypatch, *, empty_link, applicability="optional"):
+    root, _, tasks, _ = _member_window_fixture(tmp_path, monkeypatch, count=1)
+    task = tasks["CC-ONE"]
+    decision = _policy_decision(task, "document")
+    projection_path = Path(task.read()["autodev_path"])
+    current = read_auto_dev_state(projection_path)
+    current["stage_policies"]["document"]["applicability"] = applicability
+    if empty_link:
+        current["delivery"]["task_state_ref"] = ""
+    else:
+        current["delivery"].pop("task_state_ref")
+    delivery._atomic_json(projection_path, current)
+    return root, tasks, task, decision, projection_path
+
+
+def _observe_nonreentrant_projection_locks(monkeypatch):
+    # Invoke the actual lock, but refuse a second owned acquisition before it
+    # can strand the test. No thread, timeout, signal or real PID is involved.
+    original = auto_dev._file_lock
+    held = set()
+    entries = []
+    @contextmanager
+    def observed(path):
+        identity = Path(path).resolve()
+        assert identity not in held, "same projection lock reacquired while owned"
+        held.add(identity)
+        entries.append(identity)
+        try:
+            with original(path):
+                yield
+        finally:
+            held.remove(identity)
+    monkeypatch.setattr(auto_dev, "_file_lock", observed)
+    return entries, held
+
+
+def _unlinked_canonical_database_bytes(root):
+    database = default_db_path(root)
+    return {str(path): path.read_bytes() for path in
+            (database, Path(str(database) + "-wal"), Path(str(database) + "-shm"))
+            if path.is_file()}
+
+
+@pytest.mark.parametrize("empty_link", [False, True], ids=["missing-link", "empty-link"])
+@pytest.mark.parametrize("applicability", ["optional", "disabled"])
+def test_unlinked_optional_policy_stage_refuses_under_one_owned_guard_without_effects(
+    tmp_path, monkeypatch, empty_link, applicability
+):
+    root, tasks, task, decision, projection_path = _unlinked_stage_fixture(
+        tmp_path, monkeypatch, empty_link=empty_link, applicability=applicability)
+    evidence_path = tmp_path / "not-required-evidence.json"
+    evidence_path.write_text(json.dumps({"schema": AUTO_DEV_STAGE_EVIDENCE_SCHEMA,
+        "stage": "document", "status": "not_required", "summary": "Offline optional fixture",
+        "verified_at": "2026-10-10T00:00:00Z", "evidence": {"policy_ref": str(decision)}}))
+    before = _member_publication_bytes(tasks)
+    canonical_before = _unlinked_canonical_database_bytes(root)
+    inputs_before = {str(path): path.read_bytes() for path in
+                     (evidence_path, decision, Path(task.read()["policy_receipt"]))}
+    entries, held = _observe_nonreentrant_projection_locks(monkeypatch)
+    with pytest.raises(AutoDevStateError) as refused:
+        record_auto_dev_stage(projection_path, stage="document", evidence_file=evidence_path,
+                              idempotency_key="unlinked-not-required")
+    assert str(refused.value) == "document policy decision requires a linked delivery task"
+    assert entries == [projection_path.with_suffix(".json.lock")]
+    assert held == set()
+    assert _member_publication_bytes(tasks) == before
+    assert _unlinked_canonical_database_bytes(root) == canonical_before
+    assert {str(path): path.read_bytes() for path in
+            (evidence_path, decision, Path(task.read()["policy_receipt"]))} == inputs_before
+
+
+@pytest.mark.parametrize("empty_link", [False, True], ids=["missing-link", "empty-link"])
+def test_unlinked_direct_policy_materializer_keeps_guarded_zero_write_refusal(
+    tmp_path, monkeypatch, empty_link
+):
+    root, tasks, task, decision, projection_path = _unlinked_stage_fixture(
+        tmp_path, monkeypatch, empty_link=empty_link)
+    before = _member_publication_bytes(tasks)
+    canonical_before = _unlinked_canonical_database_bytes(root)
+    entries, held = _observe_nonreentrant_projection_locks(monkeypatch)
+    with pytest.raises(AutoDevStateError) as refused:
+        auto_dev.materialize_auto_dev_policy_decision(decision, "document",
+            work_item=Path(task.read()["work_item"]), current=read_auto_dev_state(projection_path))
+    assert str(refused.value) == "document policy decision requires a linked delivery task"
+    assert entries == [projection_path.with_suffix(".json.lock")] and held == set()
+    assert _member_publication_bytes(tasks) == before
+    assert _unlinked_canonical_database_bytes(root) == canonical_before
+
+
+@pytest.mark.parametrize("empty_link", [False, True], ids=["missing-link", "empty-link"])
+def test_unlinked_completed_standalone_evidence_preserves_supported_publication(
+    tmp_path, monkeypatch, empty_link
+):
+    root, _, task, _, projection_path = _unlinked_stage_fixture(
+        tmp_path, monkeypatch, empty_link=empty_link)
+    evidence = _member_standalone_evidence(tmp_path, "groom")
+    task_before = task.path.read_bytes()
+    canonical_before = _unlinked_canonical_database_bytes(root)
+    inputs_before = {str(path): path.read_bytes() for path in
+                     (evidence, tmp_path / "groom-proof.json", Path(task.read()["policy_receipt"]))}
+    entries, held = _observe_nonreentrant_projection_locks(monkeypatch)
+    result = record_auto_dev_stage(projection_path, stage="groom", evidence_file=evidence,
+                                  idempotency_key="unlinked-completed")
+    assert result["receipt"]["status"] == "completed"
+    assert result["state"]["stages"]["groom"]["status"] == "completed"
+    assert entries.count(projection_path.with_suffix(".json.lock")) == 1
+    orchestration = projection_path.parent / "artifacts" / "auto-dev-orchestration"
+    assert entries == [projection_path.with_suffix(".json.lock"),
+                       orchestration / "stages" / "groom" / ".lock",
+                       orchestration / "events.jsonl.lock"]
+    assert held == set()
+    assert task.path.read_bytes() == task_before
+    assert _unlinked_canonical_database_bytes(root) == canonical_before
+    assert {str(path): path.read_bytes() for path in
+            (evidence, tmp_path / "groom-proof.json", Path(task.read()["policy_receipt"]))} == inputs_before
+    receipt = Path(result["receipt"]["receipt_ref"])
+    assert receipt.is_file() and receipt.parent.joinpath("latest.json").is_file()
+
+
+@pytest.mark.parametrize("at_end", [False, True])
+def test_member_pending_development_record_guards_materialization_and_revision_replay(tmp_path, monkeypatch, at_end):
+    root, _, tasks, _ = _member_window_fixture(tmp_path, monkeypatch, count=2)
+    task = tasks["CC-ONE"]
+    value = task.read()
+    value["state"] = "local_validation" if at_end else "planned"
+    ready = tmp_path / "reviewed-head.json"
+    ready.write_text(json.dumps({"evidence": {"subject_revision": "b" * 40}}))
+    value["receipts"].append({"state": "ready_for_merge", "ref": str(ready),
+                             "sha256": hashlib.sha256(ready.read_bytes()).hexdigest()})
+    delivery._atomic_json(task.path, value)
+    sync_delivery_projection(task.path)
+    receipt = tmp_path / "code-change.json"
+    receipt.write_text(json.dumps({"schema": "development-stage-evidence/v1",
+        "state": "code_changed", "status": "completed", "summary": "Offline change fixture",
+        "verified_at": "2026-10-10T00:00:00Z", "evidence": {"source": "fixture"}}))
+    _member_leave_pending(root, tasks, monkeypatch)
+    before = _member_publication_bytes(tasks)
+    with pytest.raises(DevelopmentDeliveryError, match="pending member-window"):
+        run_development_stage(task.path, stage="implementation", receipts={
+            name: str(receipt) for name in delivery.FORWARD_STATES}, idempotency_prefix="pending-develop")
+    assert _member_publication_bytes(tasks) == before
+    _member_retarget(root, tasks, "CC-ONE")
+
+
+def test_member_standalone_stale_preflight_is_rejected_before_proof_publication(tmp_path, monkeypatch):
+    root, _, tasks, _ = _member_window_fixture(tmp_path, monkeypatch, count=2)
+    evidence = _member_standalone_evidence(tmp_path, "groom")
+    original_guard = auto_dev._auto_dev_publication_guard
+    preflight, proceed = threading.Event(), threading.Event()
+    @contextmanager
+    def paused_guard(path, current):
+        preflight.set()
+        assert proceed.wait(10)
+        with original_guard(path, current):
+            yield
+    monkeypatch.setattr(auto_dev, "_auto_dev_publication_guard", paused_guard)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(record_auto_dev_stage, tasks["CC-ONE"].read()["autodev_path"],
+            stage="groom", evidence_file=evidence, idempotency_key="stale-groom")
+        try:
+            assert preflight.wait(10)
+            _member_retarget(root, tasks, "CC-ONE")
+            before = _member_publication_bytes(tasks)
+        finally:
+            proceed.set()
+        with pytest.raises(AutoDevStateError, match="publication preflight changed"):
+            future.result(timeout=10)
+    assert _member_publication_bytes(tasks) == before
+
+
+def test_member_standalone_publication_serializes_initial_authority_snapshot(tmp_path, monkeypatch):
+    root, _, tasks, _ = _member_window_fixture(tmp_path, monkeypatch, count=2)
+    evidence = _member_standalone_evidence(tmp_path, "groom")
+    original_source = auto_dev._materialize_stage_source
+    original_admission = delivery._task_provisioning_admission_lock
+    publishing, proceed, attempted = threading.Event(), threading.Event(), threading.Event()
+    def paused_source(*args, **kwargs):
+        publishing.set()
+        assert proceed.wait(10)
+        return original_source(*args, **kwargs)
+    @contextmanager
+    def watched_admission(path):
+        if threading.current_thread().name.startswith("member-retarget"):
+            attempted.set()
+        with original_admission(path):
+            yield
+    monkeypatch.setattr(auto_dev, "_materialize_stage_source", paused_source)
+    monkeypatch.setattr(delivery, "_task_provisioning_admission_lock", watched_admission)
+    with ThreadPoolExecutor(max_workers=1) as record_pool, ThreadPoolExecutor(max_workers=1, thread_name_prefix="member-retarget") as retarget_pool:
+        recorded = record_pool.submit(record_auto_dev_stage, tasks["CC-ONE"].read()["autodev_path"],
+            stage="groom", evidence_file=evidence, idempotency_key="serialized-groom")
+        try:
+            assert publishing.wait(10)
+            retargeted = retarget_pool.submit(_member_retarget, root, tasks, "CC-ONE")
+            assert attempted.wait(10)
+            assert not retargeted.done()
+            assert not (tasks["CC-ONE"].path.parents[2] / "member-window-operations").exists()
+        finally:
+            proceed.set()
+        assert recorded.result(timeout=10)["receipt"]["stage"] == "groom"
+        assert "member_window_pending" not in retargeted.result(timeout=10)
+    projection = json.loads(Path(tasks["CC-ONE"].read()["autodev_path"]).read_text())
+    assert projection["stages"]["groom"]["status"] == "completed"
+    assert projection["completion_stage"] == "document"
+
+
+@pytest.mark.parametrize("changed", ["redirect_spec", "foreign_guard", "missing_guard", "unknown_entry",
+    "task_schema", "projection_schema", "packet", "autodev_path", "task_source", "task_context",
+    "projection_packet", "projection_task_ref", "projection_owner", "authority_bytes",
+    "original_auto_dev", "original_row", "original_repository", "original_member_shape"])
+def test_member_pending_replay_closes_targets_before_any_guard_read(tmp_path, monkeypatch, changed):
+    root, _, tasks, _ = _member_window_fixture(tmp_path, monkeypatch, count=2)
+    _member_leave_pending(root, tasks, monkeypatch)
+    task = tasks["CC-ONE"]
+    portfolio_path = task.path.parents[2] / "portfolio.json"
+    portfolio = json.loads(portfolio_path.read_text())
+    intent_path = Path(portfolio["member_window_pending"]["intent_ref"])
+    intent = json.loads(intent_path.read_text())
+    member = intent["original_members"]["CC-ONE"]
+    foreign = tmp_path / "foreign-unadmitted.json"
+    foreign.write_text(json.dumps({"private_fixture": True}))
+    if changed == "redirect_spec":
+        ref = str(Path(task.read()["work_item"]) / "SPEC.md")
+        projection_ref = member["entry"]["projection_ref"]
+        member["entry"]["projection_ref"] = ref
+        intent["effects"][ref] = intent["effects"].pop(projection_ref)
+        intent["desired_portfolio"]["member_windows"]["members"]["CC-ONE"]["projection_ref"] = ref
+    elif changed == "foreign_guard":
+        intent["files"][str(foreign)] = hashlib.sha256(foreign.read_bytes()).hexdigest()
+    elif changed == "missing_guard":
+        del intent["files"][str(Path(task.read()["work_item"]) / "SPEC.md")]
+    elif changed == "unknown_entry":
+        member["entry"]["alternate_projection"] = str(foreign)
+    elif changed == "task_schema":
+        member["task"]["schema"] = "foreign-task/v1"
+    elif changed == "projection_schema":
+        member["projection"]["schema"] = "foreign-projection/v1"
+    elif changed == "packet":
+        member["task"]["work_item"] = str(Path(task.read()["work_item"]).parent / "foreign-packet")
+    elif changed == "autodev_path":
+        member["task"]["autodev_path"] = str(foreign)
+    elif changed == "task_source":
+        member["task"]["source"]["key"] = "FOREIGN"
+    elif changed == "task_context":
+        member["task"]["context_selection"] = {"content_hash": "foreign"}
+    elif changed == "projection_packet":
+        member["projection"]["work_item_id"] = "foreign-packet"
+    elif changed == "projection_task_ref":
+        member["projection"]["delivery"]["task_state_ref"] = str(foreign)
+    elif changed == "projection_owner":
+        member["projection"]["canonical_work_id"] = "foreign-owner"
+    elif changed == "authority_bytes":
+        intent["original_authority_bytes"][str(task.path)] = "{}"
+    elif changed == "original_auto_dev":
+        intent["original_portfolio"]["auto_dev"] = "unqualified-object"
+    elif changed == "original_row":
+        intent["original_portfolio"]["tasks"][0]["ticket"] = ["CC-ONE"]
+    elif changed == "original_repository":
+        intent["original_portfolio"]["repository"] = "unqualified-source"
+    else:
+        member["entry"] = "unqualified-entry"
+    delivery._atomic_json(intent_path, intent)
+    portfolio["member_window_pending"]["intent_sha256"] = hashlib.sha256(intent_path.read_bytes()).hexdigest()
+    delivery._atomic_json(portfolio_path, portfolio)
+    before = _member_publication_bytes(tasks)
+    original_read = delivery._member_window_file_bytes
+    def admitted_read(path):
+        assert path != foreign, "unadmitted target was read before admission"
+        return original_read(path)
+    monkeypatch.setattr(delivery, "_member_window_file_bytes", admitted_read)
+    with pytest.raises(DevelopmentDeliveryError):
+        _member_retarget(root, tasks, "CC-ONE")
+    assert _member_publication_bytes(tasks) == before
+    assert foreign.read_text() == json.dumps({"private_fixture": True})
+
+
+@pytest.mark.parametrize("kind", ["symlink", "fifo", "directory", "scalar_json", "malformed_json"])
+def test_member_window_authority_reader_refuses_unqualified_files(tmp_path, kind):
+    path = tmp_path / "authority.json"
+    if kind == "symlink":
+        target = tmp_path / "unadmitted.json"
+        target.write_text('{"unadmitted": true}')
+        path.symlink_to(target)
+    elif kind == "fifo":
+        os.mkfifo(path)
+    elif kind == "directory":
+        path.mkdir()
+    elif kind == "scalar_json":
+        path.write_text('"foreign"')
+    else:
+        path.write_text('{"truncated":')
+    with pytest.raises(DevelopmentDeliveryError):
+        delivery._member_window_mapping(path)
+
+
+def test_member_window_repair_rejects_symlink_manifest_before_target_read(tmp_path, monkeypatch):
+    _, _, tasks, portfolio = _legacy_member_divergence(tmp_path, monkeypatch)
+    plan = delivery.repair_development_member_windows(portfolio, members=["CC-ONE"], idempotency_key="nofollow-repair")
+    target = tmp_path / "unadmitted-manifest.json"
+    target.write_text(json.dumps(plan["manifest"]))
+    manifest_path = tmp_path / "manifest-link.json"
+    manifest_path.symlink_to(target)
+    reader = delivery._member_window_file_bytes
+    opened = []
+    def bounded_reader(path):
+        opened.append(path)
+        return reader(path)
+    monkeypatch.setattr(delivery, "_member_window_file_bytes", bounded_reader)
+    before = _member_authority_bytes(tasks)
+    portfolio_before = portfolio.read_bytes()
+    with pytest.raises(DevelopmentDeliveryError, match="not a regular file"):
+        delivery.repair_development_member_windows(portfolio, members=["CC-ONE"], idempotency_key="nofollow-repair", repair_manifest=manifest_path, apply=True)
+    assert target not in opened
+    assert _member_authority_bytes(tasks) == before
+    assert portfolio.read_bytes() == portfolio_before
+
+
+def _member_governed_bytes(tasks):
+    operations = next(iter(tasks.values())).path.parents[2] / "member-window-operations"
+    return {ref: content for ref, content in _member_publication_bytes(tasks).items()
+            if not Path(ref).is_relative_to(operations)}
+
+
+def _member_directory_bytes(path):
+    return {str(item.relative_to(path)): item.read_bytes() for item in path.rglob("*") if item.is_file()}
+
+
+def _member_forbid_publication(monkeypatch):
+    writes = []
+    def forbidden(*args, **kwargs):
+        writes.append((args, kwargs))
+        raise AssertionError("unadmitted operations directory reached authority/evidence/event publication")
+    monkeypatch.setattr(delivery, "_atomic_json", forbidden)
+    monkeypatch.setattr(delivery, "append_event", forbidden)
+    return writes
+
+
+def _member_operations_alias(path, foreign, kind):
+    if kind == "symlink":
+        path.symlink_to(foreign, target_is_directory=True)
+    elif kind == "file":
+        path.write_text("unadmitted operations root\n")
+    else:
+        os.mkfifo(path)
+
+
+@pytest.mark.parametrize("kind", ["symlink", "file", "fifo"])
+def test_member_window_operations_alias_refuses_fresh_retarget_without_effects(tmp_path, monkeypatch, kind):
+    root, _, tasks, _ = _member_window_fixture(tmp_path, monkeypatch, count=2)
+    operations = tasks["CC-ONE"].path.parents[2] / "member-window-operations"
+    foreign = tmp_path / "foreign-operations"
+    foreign.mkdir()
+    (foreign / "canary.json").write_text('{"foreign": true}')
+    _member_operations_alias(operations, foreign, kind)
+    before, canary = _member_governed_bytes(tasks), _member_directory_bytes(foreign)
+    writes = _member_forbid_publication(monkeypatch)
+    with pytest.raises(DevelopmentDeliveryError, match="operations.*directory"):
+        _member_retarget(root, tasks, "CC-ONE")
+    assert writes == []
+    assert _member_governed_bytes(tasks) == before
+    assert _member_directory_bytes(foreign) == canary
+
+
+@pytest.mark.parametrize("kind", ["symlink", "file", "fifo"])
+@pytest.mark.parametrize("apply", [False, True])
+def test_member_window_operations_alias_refuses_fresh_repair_without_effects(tmp_path, monkeypatch, kind, apply):
+    _, _, tasks, portfolio = _legacy_member_divergence(tmp_path, monkeypatch)
+    plan = delivery.repair_development_member_windows(portfolio, members=["CC-ONE"], idempotency_key="directory-repair")
+    manifest = tmp_path / "reviewed-repair.json"
+    manifest.write_text(json.dumps(plan["manifest"]))
+    operations = portfolio.parent / "member-window-operations"
+    assert not operations.exists()
+    foreign = tmp_path / "foreign-operations"
+    foreign.mkdir()
+    (foreign / "canary.json").write_text('{"foreign": true}')
+    _member_operations_alias(operations, foreign, kind)
+    before, canary = _member_governed_bytes(tasks), _member_directory_bytes(foreign)
+    writes = _member_forbid_publication(monkeypatch)
+    with pytest.raises(DevelopmentDeliveryError, match="operations.*directory"):
+        delivery.repair_development_member_windows(portfolio, members=["CC-ONE"], idempotency_key="directory-repair",
+            repair_manifest=manifest if apply else None, apply=apply)
+    assert writes == []
+    assert _member_governed_bytes(tasks) == before
+    assert _member_directory_bytes(foreign) == canary
+
+
+def _member_redirect_pending_operations(tmp_path, portfolio):
+    marker = json.loads(portfolio.read_text())["member_window_pending"]
+    intent = Path(marker["intent_ref"])
+    content = intent.read_bytes()
+    assert hashlib.sha256(content).hexdigest() == marker["intent_sha256"]
+    foreign = tmp_path / "foreign-operations"
+    foreign.mkdir()
+    (foreign / "canary.json").write_text('{"foreign": true}')
+    (foreign / intent.name).write_bytes(content)
+    retained = tmp_path / "retained-original-operations"
+    intent.parent.rename(retained)
+    intent.parent.symlink_to(foreign, target_is_directory=True)
+    return foreign, retained
+
+
+def test_member_window_operations_alias_refuses_exact_pending_retarget_before_intent_read(tmp_path, monkeypatch):
+    root, _, tasks, _ = _member_window_fixture(tmp_path, monkeypatch, count=2)
+    _member_leave_pending(root, tasks, monkeypatch)
+    portfolio = tasks["CC-ONE"].path.parents[2] / "portfolio.json"
+    foreign, retained = _member_redirect_pending_operations(tmp_path, portfolio)
+    before, canary, original = _member_governed_bytes(tasks), _member_directory_bytes(foreign), _member_directory_bytes(retained)
+    reads = []
+    def unadmitted_read(*args):
+        reads.append(args)
+        raise AssertionError("linked operations root reached intent I/O")
+    monkeypatch.setattr(delivery._MemberWindowOperations, "read", unadmitted_read)
+    writes = _member_forbid_publication(monkeypatch)
+    with pytest.raises(DevelopmentDeliveryError, match="operations.*directory"):
+        _member_retarget(root, tasks, "CC-ONE")
+    assert reads == writes == []
+    assert _member_governed_bytes(tasks) == before
+    assert _member_directory_bytes(foreign) == canary
+    assert _member_directory_bytes(retained) == original
+
+
+@pytest.mark.parametrize("apply", [False, True])
+def test_member_window_operations_alias_refuses_exact_pending_repair_before_intent_read(tmp_path, monkeypatch, apply):
+    _, _, tasks, portfolio = _legacy_member_divergence(tmp_path, monkeypatch)
+    planned = delivery.repair_development_member_windows(portfolio, members=["CC-ONE"], idempotency_key="directory-repair")
+    manifest = tmp_path / "reviewed-repair.json"
+    manifest.write_text(json.dumps(planned["manifest"]))
+    with monkeypatch.context() as fault:
+        def fail_event(*args, **kwargs):
+            raise OSError("injected pending repair event")
+        fault.setattr(delivery, "append_event", fail_event)
+        with pytest.raises(OSError, match="pending repair"):
+            delivery.repair_development_member_windows(portfolio, members=["CC-ONE"], idempotency_key="directory-repair",
+                repair_manifest=manifest, apply=True)
+    foreign, retained = _member_redirect_pending_operations(tmp_path, portfolio)
+    before, canary, original = _member_governed_bytes(tasks), _member_directory_bytes(foreign), _member_directory_bytes(retained)
+    reads = []
+    def unadmitted_read(*args):
+        reads.append(args)
+        raise AssertionError("linked operations root reached intent I/O")
+    monkeypatch.setattr(delivery._MemberWindowOperations, "read", unadmitted_read)
+    writes = _member_forbid_publication(monkeypatch)
+    with pytest.raises(DevelopmentDeliveryError, match="operations.*directory"):
+        delivery.repair_development_member_windows(portfolio, members=["CC-ONE"], idempotency_key="directory-repair",
+            repair_manifest=manifest, apply=apply)
+    assert reads == writes == []
+    assert _member_governed_bytes(tasks) == before
+    assert _member_directory_bytes(foreign) == canary
+    assert _member_directory_bytes(retained) == original
+
+
+@pytest.mark.parametrize("kind", ["symlink", "directory"])
+def test_member_window_operations_identity_change_refuses_fresh_intent_publication(tmp_path, monkeypatch, kind):
+    root, _, tasks, _ = _member_window_fixture(tmp_path, monkeypatch, count=2)
+    operations = tasks["CC-ONE"].path.parents[2] / "member-window-operations"
+    foreign, retained = tmp_path / "foreign-operations", tmp_path / "retained-original-operations"
+    foreign.mkdir()
+    (foreign / "canary.json").write_text('{"foreign": true}')
+    before, canary = _member_governed_bytes(tasks), _member_directory_bytes(foreign)
+    ensure = delivery._MemberWindowOperations.ensure_present
+    changed = False
+    def replace_after_admission(store):
+        nonlocal changed
+        ensure(store)
+        if not changed:
+            changed = True
+            operations.rename(retained)
+            if kind == "symlink":
+                operations.symlink_to(foreign, target_is_directory=True)
+            else:
+                foreign.rename(operations)
+    monkeypatch.setattr(delivery._MemberWindowOperations, "ensure_present", replace_after_admission)
+    writes = _member_forbid_publication(monkeypatch)
+    with pytest.raises(DevelopmentDeliveryError, match="operations.*(directory|identity)"):
+        _member_retarget(root, tasks, "CC-ONE")
+    assert changed and writes == []
+    assert _member_governed_bytes(tasks) == before
+    assert _member_directory_bytes(foreign if kind == "symlink" else operations) == canary
+    assert list(retained.iterdir()) == []
+
+
+@pytest.mark.parametrize("kind", ["symlink", "directory"])
+@pytest.mark.parametrize("timing", ["before_read", "after_read"])
+def test_member_window_operations_identity_change_refuses_byte_identical_pending_replay(tmp_path, monkeypatch, kind, timing):
+    root, _, tasks, _ = _member_window_fixture(tmp_path, monkeypatch, count=2)
+    _member_leave_pending(root, tasks, monkeypatch)
+    portfolio = tasks["CC-ONE"].path.parents[2] / "portfolio.json"
+    intent = Path(json.loads(portfolio.read_text())["member_window_pending"]["intent_ref"])
+    operations = intent.parent
+    foreign, retained = tmp_path / "foreign-operations", tmp_path / "retained-original-operations"
+    foreign.mkdir()
+    (foreign / "canary.json").write_text('{"foreign": true}')
+    (foreign / intent.name).write_bytes(intent.read_bytes())
+    before, canary, original = _member_governed_bytes(tasks), _member_directory_bytes(foreign), _member_directory_bytes(operations)
+    read = delivery._MemberWindowOperations.read
+    changed = False
+    snapshots = []
+    def replace_during_replay(store, path):
+        nonlocal changed
+        if changed:
+            return read(store, path)
+        snapshot = read(store, path) if timing == "after_read" else None
+        if snapshot is not None:
+            snapshots.append(snapshot)
+        changed = True
+        operations.rename(retained)
+        if kind == "symlink":
+            operations.symlink_to(foreign, target_is_directory=True)
+        else:
+            foreign.rename(operations)
+        return snapshot if timing == "after_read" else read(store, path)
+    monkeypatch.setattr(delivery._MemberWindowOperations, "read", replace_during_replay)
+    writes = _member_forbid_publication(monkeypatch)
+    with pytest.raises(DevelopmentDeliveryError, match="operations.*(directory|identity)"):
+        _member_retarget(root, tasks, "CC-ONE")
+    assert changed and writes == []
+    assert len(snapshots) == (1 if timing == "after_read" else 0)
+    assert _member_governed_bytes(tasks) == before
+    assert _member_directory_bytes(foreign if kind == "symlink" else operations) == canary
+    assert _member_directory_bytes(retained) == original
+
+
+@pytest.mark.parametrize("kind", ["symlink", "fifo", "directory"])
+def test_member_window_operations_leaf_refuses_pending_replay_without_effects(tmp_path, monkeypatch, kind):
+    root, _, tasks, _ = _member_window_fixture(tmp_path, monkeypatch, count=2)
+    _member_leave_pending(root, tasks, monkeypatch)
+    portfolio = tasks["CC-ONE"].path.parents[2] / "portfolio.json"
+    intent = Path(json.loads(portfolio.read_text())["member_window_pending"]["intent_ref"])
+    foreign = tmp_path / "foreign-intent.json"
+    foreign.write_bytes(intent.read_bytes())
+    intent.unlink()
+    if kind == "symlink":
+        intent.symlink_to(foreign)
+    elif kind == "fifo":
+        os.mkfifo(intent)
+    else:
+        intent.mkdir()
+    before, canary = _member_governed_bytes(tasks), foreign.read_bytes()
+    writes = _member_forbid_publication(monkeypatch)
+    with pytest.raises(DevelopmentDeliveryError, match="intent.*regular file"):
+        _member_retarget(root, tasks, "CC-ONE")
+    assert writes == []
+    assert _member_governed_bytes(tasks) == before
+    assert foreign.read_bytes() == canary
+
+
+def test_member_window_operations_immutable_publication_refuses_a_raced_existing_intent(tmp_path, monkeypatch):
+    root, _, tasks, _ = _member_window_fixture(tmp_path, monkeypatch, count=2)
+    before = _member_governed_bytes(tasks)
+    link = delivery.os.link
+    raced = []
+    def competing_intent(source, target, **kwargs):
+        descriptor = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600, dir_fd=kwargs["dst_dir_fd"])
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(b'{"unadmitted": true}\n')
+        raced.append(target)
+        return link(source, target, **kwargs)
+    monkeypatch.setattr(delivery.os, "link", competing_intent)
+    writes = _member_forbid_publication(monkeypatch)
+    with pytest.raises(DevelopmentDeliveryError, match="immutable.*already exists"):
+        _member_retarget(root, tasks, "CC-ONE")
+    assert writes == [] and len(raced) == 1
+    operations = tasks["CC-ONE"].path.parents[2] / "member-window-operations"
+    assert _member_directory_bytes(operations) == {raced[0]: b'{"unadmitted": true}\n'}
+    assert _member_governed_bytes(tasks) == before
+
+
+def test_member_window_operations_preview_preserves_absence_and_valid_repair_replay(tmp_path, monkeypatch):
+    _, _, tasks, portfolio = _legacy_member_divergence(tmp_path, monkeypatch)
+    operations = portfolio.parent / "member-window-operations"
+    planned = delivery.repair_development_member_windows(portfolio, members=["CC-ONE"], idempotency_key="directory-preview")
+    assert not operations.exists()
+    manifest = tmp_path / "reviewed-repair.json"
+    manifest.write_text(json.dumps(planned["manifest"]))
+    first = delivery.repair_development_member_windows(portfolio, members=["CC-ONE"], idempotency_key="directory-preview",
+        repair_manifest=manifest, apply=True)
+    assert operations.is_dir() and not operations.is_symlink()
+    content = _member_directory_bytes(operations)
+    before = _member_governed_bytes(tasks)
+    again = delivery.repair_development_member_windows(portfolio, members=["CC-ONE"], idempotency_key="directory-preview",
+        repair_manifest=manifest, apply=True)
+    assert first["result"] == "completed" and again["result"] == "replayed"
+    assert again["receipt"] == first["receipt"] and again["receipt_sha256"] == first["receipt_sha256"]
+    assert _member_directory_bytes(operations) == content
+    assert _member_governed_bytes(tasks) == before
 
 
 def test_start_creates_one_linked_auto_dev_projection_and_policy_planes(

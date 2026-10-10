@@ -9,10 +9,11 @@ adapters selected by the project profile.
 
 from __future__ import annotations
 
-from contextlib import contextmanager
+from contextlib import contextmanager, ExitStack
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from functools import wraps
 import hashlib
 import fcntl
 import json
@@ -22,8 +23,9 @@ import re
 import sqlite3
 import stat
 import subprocess
+import threading
 import time
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any, Callable, Iterator, Mapping, Sequence
 from urllib.parse import urlsplit
 import uuid
 
@@ -1783,6 +1785,8 @@ def _refresh_portfolio_state(task_state_path: Path) -> None:
         return
     with _file_lock(portfolio_path.with_suffix(portfolio_path.suffix + ".lock")):
         portfolio = _read_mapping(portfolio_path)
+        if "member_window_pending" in portfolio:
+            raise DevelopmentDeliveryError("pending member-window operation requires exact receipt-backed completion")
         states: list[str] = []
         for row in portfolio.get("tasks") or []:
             if not isinstance(row, Mapping) or not row.get("state_ref"):
@@ -1808,25 +1812,50 @@ def _refresh_portfolio_state(task_state_path: Path) -> None:
 def _sync_auto_dev_projection(task_state_path: Path) -> dict[str, Any] | None:
     """Refresh the non-canonical projection without rolling back committed delivery state."""
 
-    try:
-        return sync_delivery_projection(task_state_path)
-    except (AutoDevStateError, OSError) as exc:
-        task = _read_mapping(task_state_path)
-        append_event(
-            task_state_path.parent / "events.jsonl",
-            event_type="development.autodev_projection.sync_failed",
-            idempotency_key=(
-                f"{task.get('run_id')}:{task.get('ticket')}:projection-sync-failed:"
-                f"{task.get('updated_at')}"
-            ),
-            payload={
-                "ticket": task.get("ticket"),
-                "projection": task.get("autodev_path"),
-                "error": str(exc),
-                "recovery": "repair autodev.json, then run agentic-os auto-dev sync",
-            },
-        )
-        return None
+    with task_publication_guard(task_state_path):
+        try:
+            return sync_delivery_projection(task_state_path)
+        except (AutoDevStateError, OSError) as exc:
+            task = _read_mapping(task_state_path)
+            append_event(
+                task_state_path.parent / "events.jsonl",
+                event_type="development.autodev_projection.sync_failed",
+                idempotency_key=(
+                    f"{task.get('run_id')}:{task.get('ticket')}:projection-sync-failed:"
+                    f"{task.get('updated_at')}"
+                ),
+                payload={
+                    "ticket": task.get("ticket"),
+                    "projection": task.get("autodev_path"),
+                    "error": str(exc),
+                    "recovery": "repair autodev.json, then run agentic-os auto-dev sync",
+                },
+            )
+            return None
+
+
+@contextmanager
+def task_publication_guard(state_path: str | Path):
+    """Admit local receipt/state publication before any durable file effect.
+
+    Member retargets take this same admission lock before their portfolio,
+    task and projection locks. Publication may nest normal lifecycle writers;
+    no task/projection lock or executor/provider operation is held here.
+    """
+    path = Path(state_path).expanduser().resolve()
+    with _task_provisioning_admission_lock(path):
+        portfolio = path.parents[2] / "portfolio.json"
+        if portfolio.is_file() and "member_window_pending" in _read_mapping(portfolio):
+            raise DevelopmentDeliveryError("pending member-window operation requires exact receipt-backed completion")
+        yield
+
+
+def _guard_task_publication(method):
+    @wraps(method)
+    def publish(self, *args, **kwargs):
+        with task_publication_guard(self.path):
+            return method(self, *args, **kwargs)
+    return publish
 
 
 @dataclass
@@ -1845,6 +1874,16 @@ class TaskState:
             raise DevelopmentDeliveryError(f"invalid task state: {self.path}")
         return value
 
+    @contextmanager
+    def mutation_lock(self):
+        """Do not change a task inside an interrupted authority publication."""
+        with _file_lock(self.path.with_suffix(self.path.suffix + ".lock")):
+            portfolio = self.path.parents[2] / "portfolio.json"
+            if portfolio.is_file() and "member_window_pending" in _read_mapping(portfolio):
+                raise DevelopmentDeliveryError("pending member-window operation requires exact receipt-backed completion")
+            yield
+
+    @_guard_task_publication
     def emit(self, *, event_type: str, idempotency_key: str, payload: Mapping[str, Any]) -> None:
         """Write the task ledger and its optional root rollup pointer ledger."""
         append_event(self.ledger, event_type=event_type, idempotency_key=idempotency_key, payload=payload)
@@ -1853,9 +1892,10 @@ class TaskState:
         if rollup:
             append_event(Path(str(rollup)), event_type=event_type, idempotency_key=idempotency_key, payload=payload)
 
+    @_guard_task_publication
     def transition(self, target: str, *, receipt: str, idempotency_key: str) -> dict[str, Any]:
         replayed = False
-        with _file_lock(self.path.with_suffix(self.path.suffix + ".lock")):
+        with self.mutation_lock():
             state = self.read()
             current = str(state["state"])
             if state.get("last_transition_key") == idempotency_key:
@@ -1888,6 +1928,7 @@ class TaskState:
         _sync_canonical_task_progress(self.path)
         return state
 
+    @_guard_task_publication
     def fail(
         self,
         *,
@@ -1898,7 +1939,7 @@ class TaskState:
         sync_canonical: bool = True,
     ) -> dict[str, Any]:
         replayed = False
-        with _file_lock(self.path.with_suffix(self.path.suffix + ".lock")):
+        with self.mutation_lock():
             state = self.read()
             if state.get("last_failure_key") == idempotency_key:
                 replayed = True
@@ -1937,6 +1978,7 @@ class TaskState:
             _sync_canonical_task_progress(self.path)
         return state
 
+    @_guard_task_publication
     def record_executor_unavailable(self, *, stage: str | None) -> dict[str, Any]:
         """Atomically bind one unaccepted post-materialization handoff to its task.
 
@@ -1949,7 +1991,7 @@ class TaskState:
 
         replayed = False
         handoff: dict[str, Any]
-        with _file_lock(self.path.with_suffix(self.path.suffix + ".lock")):
+        with self.mutation_lock():
             state = self.read()
             failure = state.get("failure") if isinstance(state.get("failure"), Mapping) else {}
             prior_receipt = Path(str(failure.get("receipt") or "")).expanduser()
@@ -2082,9 +2124,10 @@ class TaskState:
         _sync_canonical_task_progress(self.path)
         return {"task": state, "handoff": handoff, "replayed": False}
 
+    @_guard_task_publication
     def recover(self, *, receipt: str, idempotency_key: str) -> dict[str, Any]:
         replayed = False
-        with _file_lock(self.path.with_suffix(self.path.suffix + ".lock")):
+        with self.mutation_lock():
             state = self.read()
             if state.get("last_recovery_key") == idempotency_key:
                 replayed = True
@@ -2136,11 +2179,12 @@ class TaskState:
         self.fail(kind="lease_expired", detail="worker heartbeat lease expired", receipt=str(self.path), idempotency_key=key)
         return {"recovered": True, "reason": "lease_expired"}
 
+    @_guard_task_publication
     def heartbeat(self, *, owner: str, lease_minutes: int, idempotency_key: str) -> dict[str, Any]:
         """Renew task ownership without changing lifecycle state."""
         if not owner.strip() or lease_minutes < 1:
             raise DevelopmentDeliveryError("heartbeat requires an owner and positive lease_minutes")
-        with _file_lock(self.path.with_suffix(self.path.suffix + ".lock")):
+        with self.mutation_lock():
             state = self.read()
             if state.get("last_heartbeat_key") == idempotency_key:
                 _sync_auto_dev_projection(self.path)
@@ -2846,6 +2890,9 @@ def create_isolated_worktree(
     }
 
 
+_task_admission_ownership = threading.local()
+
+
 @contextmanager
 def _task_provisioning_admission_lock(state_path: Path):
     """Serialize correction of a failed selection with later provisioning.
@@ -2856,8 +2903,19 @@ def _task_provisioning_admission_lock(state_path: Path):
     admission lock with correction rather than racing the preflight proof.
     """
 
-    with _file_lock(state_path.with_suffix(state_path.suffix + ".provisioning-admission.lock")):
+    # Reuse only a lock already owned by this thread. Other threads and
+    # processes still acquire the same OS lock; this is not authority state.
+    key = str(state_path.resolve())
+    owned = getattr(_task_admission_ownership, "paths", set())
+    if key in owned:
         yield
+        return
+    with _file_lock(state_path.with_suffix(state_path.suffix + ".provisioning-admission.lock")):
+        _task_admission_ownership.paths = owned | {key}
+        try:
+            yield
+        finally:
+            _task_admission_ownership.paths = owned
 
 
 def _worktree_ready_recovery_read_file(
@@ -7704,6 +7762,838 @@ def _record_post_materialization_handoff(
     }
 
 
+MEMBER_WINDOWS_SCHEMA = "auto-dev-member-windows/v1"
+MEMBER_WINDOW_INTENT_SCHEMA = "auto-dev-member-window-operation/v1"
+MEMBER_WINDOW_REPAIR_SCHEMA = "auto-dev-member-window-repair/v1"
+
+
+def _member_window_pending_marker(portfolio: Mapping[str, Any], portfolio_path: Path) -> Mapping[str, Any] | None:
+    """Only absence means no operation; a present marker needs closed admission."""
+    if "member_window_pending" not in portfolio:
+        return None
+    marker = portfolio["member_window_pending"]
+    if (not isinstance(marker, Mapping)
+        or set(marker) != {"schema", "intent_ref", "intent_sha256", "request"}
+        or marker.get("schema") != MEMBER_WINDOW_INTENT_SCHEMA
+        or not isinstance(marker.get("intent_ref"), str)
+        or not isinstance(marker.get("intent_sha256"), str)
+        or not re.fullmatch(r"[a-f0-9]{64}", marker["intent_sha256"])
+        or not isinstance(marker.get("request"), Mapping)):
+        raise DevelopmentDeliveryError("malformed pending member-window authority")
+    intent_path = Path(marker["intent_ref"])
+    if (not intent_path.is_absolute() or str(intent_path) != marker["intent_ref"]
+        or intent_path.parent != portfolio_path.parent / "member-window-operations"
+        or not re.fullmatch(r"[a-f0-9]{64}\.json", intent_path.name)):
+        raise DevelopmentDeliveryError("unknown pending member-window intent identity")
+    request = marker["request"]
+    tickets = request.get("tickets")
+    if (not isinstance(tickets, list) or not tickets
+        or not all(isinstance(ticket, str) and ticket for ticket in tickets)
+        or len(tickets) != len(set(tickets))):
+        raise DevelopmentDeliveryError("unknown pending member-window request membership")
+    if request.get("kind") == "retarget":
+        if (set(request) != {"kind", "tickets", "mode", "requested_stage", "start_stage", "completion_stage"}
+            or request["mode"] not in AUTO_DEV_MODES
+            or (request["requested_stage"] is not None and request["requested_stage"] not in AUTO_DEV_STAGE_ORDER)
+            or (request["mode"] == "single_stage" and request["requested_stage"] is None)
+            or request["start_stage"] not in AUTO_DEV_STAGE_ORDER
+            or request["completion_stage"] not in AUTO_DEV_STAGE_ORDER):
+            raise DevelopmentDeliveryError("unknown pending member-window retarget request")
+    elif request.get("kind") == "repair":
+        if (set(request) != {"kind", "tickets", "idempotency_key"}
+            or not isinstance(request["idempotency_key"], str) or not request["idempotency_key"].strip()):
+            raise DevelopmentDeliveryError("unknown pending member-window repair request")
+    else:
+        raise DevelopmentDeliveryError("unknown pending member-window operation kind")
+    return marker
+
+
+def _member_window_bytes(value: Mapping[str, Any]) -> bytes:
+    return (json.dumps(value, indent=2, sort_keys=True) + "\n").encode("utf-8")
+
+
+@dataclass
+class _MemberWindowOperations:
+    """Keep intent I/O on one admitted run-local directory descriptor."""
+
+    path: Path
+    parent_descriptor: int
+    parent_identity: tuple[int, int]
+    descriptor: int | None
+    identity: tuple[int, int] | None
+
+    def check(self) -> None:
+        """Refuse a replaced, linked or non-directory operation store."""
+        try:
+            parent = self.path.parent.stat(follow_symlinks=False)
+            opened_parent = os.fstat(self.parent_descriptor)
+            if (not stat.S_ISDIR(parent.st_mode)
+                or (parent.st_dev, parent.st_ino) != self.parent_identity
+                or (opened_parent.st_dev, opened_parent.st_ino) != self.parent_identity):
+                raise DevelopmentDeliveryError("member-window operations directory identity changed")
+            try:
+                current = os.stat(self.path.name, dir_fd=self.parent_descriptor, follow_symlinks=False)
+            except FileNotFoundError:
+                if self.descriptor is None:
+                    return
+                raise DevelopmentDeliveryError("member-window operations directory identity changed")
+            if self.descriptor is None or not stat.S_ISDIR(current.st_mode):
+                raise DevelopmentDeliveryError("member-window operations root must be an unchanged real directory")
+            opened = os.fstat(self.descriptor)
+            if ((current.st_dev, current.st_ino) != self.identity
+                or (opened.st_dev, opened.st_ino) != self.identity):
+                raise DevelopmentDeliveryError("member-window operations directory identity changed")
+        except OSError as exc:
+            raise DevelopmentDeliveryError("member-window operations directory is unavailable") from exc
+
+    def ensure_present(self) -> None:
+        """Create only the previously admitted absent directory, without aliases."""
+        self.check()
+        if self.descriptor is not None:
+            return
+        try:
+            os.mkdir(self.path.name, mode=0o700, dir_fd=self.parent_descriptor)
+            self.descriptor = os.open(self.path.name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                                      dir_fd=self.parent_descriptor)
+            opened = os.fstat(self.descriptor)
+            self.identity = (opened.st_dev, opened.st_ino)
+        except OSError as exc:
+            raise DevelopmentDeliveryError("member-window operations directory changed during creation") from exc
+        self.check()
+
+    def read(self, path: Path) -> tuple[dict[str, Any], str] | None:
+        """Return one no-follow intent snapshot and its digest, or absence."""
+        self.check()
+        if path.parent != self.path or not re.fullmatch(r"[a-f0-9]{64}\.json", path.name):
+            raise DevelopmentDeliveryError("unknown member-window intent identity")
+        if self.descriptor is None:
+            return None
+        try:
+            descriptor = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+                                 dir_fd=self.descriptor)
+        except FileNotFoundError:
+            self.check()
+            return None
+        except OSError as exc:
+            raise DevelopmentDeliveryError("member-window intent is unavailable or not a regular file") from exc
+        try:
+            if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+                raise DevelopmentDeliveryError("member-window intent must be a regular file")
+            with os.fdopen(descriptor, "rb", closefd=False) as handle:
+                content = handle.read()
+        except OSError as exc:
+            raise DevelopmentDeliveryError("member-window intent could not be read") from exc
+        finally:
+            os.close(descriptor)
+        self.check()
+        try:
+            value = json.loads(content)
+        except (ValueError, UnicodeError) as exc:
+            raise DevelopmentDeliveryError("invalid member-window JSON intent") from exc
+        if not isinstance(value, dict):
+            raise DevelopmentDeliveryError("member-window intent must be a JSON object")
+        return value, hashlib.sha256(content).hexdigest()
+
+    def publish(self, path: Path, value: Mapping[str, Any]) -> None:
+        """Publish a complete immutable intent without replacing an existing one."""
+        self.ensure_present()
+        if path.parent != self.path or not re.fullmatch(r"[a-f0-9]{64}\.json", path.name):
+            raise DevelopmentDeliveryError("unknown member-window intent identity")
+        temporary = f"{path.name}.{uuid.uuid4().hex}.tmp"
+        self.check()
+        descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                             0o600, dir_fd=self.descriptor)
+        try:
+            with os.fdopen(descriptor, "wb") as handle:
+                handle.write(_member_window_bytes(value))
+            self.check()
+            try:
+                os.link(temporary, path.name, src_dir_fd=self.descriptor,
+                        dst_dir_fd=self.descriptor, follow_symlinks=False)
+            except FileExistsError as exc:
+                raise DevelopmentDeliveryError("immutable member-window intent already exists") from exc
+            self.check()
+        finally:
+            os.unlink(temporary, dir_fd=self.descriptor)
+
+
+@contextmanager
+def _member_window_operations(portfolio_path: Path) -> Iterator[_MemberWindowOperations]:
+    """Admit an existing physical store; a preview never creates an absent one."""
+    try:
+        parent_descriptor = os.open(portfolio_path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    except OSError as exc:
+        raise DevelopmentDeliveryError("member-window operations parent must be a real directory") from exc
+    operations = None
+    descriptor = None
+    try:
+        parent = os.fstat(parent_descriptor)
+        path = portfolio_path.parent / "member-window-operations"
+        try:
+            descriptor = os.open(path.name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                                 dir_fd=parent_descriptor)
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            raise DevelopmentDeliveryError("member-window operations root must be a real directory") from exc
+        opened = os.fstat(descriptor) if descriptor is not None else None
+        operations = _MemberWindowOperations(path, parent_descriptor, (parent.st_dev, parent.st_ino),
+            descriptor, (opened.st_dev, opened.st_ino) if opened is not None else None)
+        operations.check()
+        yield operations
+    finally:
+        if operations is not None and operations.descriptor is not None:
+            os.close(operations.descriptor)
+        elif descriptor is not None:
+            os.close(descriptor)
+        os.close(parent_descriptor)
+
+
+def _member_window_file_bytes(path: Path) -> bytes:
+    try:
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError as exc:
+        raise DevelopmentDeliveryError(f"member-window authority is unavailable or not a regular file: {path}") from exc
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise DevelopmentDeliveryError(f"member-window authority must be a regular file: {path}")
+        with os.fdopen(descriptor, "rb", closefd=False) as handle:
+            return handle.read()
+    except OSError as exc:
+        raise DevelopmentDeliveryError(f"member-window authority could not be read: {path}") from exc
+    finally:
+        os.close(descriptor)
+
+
+def _member_window_mapping(path: Path) -> dict[str, Any]:
+    if not path.exists() and not path.is_symlink():
+        return {}
+    try:
+        value = json.loads(_member_window_file_bytes(path))
+    except DevelopmentDeliveryError:
+        raise
+    except (ValueError, UnicodeError) as exc:
+        raise DevelopmentDeliveryError(f"invalid member-window JSON authority: {path}") from exc
+    if not isinstance(value, dict):
+        raise DevelopmentDeliveryError(f"member-window authority must be a JSON object: {path}")
+    return value
+
+
+def _member_window_file_sha(path: Path) -> str:
+    return hashlib.sha256(_member_window_file_bytes(path)).hexdigest()
+
+
+def _member_window_source_proof() -> dict[str, str]:
+    package = Path(__file__).parent
+    return {name: _member_window_file_sha(package / name) for name in (
+        "development_delivery.py", "auto_dev_orchestration.py", "cli/develop.py"
+    )}
+
+
+def _member_window(value: Mapping[str, Any], *, task: bool = False) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        raise DevelopmentDeliveryError("member authority requires a known workflow object")
+    prefix = "auto_dev_" if task else ""
+    boundary = _explicit_auto_dev_boundary(
+        value, mode_key=prefix + "mode", start_key=prefix + "start_stage",
+        completion_key=prefix + "completion_stage", label="member authority",
+    )
+    if boundary is None or boundary[0] not in AUTO_DEV_MODES:
+        raise DevelopmentDeliveryError("member authority requires a complete known workflow boundary")
+    order = value.get(prefix + "stage_order")
+    if not isinstance(order, list):
+        raise DevelopmentDeliveryError("member authority requires a frozen stage order")
+    if order == [name for name in AUTO_DEV_STAGE_ORDER if name in order] and len(order) == len(set(order)):
+        order = list(AUTO_DEV_STAGE_ORDER)
+    try:
+        order = validate_auto_dev_stage_order(order)
+        auto_dev_workflow_window(order, boundary[1], boundary[2])
+        policies = validate_auto_dev_stage_policies(value.get(prefix + "stage_policies") or {})
+    except AutoDevStateError as exc:
+        raise DevelopmentDeliveryError(f"unsafe member workflow authority: {exc}") from exc
+    return {"mode": boundary[0], "start_stage": boundary[1], "completion_stage": boundary[2],
+            "stage_order": order, "stage_policies": policies}
+
+
+def _member_window_identity(task: Mapping[str, Any]) -> dict[str, Any]:
+    # Lease owner, attempts, state and receipts legitimately change during
+    # execution. The complete original bytes are guarded for each operation;
+    # the durable member binding retains the independent frozen identity.
+    return {name: deepcopy(task.get(name)) for name in (
+        "canonical_work_id", "run_id", "ticket", "domain", "project", "os_root",
+        "work_item", "autodev_path", "policy_receipt", "policy_fingerprint",
+        "context_selection", "repository", "authorship", "source", "worktree", "runtime",
+        "profile_source", "policy_sources",
+    )}
+
+
+def _member_window_evidence_paths(task_path: Path, packet: Path) -> set[Path]:
+    """Reconstruct retained evidence locations; stored intent keys admit none."""
+    candidates = {packet / "SPEC.md", task_path.parent / "events.jsonl",
+                  packet / "artifacts" / "auto-dev-orchestration" / "events.jsonl"}
+    directories = (
+        task_path.parent / "stages", task_path.parent / "handoffs",
+        packet / "artifacts" / "development-delivery" / "evidence",
+        packet / "artifacts" / "auto-dev-orchestration" / "stages",
+        packet / "artifacts" / "auto-dev-orchestration" / "proofs",
+    )
+    for directory in directories:
+        if directory.is_symlink():
+            raise DevelopmentDeliveryError("member evidence directory is not an admitted regular directory")
+        if directory.is_dir():
+            for child in directory.iterdir():
+                if child.is_symlink() or child.is_file():
+                    candidates.add(child)
+                elif child.is_dir():
+                    candidates.update(child.iterdir())
+    return {path for path in candidates if path.is_symlink() or path.is_file()}
+
+
+def _member_window_context(portfolio_path: Path, *, repair: bool = False) -> dict[str, Any]:
+    portfolio = _member_window_mapping(portfolio_path)
+    tickets = portfolio.get("tickets")
+    if portfolio.get("schema") != "development-portfolio/v1" or not isinstance(tickets, list) or len(tickets) < 2 or len(tickets) != len(set(tickets)):
+        raise DevelopmentDeliveryError("member-window operation requires an exact multi-member portfolio")
+    rows = portfolio.get("tasks")
+    if not isinstance(rows, list) or len(rows) != len(tickets) or any(not isinstance(row, Mapping) for row in rows):
+        raise DevelopmentDeliveryError("member-window portfolio has incomplete task membership")
+    if not isinstance(portfolio.get("repository"), Mapping):
+        raise DevelopmentDeliveryError("member-window portfolio requires a known source identity")
+    by_ticket = {str(row.get("ticket")): row for row in rows}
+    if set(by_ticket) != set(tickets):
+        raise DevelopmentDeliveryError("member-window portfolio has foreign or duplicate task membership")
+    run_dir = portfolio_path.parent
+    if portfolio.get("run_dir") != str(run_dir) or portfolio.get("run_id") != run_dir.name:
+        raise DevelopmentDeliveryError("member-window portfolio belongs to a different canonical run directory")
+    policy_path = run_dir / "effective-policies.json"
+    policy = _member_window_mapping(policy_path)
+    selected_profile = _validate_effective_policy_snapshot(policy, require_selected_profile=False)
+    if policy.get("fingerprint") != portfolio.get("policy_fingerprint") or policy.get("context_selection") != portfolio.get("context_selection"):
+        raise DevelopmentDeliveryError("member-window frozen portfolio policy/context differs")
+    if any(policy.get(name) != portfolio.get(name) for name in ("domain", "project")) or (selected_profile is not None and selected_profile.get("repository_id") != (portfolio.get("repository") or {}).get("id")):
+        raise DevelopmentDeliveryError("member-window frozen policy source identity differs from its portfolio")
+    legacy = _member_window(portfolio.get("auto_dev") or {})
+    member_map = portfolio.get("member_windows")
+    if member_map is not None and (
+        not isinstance(member_map, Mapping) or set(member_map) != {"schema", "members"} or member_map.get("schema") != MEMBER_WINDOWS_SCHEMA
+        or not isinstance(member_map.get("members"), Mapping)
+        or set(member_map["members"]) != set(tickets)
+    ):
+        raise DevelopmentDeliveryError("unknown or incomplete member-window authority")
+    if repair and member_map is not None:
+        raise DevelopmentDeliveryError("explicit legacy repair requires a portfolio without member windows")
+    files = {str(portfolio_path): _member_window_file_sha(portfolio_path),
+             str(policy_path): _member_window_file_sha(policy_path)}
+    authority_bytes = {str(portfolio_path): _member_window_file_bytes(portfolio_path).decode("utf-8")}
+    members: dict[str, Any] = {}
+    divergent: list[str] = []
+    for ticket in tickets:
+        row = by_ticket[ticket]
+        state_path = run_dir / "tasks" / _slug(ticket) / "state.json"
+        if Path(str(row.get("state_ref") or "")).expanduser().resolve() != state_path.resolve():
+            raise DevelopmentDeliveryError("member task reference differs from canonical portfolio membership")
+        task = _member_window_mapping(state_path)
+        if task.get("schema") != "development-task/v1":
+            raise DevelopmentDeliveryError("unknown member task authority schema")
+        if not task.get("canonical_work_id") or any(task.get(name) != portfolio.get(name) for name in ("run_id", "domain", "project", "policy_fingerprint", "context_selection", "repository", "authorship")):
+            raise DevelopmentDeliveryError("member owner/source/policy/context differs from its frozen portfolio")
+        if task.get("ticket") != ticket or (row.get("canonical_work_id") and row["canonical_work_id"] != task["canonical_work_id"]):
+            raise DevelopmentDeliveryError("member canonical task identity differs")
+        if not isinstance(task.get("source"), Mapping) or task["source"].get("key") != ticket:
+            raise DevelopmentDeliveryError("member tracker source differs from its canonical ticket")
+        if task.get("state") not in (*FORWARD_STATES, "blocked"):
+            raise DevelopmentDeliveryError("member task is not an active supported delivery authority")
+        packet = Path(str(task.get("work_item") or "")).expanduser().resolve()
+        owning_project = run_dir.parents[2]
+        try:
+            packet.relative_to(owning_project / "work-items")
+        except ValueError as exc:
+            raise DevelopmentDeliveryError("member packet is outside its owning project") from exc
+        projection_path = packet / "autodev.json"
+        if Path(str(task.get("autodev_path") or "")).expanduser().resolve() != projection_path:
+            raise DevelopmentDeliveryError("member projection reference differs from its packet")
+        projection = _member_window_mapping(projection_path)
+        if projection.get("schema") != "auto-dev-work-item/v1" or projection.get("work_item_id") != packet.name:
+            raise DevelopmentDeliveryError("unknown or foreign member projection authority schema/packet identity")
+        linked = projection.get("delivery") or {}
+        if not isinstance(linked, Mapping) or linked.get("task_state_ref") != str(state_path) or linked.get("portfolio_ref") != str(portfolio_path):
+            raise DevelopmentDeliveryError("member projection is not linked to its exact task and portfolio")
+        if any(projection.get(name) != task.get(name) for name in ("domain", "project", "canonical_work_id", "source")) or any(linked.get(name) != task.get(name) for name in ("run_id", "policy_fingerprint", "context_selection", "repository", "worktree", "runtime", "canonical_work_id")):
+            raise DevelopmentDeliveryError("member projection source/owner/policy/context differs from its task")
+        if Path(str(task.get("policy_receipt") or "")).expanduser().resolve() != policy_path:
+            raise DevelopmentDeliveryError("member task has a foreign frozen policy receipt")
+        window = _member_window(task, task=True)
+        if _member_window(projection) != window:
+            raise DevelopmentDeliveryError("member workflow boundary differs between task and projection")
+        entry = {"task_ref": str(state_path), "projection_ref": str(projection_path),
+                 "identity": _member_window_identity(task), "auto_dev": window}
+        if member_map is not None:
+            if member_map["members"].get(ticket) != entry:
+                raise DevelopmentDeliveryError("member workflow boundary or frozen identity differs from its independent authority")
+        elif window != legacy:
+            divergent.append(ticket)
+            if not repair:
+                raise DevelopmentDeliveryError("recorded Auto-Dev workflow boundary differs between portfolio, task, and projection; use explicit member-window repair")
+            if window["stage_order"] != legacy["stage_order"] or window["stage_policies"] != legacy["stage_policies"] or window["mode"] != legacy["mode"] or not set(auto_dev_workflow_window(window["stage_order"], window["start_stage"], window["completion_stage"])) <= set(auto_dev_workflow_window(legacy["stage_order"], legacy["start_stage"], legacy["completion_stage"])):
+                raise DevelopmentDeliveryError("legacy divergence is not the supported narrower agreeing member shape")
+        files[str(state_path)] = _member_window_file_sha(state_path)
+        files[str(projection_path)] = _member_window_file_sha(projection_path)
+        authority_bytes.update({str(path): _member_window_file_bytes(path).decode("utf-8") for path in (state_path, projection_path)})
+        # Capture retained evidence bytes without treating their existence as
+        # permission to invent a completed workflow or a provider verdict.
+        for candidate in _member_window_evidence_paths(state_path, packet):
+            files[str(candidate)] = _member_window_file_sha(candidate)
+        members[ticket] = {"entry": entry, "task": task, "projection": projection}
+    if repair and not divergent:
+        raise DevelopmentDeliveryError("legacy portfolio has no supported member-window divergence to repair")
+    return {"portfolio": portfolio, "members": members, "files": files,
+            "original_authority_bytes": authority_bytes,
+            "divergent_members": divergent, "source_proof": _member_window_source_proof()}
+
+
+@contextmanager
+def _member_window_locks(portfolio_path: Path):
+    """Existing lock order: admission, portfolio, ordered tasks, projections."""
+    portfolio = _member_window_mapping(portfolio_path)
+    tickets = portfolio.get("tickets")
+    if not isinstance(tickets, list) or len(tickets) != len(set(tickets)) or not all(isinstance(ticket, str) for ticket in tickets):
+        raise DevelopmentDeliveryError("member-window lock membership is invalid")
+    with ExitStack() as locks:
+        state_paths = [portfolio_path.parent / "tasks" / _slug(ticket) / "state.json" for ticket in sorted(tickets)]
+        for state_path in state_paths:
+            locks.enter_context(_task_provisioning_admission_lock(state_path))
+        locks.enter_context(_file_lock(portfolio_path.with_suffix(".json.lock")))
+        if _member_window_mapping(portfolio_path).get("tickets") != tickets:
+            raise DevelopmentDeliveryError("member membership changed during lock admission")
+        for state_path in state_paths:
+            locks.enter_context(_file_lock(state_path.with_suffix(".json.lock")))
+        for state_path in state_paths:
+            task = _member_window_mapping(state_path)
+            packet = Path(str(task.get("work_item") or "")).expanduser().resolve()
+            projection_path = packet / "autodev.json"
+            if Path(str(task.get("autodev_path") or "")).expanduser().resolve() != projection_path:
+                raise DevelopmentDeliveryError("member projection lock identity is invalid")
+            try:
+                packet.relative_to(portfolio_path.parent.parents[2] / "work-items")
+            except ValueError as exc:
+                raise DevelopmentDeliveryError("member projection lock lies outside its project") from exc
+            locks.enter_context(_file_lock(projection_path.with_suffix(".json.lock")))
+        yield
+
+
+def _requested_member_window(window: Mapping[str, Any], request: Mapping[str, Any]) -> dict[str, Any]:
+    window = deepcopy(dict(window))
+    order = window["stage_order"]
+    start = order.index(window["start_stage"])
+    completion = order.index(window["completion_stage"])
+    if request["mode"] == "single_stage":
+        focus = order.index(str(request["requested_stage"]))
+        start, completion = min(start, focus), max(completion, focus)
+    elif request["mode"] != window["mode"] and window["mode"] != "everything":
+        start = min(start, order.index(request["start_stage"]))
+        completion = max(completion, order.index(request["completion_stage"]))
+        window["mode"] = request["mode"]
+    window.update(start_stage=order[start], completion_stage=order[completion])
+    return window
+
+
+def _admit_member_window_intent_snapshots(portfolio_path: Path, intent: Mapping[str, Any]) -> None:
+    """Close path/identity admission before deriving effects or reading guards."""
+    original = intent["original_portfolio"]
+    tickets = original.get("tickets")
+    run_dir = portfolio_path.parent
+    if (original.get("schema") != "development-portfolio/v1" or not isinstance(tickets, list)
+        or len(tickets) < 2 or not all(isinstance(ticket, str) for ticket in tickets)
+        or len(tickets) != len(set(tickets)) or original.get("run_dir") != str(run_dir)
+        or original.get("run_id") != run_dir.name or "member_window_pending" in original):
+        raise DevelopmentDeliveryError("unknown original member-window portfolio authority")
+    rows = original.get("tasks")
+    if not isinstance(rows, list) or len(rows) != len(tickets) or any(not isinstance(row, Mapping) or not isinstance(row.get("ticket"), str) for row in rows):
+        raise DevelopmentDeliveryError("unknown original member-window task membership")
+    if not isinstance(original.get("repository"), Mapping):
+        raise DevelopmentDeliveryError("unknown original member-window source identity")
+    by_ticket = {row.get("ticket"): row for row in rows}
+    if set(by_ticket) != set(tickets):
+        raise DevelopmentDeliveryError("unknown original member-window task membership")
+    policy_path = run_dir / "effective-policies.json"
+    policy = _member_window_mapping(policy_path)
+    selected_profile = _validate_effective_policy_snapshot(policy, require_selected_profile=False)
+    if any(policy.get(name) != original.get(name) for name in ("domain", "project", "context_selection")) or policy.get("fingerprint") != original.get("policy_fingerprint") or (selected_profile is not None and selected_profile.get("repository_id") != (original.get("repository") or {}).get("id")):
+        raise DevelopmentDeliveryError("original member-window policy/source/context differs")
+    legacy = _member_window(original.get("auto_dev") or {})
+    member_map = original.get("member_windows")
+    if member_map is not None and (not isinstance(member_map, Mapping) or set(member_map) != {"schema", "members"} or member_map.get("schema") != MEMBER_WINDOWS_SCHEMA or not isinstance(member_map.get("members"), Mapping) or set(member_map["members"]) != set(tickets)):
+        raise DevelopmentDeliveryError("unknown original independent member-window authority")
+    expected_files = {str(portfolio_path), str(policy_path)}
+    snapshots = {str(portfolio_path): original}
+    divergent = []
+    for ticket in tickets:
+        member = intent["original_members"].get(ticket)
+        if not isinstance(member, Mapping) or set(member) != {"entry", "task", "projection"} or any(not isinstance(member[name], Mapping) for name in member):
+            raise DevelopmentDeliveryError("unknown original member-window snapshot")
+        task, projection, entry = member["task"], member["projection"], member["entry"]
+        task_path = run_dir / "tasks" / _slug(ticket) / "state.json"
+        # Only the canonical run target is read here. In particular no stored
+        # entry, effects or files reference selects a target to read.
+        live_task = _member_window_mapping(task_path)
+        if task.get("schema") != "development-task/v1" or task.get("state") not in (*FORWARD_STATES, "blocked") or _member_window_identity(task) != _member_window_identity(live_task):
+            raise DevelopmentDeliveryError("original member-window task schema or frozen identity differs")
+        row = by_ticket[ticket]
+        if row.get("state_ref") != str(task_path) or task.get("ticket") != ticket or not task.get("canonical_work_id") or (row.get("canonical_work_id") and row["canonical_work_id"] != task["canonical_work_id"]):
+            raise DevelopmentDeliveryError("original member-window canonical task binding differs")
+        if any(task.get(name) != original.get(name) for name in ("run_id", "domain", "project", "policy_fingerprint", "context_selection", "repository", "authorship")) or not isinstance(task.get("source"), Mapping) or task["source"].get("key") != ticket or task.get("policy_receipt") != str(policy_path):
+            raise DevelopmentDeliveryError("original member-window task owner/source/policy/context differs")
+        packet = Path(str(live_task.get("work_item") or "")).expanduser().resolve()
+        try:
+            packet.relative_to(run_dir.parents[2] / "work-items")
+        except ValueError as exc:
+            raise DevelopmentDeliveryError("original member-window packet lies outside its project") from exc
+        projection_path = packet / "autodev.json"
+        if task.get("work_item") != str(packet) or task.get("autodev_path") != str(projection_path):
+            raise DevelopmentDeliveryError("original member-window packet/projection target differs")
+        linked = projection.get("delivery")
+        if projection.get("schema") != "auto-dev-work-item/v1" or projection.get("work_item_id") != packet.name or not isinstance(linked, Mapping) or linked.get("task_state_ref") != str(task_path) or linked.get("portfolio_ref") != str(portfolio_path):
+            raise DevelopmentDeliveryError("original member-window projection schema or delivery binding differs")
+        if any(projection.get(name) != task.get(name) for name in ("domain", "project", "canonical_work_id", "source")) or any(linked.get(name) != task.get(name) for name in ("run_id", "policy_fingerprint", "context_selection", "repository", "worktree", "runtime", "canonical_work_id")):
+            raise DevelopmentDeliveryError("original member-window projection frozen identity differs")
+        window = _member_window(task, task=True)
+        expected_entry = {"task_ref": str(task_path), "projection_ref": str(projection_path),
+                          "identity": _member_window_identity(task), "auto_dev": window}
+        if dict(entry) != expected_entry or _member_window(projection) != window or (member_map is not None and member_map["members"].get(ticket) != expected_entry):
+            raise DevelopmentDeliveryError("original member-window entry target or authority differs")
+        if member_map is None and window != legacy:
+            divergent.append(ticket)
+            if intent["request"]["kind"] != "repair" or window["stage_order"] != legacy["stage_order"] or window["stage_policies"] != legacy["stage_policies"] or window["mode"] != legacy["mode"] or not set(auto_dev_workflow_window(window["stage_order"], window["start_stage"], window["completion_stage"])) <= set(auto_dev_workflow_window(legacy["stage_order"], legacy["start_stage"], legacy["completion_stage"])):
+                raise DevelopmentDeliveryError("unknown original legacy member-window divergence")
+        # A partially published task may differ only by this requested window.
+        expected_task = deepcopy(dict(task))
+        request = intent["request"]
+        if request["kind"] == "retarget" and ticket in request["tickets"] and task.get("state") != "blocked":
+            desired_window = _requested_member_window(window, request)
+            expected_task.update(auto_dev_mode=desired_window["mode"], auto_dev_start_stage=desired_window["start_stage"], auto_dev_completion_stage=desired_window["completion_stage"], auto_dev_stage_order=desired_window["stage_order"], auto_dev_stage_policies=desired_window["stage_policies"], requested_stage=request["requested_stage"], goal="delivery_complete" if desired_window["completion_stage"] == "health" else desired_window["completion_stage"])
+            if expected_task != task:
+                effect = intent["effects"].get(str(task_path))
+                if not isinstance(effect, Mapping) or not isinstance(effect.get("updated_at"), str):
+                    raise DevelopmentDeliveryError("member-window task effect is incomplete")
+                expected_task["updated_at"] = effect["updated_at"]
+        if live_task not in (task, expected_task):
+            raise DevelopmentDeliveryError("stale or unknown partial member-window task authority")
+        expected_files.update((str(task_path), str(projection_path)))
+        expected_files.update(str(path) for path in _member_window_evidence_paths(task_path, packet))
+        snapshots.update({str(task_path): task, str(projection_path): projection})
+    if intent["request"]["kind"] == "repair" and (member_map is not None or divergent != intent["request"]["tickets"]):
+        raise DevelopmentDeliveryError("repair intent does not name the exact legacy divergence")
+    files = intent["files"]
+    if set(files) != expected_files or any(not isinstance(sha, str) or not re.fullmatch(r"[a-f0-9]{64}", sha) for sha in files.values()):
+        raise DevelopmentDeliveryError("unknown or incomplete member-window authority/evidence guard set")
+    raw_authority = intent["original_authority_bytes"]
+    if not isinstance(raw_authority, Mapping) or set(raw_authority) != set(snapshots):
+        raise DevelopmentDeliveryError("unknown original member-window authority byte set")
+    for ref, snapshot in snapshots.items():
+        raw = raw_authority[ref]
+        if not isinstance(raw, str) or hashlib.sha256(raw.encode("utf-8")).hexdigest() != files[ref]:
+            raise DevelopmentDeliveryError("member-window original snapshot digest differs from its admitted guard")
+        try:
+            decoded = json.loads(raw)
+        except (ValueError, TypeError) as exc:
+            raise DevelopmentDeliveryError("invalid original member-window authority bytes") from exc
+        if decoded != snapshot:
+            raise DevelopmentDeliveryError("original member-window authority bytes differ from their snapshot")
+
+
+def _validate_member_window_intent(portfolio_path: Path, intent_path: Path, intent: Mapping[str, Any]) -> None:
+    """An intent authorizes only the known window effects, never arbitrary JSON."""
+    required = {"schema", "operation_id", "portfolio_ref", "request", "source_proof", "files",
+                "original_portfolio", "desired_portfolio", "effects", "original_members", "original_authority_bytes"}
+    if not required <= set(intent) or set(intent) - required - {"repair_manifest"} or any(not isinstance(intent[name], Mapping) for name in ("request", "files", "original_portfolio", "desired_portfolio", "effects", "original_members")):
+        raise DevelopmentDeliveryError("unknown or incomplete member-window intent shape")
+    request = intent["request"]
+    original = intent["original_portfolio"]
+    members = intent["original_members"]
+    tickets = original.get("tickets")
+    if not isinstance(tickets, list) or not all(isinstance(ticket, str) for ticket in tickets) or set(members) != set(tickets) or not isinstance(request.get("tickets"), list) or not request["tickets"] or not all(isinstance(ticket, str) for ticket in request["tickets"]) or len(request["tickets"]) != len(set(request["tickets"])) or not set(request["tickets"]) <= set(tickets):
+        raise DevelopmentDeliveryError("unknown member-window intent membership")
+    original_sha = intent["files"].get(str(portfolio_path))
+    if not isinstance(original_sha, str) or not re.fullmatch(r"[a-f0-9]{64}", original_sha):
+        raise DevelopmentDeliveryError("member-window intent lacks its original portfolio digest")
+    operation_id = _json_sha256({"request": request, "original_sha256": original_sha})
+    if intent.get("operation_id") != operation_id or intent_path != portfolio_path.parent / "member-window-operations" / f"{operation_id}.json":
+        raise DevelopmentDeliveryError("member-window intent identity differs from its original authority")
+    entries = {}
+    expected_effects = {}
+    if request.get("kind") == "retarget":
+        if set(request) != {"kind", "tickets", "mode", "requested_stage", "start_stage", "completion_stage"} or request["mode"] not in AUTO_DEV_MODES or (request["requested_stage"] is not None and request["requested_stage"] not in AUTO_DEV_STAGE_ORDER) or (request["mode"] == "single_stage" and request["requested_stage"] is None):
+            raise DevelopmentDeliveryError("unknown member-window retarget request")
+    elif request.get("kind") == "repair":
+        if set(request) != {"kind", "tickets", "idempotency_key"} or not str(request["idempotency_key"]).strip() or "repair_manifest" not in intent:
+            raise DevelopmentDeliveryError("unknown member-window repair request")
+    else:
+        raise DevelopmentDeliveryError("unknown member-window operation kind")
+    _admit_member_window_intent_snapshots(portfolio_path, intent)
+    for ticket in tickets:
+        member = members[ticket]
+        if not isinstance(member, Mapping) or set(member) != {"entry", "task", "projection"}:
+            raise DevelopmentDeliveryError("unknown original member-window snapshot")
+        task = member["task"]
+        entry = deepcopy(member["entry"])
+        task_path = portfolio_path.parent / "tasks" / _slug(ticket) / "state.json"
+        if entry.get("task_ref") != str(task_path) or entry.get("identity") != _member_window_identity(task) or entry.get("auto_dev") != _member_window(task, task=True) or _member_window(member["projection"]) != entry["auto_dev"]:
+            raise DevelopmentDeliveryError("member-window intent snapshot authority differs")
+        if request["kind"] == "retarget" and ticket in request["tickets"] and task.get("state") != "blocked":
+            window = _requested_member_window(entry["auto_dev"], request)
+            desired_task = deepcopy(task)
+            desired_task.update(auto_dev_mode=window["mode"], auto_dev_start_stage=window["start_stage"],
+                auto_dev_completion_stage=window["completion_stage"], auto_dev_stage_order=window["stage_order"],
+                auto_dev_stage_policies=window["stage_policies"], requested_stage=request["requested_stage"],
+                goal="delivery_complete" if window["completion_stage"] == "health" else window["completion_stage"])
+            entry["auto_dev"] = window
+            if desired_task != task:
+                effect = intent["effects"].get(entry["task_ref"])
+                if not isinstance(effect, Mapping) or not isinstance(effect.get("updated_at"), str):
+                    raise DevelopmentDeliveryError("member-window task effect is incomplete")
+                desired_task["updated_at"] = effect["updated_at"]
+                expected_effects[entry["task_ref"]] = desired_task
+                preview = sync_delivery_projection(task_path, _preview_task=desired_task, _preview_existing=member["projection"])
+                if preview is None or not isinstance(intent["effects"].get(entry["projection_ref"]), Mapping):
+                    raise DevelopmentDeliveryError("member-window projection effect is incomplete")
+                preview["updated_at"] = intent["effects"][entry["projection_ref"]].get("updated_at")
+                expected_effects[entry["projection_ref"]] = preview
+        entries[ticket] = entry
+    if intent["effects"] != expected_effects:
+        raise DevelopmentDeliveryError("unknown task or projection effects in member-window intent")
+    desired = deepcopy(dict(original))
+    desired["member_windows"] = {"schema": MEMBER_WINDOWS_SCHEMA, "members": entries}
+    desired.setdefault("member_window_operations", []).append({"operation_id": operation_id, "intent_ref": str(intent_path), "request": dict(request)})
+    if desired != intent["desired_portfolio"]:
+        raise DevelopmentDeliveryError("unknown portfolio effects in member-window intent")
+    if request["kind"] == "repair":
+        expected_manifest = {"schema": MEMBER_WINDOW_REPAIR_SCHEMA, "portfolio_ref": str(portfolio_path),
+            "idempotency_key": request["idempotency_key"], "repair_members": request["tickets"],
+            "membership": tickets, "files": intent["files"], "source_proof": intent["source_proof"],
+            "member_windows": desired["member_windows"]}
+        if intent["repair_manifest"] != expected_manifest:
+            raise DevelopmentDeliveryError("member-window repair intent manifest differs")
+
+
+def _complete_member_window_intent(portfolio_path: Path, intent_path: Path, intent: Mapping[str, Any], *, operations: _MemberWindowOperations) -> dict[str, Any]:
+    """Complete only exact original/result bytes; refuse unknown partial edits."""
+    if intent.get("schema") != MEMBER_WINDOW_INTENT_SCHEMA or intent.get("portfolio_ref") != str(portfolio_path) or intent.get("source_proof") != _member_window_source_proof():
+        raise DevelopmentDeliveryError("unknown or source-mismatched member-window intent")
+    current_portfolio = _member_window_mapping(portfolio_path)
+    pending_marker = _member_window_pending_marker(current_portfolio, portfolio_path)
+    snapshot = operations.read(intent_path)
+    if snapshot is None or snapshot[0] != intent:
+        raise DevelopmentDeliveryError("member-window intent changed before completion")
+    _, digest = snapshot
+    marker = {"schema": MEMBER_WINDOW_INTENT_SCHEMA, "intent_ref": str(intent_path),
+              "intent_sha256": digest, "request": intent.get("request")}
+    if pending_marker is not None and pending_marker != marker:
+        raise DevelopmentDeliveryError("a different member-window operation is pending")
+    _validate_member_window_intent(portfolio_path, intent_path, intent)
+    original = intent["original_portfolio"]
+    desired = intent["desired_portfolio"]
+    pending = {**original, "member_window_pending": marker}
+    staged = {**desired, "member_window_pending": marker}
+    allowed_portfolio = {hashlib.sha256(_member_window_bytes(v)).hexdigest() for v in (pending, staged, desired)} | {intent["files"][str(portfolio_path)]}
+    effects = intent["effects"]
+    # Preflight every effect and evidence guard before the first replacement.
+    for ref, before_sha in intent["files"].items():
+        current_sha = _member_window_file_sha(Path(ref))
+        allowed = allowed_portfolio if ref == str(portfolio_path) else {before_sha}
+        if ref in effects:
+            allowed = allowed | {hashlib.sha256(_member_window_bytes(effects[ref])).hexdigest()}
+        if current_sha not in allowed:
+            raise DevelopmentDeliveryError(f"stale or unknown partial member-window authority: {ref}")
+    if current_portfolio == desired:
+        operations.check()
+        return {"schema": "auto-dev-member-window-result/v1", "result": "replayed", "receipt": str(intent_path), "receipt_sha256": digest, "portfolio": desired}
+    operations.check()
+    if pending_marker is None:
+        _atomic_json(portfolio_path, pending)
+    for ref, value in effects.items():
+        path = Path(ref)
+        operations.check()
+        if _member_window_file_bytes(path) != _member_window_bytes(value):
+            _atomic_json(path, value)
+    operations.check()
+    _atomic_json(portfolio_path, staged)
+    operations.check()
+    append_event(portfolio_path.parent / "events.jsonl", event_type="development.portfolio.member_windows.updated",
+                 idempotency_key=intent["operation_id"], payload={"portfolio_ref": str(portfolio_path), "receipt": str(intent_path), "receipt_sha256": digest, "request": intent["request"]})
+    operations.check()
+    _atomic_json(portfolio_path, desired)
+    operations.check()
+    return {"schema": "auto-dev-member-window-result/v1", "result": "completed", "receipt": str(intent_path), "receipt_sha256": digest, "portfolio": desired}
+
+
+def _publish_member_window_intent(portfolio_path: Path, context: Mapping[str, Any], request: Mapping[str, Any], desired: Mapping[str, Any], effects: Mapping[str, Any], *, operations: _MemberWindowOperations, repair_manifest: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    operation_id = _json_sha256({"request": request, "original_sha256": context["files"][str(portfolio_path)]})
+    intent_path = portfolio_path.parent / "member-window-operations" / f"{operation_id}.json"
+    desired = deepcopy(dict(desired))
+    desired.setdefault("member_window_operations", []).append({"operation_id": operation_id, "intent_ref": str(intent_path), "request": dict(request)})
+    intent = {"schema": MEMBER_WINDOW_INTENT_SCHEMA, "operation_id": operation_id,
+              "portfolio_ref": str(portfolio_path), "request": dict(request),
+              "source_proof": context["source_proof"], "files": context["files"],
+              "original_portfolio": context["portfolio"], "desired_portfolio": desired,
+               "effects": dict(effects), "original_members": context["members"]}
+    intent["original_authority_bytes"] = context["original_authority_bytes"]
+    if repair_manifest is not None:
+        intent["repair_manifest"] = dict(repair_manifest)
+    operations.ensure_present()
+    snapshot = operations.read(intent_path)
+    if snapshot is not None:
+        recorded, _ = snapshot
+        def stable_effects(values):
+            return {ref: {k: v for k, v in value.items() if k != "updated_at"} for ref, value in values.items()}
+        if any(recorded.get(name) != intent.get(name) for name in (
+            "schema", "operation_id", "portfolio_ref", "request", "source_proof", "files", "original_portfolio", "desired_portfolio", "repair_manifest", "original_members", "original_authority_bytes"
+        )) or stable_effects(recorded.get("effects") or {}) != stable_effects(effects):
+            raise DevelopmentDeliveryError("immutable member-window intent already has different content")
+        intent = recorded
+    else:
+        operations.publish(intent_path, intent)
+    return _complete_member_window_intent(portfolio_path, intent_path, intent, operations=operations)
+
+
+def _resume_materialized_member_windows(
+    portfolio_path: Path, *, selected_tickets: Sequence[str], selected_packet: Path | None,
+    requested_mode: str, requested_stage: str | None, requested_start: str,
+    requested_completion: str, repository: Mapping[str, Any], authorship: Mapping[str, Any],
+    titles: Mapping[str, str] | None,
+) -> dict[str, Any] | None:
+    initial = _member_window_mapping(portfolio_path)
+    _member_window_pending_marker(initial, portfolio_path)
+    if len(initial.get("tickets") or []) < 2:
+        if "member_window_pending" in initial:
+            raise DevelopmentDeliveryError("pending member-window authority cannot fall back to single-member provisioning")
+        return None
+    # Fresh/incomplete provisioning retains its existing admission and retry
+    # path. Once member authority exists it may never fall back to that path.
+    for ticket in initial.get("tickets") or []:
+        task_path = portfolio_path.parent / "tasks" / _slug(ticket) / "state.json"
+        task = _member_window_mapping(task_path)
+        if not task.get("work_item") or not task.get("autodev_path") or not task.get("worktree"):
+            if initial.get("member_windows") or "member_window_pending" in initial:
+                raise DevelopmentDeliveryError("independent member authority cannot fall back to incomplete provisioning")
+            legacy = _member_window(initial.get("auto_dev") or {})
+            request = {"mode": requested_mode, "requested_stage": requested_stage,
+                       "start_stage": requested_start, "completion_stage": requested_completion}
+            if _requested_member_window(legacy, request) != legacy:
+                raise DevelopmentDeliveryError("member extension requires complete materialized sibling authority; finish provisioning first")
+            return None
+    requested = list(dict.fromkeys(selected_tickets))
+    if (selected_packet is None and requested != initial["tickets"]) or not set(requested) <= set(initial["tickets"]):
+        raise DevelopmentDeliveryError("run id already belongs to a different ticket portfolio")
+    request = {"kind": "retarget", "tickets": requested, "mode": requested_mode,
+               "requested_stage": requested_stage, "start_stage": requested_start,
+               "completion_stage": requested_completion}
+    with _member_window_locks(portfolio_path), _member_window_operations(portfolio_path) as operations:
+        latest = _member_window_mapping(portfolio_path)
+        if latest.get("repository") != repository or latest.get("authorship") != authorship:
+            raise DevelopmentDeliveryError("member resume repository or authorship differs from its frozen portfolio")
+        for ticket, supplied in (titles or {}).items():
+            if supplied != (latest.get("titles") or {}).get(ticket):
+                raise DevelopmentDeliveryError(f"run id already pinned the title for {ticket}")
+        pending = _member_window_pending_marker(latest, portfolio_path)
+        if pending is not None:
+            if pending["request"] != request:
+                raise DevelopmentDeliveryError("a different member-window operation is pending; replay the exact original request")
+            intent_path = Path(str(pending.get("intent_ref") or ""))
+            snapshot = operations.read(intent_path)
+            if snapshot is None or snapshot[1] != pending.get("intent_sha256"):
+                raise DevelopmentDeliveryError("unknown member-window intent reference or digest")
+            return _complete_member_window_intent(portfolio_path, intent_path, snapshot[0], operations=operations)["portfolio"]
+        context = _member_window_context(portfolio_path)
+        desired = deepcopy(context["portfolio"])
+        entries = {ticket: deepcopy(member["entry"]) for ticket, member in context["members"].items()}
+        effects: dict[str, Any] = {}
+        for ticket in requested:
+            member = context["members"][ticket]
+            task = deepcopy(member["task"])
+            entry = entries[ticket]
+            if selected_packet is not None and selected_packet != Path(entry["identity"]["work_item"]):
+                raise DevelopmentDeliveryError("selected packet belongs to a different member authority")
+            if _project_work_item_is_finished(Path(task["work_item"]), portfolio_path.parent.parents[2]) and requested_stage != "health":
+                raise DevelopmentDeliveryError("finished Auto-Dev packets are immutable; use the explicit reopen path")
+            if task.get("state") == "blocked":
+                continue
+            window = _requested_member_window(entry["auto_dev"], request)
+            order = window["stage_order"]
+            goal = "delivery_complete" if window["completion_stage"] == "health" else window["completion_stage"]
+            task.update(auto_dev_mode=window["mode"], auto_dev_start_stage=window["start_stage"],
+                        auto_dev_completion_stage=window["completion_stage"], auto_dev_stage_order=order,
+                        auto_dev_stage_policies=window["stage_policies"], requested_stage=requested_stage, goal=goal)
+            entry["auto_dev"] = window
+            if task != member["task"]:
+                task["updated_at"] = utc_now()
+                projection = sync_delivery_projection(entry["task_ref"], _preview_task=task, _preview_existing=member["projection"])
+                if projection is None:
+                    raise DevelopmentDeliveryError("member projection preview is unavailable")
+                effects[entry["task_ref"]] = task
+                effects[entry["projection_ref"]] = projection
+        desired["member_windows"] = {"schema": MEMBER_WINDOWS_SCHEMA, "members": entries}
+        if desired == context["portfolio"] and not effects:
+            operations.check()
+            return desired
+        return _publish_member_window_intent(portfolio_path, context, request, desired, effects, operations=operations)["portfolio"]
+
+
+def repair_development_member_windows(
+    portfolio_file: str | Path, *, members: Sequence[str], idempotency_key: str,
+    repair_manifest: str | Path | None = None, apply: bool = False,
+) -> dict[str, Any]:
+    """Plan/import only agreeing narrower legacy member boundaries."""
+    selected_path = Path(portfolio_file).expanduser()
+    _member_window_file_sha(selected_path)
+    portfolio_path = selected_path.resolve()
+    selected = list(members)
+    if not idempotency_key.strip() or not selected or len(selected) != len(set(selected)):
+        raise DevelopmentDeliveryError("member-window repair requires an idempotency key and exact unique member subset")
+    supplied = _member_window_mapping(Path(repair_manifest).expanduser()) if repair_manifest else None
+    if apply and supplied is None:
+        raise DevelopmentDeliveryError("member-window apply requires the exact reviewed repair manifest")
+    with _member_window_locks(portfolio_path), _member_window_operations(portfolio_path) as operations:
+        portfolio = _member_window_mapping(portfolio_path)
+        request = {"kind": "repair", "tickets": selected, "idempotency_key": idempotency_key}
+        pending = _member_window_pending_marker(portfolio, portfolio_path)
+        histories = portfolio.get("member_window_operations") or []
+        prior = next((row for row in histories if isinstance(row, Mapping) and row.get("request") == request), None)
+        if pending is not None or prior:
+            reference = pending if pending is not None else prior
+            if reference.get("request") != request or supplied is None:
+                raise DevelopmentDeliveryError("member-window repair replay requires its exact manifest and operation key")
+            intent_path = Path(str(reference.get("intent_ref") or ""))
+            if intent_path.parent != portfolio_path.parent / "member-window-operations":
+                raise DevelopmentDeliveryError("foreign member-window repair intent")
+            snapshot = operations.read(intent_path)
+            if snapshot is None:
+                raise DevelopmentDeliveryError("member-window repair intent is unavailable")
+            intent, digest = snapshot
+            if intent.get("repair_manifest") != supplied:
+                raise DevelopmentDeliveryError("member-window repair replay manifest differs")
+            if pending is not None and digest != pending["intent_sha256"]:
+                raise DevelopmentDeliveryError("member-window pending repair intent changed")
+            if not apply:
+                operations.check()
+                return {"schema": "auto-dev-member-window-result/v1", "result": "pending" if pending is not None else "replayed", "manifest": supplied, "receipt": str(intent_path), "receipt_sha256": digest}
+            return _complete_member_window_intent(portfolio_path, intent_path, intent, operations=operations)
+        context = _member_window_context(portfolio_path, repair=True)
+        if selected != context["divergent_members"]:
+            raise DevelopmentDeliveryError("repair member subset must exactly match the agreeing narrower legacy members in portfolio order")
+        manifest = {"schema": MEMBER_WINDOW_REPAIR_SCHEMA, "portfolio_ref": str(portfolio_path),
+                    "idempotency_key": idempotency_key, "repair_members": selected,
+                    "membership": portfolio["tickets"], "files": context["files"],
+                    "source_proof": context["source_proof"],
+                    "member_windows": {"schema": MEMBER_WINDOWS_SCHEMA, "members": {ticket: member["entry"] for ticket, member in context["members"].items()}}}
+        if supplied is not None and supplied != manifest:
+            raise DevelopmentDeliveryError("stale, foreign or changed member-window repair manifest")
+        if not apply:
+            operations.check()
+            return {"schema": "auto-dev-member-window-result/v1", "result": "planned", "manifest": manifest}
+        desired = {**portfolio, "member_windows": manifest["member_windows"]}
+        return _publish_member_window_intent(portfolio_path, context, request, desired, {}, operations=operations, repair_manifest=manifest)
+
+
 def start_development_run(
     root: str | Path,
     domain: str,
@@ -8029,6 +8919,42 @@ def start_development_run(
     portfolio_existed = portfolio_path.is_file()
     if run_dir.exists() and not portfolio_path.is_file():
         raise DevelopmentDeliveryError(f"run directory exists without a portfolio receipt: {run_dir}")
+    if portfolio_existed:
+        member_resume = _resume_materialized_member_windows(
+            portfolio_path, selected_tickets=tickets, selected_packet=selected_packet,
+            requested_mode=auto_dev_mode, requested_stage=requested_stage,
+            requested_start=auto_dev_start_stage, requested_completion=auto_dev_completion_stage,
+            repository=plan["repository"], authorship=plan["authorship"], titles=titles,
+        )
+        if member_resume is not None:
+            # Window publication changes no execution state. Preserve the
+            # existing bounded post-materialization handoff contract after
+            # releasing its authority locks, including distinct recoveries.
+            handoffs = {}
+            for ticket in dict.fromkeys(tickets):
+                state_path = run_dir / "tasks" / _slug(ticket) / "state.json"
+                if TaskState(state_path).read().get("state") != "blocked":
+                    handoffs[ticket] = _record_post_materialization_handoff(
+                        TaskState(state_path), require_executor_handoff=require_executor_handoff,
+                    )
+            with _file_lock(portfolio_path.with_suffix(".json.lock")):
+                latest = _read_mapping(portfolio_path)
+                if "member_window_pending" in latest:
+                    raise DevelopmentDeliveryError("a member-window operation became pending before handoff rollup")
+                changed = deepcopy(latest)
+                for row in changed["tasks"]:
+                    if row["ticket"] in handoffs:
+                        if handoffs[row["ticket"]] is None:
+                            row.pop("handoff", None)
+                        else:
+                            row["handoff"] = handoffs[row["ticket"]]
+                states = [TaskState(run_dir / "tasks" / _slug(ticket) / "state.json").read()["state"] for ticket in latest["tickets"]]
+                rollup = _portfolio_rollup(states)
+                changed["state"] = "pending" if rollup == "dispatching" and any((row.get("handoff") or {}).get("status") == "pending" for row in changed["tasks"]) else rollup
+                if changed != latest:
+                    changed["updated_at"] = utc_now()
+                    _atomic_json(portfolio_path, changed)
+                return changed
     if portfolio_existed:
         for ticket in dict.fromkeys(tickets):
             state_path = run_dir / "tasks" / _slug(ticket) / "state.json"
@@ -9714,6 +10640,7 @@ def run_development_stage(
         pending = pending_subject_supersessions(task_value)
         return pending[-1] if pending else None
 
+    @task_publication_guard(state.path)
     def persist_delivery_revision_metadata() -> dict[str, Any]:
         """Keep reviewed-head and terminal merge/deploy revisions distinct."""
 
@@ -9778,6 +10705,7 @@ def run_development_stage(
             _sync_auto_dev_projection(state.path)
         return state.read()
 
+    @task_publication_guard(state.path)
     def validate_receipt(target: str, raw: str) -> tuple[str, dict[str, Any]]:
         path = Path(raw).expanduser().resolve()
         if not path.is_file():
@@ -10268,7 +11196,7 @@ def run_development_stage(
             "recorded_at": utc_now(),
         }
         output = legacy_output
-        with _file_lock(state.path.with_suffix(state.path.suffix + ".lock")):
+        with task_publication_guard(state.path), _file_lock(state.path.with_suffix(state.path.suffix + ".lock")):
             task_value = state.read()
             superseded_ready_for_merge = False
             refreshed_subject_fence = False
