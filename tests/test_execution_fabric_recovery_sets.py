@@ -565,9 +565,9 @@ def test_encryption_exact_snapshot_is_restored_and_bytes_verified(capture, tmp_p
                 "time": datetime.now(timezone.utc).isoformat()}]).encode())
         if "backup" in argv:
             return subprocess.CompletedProcess(argv, 0, b'{"message_type":"summary","snapshot_id":"' + b"a" * 64 + b'"}\n')
-        assert argv[argv.index("restore") + 1] == "a" * 64
-        restored = Path(argv[argv.index("--target") + 1]) / str(target).lstrip("/")
-        shutil.copytree(target, restored)
+        assert argv[argv.index("restore") + 1] == "a" * 64 + ":" + str(target)
+        restored = Path(argv[argv.index("--target") + 1])
+        shutil.copytree(target, restored, dirs_exist_ok=True)
         return subprocess.CompletedProcess(argv, 0, b"")
     receipt = r.collect_recovery_set(target, str(repo), password, "daily-unit",
                                      apply=True, runner=native_fixture)
@@ -576,6 +576,35 @@ def test_encryption_exact_snapshot_is_restored_and_bytes_verified(capture, tmp_p
     assert receipt["applicationRestoreQualification"] == "required"
     assert not receipt["authorityTransferAuthorized"]
     assert "fixture-secret-key" not in json.dumps(receipt) + json.dumps(seen)
+
+
+def test_isolated_restore_selects_exact_native_source_subtree(capture, tmp_path):
+    source, captured = prepared(capture, tmp_path)
+    repository = tmp_path / "repository"
+    repository.mkdir(mode=0o700)
+    password = write(tmp_path / "private-key", b"fixture-only")
+    destination = tmp_path / "direct-readback"
+    source_pins = {p.relative_to(source).as_posix(): r.sha256(p)
+                   for p in source.rglob("*") if p.is_file()}
+    calls = []
+    def fixture_native(argv):
+        calls.append(argv)
+        if "snapshots" in argv:
+            return subprocess.CompletedProcess(argv, 0, json.dumps([
+                {"id": "a" * 64, "paths": [str(source)]}]).encode())
+        assert argv[argv.index("restore") + 1] == "a" * 64 + ":" + str(source)
+        assert argv[-2:] == ["--target", str(destination)]
+        shutil.copytree(source, destination, dirs_exist_ok=True)
+        return subprocess.CompletedProcess(argv, 0, b"")
+    result = r.restore_recovery_set_isolated(str(repository), password, "a" * 64,
+        destination, apply=True, runner=fixture_native)
+    assert result["manifestSha256"] == captured["manifestSha256"]
+    assert not result["authorityTransferAuthorized"]
+    assert (destination / "manifest.json").is_file()
+    assert not (destination / str(source).lstrip("/")).exists()
+    assert {p.relative_to(source).as_posix(): r.sha256(p)
+            for p in source.rglob("*") if p.is_file()} == source_pins
+    assert len(calls) == 2
 
 
 def test_transport_is_fixed_to_registered_host_and_declared_root(capture, tmp_path):
@@ -906,27 +935,66 @@ def test_native_restic_encrypted_exact_snapshot_roundtrip(capture, tmp_path):
         "bytes": nested.stat().st_size, "ownerBinding": "original-task:review"})
     write(capture[2] / "immutableReceipts/inventory.json", inventory)
     write(capture[0], plan)
-    target, captured = prepared(capture, tmp_path)
+    original_authority_pins = {p.relative_to(capture[2]).as_posix(): r.sha256(p)
+        for p in capture[2].rglob("*") if p.is_file()
+        and p != capture[2] / "osAuthorities/canonical.db-shm"}
+    # Reproduce the native full gate's doubled-path failure even with a short
+    # pytest root. The actual captured database path remains below that depth.
+    deep = tmp_path / "long source:with spaces"
+    while len(os.fsencode(deep / "set")) < 400:
+        remaining = 400 - len(os.fsencode(deep / "set"))
+        deep /= "x" * min(96, max(1, remaining - 1))
+    target = deep / "set"
+    captured = r.prepare_recovery_set(capture[0], capture[1], target, apply=True)
+    source_pins = {p.relative_to(target).as_posix(): r.sha256(p)
+                   for p in target.rglob("*") if p.is_file()}
+    sibling = write(deep / "set-other/private-sibling", b"never captured or restored")
+    sibling_pin = r.sha256(sibling)
     repository = tmp_path / "encrypted-repository"
     repository.mkdir(mode=0o700)
     password = write(tmp_path / "offline-custodian-password", os.urandom(32).hex().encode())
     r.native_command([binary, "--repo", str(repository), "--password-file", str(password), "init"])
+    calls = []
+    def actual_native(argv, **kwargs):
+        calls.append(argv)
+        assert "forget" not in argv and "prune" not in argv
+        return r.native_command(argv, **kwargs)
+    readback = tmp_path / "encrypted-readback"
+    drill = tmp_path / "isolated-drill"
+    legacy_nested = readback / str(target).lstrip("/") / "witness/witness.db"
+    assert len(os.fsencode(legacy_nested)) > 512
     custody = r.collect_recovery_set(
         target, str(repository), password, "daily-unit", restic=binary, apply=True,
-        verify_target=tmp_path / "encrypted-readback",
+        verify_target=readback, runner=actual_native,
     )
     assert custody["status"] == "encrypted_bytes_verified"
     assert custody["manifestSha256"] == captured["manifestSha256"]
     assert len(custody["snapshotId"]) == 64
     restored = r.restore_recovery_set_isolated(
-        str(repository), password, custody["snapshotId"], tmp_path / "isolated-drill",
-        restic=binary, apply=True,
+        str(repository), password, custody["snapshotId"], drill,
+        restic=binary, apply=True, runner=actual_native,
     )
     assert restored["manifestSha256"] == captured["manifestSha256"]
     assert restored["status"] == "bytes_verified"
     assert not restored["authorityTransferAuthorized"]
     assert restored["applicationRestoreQualification"] == "required"
     assert json.loads((tmp_path / "recovery-receipts/daily-unit.json").read_text()) == custody
+    assert [argv[argv.index("restore") + 1] for argv in calls if "restore" in argv] == [
+        custody["snapshotId"] + ":" + str(target), custody["snapshotId"] + ":" + str(target)]
+    for destination in (readback, drill):
+        assert {p.relative_to(destination).as_posix(): r.sha256(p)
+                for p in destination.rglob("*") if p.is_file()} == source_pins
+        assert not (destination / str(target).lstrip("/")).exists()
+        assert not (destination / "set-other").exists()
+        sentinel = json.loads((destination / "witness/witness.db.initialized").read_text())
+        assert sentinel["database"] == plan["componentMetadata"]["witness"]["originalDatabasePath"]
+        assert sentinel["backup"] == plan["componentMetadata"]["witness"]["originalBackupPath"]
+    assert {p.relative_to(target).as_posix(): r.sha256(p)
+            for p in target.rglob("*") if p.is_file()} == source_pins
+    assert {p.relative_to(capture[2]).as_posix(): r.sha256(p)
+        for p in capture[2].rglob("*") if p.is_file()
+        and p != capture[2] / "osAuthorities/canonical.db-shm"} == original_authority_pins
+    assert r.sha256(sibling) == sibling_pin
     metrics_output = os.environ.get("RUBICON_NATIVE_RESTIC_RECEIPT_DIR")
     if metrics_output:
         destination = Path(metrics_output)
@@ -939,6 +1007,10 @@ def test_native_restic_encrypted_exact_snapshot_roundtrip(capture, tmp_path):
             "manifestSha256": captured["manifestSha256"], "components": sorted(manifest["components"]),
             "fileCount": len(manifest["files"]), "payloadBytes": sum(row["bytes"] for row in manifest["files"]),
             "encryptedReadbackVerified": True, "exactSnapshotIsolatedRestoreVerified": True,
+            "directTargetSubtreeRestoreVerified": True, "originalSourceAndSentinelBytesPreserved": True,
+            "siblingExcluded": True, "legacyNestedWitnessPathBytes": len(os.fsencode(legacy_nested)),
+            "capturedWitnessPathBytes": len(os.fsencode(target / "witness/witness.db")),
+            "directReadbackWitnessPathBytes": len(os.fsencode(readback / "witness/witness.db")),
             "nativePostgresProvenanceReceiptSha256": r.sha256(Path(native_pg) / "terminal.json") if native_pg else None,
             "nativePostgresDumpSha256": native_pg_receipt["backupSha256"] if native_pg_receipt else None,
             "nativeMinioQualified": False, "productionRecoveryQualified": False,
@@ -948,6 +1020,39 @@ def test_native_restic_encrypted_exact_snapshot_roundtrip(capture, tmp_path):
     for data in (repository / "data").rglob("*"):
         if data.is_file():
             assert b"PGDMP-test-private-ledger" not in data.read_bytes()
+
+
+@pytest.mark.skipif(not os.environ.get("RUBICON_NATIVE_RESTIC"), reason="explicit native disposable subtree qualification")
+def test_native_restic_subfolder_selection_excludes_exact_sibling(tmp_path):
+    binary = os.environ["RUBICON_NATIVE_RESTIC"]
+    parent = tmp_path / "native tree:with spaces"
+    member = parent / "recovery set"
+    payload = write(member / "payload", b"selected member only")
+    sentinel = write(member / "witness/witness.db.initialized",
+                     {"database": "/original/witness.db", "backup": "/original/witness.db.backup"})
+    sibling = write(parent / "recovery set-other/private-sibling", b"excluded native snapshot sibling")
+    original_pins = {str(p): r.sha256(p) for p in (payload, sentinel, sibling)}
+    repository = tmp_path / "private-repository"
+    repository.mkdir(mode=0o700)
+    password = write(tmp_path / "private-key", os.urandom(32).hex().encode())
+    prefix = [binary, "--repo", str(repository), "--password-file", str(password), "--json"]
+    r.native_command(prefix + ["init"])
+    output = r.native_command(prefix + ["backup", str(parent)])
+    rows = [json.loads(line) for line in output.stdout.decode().splitlines()]
+    identity = [row["snapshot_id"] for row in rows if row.get("message_type") == "summary"][-1]
+    catalog = r._catalog(prefix, r.native_command)
+    assert catalog[identity]["paths"] == [str(parent)]
+    destination = tmp_path / "direct-member"
+    destination.mkdir(mode=0o700)
+    r.native_command(prefix + ["restore", identity + ":" + str(member), "--target", str(destination)])
+    assert {p.relative_to(destination).as_posix() for p in destination.rglob("*") if p.is_file()} == {
+        "payload", "witness/witness.db.initialized"}
+    assert (destination / "payload").read_bytes() == payload.read_bytes()
+    assert (destination / "witness/witness.db.initialized").read_bytes() == sentinel.read_bytes()
+    assert {str(p): r.sha256(p) for p in (payload, sentinel, sibling)} == original_pins
+    assert not (destination / "recovery set-other").exists()
+    assert not (destination / str(member).lstrip("/")).exists()
+    assert r._catalog(prefix, r.native_command) == catalog
 
 
 @pytest.mark.skipif(not os.environ.get("RUBICON_NATIVE_RESTIC"), reason="explicit native disposable restic catalog qualification")

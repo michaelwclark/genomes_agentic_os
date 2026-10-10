@@ -919,9 +919,10 @@ def collect_recovery_set(source_dir: str | Path, repository: str,
         private = Path(verify_target)
     target = _empty_target(private)
     try:
-        runner(prefix + ["restore", snapshot_id, "--target", str(target)])
-        restored = target / str(source).lstrip("/")
-        restored_receipt = verify_recovery_set(restored)
+        # Native subtree selection restores only this catalog-bound source into
+        # the private root, without duplicating its absolute path beneath it.
+        runner(prefix + ["restore", snapshot_id + ":" + binding["sourceRoot"], "--target", str(target)])
+        restored_receipt = verify_recovery_set(target)
         if restored_receipt["manifestSha256"] != verified["manifestSha256"]:
             raise RecoverySetError("encrypted restore manifest identity differs")
         if _repository_id(prefix, runner) != repository_id:
@@ -972,14 +973,13 @@ def restore_recovery_set_isolated(repository: str, password_file: str | Path,
         if (len(metadata) != 1 or metadata[0]["id"] != snapshot_id or not isinstance(paths, list)
             or len(paths) != 1 or not isinstance(paths[0], str) or not PurePosixPath(paths[0]).is_absolute()):
             raise ValueError
-        original_relative = _relative(paths[0].lstrip("/"))
+        _relative(paths[0].lstrip("/"))
     except (ValueError, TypeError, KeyError, IndexError):
         raise RecoverySetError("exact native snapshot source identity is unavailable") from None
     destination = _empty_target(target)
-    runner(prefix + ["restore", snapshot_id, "--target", str(destination)])
-    root = _inside(destination, original_relative)
-    verified = verify_recovery_set(root)
-    _verify_postgres(root, _read(root / "manifest.json"))
+    runner(prefix + ["restore", snapshot_id + ":" + paths[0], "--target", str(destination)])
+    verified = verify_recovery_set(destination)
+    _verify_postgres(destination, _read(destination / "manifest.json"))
     return {**verified, "schemaVersion": "execution-fabric-recovery-restore/v1",
             "snapshotId": snapshot_id, "status": "bytes_verified",
             "applicationRestoreQualification": "required",
