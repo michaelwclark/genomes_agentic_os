@@ -6,7 +6,7 @@ The operational target is at most one day of lost changes and restoration within
 
 ## Clone and prepare the tools
 
-Clone the owning `genomes_agentic_os` repository and select the reviewed release tag or exact commit. Follow [the release contract](../release-contract.md) and [deployment instructions](../../deploy/execution-fabric/README.md); a source build is not evidence of an installed release.
+Clone the owning `genomes_agentic_os` repository and select the reviewed release tag or exact commit. Follow [the release contract](../release-contract.md) and [the Execution Fabric guide](../13-feature-guides/18-execution-fabric.md). Use the deployment instructions in `deploy/execution-fabric/README.md` from that same reviewed checkout; a source build is not evidence of an installed release.
 
 Install the supported Python CLI and locked Node dependencies, then build the two services:
 
@@ -43,7 +43,7 @@ If the old host is still reachable, stop and hold the selected producer/runtime 
 
 ## Restore into a held target
 
-Use [complete backup recovery](../operations/execution-fabric-backup-recovery.md) to select an exact encrypted snapshot, retrieve the decryption key independently and restore all required components into a private empty isolated target. Verify actual restored bytes and logical PostgreSQL/witness/object/OS receipt linkage. Validate required PostgreSQL roles/extensions and architecture compatibility. A tar listing, file magic, sidecar checksum or per-store backup check does not establish a whole-system restore.
+Use the reviewed complete-backup recovery procedure (`docs/operations/execution-fabric-backup-recovery.md` in the backup-enabled release) to select an exact encrypted snapshot, retrieve the decryption key independently and restore all required components into a private empty isolated target. If the selected checkout lacks that procedure, stop and select a reviewed release containing both complete-backup and cold-recovery capabilities before continuing. Verify actual restored bytes and logical PostgreSQL/witness/object/OS receipt linkage. Validate required PostgreSQL roles/extensions and architecture compatibility. A tar listing, file magic, sidecar checksum or per-store backup check does not establish a whole-system restore.
 
 Keep API mutation, workers, schedulers, healer and external effect publishers stopped or durably held. Do not invoke existing HA leadership activation: it can requeue/refence old attempts and effects. Do not reseed or overwrite an authoritative host to simplify a drill.
 

@@ -61,7 +61,7 @@ def _cold_root(tmp_path):
 
 
 def _cold_assignment():
-    return {"fabricEpoch": 7, "attemptId": "4d7729b4-6b99-4f74-a233-63828b9b2d73", "leaseToken": "34668958-8b81-492a-a7c2-45fbd1474cfb",
+    return {"fabricEpoch": 7, "attemptId": "4d7729b4-6b99-4f74-a233-63828b9b2d73", "leaseToken": "fixture",
             "task": {"id": "9b4bf200-4ac8-4a64-9969-07812e617d83", "taskType": "fabric.cold_canary", "queue": "fabric_cold_recovery",
                      "namespace": "fabric_cold_recovery", "requiredCapabilities": ["fabric.cold_canary"],
                      "payload": {"schema_version": "execution-fabric-cold-canary/v1", "recovery_id": "9b4bf200-4ac8-4a64-9969-07812e617d81",
