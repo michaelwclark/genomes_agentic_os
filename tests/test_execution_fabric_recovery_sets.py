@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import shutil
 import sqlite3
+import stat
 import subprocess
 import tarfile
 from types import SimpleNamespace
@@ -978,7 +979,8 @@ def test_native_restic_encrypted_exact_snapshot_roundtrip(capture, tmp_path):
     assert restored["status"] == "bytes_verified"
     assert not restored["authorityTransferAuthorized"]
     assert restored["applicationRestoreQualification"] == "required"
-    assert json.loads((tmp_path / "recovery-receipts/daily-unit.json").read_text()) == custody
+    custody_path = tmp_path / "recovery-receipts" / ("custody-" + custody["repositoryId"] + "-" + custody["snapshotId"] + ".json")
+    assert json.loads(custody_path.read_text()) == custody
     assert [argv[argv.index("restore") + 1] for argv in calls if "restore" in argv] == [
         custody["snapshotId"] + ":" + str(target), custody["snapshotId"] + ":" + str(target)]
     for destination in (readback, drill):
@@ -1127,3 +1129,291 @@ def test_native_retention_binds_two_repositories_and_preserves_all_catalog_snaps
             "actualMissingLastGoodRefused": True, "nativeForgetInvocations": 0, "nativePruneInvocations": 0,
             "productionRetentionAuthorized": False,
         })
+
+
+
+@pytest.fixture
+def collected_fixture(capture, tmp_path):
+    """Controlled native command seam; no real repository or released authority."""
+    target, original = prepared(capture, tmp_path)
+    repo = tmp_path / "repository"
+    repo.mkdir(mode=0o700)
+    password = write(tmp_path / "password", b"isolated-key")
+    class NativeFixture:
+        def __init__(self):
+            self.calls = []
+            self.catalog = {}
+            self.same_snapshot = False
+            self.failure = None
+            self.repository_id = "e" * 64
+            self.sequence = 0
+        def __call__(self, argv, **kwargs):
+            self.calls.append(argv)
+            if "cat" in argv:
+                identity = "d" * 64 if self.failure == "repository-change" and self.sequence >= 2 else self.repository_id
+                return subprocess.CompletedProcess(argv, 0, json.dumps({"id": identity}).encode())
+            if "backup" in argv:
+                self.sequence += 1
+                identity = f"{1 if self.same_snapshot else self.sequence:064x}"
+                self.catalog.setdefault(identity, {"id": identity, "paths": [str(target)],
+                    "tags": ["rubicon-recovery:daily-unit"], "time": datetime.now(timezone.utc).isoformat()})
+                if self.failure == "native":
+                    raise r.RecoverySetError("fixture native actor failed")
+                if self.failure == "summary":
+                    return subprocess.CompletedProcess(argv, 0, b"not JSON")
+                return subprocess.CompletedProcess(argv, 0, json.dumps(
+                    {"message_type": "summary", "snapshot_id": identity}).encode())
+            if "snapshots" in argv:
+                rows = [] if self.failure == "absent" else list(self.catalog.values())
+                if self.failure in {"source", "tag"}:
+                    rows = [dict(row, paths=["/foreign/source"]) if self.failure == "source"
+                            else dict(row, tags=["foreign:set"]) for row in rows]
+                return subprocess.CompletedProcess(argv, 0, json.dumps(rows).encode())
+            assert "restore" in argv and "forget" not in argv and "prune" not in argv
+            destination = Path(argv[argv.index("--target") + 1])
+            shutil.copytree(target, destination, dirs_exist_ok=True)
+            if self.failure == "restore":
+                (destination / "manifest.json").write_text("{}")
+            return subprocess.CompletedProcess(argv, 0, b"")
+    native = NativeFixture()
+    def collect(**kwargs):
+        return r.collect_recovery_set(target, str(repo), password, "daily-unit", apply=True,
+                                      runner=native, **kwargs)
+    return collect, native, repo, target, original
+
+
+def test_repeat_set_collection_keeps_each_snapshot_and_old_receipt_with_drill_pin(collected_fixture):
+    collect, native, repo, target, original = collected_fixture
+    first = collect()
+    receipts = repo.parent / "recovery-receipts"
+    legacy = write(receipts / "daily-unit.json", first)
+    original_legacy = legacy.read_bytes()
+    prior = {p.name: p.read_bytes() for p in receipts.glob("*.json")}
+    second = collect()
+    custody = [json.loads(p.read_text()) for p in receipts.glob("custody-*.json")]
+    assert {row["snapshotId"] for row in custody} == {first["snapshotId"], second["snapshotId"]}
+    assert first["snapshotId"] != second["snapshotId"]
+    assert all((receipts / name).read_bytes() == data for name, data in prior.items())
+    assert legacy.read_bytes() == original_legacy
+    plan = r.plan_retention(receipts, keep=1, weekly=0, monthly=0, pinned=(first["snapshotId"],))
+    assert plan["retained"] == sorted([first["snapshotId"], second["snapshotId"]])
+    assert not plan["remove"] and plan["lastGood"] == second["snapshotId"]
+    assert len(list(receipts.glob("collection-*-complete.json"))) == 2
+    assert r.verify_recovery_set(target)["manifestSha256"] == original["manifestSha256"]
+    assert len([argv for argv in native.calls if "restore" in argv]) == 2
+
+
+def test_exact_native_snapshot_replay_verifies_current_bytes_and_retains_first_proof(collected_fixture):
+    collect, native, repo, _, _ = collected_fixture
+    native.same_snapshot = True
+    first = collect()
+    path = next((repo.parent / "recovery-receipts").glob("custody-*.json"))
+    original = path.read_bytes()
+    second = collect()
+    assert second == first and path.read_bytes() == original
+    assert len([argv for argv in native.calls if "backup" in argv]) == 2
+    assert len([argv for argv in native.calls if "restore" in argv]) == 2
+    assert not list(path.parent.glob("*.partial"))
+
+
+@pytest.mark.parametrize("failure", ["native", "summary", "absent", "source", "tag", "restore", "repository-change"])
+def test_native_success_with_later_failure_stays_partial_and_prior_history_is_intact(collected_fixture, failure):
+    collect, native, repo, _, _ = collected_fixture
+    first = collect()
+    receipts = repo.parent / "recovery-receipts"
+    prior = {p.name: p.read_bytes() for p in receipts.glob("*.json")}
+    native.failure = failure
+    with pytest.raises(r.RecoverySetError):
+        collect()
+    assert all((receipts / name).read_bytes() == data for name, data in prior.items())
+    failed = json.loads(next(receipts.glob("*-failed.json")).read_text())
+    assert failed["status"] == ("native_outcome_uncertain" if failure in {"native", "summary"}
+                                else "partial_native_snapshot")
+    assert not failed["nativeSnapshotRemovalAuthorized"]
+    assert len(list(receipts.glob("custody-*.json"))) == 1
+    assert first["snapshotId"] in native.catalog and f"{2:064x}" in native.catalog
+    assert all("forget" not in argv and "prune" not in argv for argv in native.calls)
+
+
+@pytest.mark.parametrize("collision", ["foreign", "invalid", "symlink", "fifo", "oversized", "public",
+                                       "time", "claims", "extra", "nonobject"])
+def test_immutable_custody_collision_refuses_without_replacing_any_prior_bytes(collected_fixture, collision):
+    collect, native, repo, _, _ = collected_fixture
+    first = collect()
+    receipts = repo.parent / "recovery-receipts"
+    path = next(receipts.glob("custody-*.json"))
+    if collision == "foreign":
+        replacement = dict(first, manifestSha256="f" * 64)
+        write(path, replacement)
+    elif collision == "invalid":
+        path.write_bytes(b"invalid JSON")
+    elif collision == "symlink":
+        path.unlink()
+        destination = write(receipts / "foreign-held.json", first)
+        path.symlink_to(destination)
+    elif collision == "fifo":
+        path.unlink()
+        os.mkfifo(path, 0o600)
+    elif collision == "oversized":
+        path.write_bytes(b"x" * (1024 * 1024 + 1))
+    elif collision == "public":
+        path.chmod(0o644)
+    elif collision == "time":
+        write(path, dict(first, verifiedAt=(datetime.now(timezone.utc) + timedelta(days=1)).isoformat()))
+    elif collision == "claims":
+        write(path, dict(first, fileCount=first["fileCount"] + 1))
+    elif collision == "extra":
+        write(path, dict(first, unsupported="claim"))
+    else:
+        write(path, [])
+    before = path.read_bytes() if collision != "fifo" else None
+    native.same_snapshot = True
+    with pytest.raises(r.RecoverySetError, match="custody collision"):
+        collect()
+    if before is not None:
+        assert path.read_bytes() == before
+    else:
+        assert stat.S_ISFIFO(path.lstat().st_mode)
+    failed = json.loads(next(receipts.glob("*-failed.json")).read_text())
+    assert failed["status"] == "partial_native_snapshot" and failed["snapshotId"] == first["snapshotId"]
+    assert not list(receipts.glob("*.partial"))
+
+
+def test_custody_published_before_interrupted_completion_remains_valid_and_exact_replay_qualifies(
+        collected_fixture, monkeypatch):
+    collect, native, repo, _, _ = collected_fixture
+    actual = r._write_immutable_receipt
+    def interrupted(path, value, **kwargs):
+        if path.name.endswith("-complete.json"):
+            raise r.RecoverySetError("fixture completion publication interrupted")
+        return actual(path, value, **kwargs)
+    monkeypatch.setattr(r, "_write_immutable_receipt", interrupted)
+    with pytest.raises(r.RecoverySetError, match="interrupted"):
+        collect()
+    receipts = repo.parent / "recovery-receipts"
+    path = next(receipts.glob("custody-*.json"))
+    proof = path.read_bytes()
+    assert r.plan_retention(receipts)["lastGood"] == f"{1:064x}"
+    failed = json.loads(next(receipts.glob("*-failed.json")).read_text())
+    assert failed["snapshotId"] == f"{1:064x}" and failed["status"] == "partial_native_snapshot"
+    monkeypatch.setattr(r, "_write_immutable_receipt", actual)
+    native.same_snapshot = True
+    result = collect()
+    assert path.read_bytes() == proof and result["snapshotId"] == f"{1:064x}"
+    assert len(list(receipts.glob("*-complete.json"))) == 1
+    assert len(list(receipts.glob("*-failed.json"))) == 1
+
+
+def test_concurrent_exact_custody_publication_keeps_one_complete_proof_and_reuses_winner(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+    value = custody_fixture("a" * 64, datetime.now(timezone.utc).isoformat())
+    value.update(fileCount=17, authorityTransferAuthorized=False,
+                 independentDeletionProtectionVerified=False, applicationRestoreQualification="required")
+    path = tmp_path / "custody.json"
+    barrier = Barrier(2)
+    def publish(index):
+        candidate = dict(value, verifiedAt=datetime.now(timezone.utc).isoformat())
+        barrier.wait(timeout=5)
+        return r._write_immutable_receipt(path, candidate, reuse_custody=True)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(publish, [1, 2]))
+    assert results[0] == results[1] == json.loads(path.read_text())
+    assert not list(tmp_path.glob("*.partial"))
+
+
+def test_exclusive_temporary_collision_preserves_foreign_partial_file(tmp_path, monkeypatch):
+    monkeypatch.setattr(r, "uuid4", lambda: SimpleNamespace(hex="same-operation"))
+    target = tmp_path / "custody.json"
+    foreign = write(tmp_path / "custody.json.same-operation.partial", b"foreign-incomplete-owner-bytes")
+    before = foreign.read_bytes()
+    with pytest.raises(FileExistsError):
+        r._write_immutable_receipt(target, {"status": "started"})
+    assert foreign.read_bytes() == before and not target.exists()
+
+
+def test_immutable_outcome_replay_is_refused_and_link_failure_never_publishes_partial_bytes(tmp_path, monkeypatch):
+    path = tmp_path / "outcome.json"
+    actual = r._write_immutable_receipt(path, {"status": "started"})
+    before = path.read_bytes()
+    with pytest.raises(r.RecoverySetError, match="already exists"):
+        r._write_immutable_receipt(path, actual)
+    assert path.read_bytes() == before
+    def refused_link(*args, **kwargs):
+        raise OSError("fixture publication interrupted before link")
+    monkeypatch.setattr(os, "link", refused_link)
+    target = tmp_path / "new-outcome.json"
+    with pytest.raises(OSError, match="interrupted"):
+        r._write_immutable_receipt(target, actual)
+    assert not target.exists() and not list(tmp_path.glob("*.partial"))
+
+
+@pytest.mark.parametrize("unsafe", ["symlink", "public", "inside-source"])
+def test_collection_history_guard_refuses_before_native_backup(collected_fixture, unsafe):
+    collect, native, repo, target, _ = collected_fixture
+    receipts = repo.parent / "recovery-receipts"
+    if unsafe == "symlink":
+        receipts.symlink_to(target, target_is_directory=True)
+    elif unsafe == "public":
+        receipts.mkdir(mode=0o755)
+    else:
+        # The verified source remains valid, but the fixed custody destination
+        # would otherwise mutate the immutable source before native backup.
+        receipts.mkdir(mode=0o700)
+        target.rename(receipts / "source")
+        collect = lambda: r.collect_recovery_set(receipts / "source", str(repo), repo.parent / "password",
+            "daily-unit", apply=True, runner=native)
+    with pytest.raises(r.RecoverySetError, match="independent private owned"):
+        collect()
+    assert not [argv for argv in native.calls if "backup" in argv]
+
+
+
+def test_collection_explicit_readback_is_retained_and_invalid_summary_identity_stays_uncertain(
+        collected_fixture, tmp_path):
+    collect, native, repo, _, original = collected_fixture
+    retained = tmp_path / "retained-disposable-readback"
+    receipt = collect(verify_target=retained)
+    assert retained.is_dir() and r.verify_recovery_set(retained)["manifestSha256"] == original["manifestSha256"]
+    assert receipt["status"] == "encrypted_bytes_verified"
+    actual = native.__call__
+    def invalid_identity(argv, **kwargs):
+        if "backup" in argv:
+            return subprocess.CompletedProcess(argv, 0, b'{"message_type":"summary","snapshot_id":"short"}')
+        return actual(argv, **kwargs)
+    with pytest.raises(r.RecoverySetError, match="exact snapshot"):
+        r.collect_recovery_set(native.catalog[receipt["snapshotId"]]["paths"][0], str(repo),
+            repo.parent / "password", "daily-unit", apply=True, runner=invalid_identity)
+    failed = json.loads(next((repo.parent / "recovery-receipts").glob("*-failed.json")).read_text())
+    assert failed["status"] == "native_outcome_uncertain"
+
+
+def test_valid_byte_readback_of_different_manifest_never_qualifies_custody(collected_fixture, monkeypatch):
+    collect, native, repo, source, original = collected_fixture
+    actual = r.verify_recovery_set
+    def foreign_readback(root):
+        result = actual(root)
+        if Path(root) != source:
+            result = dict(result, manifestSha256="f" * 64)
+        return result
+    monkeypatch.setattr(r, "verify_recovery_set", foreign_readback)
+    with pytest.raises(r.RecoverySetError, match="restore manifest identity differs"):
+        collect()
+    receipts = repo.parent / "recovery-receipts"
+    assert not list(receipts.glob("custody-*.json"))
+    failed = json.loads(next(receipts.glob("*-failed.json")).read_text())
+    assert failed["snapshotId"] in native.catalog and failed["status"] == "partial_native_snapshot"
+
+
+def test_directory_flush_failure_preserves_complete_immutable_bytes_for_owner_recovery(tmp_path, monkeypatch):
+    actual_fsync = os.fsync
+    def failed_directory_sync(descriptor):
+        if stat.S_ISDIR(os.fstat(descriptor).st_mode):
+            raise OSError("fixture directory durability readback failed")
+        return actual_fsync(descriptor)
+    monkeypatch.setattr(os, "fsync", failed_directory_sync)
+    path = tmp_path / "immutable-outcome.json"
+    with pytest.raises(OSError, match="durability"):
+        r._write_immutable_receipt(path, {"status": "started"})
+    assert json.loads(path.read_text()) == {"status": "started"}
+    assert not list(tmp_path.glob("*.partial"))

@@ -164,6 +164,14 @@ bundle/dirty patch and escrow must be maintained by qualified canonical owners;
 missing or inconsistent component inventories fail closure. The source coordinator
 does not manufacture custody or released writer qualification.
 
+Ordinary cleanup attempts each independently verified exact-owned root once,
+continues after another root refuses, and archives all per-root outcomes plus
+their aggregate. Unverified or unsupported readbacks remain held. Evidence
+records only bounded return/status/verification observations and matching
+admitted binding fields; arbitrary returned fields and actor text are omitted.
+An unchanged refusal is never automatically retried, and any unresolved root
+keeps the attempted set unpublished and the last-good pointer unchanged.
+
     agentic-os runtime recovery-set daily --root "$OS_ROOT" \
       --daily-plan "$CANONICAL_DAILY_PLAN" --apply --json
 
@@ -173,6 +181,82 @@ does not manufacture custody or released writer qualification.
     agentic-os runtime recovery-set prepare --root "$OS_ROOT" \
       --capture-plan "$CAPTURE_PLAN" --maintenance-receipt "$MAINTENANCE_PROOF" \
       --output "$NEW_SET_DIR" --apply --json
+
+## Recover an interrupted daily attempt
+
+Use this procedure only after the installed release contains both complete
+recovery sets and the qualified AGE224 `producer-admission/v1` protocol, with
+the original participating roots and writers independently verified. Source
+or disposable package proof does not establish a released installation. Never
+import another worktree to make recovery run.
+
+A terminated daily capture can leave its durable admission overlays in `holding`
+state. This includes termination at the Linux backup service's 600-second deadline.
+Process exit releases file locks; it does not prove the native backup/export children
+or stores are coherent, and it does not restore producer admission. Keep those holds
+until the original owner has completed this recovery. Never delete hold files, change
+producer enabled flags, clear every hold, release a foreign hold or rerun a new daily
+UUID to escape the abandoned attempt.
+
+First prevent the configured daily coordinator from starting another attempt through
+the installation's supported scheduling workflow. Record the actual service/process
+terminal evidence. Independently identify every native backup/export child of the
+original attempt and prove it is terminal; a missing parent process alone is insufficient.
+Inspect the qualified source stores and any disposable backup-restore database using
+their supported readback procedures. Resolve uncertain child ownership, unfinished
+store operations or changed/corrupt authority before restoring admission. This procedure
+does not authorize force termination, deleting an unknown database, restoring older
+authority, bootstrapping an empty primary or overwriting existing Brain/Mongo records.
+
+Identify the exact abandoned set under the configured staging root's
+`.attempts/<set-id>` using the frozen `evidence/daily-plan.json`, qualification and
+participant receipts, available `holding-*.json`/`guard-*.json`, and actual process/service
+history. A termination between pause and evidence copying may leave a hold without
+`holding-*.json`; supported status still returns the root's durable original hold.
+Match its exact root, `hold_id`, `owner`, selectors, original definition hashes and
+creation time to the abandoned attempt and its approved participant scope. If that
+binding is ambiguous, leave it held for the canonical owner to investigate.
+
+For each verified participating root, read the installed supported status and inventory.
+The commands already return JSON; they do not accept a separate `--json` flag.
+
+```sh
+agentic-os producer-admission status --root "$EXACT_PARTICIPANT_ROOT"
+agentic-os producer-admission inventory --root "$EXACT_PARTICIPANT_ROOT"
+```
+
+Save the readbacks and original hold bytes in new private operator evidence before
+the supported writer advances the hold. Keep private paths and owner metadata out of
+public reports. Confirm the original definitions, ownership and enabled states still
+match. After the process/store checks above, restore only that exact owned overlay:
+
+```sh
+agentic-os producer-admission resume --root "$EXACT_PARTICIPANT_ROOT" \
+  --hold-id "$EXACT_ABANDONED_HOLD_ID" --owner "$EXACT_ABANDONED_OWNER"
+agentic-os producer-admission status --root "$EXACT_PARTICIPANT_ROOT"
+```
+
+Require successful command status, `status=restored`, `readback_verified=true`, and
+the same root/hold/owner/selection in fresh supported status. The command refuses
+stale or corrupt original-definition evidence; retain unknown edits and let their
+canonical owner reconcile them. Repeat only for independently verified roots of this
+one attempt. Existing held provider scopes and sealed review receipts remain held.
+
+Write a new operator recovery receipt alongside the existing immutable evidence,
+binding the attempt/set ID, exact source release/policy/qualification digests, roots,
+hold IDs/owners, original receipt hashes, process/native-child terminal checks,
+store coherence readbacks, per-root restored status and verification time. The daily
+coordinator supplies no public command that manufactures this receipt; retain actual
+supported readbacks and use the installation's normal owner workflow to record it.
+Preserve every original failure/incomplete receipt and attempted capture. A recovered
+hold does not turn the abandoned capture into a complete recovery set.
+
+Verify that `current-success.json` still identifies the prior independently verified
+complete set. Do not repoint it to the abandoned attempt or delete existing history.
+Only after every owned overlay has matching restoration proof and all current
+qualification still holds may the owner admit a fresh daily attempt and restore the
+original scheduling state through supported workflow. Qualify this interruption and
+recovery path on disposable stores before enabling unattended daily capture.
 
 ## BigMac collection
 
@@ -235,6 +319,26 @@ supervised successful collection. A loaded schedule does not prove backup succes
 | FABRIC_RECOVERY_RESTIC | Native binary, default restic. |
 
 ## Isolated restore and disaster drill
+
+Each completed collection archives a private immutable
+`recovery-receipts/custody-<repository-id>-<full-snapshot-id>.json` proof. Repeated
+collection of one set can produce multiple native snapshots; each retains its
+own exact repository, set, source, metadata and manifest binding. Exact native
+snapshot replay repeats catalog and byte verification, then reuses matching
+prior custody bytes. Conflicting, corrupt or unsafe proof files require owner
+investigation and are never replaced. Concurrent publication admits one complete
+proof and verifies exact reuse; incomplete temporary files are never custody.
+
+The same private directory also retains immutable per-attempt `collection-*`
+started, native, complete or failed outcome receipts. A native snapshot can
+exist even when subsequent readback or custody publication fails. That attempt
+remains partial or uncertain; no failure authorizes snapshot deletion or a
+successful custody claim. A custody file published before completion evidence
+fails remains archived for exact owner readback and recovery. Keep every
+outcome and old per-set v1 custody receipt unchanged. Retention continues to
+read valid v1 proofs, deduplicates exact snapshot provenance, honors drill pins
+and last-good, and conservatively preserves native snapshots without qualified
+custody. It never treats an attempt outcome as verified custody.
 
     agentic-os runtime recovery-set restore-plan --root "$OS_ROOT" \
       --repository "$LOCAL_REPOSITORY" --password-file "$CUSTODIAN_PASSWORD_FILE" \

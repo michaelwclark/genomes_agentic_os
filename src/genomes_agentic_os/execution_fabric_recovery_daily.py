@@ -231,6 +231,81 @@ def _bind_daily_evidence(capture: Path, evidence: Path, owner: str) -> dict[str,
     return r.verify_recovery_set(capture)
 
 
+def _restoration_observation(readback: Any, root: str, hold_id: str, owner: str) -> dict[str, Any]:
+    """Keep bounded recognized observations; never copy arbitrary actor payloads."""
+    types = {type(None): "null", dict: "object", list: "array", str: "string",
+             bool: "boolean", int: "integer", float: "number"}
+    observation = {"received": True, "returnType": types.get(type(readback), "unsupported")}
+    fields = readback if isinstance(readback, dict) else {}
+    status = fields.get("status")
+    recognized = type(status) is str and status in {"holding", "restored"}
+    observation["status"] = {"present": "status" in fields,
+        "type": types.get(type(status), "unsupported"), "recognized": recognized}
+    if recognized:
+        observation["status"]["value"] = status
+    flag = fields.get("readback_verified")
+    observation["verification"] = {"present": "readback_verified" in fields,
+        "type": types.get(type(flag), "unsupported"), "strictBoolean": type(flag) is bool}
+    if type(flag) is bool:
+        observation["verification"]["value"] = flag
+    observation["bindings"] = {}
+    for name, expected in (("root", root), ("hold_id", hold_id), ("owner", owner)):
+        value = fields.get(name)
+        matched = type(value) is str and value == expected
+        observation["bindings"][name] = {"present": name in fields,
+            "type": types.get(type(value), "unsupported"), "matchesAdmittedBinding": matched}
+        if matched:
+            observation["bindings"][name]["value"] = expected
+    return observation
+
+
+def _restore_daily_roots(module: Any, paused: list[tuple[str, dict[str, Any]]],
+                         bindings: list[dict[str, Any]], hold_id: str, owner: str,
+                         evidence_dir: Path, results: dict[str, dict[str, Any]]) -> None:
+    """Attempt independent exact-owner restorations once, retaining every refusal."""
+    by_root = {binding["root"]: binding for binding in bindings}
+    for root, _ in reversed(paused):
+        if root in results:
+            continue
+        outcome = {"schemaVersion": "execution-fabric-recovery-daily-restoration/v1",
+                   "root": root, "holdId": hold_id, "ownerBinding": owner,
+                   "status": "held", "bindingVerified": False,
+                   "readbackObservation": {"received": False, "returnType": "not_called"}}
+        # Record the decision before entering an actor; finally must not retry it.
+        results[root] = outcome
+        try:
+            binding = by_root.get(root)
+            if binding is None:
+                binding = module.admission_receipt_binding(root, hold_id=hold_id, owner=owner)
+            if (binding.get("root") != root or binding.get("hold_id") != hold_id
+                or binding.get("owner") != owner):
+                raise r.RecoverySetError("original producer hold owner binding differs")
+            module.verify_admission_binding(binding)
+            outcome["bindingVerified"] = True
+            outcome["readbackObservation"] = {"received": False, "returnType": "raised"}
+            restored = module.resume_producers(root, hold_id=hold_id, owner=owner)
+            outcome["readbackObservation"] = _restoration_observation(restored, root, hold_id, owner)
+            if (not isinstance(restored, dict) or restored.get("status") != "restored"
+                or restored.get("readback_verified") is not True
+                or any(field["present"] and not field["matchesAdmittedBinding"]
+                       for field in outcome["readbackObservation"]["bindings"].values())):
+                raise r.RecoverySetError("original producer admission readback did not restore")
+            outcome.update(status="restored", readback={"status": "restored", "readback_verified": True})
+        except Exception as error:
+            # Do not copy potentially private actor text into public failure output.
+            outcome["errorType"] = type(error).__name__
+    # Attempt all independent roots before publishing any aggregate result.
+    for index, (root, _) in enumerate(paused):
+        r._write(evidence_dir / ("restoration-" + str(index) + ".json"), results[root])
+    r._write(evidence_dir / "restoration-summary.json", {
+        "schemaVersion": "execution-fabric-recovery-daily-restoration-summary/v1",
+        "status": "restored" if all(row["status"] == "restored" for row in results.values()) else "held",
+        "holdId": hold_id, "ownerBinding": owner, "requiredRoots": [root for root, _ in paused],
+        "restoredRoots": sorted(root for root, row in results.items() if row["status"] == "restored"),
+        "unresolvedRoots": sorted(root for root, row in results.items() if row["status"] != "restored"),
+        "authorityTransferAuthorized": False})
+
+
 def run_daily_recovery(plan_file: str | Path, *, apply: bool = False,
                        runner: Callable = r.native_command) -> dict[str, Any]:
     plan = r._read(plan_file)
@@ -251,7 +326,7 @@ def run_daily_recovery(plan_file: str | Path, *, apply: bool = False,
     evidence_dir.mkdir(mode=0o700)
     paused: list[tuple[str, dict[str, Any]]] = []
     bindings = []
-    restorations = []
+    restorations: dict[str, dict[str, Any]] = {}
     capture = working / "capture"
     try:
         _freeze_file(plan_file, evidence_dir / "daily-plan.json")
@@ -366,13 +441,9 @@ def run_daily_recovery(plan_file: str | Path, *, apply: bool = False,
                 "beforeWatermarks": before, "afterWatermarks": after, "ownerBinding": owner})
             for binding in bindings:
                 module.verify_admission_binding(binding)
-            for root, _ in reversed(paused):
-                restored = module.resume_producers(root, hold_id=hold_id, owner=owner)
-                if restored.get("status") != "restored" or restored.get("readback_verified") is not True:
-                    raise r.RecoverySetError("original producer admission readback did not restore")
-                restorations.append(root)
-                r._write(evidence_dir / ("restoration-" + str(len(restorations) - 1) + ".json"),
-                         {"root": root, "holdId": hold_id, "ownerBinding": owner, "readback": restored})
+            _restore_daily_roots(module, paused, bindings, hold_id, owner, evidence_dir, restorations)
+            if any(row["status"] != "restored" for row in restorations.values()):
+                raise r.RecoverySetError("daily capture has unresolved original-state restorations; holds preserved")
             captured = _bind_daily_evidence(capture, evidence_dir, owner)
             # Publication stays inside retained barriers and after all restoration readbacks.
             destination = staging / "sets" / set_id
@@ -388,14 +459,13 @@ def run_daily_recovery(plan_file: str | Path, *, apply: bool = False,
             r._write(staging / "current-success.json", result)
             r._write(working / "daily.receipt.json", result)
             return result
-    except Exception:
+    except Exception as error:
+        if len(restorations) < len(paused):
+            _restore_daily_roots(module, paused, bindings, hold_id, owner, evidence_dir, restorations)
         r._write(working / "failure.json", {"schemaVersion": "execution-fabric-recovery-daily-failure/v1",
             "status": "held", "recoverySetId": set_id, "lastGoodPreserved": True,
+            "originalErrorType": type(error).__name__,
+            "restoredRoots": sorted(root for root, row in restorations.items() if row["status"] == "restored"),
+            "unresolvedRoots": sorted(root for root, row in restorations.items() if row["status"] != "restored"),
             "authorityTransferAuthorized": False})
         raise
-    finally:
-        for root, _ in reversed(paused):
-            if root not in restorations:
-                restored = module.resume_producers(root, hold_id=hold_id, owner=owner)
-                if restored.get("status") != "restored" or restored.get("readback_verified") is not True:
-                    raise r.RecoverySetError("daily failure left an unresolved original-state restoration")

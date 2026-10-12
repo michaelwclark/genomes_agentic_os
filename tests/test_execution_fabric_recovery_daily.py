@@ -174,7 +174,7 @@ def test_failed_guard_restores_exact_owned_hold_without_native_actor(daily_plan,
         pytest.fail("refused guard invoked backup/export actor")
     with pytest.raises(r.RecoverySetError, match="did not drain"):
         daily.run_daily_recovery(daily_plan[0], apply=True, runner=forbidden)
-    assert fixture.events == ["pause", "binding", "guard-enter", "resume"]
+    assert fixture.events == ["pause", "binding", "guard-enter", "verify", "resume"]
     assert not (Path(daily_plan[1]["stagingRoot"]) / "current-success.json").exists()
 
 
@@ -185,10 +185,14 @@ def test_daily_failure_preserves_last_good_pointer_and_reports_stale_hold(daily_
     staging = Path(daily_plan[1]["stagingRoot"])
     previous = write(staging / "current-success.json", {"recoverySetId": "previous-immutable-good"})
     original = previous.read_bytes()
-    with pytest.raises(r.RecoverySetError, match="hold preserved"):
+    with pytest.raises(r.RecoverySetError, match="backup actor is unavailable"):
         daily.run_daily_recovery(daily_plan[0], apply=True)
     assert previous.read_bytes() == original
     assert "resume" in fixture.events
+    attempt = next((staging / ".attempts").iterdir())
+    failed = json.loads((attempt / "failure.json").read_text())
+    assert failed["unresolvedRoots"] == [str(tmp_path)]
+    assert fixture.events.count("resume") == 1
 
 
 @pytest.mark.parametrize("worker_roots", [1, 2])
@@ -289,3 +293,189 @@ def test_daily_refuses_backup_export_native_source_mismatch_without_publication(
     assert "resume" in fixture.events
     staging = Path(daily_plan[1]["stagingRoot"])
     assert not (staging / "current-success.json").exists() and not (staging / "sets").exists()
+
+
+
+@pytest.mark.parametrize("refused", ["last", "both", "readback", "foreign-binding"])
+def test_daily_failure_attempts_every_independent_owned_root_once(daily_plan, tmp_path, monkeypatch, refused):
+    first, second = tmp_path / "a-root", tmp_path / "z-root"
+    participants = fixture_participants(first) + fixture_participants(second)
+    fixture = AdmissionFixture(tmp_path)
+    resumed = []
+    original_resume = fixture.resume_producers
+    original_binding = fixture.admission_receipt_binding
+    def binding(root, **kwargs):
+        result = original_binding(root, **kwargs)
+        if refused == "foreign-binding" and root == str(second):
+            result["owner"] = "foreign-owner"
+        return result
+    def resume(root, **kwargs):
+        resumed.append(root)
+        assert kwargs["owner"].startswith("recovery:genomesbox:")
+        if root == str(second) or refused == "both":
+            if refused == "readback":
+                return {"status": "holding", "readback_verified": False}
+            raise r.RecoverySetError("fixture refusal; original exact owner stays held")
+        return original_resume(root, **kwargs)
+    fixture.admission_receipt_binding = binding
+    fixture.resume_producers = resume
+    monkeypatch.setattr(daily, "_qualification", lambda _: (fixture, participants))
+    write(Path(daily_plan[1]["releaseRoot"]) / "bin/backup-health.sh", b"fixture-actor")
+    staging = Path(daily_plan[1]["stagingRoot"])
+    previous = write(staging / "current-success.json", {"recoverySetId": "previous-good"})
+    previous_bytes = previous.read_bytes()
+    def failed_capture(argv):
+        raise r.RecoverySetError("fixture capture failed before health readback")
+    with pytest.raises(r.RecoverySetError, match="capture failed"):
+        daily.run_daily_recovery(daily_plan[0], apply=True, runner=failed_capture)
+    assert resumed.count(str(first)) == 1
+    assert resumed.count(str(second)) == (0 if refused == "foreign-binding" else 1)
+    attempt = next((staging / ".attempts").iterdir())
+    summary = json.loads((attempt / "evidence/restoration-summary.json").read_text())
+    failed = json.loads((attempt / "failure.json").read_text())
+    assert summary["status"] == "held" and summary["unresolvedRoots"] == failed["unresolvedRoots"]
+    expected_restored = [] if refused == "both" else [str(first)]
+    assert summary["restoredRoots"] == failed["restoredRoots"] == expected_restored
+    assert len(list((attempt / "evidence").glob("restoration-[0-9]*.json"))) == 2
+    if refused != "both":
+        assert json.loads((first / "hold.json").read_text())["status"] == "restored"
+    assert json.loads((second / "hold.json").read_text())["status"] == "holding"
+    assert previous.read_bytes() == previous_bytes and not (staging / "sets").exists()
+
+
+@pytest.mark.parametrize("bad_readback", [None, {"status": "restored", "readback_verified": False}])
+def test_successful_capture_with_one_refused_restoration_never_publishes_or_retries(
+        daily_plan, capture, tmp_path, monkeypatch, bad_readback):
+    original_resume = AdmissionFixture.resume_producers
+    calls = []
+    def selective_resume(self, root, **kwargs):
+        calls.append(root)
+        if root == str(tmp_path / "additional-worker-root"):
+            return bad_readback
+        return original_resume(self, root, **kwargs)
+    monkeypatch.setattr(AdmissionFixture, "resume_producers", selective_resume)
+    staging = Path(daily_plan[1]["stagingRoot"])
+    previous = write(staging / "current-success.json", {"recoverySetId": "previous-good"})
+    previous_bytes = previous.read_bytes()
+    with pytest.raises(r.RecoverySetError, match="unresolved original-state restorations"):
+        test_success_generates_distinct_sets_and_restores_before_pointer_publication(
+            daily_plan, capture, tmp_path, monkeypatch, 2)
+    assert calls == [str(tmp_path / "additional-worker-root"), str(tmp_path)]
+    assert previous.read_bytes() == previous_bytes
+    assert not (staging / "sets").exists()
+    attempt = next((staging / ".attempts").iterdir())
+    failure = json.loads((attempt / "failure.json").read_text())
+    assert failure["restoredRoots"] == [str(tmp_path)]
+    assert failure["unresolvedRoots"] == [str(tmp_path / "additional-worker-root")]
+    assert (attempt / "capture/manifest.json").exists()
+
+
+def test_restoration_can_verify_pause_without_copied_binding_but_cannot_repeat_decision(tmp_path):
+    fixture = AdmissionFixture(tmp_path)
+    hold = fixture.pause_producers(str(tmp_path), hold_id="isolated-hold", owner="isolated-owner",
+                                   selectors=[], allow_empty=True)
+    evidence = tmp_path / "proofs"
+    results = {}
+    daily._restore_daily_roots(fixture, [(str(tmp_path), hold)], [], "isolated-hold",
+                               "isolated-owner", evidence, results)
+    pins = {p.name: p.read_bytes() for p in evidence.glob("*.json")}
+    daily._restore_daily_roots(fixture, [(str(tmp_path), hold)], [], "isolated-hold",
+                               "isolated-owner", evidence, results)
+    assert fixture.events.count("resume") == 1
+    assert pins == {p.name: p.read_bytes() for p in evidence.glob("*.json")}
+
+
+def test_binding_refusal_does_not_skip_an_independent_root_or_call_unsafe_resume(tmp_path):
+    first, second = tmp_path / "a", tmp_path / "z"
+    first.mkdir(); second.mkdir()
+    fixture = AdmissionFixture(tmp_path)
+    paused = [(str(root), fixture.pause_producers(str(root), hold_id="isolated", owner="owned",
+              selectors=[], allow_empty=True)) for root in (first, second)]
+    original_verify = fixture.verify_admission_binding
+    def verify(binding):
+        if binding["root"] == str(second):
+            raise r.RecoverySetError("changed original scope")
+        original_verify(binding)
+    fixture.verify_admission_binding = verify
+    results = {}
+    daily._restore_daily_roots(fixture, paused, [], "isolated", "owned", tmp_path / "proofs", results)
+    assert results[str(first)]["status"] == "restored"
+    assert results[str(second)]["status"] == "held" and not results[str(second)]["bindingVerified"]
+    assert fixture.events.count("resume") == 1
+
+
+
+@pytest.mark.parametrize("readback", [
+    None, [], "unsupported opaque response", {"status": "holding", "readback_verified": False},
+    {"status": "restored", "readback_verified": 1}, {"readback_verified": True},
+    {"status": {"unsupported": "private fixture payload"}, "readback_verified": True},
+    {"status": "unsupported opaque response", "readback_verified": True},
+    {"status": "restored", "readback_verified": "private fixture payload"},
+])
+def test_refused_readback_preserves_bounded_observation_without_payload_leak(tmp_path, readback):
+    fixture = AdmissionFixture(tmp_path)
+    root = str(tmp_path)
+    hold = fixture.pause_producers(root, hold_id="isolated-hold", owner="isolated-owner",
+                                   selectors=[], allow_empty=True)
+    fixture.resume_producers = lambda *args, **kwargs: readback
+    results = {}
+    daily._restore_daily_roots(fixture, [(root, hold)], [], "isolated-hold", "isolated-owner",
+                               tmp_path / "proofs", results)
+    row = json.loads((tmp_path / "proofs/restoration-0.json").read_text())
+    assert row["status"] == "held" and row["bindingVerified"]
+    observation = row["readbackObservation"]
+    assert observation["received"]
+    assert not observation["status"]["recognized"] or observation["status"]["value"] != "restored"         or observation["verification"].get("value") is not True
+    serialized = json.dumps(row)
+    assert "private fixture payload" not in serialized and "unsupported opaque response" not in serialized
+    if isinstance(readback, dict) and type(readback.get("readback_verified")) is bool:
+        assert observation["verification"]["value"] is readback["readback_verified"]
+    else:
+        assert "value" not in observation["verification"]
+    assert "readback" not in row
+
+
+def test_verified_readback_retains_matching_bindings_and_discards_unknown_fields(tmp_path):
+    fixture = AdmissionFixture(tmp_path)
+    root = str(tmp_path)
+    hold = fixture.pause_producers(root, hold_id="isolated", owner="owned", selectors=[], allow_empty=True)
+    fixture.resume_producers = lambda *args, **kwargs: {
+        "status": "restored", "readback_verified": True, "root": root, "hold_id": "isolated",
+        "owner": "owned", "untrusted": "private fixture payload"}
+    results = {}
+    daily._restore_daily_roots(fixture, [(root, hold)], [], "isolated", "owned", tmp_path / "proofs", results)
+    row = results[root]
+    assert row["status"] == "restored"
+    assert row["readback"] == {"status": "restored", "readback_verified": True}
+    assert all(value["matchesAdmittedBinding"] for value in row["readbackObservation"]["bindings"].values())
+    assert "private fixture payload" not in json.dumps(row)
+
+
+@pytest.mark.parametrize("value", [object(), 1, 1.5, False])
+def test_unsupported_return_type_and_foreign_binding_values_are_classified_without_copy(value):
+    observation = daily._restoration_observation(value, "/admitted/root", "owned-hold", "owned")
+    assert observation["received"] and not observation["status"]["present"]
+    assert not observation["verification"]["present"]
+    assert all(not item["present"] for item in observation["bindings"].values())
+    row = daily._restoration_observation({"root": "/foreign/private", "hold_id": [], "owner": "foreign"},
+                                         "/admitted/root", "owned-hold", "owned")
+    assert all(not item["matchesAdmittedBinding"] and "value" not in item for item in row["bindings"].values())
+    assert "/foreign/private" not in json.dumps(row) and "foreign" not in json.dumps(row)
+
+
+
+@pytest.mark.parametrize("field", ["root", "hold_id", "owner"])
+def test_contradictory_returned_binding_cannot_claim_restoration(tmp_path, field):
+    fixture = AdmissionFixture(tmp_path)
+    root = str(tmp_path)
+    hold = fixture.pause_producers(root, hold_id="isolated", owner="owned", selectors=[], allow_empty=True)
+    fixture.resume_producers = lambda *args, **kwargs: {
+        "status": "restored", "readback_verified": True, field: "foreign private fixture value"}
+    results = {}
+    daily._restore_daily_roots(fixture, [(root, hold)], [], "isolated", "owned", tmp_path / "proofs", results)
+    assert results[root]["status"] == "held"
+    observation = results[root]["readbackObservation"]
+    assert observation["verification"]["value"] is True
+    assert observation["bindings"][field]["present"]
+    assert not observation["bindings"][field]["matchesAdmittedBinding"]
+    assert "foreign private fixture value" not in json.dumps(results)

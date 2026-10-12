@@ -868,6 +868,54 @@ def _custody_binding(receipt: dict[str, Any]) -> dict[str, Any]:
             "recoverySetId": set_id, "sourceRoot": binding["sourceRoot"]}
 
 
+def _write_immutable_receipt(path: Path, value: dict[str, Any], *,
+                             reuse_custody: bool = False) -> dict[str, Any]:
+    """Publish complete bytes exclusively; exact custody replay retains old bytes."""
+    temporary = path.with_name(path.name + "." + uuid4().hex + ".partial")
+    created = False
+    try:
+        with temporary.open("x", encoding="utf-8") as stream:
+            created = True
+            os.chmod(temporary, 0o600)
+            json.dump(value, stream, sort_keys=True, indent=2)
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        try:
+            os.link(temporary, path)
+        except FileExistsError:
+            if not reuse_custody:
+                raise RecoverySetError("immutable collection outcome already exists") from None
+            try:
+                descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+                with os.fdopen(descriptor, "rb") as stream:
+                    metadata = os.fstat(stream.fileno())
+                    if (not stat.S_ISREG(metadata.st_mode) or metadata.st_size > 1024 * 1024
+                        or metadata.st_uid != os.getuid() or metadata.st_mode & 0o077):
+                        raise ValueError
+                    existing = json.load(stream)
+                _closed(existing, set(value), "immutable custody")
+                if (_custody_binding(existing) != _custody_binding(value)
+                    or {k: v for k, v in existing.items() if k != "verifiedAt"}
+                       != {k: v for k, v in value.items() if k != "verifiedAt"}
+                    or datetime.fromisoformat(existing["verifiedAt"].replace("Z", "+00:00"))
+                       > datetime.now(timezone.utc)):
+                    raise ValueError
+            except (OSError, ValueError, KeyError, TypeError):
+                raise RecoverySetError("immutable custody collision requires owner investigation") from None
+            value = existing
+        # Persist the new directory entry as well as the complete file bytes.
+        descriptor = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+        return value
+    finally:
+        if created:
+            temporary.unlink(missing_ok=True)
+
+
 def collect_recovery_set(source_dir: str | Path, repository: str,
                          password_file: str | Path, set_id: str, *,
                          restic: str = "restic", verify_target: str | Path | None = None,
@@ -897,55 +945,84 @@ def collect_recovery_set(source_dir: str | Path, repository: str,
         raise RecoverySetError("repository and recovery set overlap")
     prefix = [restic, "--repo", str(repo), "--password-file", str(password), "--json"]
     repository_id = _repository_id(prefix, runner)
-    output = runner(prefix + ["backup", "--tag", "rubicon-recovery:" + set_id, str(source)])
+    receipts = repo.parent / "recovery-receipts"
+    receipts.mkdir(mode=0o700, parents=True, exist_ok=True)
+    metadata = receipts.lstat()
+    if (not stat.S_ISDIR(metadata.st_mode) or metadata.st_uid != os.getuid()
+        or metadata.st_mode & 0o077 or receipts.is_relative_to(source)
+        or source.is_relative_to(receipts)):
+        raise RecoverySetError("custody history must be an independent private owned directory")
+    attempt = {"schemaVersion": "execution-fabric-recovery-collection-outcome/v1",
+               "operationId": uuid4().hex, "repositoryId": repository_id,
+               "recoverySetId": set_id, "sourceRoot": str(source),
+               "manifestSha256": verified["manifestSha256"],
+               "verifiedAt": datetime.now(timezone.utc).isoformat(),
+               "authorityTransferAuthorized": False}
+    stem = "collection-" + attempt["operationId"]
+    _write_immutable_receipt(receipts / (stem + "-started.json"), {**attempt, "status": "started"})
+    snapshot_id = None
     try:
-        messages = [json.loads(line) for line in output.stdout.decode().splitlines() if line.strip()]
-        ids = [m["snapshot_id"] for m in messages if m.get("message_type") == "summary"]
-        snapshot_id = ids[-1]
-        if not re.fullmatch(r"[a-f0-9]{64}", snapshot_id):
-            raise ValueError
-    except (ValueError, KeyError, IndexError):
-        raise RecoverySetError("native encryption did not return an exact snapshot identity") from None
-    catalog = _catalog(prefix, runner)
-    if snapshot_id not in catalog:
-        raise RecoverySetError("native encrypted snapshot is absent from its repository catalog")
-    binding = _snapshot_binding(catalog[snapshot_id])
-    if binding["sourceRoot"] != str(source) or "rubicon-recovery:" + set_id not in binding["tags"]:
-        raise RecoverySetError("native encrypted snapshot source/set tag differs")
-    if verify_target is None:
-        private = Path(tempfile.mkdtemp(prefix="rubicon-restore-"))
-        private.rmdir()
-    else:
-        private = Path(verify_target)
-    target = _empty_target(private)
-    try:
-        # Native subtree selection restores only this catalog-bound source into
-        # the private root, without duplicating its absolute path beneath it.
-        runner(prefix + ["restore", snapshot_id + ":" + binding["sourceRoot"], "--target", str(target)])
-        restored_receipt = verify_recovery_set(target)
-        if restored_receipt["manifestSha256"] != verified["manifestSha256"]:
-            raise RecoverySetError("encrypted restore manifest identity differs")
-        if _repository_id(prefix, runner) != repository_id:
-            raise RecoverySetError("native repository identity changed during collection")
-    finally:
-        # Only this invocation's generated temporary readback is removed.
-        # Explicit targets remain private for the separately owned application drill.
+        output = runner(prefix + ["backup", "--tag", "rubicon-recovery:" + set_id, str(source)])
+        try:
+            messages = [json.loads(line) for line in output.stdout.decode().splitlines() if line.strip()]
+            ids = [m["snapshot_id"] for m in messages if m.get("message_type") == "summary"]
+            identity = ids[-1]
+            if not isinstance(identity, str) or not re.fullmatch(r"[a-f0-9]{64}", identity):
+                raise ValueError
+            snapshot_id = identity
+        except (ValueError, KeyError, IndexError, AttributeError, TypeError):
+            raise RecoverySetError("native encryption did not return an exact snapshot identity") from None
+        _write_immutable_receipt(receipts / (stem + "-native.json"),
+            {**attempt, "status": "native_snapshot_created", "snapshotId": snapshot_id})
+        catalog = _catalog(prefix, runner)
+        if snapshot_id not in catalog:
+            raise RecoverySetError("native encrypted snapshot is absent from its repository catalog")
+        binding = _snapshot_binding(catalog[snapshot_id])
+        if binding["sourceRoot"] != str(source) or "rubicon-recovery:" + set_id not in binding["tags"]:
+            raise RecoverySetError("native encrypted snapshot source/set tag differs")
         if verify_target is None:
-            shutil.rmtree(target)
-    receipt = {
-        "schemaVersion": "execution-fabric-recovery-custody/v1",
-        "status": "encrypted_bytes_verified", "recoverySetId": set_id,
-        "manifestSha256": verified["manifestSha256"], "snapshotId": snapshot_id,
-        "repositoryId": repository_id, "sourceRoot": str(source),
-        "sourceTag": "rubicon-recovery:" + set_id, "nativeSnapshot": binding,
-        "snapshotMetadataSha256": _digest(binding),
-        "verifiedAt": datetime.now(timezone.utc).isoformat(),
-        "fileCount": verified["fileCount"], "authorityTransferAuthorized": False,
-        "independentDeletionProtectionVerified": False,
-        "applicationRestoreQualification": "required",
-    }
-    _write(repo.parent / "recovery-receipts" / (set_id + ".json"), receipt)
-    return receipt
+            private = Path(tempfile.mkdtemp(prefix="rubicon-restore-"))
+            private.rmdir()
+        else:
+            private = Path(verify_target)
+        target = _empty_target(private)
+        try:
+            runner(prefix + ["restore", snapshot_id + ":" + binding["sourceRoot"], "--target", str(target)])
+            restored_receipt = verify_recovery_set(target)
+            if restored_receipt["manifestSha256"] != verified["manifestSha256"]:
+                raise RecoverySetError("encrypted restore manifest identity differs")
+            if _repository_id(prefix, runner) != repository_id:
+                raise RecoverySetError("native repository identity changed during collection")
+        finally:
+            # Only this invocation's generated temporary readback is removed.
+            if verify_target is None:
+                shutil.rmtree(target)
+        receipt = {
+            "schemaVersion": "execution-fabric-recovery-custody/v1",
+            "status": "encrypted_bytes_verified", "recoverySetId": set_id,
+            "manifestSha256": verified["manifestSha256"], "snapshotId": snapshot_id,
+            "repositoryId": repository_id, "sourceRoot": str(source),
+            "sourceTag": "rubicon-recovery:" + set_id, "nativeSnapshot": binding,
+            "snapshotMetadataSha256": _digest(binding),
+            "verifiedAt": datetime.now(timezone.utc).isoformat(),
+            "fileCount": verified["fileCount"], "authorityTransferAuthorized": False,
+            "independentDeletionProtectionVerified": False,
+            "applicationRestoreQualification": "required",
+        }
+        path = receipts / ("custody-" + repository_id + "-" + snapshot_id + ".json")
+        receipt = _write_immutable_receipt(path, receipt, reuse_custody=True)
+        _write_immutable_receipt(receipts / (stem + "-complete.json"),
+            {**attempt, "status": "complete", "snapshotId": snapshot_id,
+             "custodyFile": path.name, "custodySha256": sha256(path)})
+        return receipt
+    except Exception as error:
+        # A successful native backup can precede a refused readback/publication.
+        # Its snapshot remains protected as unknown until custody qualifies.
+        _write_immutable_receipt(receipts / (stem + "-failed.json"),
+            {**attempt, "status": "partial_native_snapshot" if snapshot_id else "native_outcome_uncertain",
+             "snapshotId": snapshot_id, "originalErrorType": type(error).__name__,
+             "nativeSnapshotRemovalAuthorized": False})
+        raise
 
 
 def restore_recovery_set_isolated(repository: str, password_file: str | Path,
