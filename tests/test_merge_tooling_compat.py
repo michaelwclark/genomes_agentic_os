@@ -5,6 +5,7 @@ from __future__ import annotations
 from copy import deepcopy
 import hashlib
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -14,6 +15,7 @@ import yaml
 
 import genomes_agentic_os.auto_dev_orchestration as auto_dev
 import genomes_agentic_os.development_delivery as delivery
+from genomes_agentic_os.artifact_contracts import _load_governance_receipt, record_artifact_readback
 from genomes_agentic_os.review_coordination import (
     ReviewCoordinationError, assert_exact_head_review_receipt, load_review_receipt,
 )
@@ -26,7 +28,7 @@ from test_opposing_model_review_runner import _load_runner
 
 
 def _task(tmp_path, monkeypatch, *, review_policy="continue_with_receipt",
-          profile_base="main", task_base=None):
+          profile_base="main", task_base=None, touched_paths=(), subjects=()):
     repo, base = _repository(tmp_path)
     _git("checkout", "-b", "feature/cc-54", cwd=repo)
     root = tmp_path / "os"
@@ -47,6 +49,7 @@ def _task(tmp_path, monkeypatch, *, review_policy="continue_with_receipt",
     run = delivery.start_development_run(
         root, "acme", "app", ["CC-54"], run_id="compat",
         auto_dev_mode="everything", base_branch=task_base, apply=True,
+        touched_paths=touched_paths, subjects=subjects,
     )
     return delivery.TaskState(Path(run["tasks"][0]["state_ref"])), root, repo, base
 
@@ -221,6 +224,719 @@ def test_flat_family_refresh_integrates_with_immutable_wrapper(tmp_path, monkeyp
             call()
         assert task.path.read_bytes() == before
     assert (Path(prior).read_bytes(), wrapper.read_bytes()) == original
+
+
+def _targets_only_refresh_fixture(tmp_path, monkeypatch, *, change_legacy=None,
+                                  native_output=True):
+    """Seal the real legacy producer shape through the normal offline recorder."""
+
+    paths = ["src/genomes_agentic_os/development_delivery.py",
+             "tests/test_merge_tooling_compat.py"]
+    task, root, repo, old_head = _task(
+        tmp_path, monkeypatch, touched_paths=paths, subjects=["development-delivery"]
+    )
+    for stage in ("groom", "detective", "create_artifacts"):
+        _record_standalone_stage(task, stage)
+    delivery.run_development_stage(task.path, stage="readiness", receipts={
+        "planned": _stage_receipt(tmp_path / "planning", "planned"),
+    }, idempotency_prefix="targets:readiness")
+    delivery.run_development_stage(task.path, stage="implementation", receipts={
+        "implementing": _stage_receipt(tmp_path / "implementation", "implementing"),
+        "local_validation": _stage_receipt(tmp_path / "validation", "local_validation"),
+    }, idempotency_prefix="targets:implementation")
+    _record_standalone_stage(task, "document")
+    current = task.read()
+    packet = Path(current["work_item"])
+    directory = packet / "artifacts" / "original-pr-create"
+    directory.mkdir(parents=True)
+    provider = directory / "PROVIDER-READBACK.json"
+    applied = directory / "PR-APPLY.json"
+    approval = directory / "APPROVAL.json"
+    target_identity = "github:repo:acme/app:base:main"
+    url = "https://github.com/acme/app/pull/54"
+    content = {"title": "CC-54 qualify original receipt provenance",
+               "body": "Offline fixture for the original pull-request producer.\n"}
+    content_sha = delivery._json_sha256(content)
+    observed = {
+        "target_identity": target_identity, "rendered_content_hash": content_sha,
+        "number_or_comment_id": "54", "repository": "acme/app",
+        "rendered_body": content["body"], "pull_request_number": 54,
+        "head_sha": old_head, "base_branch": "main", "base_sha": old_head,
+        "draft": True, "state": "open", "author": "fixture-operator",
+        "head_branch": "feature/cc-54", "repository_id": 123,
+    }
+    envelope = {
+        "schema": "artifact-provider-readback/v1", "status": "verified",
+        "provider": "github", "target": target_identity, "external_id": "54",
+        "external_url": url, "verified_at": "2026-10-12T00:00:00Z",
+        "transport": "composio_mcp", "account": "github_fixture",
+        "log_id": "fixture-pr-create-54", "observed": observed, "content": content,
+    }
+    provider.write_text(json.dumps(envelope, indent=2), encoding="utf-8")
+    approval_value = {
+        "schema": "artifact-approval/v1", "status": "approved", "provider": "github",
+        "target": target_identity, "artifact_type": "pull-request",
+    }
+    approval.write_text(json.dumps(approval_value), encoding="utf-8")
+    applied.write_text(json.dumps({
+        "schema": "artifact-apply/v1", "status": "awaiting_provider_adapter",
+        "artifact_type": "pull-request", "provider": "github", "target": target_identity,
+        "required_readback": list(observed), "expected_content_sha256": content_sha,
+        "approval_receipt": _load_governance_receipt(
+            root, approval, schema="artifact-approval/v1", label="approval",
+        ),
+        "target_verification": {
+            "schema": "artifact-target-verification/v1", "status": "verified",
+            "provider": "github", "target": target_identity, "repository": "acme/app",
+            "repository_id": observed["repository_id"], "account": envelope["account"],
+            "transport": envelope["transport"], "base_branch": "main", "base_sha": old_head,
+            "log_id": "fixture-independent-target-verification-54",
+        },
+    }), encoding="utf-8")
+    # Exercise the original producer's content hashing and completed readback shape.
+    readback_output = record_artifact_readback(root, applied, readback_receipt=provider)
+    refs = []
+    for name in ("SOURCE-SNAPSHOT", "TARGET-VERIFICATION", "PR-VALIDATION"):
+        path = directory / f"{name}.json"
+        path.write_text(json.dumps({"schema": "fixture-observation/v1", "kind": name}),
+                        encoding="utf-8")
+        refs.append(str(path))
+    refs.extend([str(applied), str(provider)])
+    record = directory / "READBACK-RECORD.json"
+    record.write_text(json.dumps(readback_output if native_output else {
+        "native": "fixture-readback", "exit_code": 0, "result": readback_output,
+    }), encoding="utf-8")
+    refs.append(str(record))
+    fingerprint = current["policy_fingerprint"]
+    target = {
+        "action_classification": "created_pull_request", "authority_snapshot": str(approval),
+        "base_branch": "main", "base_sha": old_head, "draft": True,
+        "effective_policy_fingerprint": fingerprint, "head_sha": old_head,
+        "provider_log_id": envelope["log_id"], "provider_readback": str(provider),
+        "pull_request_number": 54, "pull_request_url": url, "repository": "acme/app",
+        "source_sha": old_head, "ticket": "CC-54",
+    }
+    details = {
+        "complete_tracker_acceptance_claimed": False,
+        "effective_policy_fingerprint": fingerprint, "family_status": "complete",
+        "installed_primary_or_customer_acceptance_claim": False,
+        "integration_dependency": "fixture family precedes review",
+        "merge_authorized_by_this_packet": False, "receipt_refs": refs,
+        "required_hosted_ci_pending": True, "required_reviews_pending": True,
+        "targets": [target], "ticket": "CC-54",
+    }
+    if change_legacy is not None:
+        change_legacy(details)
+    prior = _stage_receipt(tmp_path / "original", "release_propagation", evidence=details)
+    delivery.run_development_stage(task.path, stage="release_propagation", receipts={
+        "release_propagation": prior,
+    }, idempotency_prefix="targets:original")
+    current = task.read()
+    wrapper = Path(current["stage_receipts"]["release_propagation"]["ref"])
+    sealed = json.loads(wrapper.read_text(encoding="utf-8"))
+    prior_evidence = packet / sealed["receipt"]
+    _git("commit", "--allow-empty", "-m", "fixture source successor", cwd=repo)
+    new_head = _git("rev-parse", "HEAD", cwd=repo)
+    binding = {
+        "ticket": current["ticket"], "work_item": current["work_item"],
+        "worktree": current["worktree"]["path"],
+        "policy_fingerprint": current["policy_fingerprint"],
+        "context_selection_sha256": current["context_selection"]["content_sha256"],
+        "lease_owner": (current.get("lease") or {}).get("owner"),
+    }
+    successor = {
+        "repository": "git:github.com/acme/app", "base_branch": "main", "provider": "github",
+        "pull_request": "github:acme/app#54", "source_branch": "feature/cc-54",
+        "source_head_sha": new_head, "readback_verified": True,
+        "provider_observed": {"head_sha": new_head}, "selected_task_binding": binding,
+        "supersession": {
+            "supersedes_source_head_sha": old_head, "reason": "Verified successor fixture head",
+            "original_readback": {
+                "ref": str(provider), "raw_sha256": hashlib.sha256(provider.read_bytes()).hexdigest(),
+                "prior_wrapper_sha256": hashlib.sha256(wrapper.read_bytes()).hexdigest(),
+                "prior_evidence_sha256": sealed["evidence_sha256"],
+            },
+        },
+    }
+    return {"task": task, "root": root, "repo": repo, "packet": packet,
+            "provider": provider, "applied": applied, "approval": approval,
+            "readback_output": record, "native_output": native_output,
+            "details": details, "successor": successor, "prior": Path(prior),
+            "wrapper": wrapper, "prior_evidence": prior_evidence,
+            "old_head": old_head, "new_head": new_head, "content_sha": content_sha}
+
+
+def _normalize_targets_only(fixture):
+    return delivery._normalize_exact_targets_only_family_identity(
+        fixture["details"], task=fixture["task"].read(),
+        refreshed_details=fixture["successor"], prior_wrapper_ref=fixture["wrapper"],
+        prior_wrapper_sha256=hashlib.sha256(fixture["wrapper"].read_bytes()).hexdigest(),
+        prior_evidence_sha256=json.loads(fixture["wrapper"].read_text())["evidence_sha256"],
+        expected_repository="git:github.com/acme/app", expected_base_branch="main",
+        expected_source_branch="feature/cc-54", pull_request_prefix="github:acme/app#",
+    )
+
+
+def _refresh_targets_only(fixture, tmp_path, *, key="targets:successor", installed_cli=None):
+    receipt = _stage_receipt(tmp_path / "successor", "release_propagation",
+                             evidence=fixture["successor"])
+    if installed_cli:
+        console = Path(installed_cli)
+        assert console.is_absolute() and console.is_file()
+        home = fixture["root"] / "console-home"
+        home.mkdir(exist_ok=True)
+        completed = subprocess.run([
+            str(console), "develop", "stage", str(fixture["task"].path),
+            "--stage", "release_propagation", "--receipt", f"release_propagation={receipt}",
+            "--idempotency-prefix", key, "--json",
+        ], cwd=fixture["root"], capture_output=True, text=True, check=False, env={
+            "HOME": str(home),
+            "PATH": os.pathsep.join([str(console.parent), "/opt/homebrew/bin", "/usr/bin", "/bin"]),
+            "PYTHONDONTWRITEBYTECODE": "1",
+        })
+        assert completed.returncode == 0, completed.stderr
+        return json.loads(completed.stdout)
+    return delivery.run_development_stage(fixture["task"].path, stage="release_propagation",
+                                         receipts={"release_propagation": receipt},
+                                         idempotency_prefix=key)
+
+
+def _canonical_refresh_snapshot(fixture):
+    """Detect partial snapshots as well as state, projection and ledger effects."""
+
+    paths = [fixture["packet"], fixture["task"].path.parents[2]]
+    snapshot = {}
+    for root in paths:
+        for path in root.rglob("*"):
+            if path.is_symlink():
+                snapshot[str(path)] = ("symlink", str(path.readlink()))
+            elif path.is_file():
+                snapshot[str(path)] = ("file", path.read_bytes())
+            elif path.is_dir():
+                snapshot[str(path)] = ("directory",)
+    return snapshot
+
+
+@pytest.mark.parametrize("native_output", [True, False])
+def test_targets_only_uses_genuine_provider_envelope_without_rewriting_history(
+        tmp_path, monkeypatch, native_output):
+    fixture = _targets_only_refresh_fixture(tmp_path, monkeypatch, native_output=native_output)
+    before = _canonical_refresh_snapshot(fixture)
+    original_details = deepcopy(fixture["details"])
+    normalized, provenance = _normalize_targets_only(fixture)
+    assert normalized["source_head_sha"] == fixture["old_head"]
+    assert normalized["source_branch"] == "feature/cc-54"
+    assert normalized["pull_request"] == "github:acme/app#54"
+    assert provenance["source"] == "exact_targets_only_family_with_provider_envelope"
+    assert provenance["original_readback"] == fixture["successor"]["supersession"]["original_readback"]
+    assert provenance["rendered_content_sha256"] == fixture["content_sha"]
+    assert provenance["original_readback"]["raw_sha256"] != fixture["content_sha"]
+    applied = json.loads(fixture["applied"].read_text())
+    assert applied["approval_receipt"] == {
+        **json.loads(fixture["approval"].read_text()),
+        "receipt_ref": fixture["approval"].relative_to(fixture["root"]).as_posix(),
+    }
+    assert provenance["original_apply"] == {
+        "ref": str(fixture["applied"]),
+        "raw_sha256": hashlib.sha256(fixture["applied"].read_bytes()).hexdigest(),
+    }
+    if native_output:
+        assert json.loads(fixture["readback_output"].read_text()) == {
+            **applied, "receipt_ref": fixture["applied"].relative_to(fixture["root"]).as_posix(),
+        }
+        assert provenance["original_apply_outputs"] == [{
+            "ref": str(fixture["readback_output"]),
+            "raw_sha256": hashlib.sha256(fixture["readback_output"].read_bytes()).hexdigest(),
+            "canonical_ref": str(fixture["applied"]),
+        }]
+    else:
+        assert set(json.loads(fixture["readback_output"].read_text())) == {
+            "native", "exit_code", "result",
+        }
+        assert provenance["original_apply_outputs"] == []
+    assert fixture["details"] == original_details
+    assert not {"schema", "source", "source_head_sha", "head_sha", "source_branch"} & set(original_details)
+    assert fixture["task"].read()["context_selection"]["selection"]["selected_documents"] == []
+    assert _canonical_refresh_snapshot(fixture) == before
+
+
+@pytest.mark.parametrize("native_output", [True, False])
+def test_targets_only_normal_refresh_preserves_predecessor_and_replays_without_effect(
+        tmp_path, monkeypatch, native_output):
+    fixture = _targets_only_refresh_fixture(tmp_path, monkeypatch, native_output=native_output)
+    task = fixture["task"]
+    current = task.read()
+    original_files = {path: path.read_bytes() for path in (
+        fixture["wrapper"], fixture["prior_evidence"], fixture["prior"],
+        fixture["provider"], fixture["applied"], fixture["approval"], fixture["readback_output"],
+        Path(current["policy_receipt"]),
+    )}
+    installed_cli = os.environ.get("RUBICON_AGE248_INSTALLED_CLI")
+    result = _refresh_targets_only(fixture, tmp_path, installed_cli=installed_cli)
+    provenance = result["supersedes"]["legacy_identity_normalization"]
+    assert provenance["source"] == "exact_targets_only_family_with_provider_envelope"
+    assert provenance["normalized_identity"]["source_head_sha"] == fixture["old_head"]
+    after = task.read()
+    assert after["state"] == "local_validation"
+    assert after["context_selection"] == current["context_selection"]
+    assert after.get("owner") == current.get("owner")
+    assert after.get("lease") == current.get("lease")
+    assert after["receipts"][:len(current["receipts"])] == current["receipts"]
+    assert all(path.read_bytes() == raw for path, raw in original_files.items())
+    replay_before = _canonical_refresh_snapshot(fixture)
+    replay = _refresh_targets_only(fixture, tmp_path, installed_cli=installed_cli)
+    assert replay == result
+    assert _canonical_refresh_snapshot(fixture) == replay_before
+
+
+
+def _change_fixture_field(value, field, replacement):
+    """Alter one input fact; '__drop__' represents a missing field."""
+
+    parts = field.split(".")
+    for part in parts[:-1]:
+        value = value[int(part)] if isinstance(value, list) else value[part]
+    leaf = parts[-1]
+    if replacement == "__drop__":
+        value.pop(int(leaf) if isinstance(value, list) else leaf)
+    else:
+        value[int(leaf) if isinstance(value, list) else leaf] = deepcopy(replacement)
+
+
+def _assert_targets_only_refused(fixture, tmp_path, *, public=True,
+                                key="targets:successor", match=None):
+    before = _canonical_refresh_snapshot(fixture)
+    with pytest.raises(delivery.DevelopmentDeliveryError, match=match):
+        if public:
+            _refresh_targets_only(fixture, tmp_path, key=key)
+        else:
+            _normalize_targets_only(fixture)
+    assert _canonical_refresh_snapshot(fixture) == before
+
+
+@pytest.mark.parametrize("field,replacement", [
+    ("family_status", "pending"), ("ticket", "CC-55"),
+    ("effective_policy_fingerprint", "not-a-fingerprint"),
+    ("complete_tracker_acceptance_claimed", True),
+    ("complete_tracker_acceptance_claimed", 0),
+    ("installed_primary_or_customer_acceptance_claim", True),
+    ("merge_authorized_by_this_packet", True),
+    ("required_hosted_ci_pending", "true"), ("required_reviews_pending", 1),
+    ("integration_dependency", "__drop__"),
+    ("schema", "auto-dev-pr-create-family/v1"),
+    ("source", {"head_sha": "a" * 40}), ("family", []),
+    ("source_head_sha", "a" * 40), ("head_sha", "a" * 40),
+    ("targets", []), ("targets", [None]), ("targets", [{}, {}]),
+    ("targets.0.action_classification", "reused_pull_request"),
+    ("targets.0.repository", "foreign/app"), ("targets.0.ticket", "CC-55"),
+    ("targets.0.base_branch", "develop"),
+    ("targets.0.effective_policy_fingerprint", "a" * 64),
+    ("targets.0.pull_request_number", True), ("targets.0.pull_request_number", 0),
+    ("targets.0.pull_request_number", "54"),
+    ("targets.0.draft", 1), ("targets.0.head_sha", "a" * 39),
+    ("targets.0.head_sha", 42), ("targets.0.source_sha", "b" * 40),
+    ("targets.0.base_sha", "b" * 39), ("targets.0.provider_log_id", ""),
+    ("targets.0.provider_log_id", 42),
+    ("targets.0.pull_request_url", "https://github.com/foreign/app/pull/54"),
+    ("targets.0.extra_alias", "unexpected"),
+    ("receipt_refs", []), ("receipt_refs", "not-a-list"),
+    ("receipt_refs.0", ""), ("receipt_refs.0", 42),
+])
+def test_targets_only_rejects_legacy_shape_conflicts_without_effect(
+        tmp_path, monkeypatch, field, replacement):
+    fixture = _targets_only_refresh_fixture(
+        tmp_path, monkeypatch,
+        change_legacy=lambda details: _change_fixture_field(details, field, replacement),
+    )
+    _assert_targets_only_refused(fixture, tmp_path)
+
+
+@pytest.mark.parametrize("field,replacement", [
+    ("supersession", None),
+    ("supersession.original_readback", None),
+    ("supersession.original_readback.extra", "unbound"),
+    ("supersession.original_readback.ref", "PROVIDER-READBACK.json"),
+    ("supersession.original_readback.raw_sha256", "malformed"),
+    ("supersession.original_readback.raw_sha256", "a" * 64),
+    ("supersession.original_readback.prior_wrapper_sha256", "a" * 64),
+    ("supersession.original_readback.prior_evidence_sha256", "a" * 64),
+    ("selected_task_binding", None), ("selected_task_binding.extra", "unbound"),
+    ("selected_task_binding.ticket", "CC-55"),
+    ("selected_task_binding.work_item", "/foreign/packet"),
+    ("selected_task_binding.worktree", "/foreign/worktree"),
+    ("selected_task_binding.policy_fingerprint", "a" * 64),
+    ("selected_task_binding.context_selection_sha256", "a" * 64),
+    ("selected_task_binding.lease_owner", "foreign-owner"),
+    ("repository", "git:github.com/foreign/app"), ("base_branch", "develop"),
+    ("provider", "gitlab"), ("pull_request", "github:acme/app#55"),
+    ("source_branch", "feature/foreign"), ("source_head_sha", "b" * 40),
+    ("readback_verified", False), ("provider_observed.head_sha", "b" * 40),
+    ("supersession.supersedes_source_head_sha", "b" * 40),
+    ("supersession.reason", ""),
+])
+def test_targets_only_rejects_successor_binding_conflicts_without_effect(
+        tmp_path, monkeypatch, field, replacement):
+    fixture = _targets_only_refresh_fixture(tmp_path, monkeypatch)
+    _change_fixture_field(fixture["successor"], field, replacement)
+    if field.startswith("selected_task_binding"):
+        _assert_targets_only_refused(fixture, tmp_path, public=False)
+    _assert_targets_only_refused(fixture, tmp_path)
+
+
+@pytest.mark.parametrize("field,replacement", [
+    ("status", "unverified"), ("provider", "gitlab"), ("target", "foreign"),
+    ("external_id", "55"), ("external_url", "https://github.com/acme/app/pull/55"),
+    ("log_id", "foreign-log"), ("verified_at", ""), ("verified_at", 42),
+    ("transport", ""), ("account", ""), ("extra", "unbound"),
+    ("observed", None), ("content", None), ("content.extra", "unbound"),
+    ("content.title", ""), ("content.title", 42), ("content.body", ""),
+    ("observed.extra", "unbound"), ("observed.target_identity", "foreign"),
+    ("observed.number_or_comment_id", "55"), ("observed.repository", "foreign/app"),
+    ("observed.pull_request_number", 55), ("observed.pull_request_number", True),
+    ("observed.head_sha", "b" * 40), ("observed.head_branch", "feature/foreign"),
+    ("observed.base_branch", "develop"), ("observed.base_sha", "b" * 40),
+    ("observed.draft", 1), ("observed.state", "closed"),
+    ("observed.rendered_content_hash", "a" * 64),
+    ("observed.rendered_body", "foreign body"),
+    ("observed.author", ""), ("observed.author", 42),
+    ("observed.repository_id", True), ("observed.repository_id", 0),
+])
+def test_targets_only_rejects_original_envelope_conflicts_without_effect(
+        tmp_path, monkeypatch, field, replacement):
+    fixture = _targets_only_refresh_fixture(tmp_path, monkeypatch)
+    value = json.loads(fixture["provider"].read_text())
+    _change_fixture_field(value, field, replacement)
+    fixture["provider"].write_text(json.dumps(value), encoding="utf-8")
+    # Pin the altered bytes honestly so identity/body checks, not a stale digest, decide.
+    fixture["successor"]["supersession"]["original_readback"]["raw_sha256"] = (
+        hashlib.sha256(fixture["provider"].read_bytes()).hexdigest()
+    )
+    _assert_targets_only_refused(fixture, tmp_path)
+
+
+@pytest.mark.parametrize("field,replacement", [
+    ("status", "awaiting_provider_adapter"), ("provider", "gitlab"),
+    ("target", "foreign"), ("artifact_type", "comment"), ("approval_receipt", {}),
+    ("target_verification", None),
+    ("target_verification.schema", "fixture-observation/v1"),
+    ("target_verification.status", "unverified"),
+    ("target_verification.provider", "gitlab"),
+    ("target_verification.target", "foreign"),
+    ("target_verification.repository", "foreign/app"),
+    ("target_verification.repository_id", 999),
+    ("target_verification.account", "foreign-account"),
+    ("target_verification.transport", "foreign-transport"),
+    ("target_verification.base_branch", "develop"),
+    ("target_verification.base_sha", "b" * 40),
+    ("target_verification.log_id", ""), ("target_verification.log_id", 42),
+    ("expected_content_sha256", "a" * 64),
+    ("readback", None), ("readback.verified", False), ("readback.verified", 1),
+    ("readback.external_id", "55"),
+    ("readback.external_url", "https://github.com/acme/app/pull/55"),
+    ("readback.sha256", "a" * 64), ("readback.observed", {}),
+    ("readback.receipt_ref", "foreign/PROVIDER-READBACK.json"),
+])
+def test_targets_only_rejects_original_apply_conflicts_without_effect(
+        tmp_path, monkeypatch, field, replacement):
+    fixture = _targets_only_refresh_fixture(tmp_path, monkeypatch, native_output=False)
+    value = json.loads(fixture["applied"].read_text())
+    _change_fixture_field(value, field, replacement)
+    fixture["applied"].write_text(json.dumps(value), encoding="utf-8")
+    _assert_targets_only_refused(fixture, tmp_path)
+
+
+@pytest.mark.parametrize("field,replacement", [
+    ("schema", "fixture-observation/v1"), ("status", "denied"),
+    ("provider", "gitlab"), ("target", "foreign"), ("artifact_type", "comment"),
+])
+def test_targets_only_rejects_original_approval_conflicts_without_effect(
+        tmp_path, monkeypatch, field, replacement):
+    fixture = _targets_only_refresh_fixture(tmp_path, monkeypatch)
+    value = json.loads(fixture["approval"].read_text())
+    _change_fixture_field(value, field, replacement)
+    fixture["approval"].write_text(json.dumps(value), encoding="utf-8")
+    _assert_targets_only_refused(fixture, tmp_path)
+
+
+@pytest.mark.parametrize("case", [
+    "duplicate_ref", "absent_readback_ref", "foreign_ref", "traversal_ref",
+    "symlink_ref", "missing_ref", "directory_ref", "array_json",
+    "malformed_json", "duplicate_json_keys", "invalid_utf8",
+    "second_envelope", "second_apply", "missing_envelope", "missing_apply",
+])
+def test_targets_only_rejects_unsafe_or_ambiguous_provenance_without_effect(
+        tmp_path, monkeypatch, case):
+    def change(details):
+        refs = details["receipt_refs"]
+        directory = Path(refs[0]).parent
+        original = Path(refs[0])
+        if case == "duplicate_ref":
+            refs.append(refs[0])
+        elif case == "absent_readback_ref":
+            refs.remove(details["targets"][0]["provider_readback"])
+        elif case == "foreign_ref":
+            foreign = tmp_path / "foreign.json"
+            foreign.write_text("{}")
+            refs[0] = str(foreign)
+        elif case == "traversal_ref":
+            refs[0] = str(directory / ".." / directory.name / original.name)
+        elif case == "symlink_ref":
+            link = directory / "alias.json"
+            link.symlink_to(original)
+            refs[0] = str(link)
+        elif case == "missing_ref":
+            refs[0] = str(directory / "missing.json")
+        elif case == "directory_ref":
+            refs[0] = str(directory)
+        elif case == "array_json":
+            original.write_text("[]")
+        elif case == "malformed_json":
+            original.write_text("{")
+        elif case == "duplicate_json_keys":
+            original.write_text('{"schema":"a","schema":"b"}')
+        elif case == "invalid_utf8":
+            original.write_bytes(b"\\xff")
+        elif case in {"second_envelope", "second_apply"}:
+            source = Path(details["targets"][0]["provider_readback"]) if case == "second_envelope" else Path(refs[3])
+            duplicate = directory / (case + ".json")
+            duplicate.write_bytes(source.read_bytes())
+            refs.append(str(duplicate))
+        elif case == "missing_envelope":
+            value = json.loads(Path(refs[4]).read_text())
+            value["schema"] = "fixture-observation/v1"
+            Path(refs[4]).write_text(json.dumps(value))
+        elif case == "missing_apply":
+            value = json.loads(Path(refs[3]).read_text())
+            value["schema"] = "fixture-observation/v1"
+            Path(refs[3]).write_text(json.dumps(value))
+    fixture = _targets_only_refresh_fixture(tmp_path, monkeypatch, change_legacy=change)
+    _assert_targets_only_refused(fixture, tmp_path)
+
+
+def test_targets_only_rejects_content_digest_used_as_raw_digest_without_effect(tmp_path, monkeypatch):
+    fixture = _targets_only_refresh_fixture(tmp_path, monkeypatch)
+    fixture["successor"]["supersession"]["original_readback"]["raw_sha256"] = fixture["content_sha"]
+    _assert_targets_only_refused(fixture, tmp_path)
+
+
+def test_targets_only_rejects_boolean_verifier_repository_identity_without_effect(tmp_path, monkeypatch):
+    fixture = _targets_only_refresh_fixture(tmp_path, monkeypatch, native_output=False)
+    envelope = json.loads(fixture["provider"].read_text())
+    envelope["observed"]["repository_id"] = 1
+    fixture["provider"].write_text(json.dumps(envelope))
+    fixture["successor"]["supersession"]["original_readback"]["raw_sha256"] = (
+        hashlib.sha256(fixture["provider"].read_bytes()).hexdigest()
+    )
+    applied = json.loads(fixture["applied"].read_text())
+    applied["readback"]["observed"] = envelope["observed"]
+    applied["target_verification"]["repository_id"] = True
+    fixture["applied"].write_text(json.dumps(applied))
+    _assert_targets_only_refused(fixture, tmp_path)
+
+
+def test_targets_only_rejects_absolute_apply_ref_even_with_matching_suffix(tmp_path, monkeypatch):
+    fixture = _targets_only_refresh_fixture(tmp_path, monkeypatch, native_output=False)
+    applied = json.loads(fixture["applied"].read_text())
+    applied["readback"]["receipt_ref"] = str(fixture["provider"])
+    fixture["applied"].write_text(json.dumps(applied))
+    _assert_targets_only_refused(fixture, tmp_path)
+
+
+@pytest.mark.parametrize("case", ["wrapper_schema", "wrapper_stage", "evidence_schema",
+                                  "evidence_state", "evidence_details", "duplicate_wrapper"])
+def test_targets_only_rejects_predecessor_integrity_conflicts_without_effect(
+        tmp_path, monkeypatch, case):
+    fixture = _targets_only_refresh_fixture(tmp_path, monkeypatch)
+    if case.startswith("evidence_"):
+        value = json.loads(fixture["prior_evidence"].read_text())
+        value[{"evidence_schema": "schema", "evidence_state": "state",
+               "evidence_details": "evidence"}[case]] = "foreign"
+        fixture["prior_evidence"].write_text(json.dumps(value))
+    else:
+        value = json.loads(fixture["wrapper"].read_text())
+        if case == "duplicate_wrapper":
+            raw = json.dumps(value)[:-1] + ', "stage":"release_propagation"}'
+        else:
+            value["schema" if case == "wrapper_schema" else "stage"] = "foreign"
+            raw = json.dumps(value)
+        fixture["wrapper"].write_text(raw)
+    # Preserve stale current-generation descriptor: the changed history cannot be adopted.
+    _assert_targets_only_refused(fixture, tmp_path, public=False)
+    _assert_targets_only_refused(fixture, tmp_path)
+
+
+
+def test_targets_only_refuses_replay_after_normal_lease_owner_change(tmp_path, monkeypatch):
+    fixture = _targets_only_refresh_fixture(tmp_path, monkeypatch)
+    _refresh_targets_only(fixture, tmp_path)
+    fixture["task"].heartbeat(owner="successor-worker", lease_minutes=5,
+                              idempotency_key="targets:actual-owner-change")
+    _assert_targets_only_refused(fixture, tmp_path)
+
+
+@pytest.mark.parametrize("field,replacement", [
+    ("context_selection.content_sha256", "a" * 64),
+    ("context_selection", None), ("lease", {"owner": "foreign-owner"}),
+    ("worktree.path", "/foreign/worktree"), ("worktree", None),
+    ("policy_fingerprint", "a" * 64), ("ticket", "CC-55"),
+])
+def test_targets_only_refuses_replay_from_conflicting_external_task_copy(
+        tmp_path, monkeypatch, field, replacement):
+    fixture = _targets_only_refresh_fixture(tmp_path, monkeypatch)
+    _refresh_targets_only(fixture, tmp_path)
+    original_state = fixture["task"].path
+    original_bytes = original_state.read_bytes()
+    copied = fixture["task"].read()
+    _change_fixture_field(copied, field, replacement)
+    external = original_state.parent / "external-task-copy.json"
+    external.write_text(json.dumps(copied))
+    # A new state file needs its normal locking substrate before effect comparison.
+    external.with_suffix(external.suffix + ".lock").touch()
+    fixture["task"] = delivery.TaskState(external)
+    _assert_targets_only_refused(fixture, tmp_path)
+    assert original_state.read_bytes() == original_bytes
+
+
+@pytest.mark.parametrize("contents", ["{", "{}"])
+def test_targets_only_refuses_immutable_successor_snapshot_collision_without_effect(
+        tmp_path, monkeypatch, contents):
+    fixture = _targets_only_refresh_fixture(tmp_path, monkeypatch)
+    receipt = Path(_stage_receipt(tmp_path / "successor", "release_propagation",
+                                 evidence=fixture["successor"]))
+    digest = delivery._json_sha256(json.loads(receipt.read_text()))
+    snapshot = (fixture["packet"] / "artifacts" / "development-delivery" / "evidence"
+                / f"release_propagation-{digest[:20]}.json")
+    snapshot.write_text(contents)
+    _assert_targets_only_refused(fixture, tmp_path)
+
+
+def test_targets_only_reuses_existing_successor_wrapper_for_external_task_copy(
+        tmp_path, monkeypatch):
+    fixture = _targets_only_refresh_fixture(tmp_path, monkeypatch)
+    original_state = fixture["task"].path
+    external = original_state.parent / "external-task-copy.json"
+    external.write_bytes(original_state.read_bytes())
+    result = _refresh_targets_only(fixture, tmp_path)
+    canonical_after = original_state.read_bytes()
+    original_provider = fixture["provider"].read_bytes()
+    fixture["task"] = delivery.TaskState(external)
+    repeated = _refresh_targets_only(fixture, tmp_path)
+    assert repeated == result
+    assert original_state.read_bytes() == canonical_after
+    assert fixture["provider"].read_bytes() == original_provider
+    assert fixture["task"].read()["stage_receipts"]["release_propagation"]["ref"] == (
+        json.loads(canonical_after)["stage_receipts"]["release_propagation"]["ref"]
+    )
+
+
+
+@pytest.mark.parametrize("keep_legacy_descriptor", [True, False])
+def test_targets_only_serial_modern_refresh_requires_correct_provenance(
+        tmp_path, monkeypatch, keep_legacy_descriptor):
+    fixture = _targets_only_refresh_fixture(tmp_path, monkeypatch)
+    first = _refresh_targets_only(fixture, tmp_path)
+    predecessor = {path: path.read_bytes() for path in (
+        fixture["wrapper"], fixture["prior_evidence"], fixture["provider"], fixture["applied"],
+    )}
+    _git("commit", "--allow-empty", "-m", "fixture second source successor", cwd=fixture["repo"])
+    next_head = _git("rev-parse", "HEAD", cwd=fixture["repo"])
+    fixture["successor"]["source_head_sha"] = next_head
+    fixture["successor"]["provider_observed"]["head_sha"] = next_head
+    fixture["successor"]["supersession"]["supersedes_source_head_sha"] = fixture["new_head"]
+    if keep_legacy_descriptor:
+        _assert_targets_only_refused(
+            fixture, tmp_path, key="targets:second-successor",
+            match="original readback requires its genuine active predecessor",
+        )
+    else:
+        fixture["successor"]["supersession"].pop("original_readback")
+        result = _refresh_targets_only(fixture, tmp_path, key="targets:second-successor")
+        assert result["supersedes"]["source_head_sha"] == fixture["new_head"]
+        assert result["evidence_sha256"] != first["evidence_sha256"]
+        assert "legacy_identity_normalization" not in result["supersedes"]
+    assert all(path.read_bytes() == raw for path, raw in predecessor.items())
+
+
+
+@pytest.mark.parametrize("field,replacement", [
+    ("receipt_ref", "__drop__"), ("receipt_ref", ""),
+    ("receipt_ref", None), ("receipt_ref", 42),
+    ("receipt_ref", "/foreign/APPROVAL.json"),
+    ("receipt_ref", "../APPROVAL.json"),
+    ("receipt_ref", "foreign/APPROVAL.json"),
+    ("status", "__drop__"), ("status", "denied"), ("extra", "unbound"),
+])
+def test_targets_only_rejects_native_approval_projection_conflicts_without_effect(
+        tmp_path, monkeypatch, field, replacement):
+    fixture = _targets_only_refresh_fixture(tmp_path, monkeypatch, native_output=False)
+    applied = json.loads(fixture["applied"].read_text())
+    _change_fixture_field(applied["approval_receipt"], field, replacement)
+    fixture["applied"].write_text(json.dumps(applied))
+    _assert_targets_only_refused(fixture, tmp_path, match="original apply content readback conflicts")
+
+
+@pytest.mark.parametrize("field,replacement", [
+    ("receipt_ref", "__drop__"), ("receipt_ref", ""), ("receipt_ref", None),
+    ("receipt_ref", 42), ("receipt_ref", "/foreign/PR-APPLY.json"),
+    ("receipt_ref", "../PR-APPLY.json"), ("receipt_ref", "foreign/PR-APPLY.json"),
+    ("status", "awaiting_provider_adapter"), ("target", "foreign"),
+    ("readback.sha256", "a" * 64), ("extra", "unbound"),
+])
+def test_targets_only_rejects_native_apply_alias_conflicts_without_effect(
+        tmp_path, monkeypatch, field, replacement):
+    fixture = _targets_only_refresh_fixture(tmp_path, monkeypatch)
+    output = json.loads(fixture["readback_output"].read_text())
+    _change_fixture_field(output, field, replacement)
+    fixture["readback_output"].write_text(json.dumps(output))
+    _assert_targets_only_refused(fixture, tmp_path)
+
+
+def test_targets_only_rejects_absolute_native_projection_refs_even_with_exact_suffix(
+        tmp_path, monkeypatch):
+    fixture = _targets_only_refresh_fixture(tmp_path, monkeypatch)
+    output = json.loads(fixture["readback_output"].read_text())
+    output["receipt_ref"] = str(fixture["applied"])
+    fixture["readback_output"].write_text(json.dumps(output))
+    _assert_targets_only_refused(fixture, tmp_path, match="native apply output")
+
+
+@pytest.mark.parametrize("case", ["second_alias", "independent_apply", "symlink_output"])
+def test_targets_only_rejects_duplicate_or_unsafe_native_outputs_without_effect(
+        tmp_path, monkeypatch, case):
+    def change(details):
+        directory = Path(details["receipt_refs"][0]).parent
+        output = Path(details["receipt_refs"][-1])
+        if case == "symlink_output":
+            raw = output.read_bytes()
+            actual = directory / "actual-output.json"
+            actual.write_bytes(raw)
+            output.unlink()
+            output.symlink_to(actual)
+        else:
+            source = output if case == "second_alias" else Path(details["receipt_refs"][3])
+            duplicate = directory / (case + ".json")
+            duplicate.write_bytes(source.read_bytes())
+            details["receipt_refs"].append(str(duplicate))
+    fixture = _targets_only_refresh_fixture(tmp_path, monkeypatch, change_legacy=change)
+    _assert_targets_only_refused(fixture, tmp_path)
+
+
+def test_targets_only_refuses_producer_outside_declared_os_root_without_effect(
+        tmp_path, monkeypatch):
+    fixture = _targets_only_refresh_fixture(tmp_path, monkeypatch)
+    original_state = fixture["task"].path
+    original_raw = original_state.read_bytes()
+    copied = fixture["task"].read()
+    copied["os_root"] = str(tmp_path / "foreign-os")
+    external = original_state.parent / "external-task-copy.json"
+    external.write_text(json.dumps(copied))
+    external.with_suffix(external.suffix + ".lock").touch()
+    fixture["task"] = delivery.TaskState(external)
+    _assert_targets_only_refused(fixture, tmp_path, public=False,
+                                match="producer paths do not bind the declared OS root")
+    _assert_targets_only_refused(fixture, tmp_path)
+    assert original_state.read_bytes() == original_raw
+
 
 
 @pytest.mark.parametrize("policy,profile_base,task_base,review_number,review_base,seed_kind", [

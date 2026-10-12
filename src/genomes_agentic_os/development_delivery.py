@@ -9556,6 +9556,243 @@ def _normalize_exact_legacy_flat_family_identity(
     }
 
 
+def _targets_only_selected_task_binding(task: Mapping[str, Any]) -> dict[str, Any]:
+    """Compare the current file-bound task; this does not grant caller ownership."""
+    selection, lease, worktree = task.get("context_selection"), task.get("lease"), task.get("worktree")
+    return {
+        "ticket": task.get("ticket"),
+        "work_item": str(Path(str(task.get("work_item") or "")).expanduser().resolve()),
+        "worktree": worktree.get("path") if isinstance(worktree, Mapping) else None,
+        "policy_fingerprint": task.get("policy_fingerprint"),
+        "context_selection_sha256": selection.get("content_sha256") if isinstance(selection, Mapping) else None,
+        "lease_owner": lease.get("owner") if isinstance(lease, Mapping) else None,
+    }
+
+
+def _normalize_exact_targets_only_family_identity(
+    details: Mapping[str, Any], *, task: Mapping[str, Any],
+    refreshed_details: Mapping[str, Any], prior_wrapper_ref: Path,
+    prior_wrapper_sha256: str, prior_evidence_sha256: str,
+    expected_repository: str, expected_base_branch: str,
+    expected_source_branch: str, pull_request_prefix: str,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Compare a real producer predecessor; never manufacture historical fields.
+
+    The new caller pins the original envelope's bytes.  The old producer's
+    rendered-content digest is a different proof and is checked independently.
+    """
+
+    def refuse(reason: str) -> None:
+        raise DevelopmentDeliveryError("targets-only family " + reason)
+
+    def unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, value in pairs:
+            if key in result:
+                refuse("contains duplicate JSON keys")
+            result[key] = value
+        return result
+
+    packet = Path(str(task.get("work_item") or "")).expanduser().resolve()
+    os_root = Path(str(task.get("os_root") or "")).expanduser().resolve()
+
+    def read_object(ref: str) -> tuple[Path, bytes, dict[str, Any]]:
+        path = Path(ref).expanduser()
+        if not path.is_absolute():
+            path = packet / path
+        if ".." in path.parts or path != path.resolve() or not path.is_relative_to(packet):
+            refuse("provenance must be a regular same-packet path without symlinks")
+        try:
+            raw = path.read_bytes()
+            value = json.loads(raw, object_pairs_hook=unique_object)
+        except (OSError, ValueError) as exc:
+            raise DevelopmentDeliveryError("targets-only family provenance is unreadable JSON") from exc
+        if not isinstance(value, dict):
+            refuse("provenance must be an object")
+        return path, raw, value
+
+    targets = details.get("targets")
+    keys = {
+        "complete_tracker_acceptance_claimed", "effective_policy_fingerprint",
+        "family_status", "installed_primary_or_customer_acceptance_claim",
+        "integration_dependency", "merge_authorized_by_this_packet", "receipt_refs",
+        "required_hosted_ci_pending", "required_reviews_pending", "targets", "ticket",
+    }
+    if not (
+        set(details) == keys and details.get("family_status") == "complete"
+        and details.get("ticket") == task.get("ticket")
+        and expected_repository.startswith("git:github.com/")
+        and expected_base_branch and expected_source_branch
+        and re.fullmatch(r"[a-f0-9]{64}", str(details.get("effective_policy_fingerprint") or ""))
+        and all(details.get(key) is False for key in (
+            "complete_tracker_acceptance_claimed", "installed_primary_or_customer_acceptance_claim",
+            "merge_authorized_by_this_packet",
+        ))
+        and all(type(details.get(key)) is bool for key in (
+            "required_hosted_ci_pending", "required_reviews_pending",
+        ))
+        and isinstance(targets, list) and len(targets) == 1
+        and isinstance(targets[0], Mapping)
+    ):
+        refuse("does not match the genuine complete producer shape")
+    target = targets[0]
+    repository = expected_repository.removeprefix("git:github.com/")
+    number, head = target.get("pull_request_number"), target.get("head_sha")
+    target_keys = {
+        "action_classification", "authority_snapshot", "base_branch", "base_sha", "draft",
+        "effective_policy_fingerprint", "head_sha", "provider_log_id", "provider_readback",
+        "pull_request_number", "pull_request_url", "repository", "source_sha", "ticket",
+    }
+    if not (
+        set(target) == target_keys and target.get("action_classification") == "created_pull_request"
+        and target.get("repository") == repository and target.get("ticket") == task.get("ticket")
+        and target.get("base_branch") == expected_base_branch
+        and target.get("effective_policy_fingerprint") == details["effective_policy_fingerprint"]
+        and type(number) is int and number > 0 and type(target.get("draft")) is bool
+        and isinstance(head, str) and re.fullmatch(r"[a-f0-9]{40}", head)
+        and target.get("source_sha") == head
+        and re.fullmatch(r"[a-f0-9]{40}", str(target.get("base_sha") or ""))
+        and isinstance(target.get("provider_log_id"), str) and target["provider_log_id"].strip()
+    ):
+        refuse("target does not bind the selected task")
+    url = f"https://github.com/{repository}/pull/{number}"
+    target_identity = f"github:repo:{repository}:base:{expected_base_branch}"
+    if target.get("pull_request_url") != url:
+        refuse("target URL conflicts")
+    supersession = refreshed_details.get("supersession")
+    original = supersession.get("original_readback") if isinstance(supersession, Mapping) else None
+    descriptor = task.get("stage_receipts", {}).get("release_propagation")
+    if not (
+        isinstance(original, Mapping)
+        and set(original) == {"ref", "raw_sha256", "prior_wrapper_sha256", "prior_evidence_sha256"}
+        and original.get("prior_wrapper_sha256") == prior_wrapper_sha256
+        and original.get("prior_evidence_sha256") == prior_evidence_sha256
+        and re.fullmatch(r"[a-f0-9]{64}", str(original.get("raw_sha256") or ""))
+        and isinstance(descriptor, Mapping) and descriptor.get("ref") == str(prior_wrapper_ref)
+        and descriptor.get("sha256") == prior_wrapper_sha256
+        and prior_wrapper_ref == prior_wrapper_ref.resolve()
+        and hashlib.sha256(prior_wrapper_ref.read_bytes()).hexdigest() == prior_wrapper_sha256
+        and original.get("ref") == target.get("provider_readback")
+    ):
+        refuse("requires exact current-generation predecessor and raw-envelope binding")
+    binding = _targets_only_selected_task_binding(task)
+    if refreshed_details.get("selected_task_binding") != binding:
+        refuse("current task owner, source or frozen context conflicts")
+    wrapper = json.loads(prior_wrapper_ref.read_bytes(), object_pairs_hook=unique_object)
+    _evidence_path, _evidence_raw, predecessor = read_object(str(wrapper.get("receipt") or ""))
+    if not (
+        wrapper.get("schema") == "development-stage-receipt/v1"
+        and wrapper.get("stage") == "release_propagation"
+        and predecessor.get("schema") == "development-stage-evidence/v1"
+        and predecessor.get("state") == "release_propagation"
+        and predecessor.get("evidence") == details
+        and _json_sha256(predecessor) == prior_evidence_sha256
+    ):
+        refuse("immutable predecessor evidence conflicts")
+    refs = details.get("receipt_refs")
+    if not (
+        isinstance(refs, list) and refs and all(isinstance(ref, str) and ref for ref in refs)
+        and len(set(refs)) == len(refs) and original["ref"] in refs
+    ):
+        refuse("requires unambiguous original receipt references")
+    records = [read_object(ref) for ref in refs]
+    approval_path, _approval_raw, approval = read_object(str(target["authority_snapshot"]))
+    if not (
+        approval.get("schema") == "artifact-approval/v1" and approval.get("status") == "approved"
+        and approval.get("provider") == "github" and approval.get("target") == target_identity
+        and approval.get("artifact_type") == "pull-request"
+    ):
+        refuse("original producer approval identity conflicts")
+    envelopes = [record for record in records if record[2].get("schema") == "artifact-provider-readback/v1"]
+    applies = [record for record in records if record[2].get("schema") == "artifact-apply/v1"]
+    canonical_applies = [record for record in applies if "receipt_ref" not in record[2]]
+    if len(envelopes) != 1 or len(canonical_applies) != 1 or len(applies) > 2:
+        refuse("requires one original provider envelope and one canonical apply receipt")
+    path, raw, envelope = envelopes[0]
+    if str(path) != original["ref"] or hashlib.sha256(raw).hexdigest() != original["raw_sha256"]:
+        refuse("original envelope bytes do not match their raw digest")
+    observed, content = envelope.get("observed"), envelope.get("content")
+    if not (
+        set(envelope) == {"schema", "status", "provider", "target", "external_id", "external_url",
+                          "verified_at", "transport", "account", "log_id", "observed", "content"}
+        and envelope.get("status") == "verified" and envelope.get("provider") == "github"
+        and envelope.get("target") == target_identity and envelope.get("external_id") == str(number)
+        and envelope.get("external_url") == url and envelope.get("log_id") == target["provider_log_id"]
+        and all(isinstance(envelope.get(key), str) and envelope[key].strip()
+                for key in ("verified_at", "transport", "account"))
+        and isinstance(observed, Mapping) and isinstance(content, Mapping)
+        and set(content) == {"title", "body"}
+        and all(isinstance(content.get(key), str) and content[key].strip() for key in ("title", "body"))
+    ):
+        refuse("provider envelope schema, transport or identity conflicts")
+    content_hash = _json_sha256(content)
+    observed_identity = {
+        "target_identity": target_identity, "number_or_comment_id": str(number), "repository": repository,
+        "pull_request_number": number, "head_sha": head, "head_branch": expected_source_branch,
+        "base_branch": expected_base_branch, "base_sha": target["base_sha"], "draft": target["draft"],
+        "state": "open", "rendered_content_hash": content_hash, "rendered_body": content["body"],
+    }
+    if not (
+        set(observed) == {*observed_identity, "author", "repository_id"}
+        and all(observed.get(key) == value for key, value in observed_identity.items())
+        and type(observed.get("pull_request_number")) is int and type(observed.get("draft")) is bool
+        and type(observed.get("repository_id")) is int and observed["repository_id"] > 0
+        and isinstance(observed.get("author"), str) and observed["author"].strip()
+    ):
+        refuse("provider observed identity or rendered body conflicts")
+    apply_path, apply_raw, applied = canonical_applies[0]
+    if not (apply_path.is_relative_to(os_root) and approval_path.is_relative_to(os_root)):
+        refuse("original producer paths do not bind the declared OS root")
+    # The native producers return their persisted payload plus exactly this
+    # root-relative reference.  It is an alias of that canonical apply, not a
+    # second independent provider action.  Compare the complete payload.
+    apply_outputs = [record for record in applies if "receipt_ref" in record[2]]
+    expected_output = {**applied, "receipt_ref": apply_path.relative_to(os_root).as_posix()}
+    if any(output[2] != expected_output for output in apply_outputs):
+        refuse("native apply output does not exactly reference its canonical payload")
+    readback = applied.get("readback")
+    verification = applied.get("target_verification")
+    expected_verification = {
+        "schema": "artifact-target-verification/v1", "status": "verified", "provider": "github",
+        "target": target_identity, "repository": repository, "repository_id": observed["repository_id"],
+        "account": envelope["account"], "transport": envelope["transport"],
+        "base_branch": expected_base_branch, "base_sha": target["base_sha"],
+    }
+    if not (
+        applied.get("status") == "completed" and applied.get("provider") == "github"
+        and applied.get("target") == target_identity and applied.get("artifact_type") == "pull-request"
+        and applied.get("approval_receipt") == {
+            **approval, "receipt_ref": approval_path.relative_to(os_root).as_posix(),
+        }
+        and isinstance(verification, Mapping)
+        and all(verification.get(key) == value for key, value in expected_verification.items())
+        and type(verification.get("repository_id")) is int
+        and isinstance(verification.get("log_id"), str) and verification["log_id"].strip()
+        and applied.get("expected_content_sha256") == content_hash
+        and isinstance(readback, Mapping) and readback.get("verified") is True
+        and readback.get("external_id") == str(number) and readback.get("external_url") == url
+        and readback.get("sha256") == content_hash and readback.get("observed") == observed
+        and path.is_relative_to(os_root)
+        and readback.get("receipt_ref") == path.relative_to(os_root).as_posix()
+    ):
+        refuse("original apply content readback conflicts")
+    identity = {
+        "repository": expected_repository, "base_branch": expected_base_branch,
+        "provider": "github", "pull_request": f"{pull_request_prefix}{number}",
+        "source_branch": expected_source_branch, "source_head_sha": head,
+    }
+    return {**details, **identity}, {
+        "source": "exact_targets_only_family_with_provider_envelope",
+        "original_readback": dict(original), "rendered_content_sha256": content_hash,
+        "original_apply": {"ref": str(apply_path), "raw_sha256": hashlib.sha256(apply_raw).hexdigest()},
+        "original_apply_outputs": [
+            {"ref": str(path), "raw_sha256": hashlib.sha256(raw).hexdigest(), "canonical_ref": str(apply_path)}
+            for path, raw, _payload in apply_outputs
+        ],
+        "selected_task_binding": binding, "normalized_identity": identity,
+    }
+
+
 def _normalize_exact_legacy_family_identity(
     details: Mapping[str, Any],
     *,
@@ -10644,7 +10881,22 @@ def run_development_stage(
             _sync_auto_dev_projection(state.path)
         return state.read()
 
-    def validate_receipt(target: str, raw: str) -> tuple[str, dict[str, Any]]:
+    def materialize_receipt_snapshot(path: Path, payload: Mapping[str, Any]) -> None:
+        if path.is_file():
+            try:
+                existing = json.loads(path.read_text(encoding="utf-8"))
+            except json.JSONDecodeError as exc:
+                raise DevelopmentDeliveryError(
+                    "immutable delivery evidence snapshot is invalid"
+                ) from exc
+            if existing != payload:
+                raise DevelopmentDeliveryError("immutable delivery evidence snapshot collision")
+        else:
+            _atomic_json(path, payload)
+
+    def validate_receipt(
+        target: str, raw: str, *, materialize: bool = True,
+    ) -> tuple[str, dict[str, Any]]:
         path = Path(raw).expanduser().resolve()
         if not path.is_file():
             raise DevelopmentDeliveryError(f"{target} receipt file not found: {path}")
@@ -10972,17 +11224,8 @@ def run_development_stage(
                 / "evidence"
                 / f"{target}-{receipt_sha256[:20]}.json"
             )
-            if snapshot.is_file():
-                try:
-                    existing = json.loads(snapshot.read_text(encoding="utf-8"))
-                except json.JSONDecodeError as exc:
-                    raise DevelopmentDeliveryError(
-                        "immutable delivery evidence snapshot is invalid"
-                    ) from exc
-                if existing != payload:
-                    raise DevelopmentDeliveryError("immutable delivery evidence snapshot collision")
-            else:
-                _atomic_json(snapshot, payload)
+            if materialize:
+                materialize_receipt_snapshot(snapshot, payload)
             path = snapshot
         return str(path), payload
 
@@ -10995,7 +11238,6 @@ def run_development_stage(
                 "Auto-Dev release_propagation requires canonical autodev.json linkage"
             )
         if autodev_ref:
-            _sync_auto_dev_projection(state.path)
             try:
                 require_auto_dev_predecessors(autodev_ref, "pr_create")
             except AutoDevStateError as exc:
@@ -11010,7 +11252,11 @@ def run_development_stage(
             raise DevelopmentDeliveryError(
                 "release_propagation requires --receipt release_propagation=<ref>"
             )
-        receipt, release_receipt_payload = validate_receipt("release_propagation", raw_receipt)
+        # Refresh refusals must not create an orphan successor snapshot.  Plan
+        # its immutable name now; commit only after every identity/collision gate.
+        receipt, release_receipt_payload = validate_receipt(
+            "release_propagation", raw_receipt, materialize=False,
+        )
         qa_stage_policy = (
             current.get("auto_dev_stage_policies", {}).get("qa", {})
             if isinstance(current.get("auto_dev_stage_policies"), Mapping)
@@ -11067,6 +11313,18 @@ def run_development_stage(
         output = legacy_output
         with _file_lock(state.path.with_suffix(state.path.suffix + ".lock")):
             task_value = state.read()
+            incoming_details = release_receipt_payload.get("evidence")
+            incoming_supersession = (
+                incoming_details.get("supersession") if isinstance(incoming_details, Mapping) else None
+            )
+            if isinstance(incoming_details, Mapping) and (
+                "selected_task_binding" in incoming_details
+                or isinstance(incoming_supersession, Mapping) and "original_readback" in incoming_supersession
+            ):
+                if incoming_details.get("selected_task_binding") != _targets_only_selected_task_binding(task_value):
+                    raise DevelopmentDeliveryError(
+                        "targets-only family current task owner, source or frozen context conflicts"
+                    )
             superseded_ready_for_merge = False
             refreshed_subject_fence = False
             stage_receipts = (
@@ -11165,6 +11423,14 @@ def run_development_stage(
                         if isinstance(previous_evidence.get("evidence"), Mapping)
                         else {}
                     )
+                    if (
+                        isinstance(incoming_supersession, Mapping)
+                        and "original_readback" in incoming_supersession
+                        and not ("family_status" in previous_details and "targets" in previous_details)
+                    ):
+                        raise DevelopmentDeliveryError(
+                            "targets-only family original readback requires its genuine active predecessor"
+                        )
                     # Older PR-family receipts nested their identity under
                     # ``source`` and ``targets``.  Keep their immutable bytes
                     # intact, but normalize that shape before comparing it to a
@@ -11241,6 +11507,28 @@ def run_development_stage(
                         )
                     pull_request_prefix = f"{pull_request_repository}#"
                     legacy_family_identity_normalization: dict[str, Any] | None = None
+                    refreshed_details = (
+                        release_receipt_payload.get("evidence")
+                        if isinstance(release_receipt_payload.get("evidence"), Mapping)
+                        else {}
+                    )
+                    if (
+                        "family_status" in previous_details
+                        and "targets" in previous_details
+                    ):
+                        (
+                            previous_details,
+                            legacy_family_identity_normalization,
+                        ) = _normalize_exact_targets_only_family_identity(
+                            previous_details, task=task_value, refreshed_details=refreshed_details,
+                            prior_wrapper_ref=active_output,
+                            prior_wrapper_sha256=hashlib.sha256(active_output.read_bytes()).hexdigest(),
+                            prior_evidence_sha256=previous_evidence_hash,
+                            expected_repository=expected_repository,
+                            expected_base_branch=expected_base_branch,
+                            expected_source_branch=expected_source_branch,
+                            pull_request_prefix=pull_request_prefix,
+                        )
                     if (
                         not previous_details.get("source_head_sha")
                         and previous_details.get("schema") == "auto-dev-pr-create-family/v1"
@@ -11592,9 +11880,9 @@ def run_development_stage(
                                 "release propagation supersession wrapper collision"
                             )
                         payload = dict(stored)
-                    else:
-                        _atomic_json(output, payload)
-            else:
+            if work_item is not None:
+                materialize_receipt_snapshot(work_item / receipt, release_receipt_payload)
+            if not output.is_file():
                 _atomic_json(output, payload)
             task_value.setdefault("stage_receipts", {})["release_propagation"] = {
                 "ref": str(output),
