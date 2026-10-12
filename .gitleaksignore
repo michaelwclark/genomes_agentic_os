@@ -1,2 +1,5 @@
 # AGE-56 test-only duplicate idempotency fixture; GitHub gitleaks fingerprint.
 f6db31392232ed7f05f0f2434c6d80ba47e70fda:tests/test_state_importers.py:generic-api-key:194
+
+# AGE-251 independently verified nonsecret historical inert cold-canary fixture.
+9108475883fd6aca281b0148af3fd53d3c8becba:tests/test_execution_fabric_remote.py:generic-api-key:64
