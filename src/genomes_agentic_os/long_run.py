@@ -5,6 +5,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from datetime import datetime, timezone
 import fcntl
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -166,6 +167,9 @@ def _registry_entry(state: dict[str, Any]) -> dict[str, Any]:
         "checkpoint_strategy",
         "mutation_lock",
         "terminal_receipt",
+        "execution_command",
+        "execution_inputs",
+        "executed_command",
     )
     return {key: state[key] for key in fields if key in state}
 
@@ -535,7 +539,13 @@ def _progress_from_file(path: str | None) -> dict[str, Any]:
 
 def monitor_run(run_dir_value: str | Path) -> int:
     run_dir = Path(run_dir_value).expanduser()
-    command = json.loads((run_dir / "command.json").read_text(encoding="utf-8"))
+    command_path = run_dir / "command.json"
+    command_bytes = command_path.read_bytes()
+    command = json.loads(command_bytes)
+    # Capture the exact inputs actually consumed by this monitor, before any
+    # child is spawned. Later command.json edits cannot relabel what ran.
+    execution_command = {"ref": str(command_path), "sha256": hashlib.sha256(command_bytes).hexdigest()}
+    execution_inputs = json.loads(command_bytes)
     root = Path(command["root"])
     budgets = command["budgets"]
     interrupted: list[int] = []
@@ -566,7 +576,12 @@ def monitor_run(run_dir_value: str | Path) -> int:
             raise LongRunError("expected Git identity mismatch")
 
     pre_identity = git_identity()
-    _write_state(root, run_dir, {"status": "preflight", "phase": "preflight", "started_at": utc_now(), "expected_git_identity": expected_git_identity, "git_identity_pre": pre_identity})
+    _write_state(root, run_dir, {
+        "status": "preflight", "phase": "preflight", "started_at": utc_now(),
+        "expected_git_identity": expected_git_identity, "git_identity_pre": pre_identity,
+        "execution_command": execution_command, "execution_inputs": execution_inputs,
+        "executed_command": execution_inputs["command"],
+    })
     assert_expected_git_identity(pre_identity)
     preflight = _run_checks(command.get("preflight_checks") or [], work_dir=command["work_dir"], phase="preflight")
     atomic_json(run_dir / "preflight.json", {"checks": preflight, "ok": all(row["ok"] for row in preflight)})
@@ -822,6 +837,8 @@ def _terminal(
         "git_identity_pre": prior_state.get("git_identity_pre"),
         "git_identity_post": prior_state.get("git_identity_post"),
         "run_dir": str(run_dir),
+        **({key: prior_state[key] for key in ("execution_command", "execution_inputs", "executed_command")}
+           if all(key in prior_state for key in ("execution_command", "execution_inputs", "executed_command")) else {}),
         **(extra or {}),
     }
     terminal_path = run_dir / "terminal-receipt.json"

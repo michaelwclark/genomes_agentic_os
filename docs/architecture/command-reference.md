@@ -2274,6 +2274,161 @@ commands and skills provide the operator workflow for every named stage.
 
 ---
 
+### Resolve an obsolete executor handoff without rewinding progress
+
+An old `executor_unavailable` handoff can remain current after later
+receipt-proven implementation and validation. Use this operation only for an
+active, unowned canonical task that has advanced past `worktree_ready`.
+Ordinary `develop recover` restores the recorded retry state; it does not
+prove that an advanced task's old handoff is obsolete.
+
+Use the exact qualified installed release containing both this command and
+the long-run monitor's prelaunch execution provenance. From a cloned checkout,
+provision its locked development environment through the repository's normal
+installation instructions. Keep the installed command and source checkout
+versions explicit; a source import or package version string alone does not
+prove which code an installed console executes:
+
+```bash
+agentic-os develop resolve-executor-handoff --help
+python -c 'import importlib.metadata,genomes_agentic_os.development_delivery as d; print(importlib.metadata.version("genomes-agentic-os")); print(d.__file__)'
+```
+
+Inspect the exact existing task and packet with `develop status`. Keep its
+original failure, stage receipts, policy/context, source worktree and attempts
+intact. The operation refuses unrelated failures, exhausted handoffs, review
+holds, owners, ambiguous lineage, changed hashes and unrelated canonical
+authority. Authentication or connectivity does not satisfy its execution gate.
+
+Use `STATE` for the canonical task's `state.json`, rather than the packet's
+Auto-Dev projection. Read `OS_ROOT`, `TASK_WORKTREE` and `PACKET` from that
+observed task's `os_root`, `worktree.path` and `work_item` fields. `EVIDENCE`
+is a new JSON file inside that packet; `RESOLUTION_KEY` is a stable caller
+identifier for this one resolution. `JOB_DIR` is the actual qualified run's
+returned directory. Keep these bindings unchanged through dry-run and apply.
+Choose a new `RESOLUTION_KEY` for this resolution; never reuse an unrelated
+ledger event's key, and keep the same key for exact replay.
+
+First acquire a **new actual execution** through the qualified installed
+`long-run` monitor. Use the task's OS root/worktree and a packet-owned artifact
+directory. The argv must exactly match one command in its frozen selected
+validation policy. For a policy that declares this example command, use a
+shell array so arguments remain distinct:
+
+```bash
+VALIDATION_ARGV=(.venv/bin/python -m pytest tests/ -q)
+agentic-os long-run start --root "$OS_ROOT" --kind test \
+  --label "fresh executor qualification" --work-dir "$TASK_WORKTREE" \
+  --artifact-dir "$PACKET/artifacts/executor-validation" \
+  --expected-git-identity "$OBSERVED_GIT_IDENTITY" \
+  --wall-clock-minutes 30 --no-progress-minutes 10 \
+  --max-rss-mb 2048 --max-cpu-percent 200 --max-log-mb 8 \
+  --json -- "${VALIDATION_ARGV[@]}"
+```
+
+`OBSERVED_GIT_IDENTITY` is the JSON read from the exact task worktree using
+`git config --get remote.origin.url`, `git branch --show-current`,
+`git rev-parse HEAD` and `git status --porcelain`; use keys `repository`,
+`branch`, `head` and `clean` (`"true"` only when the actual status is empty).
+Use the actual returned `run_dir` as `JOB_DIR`. Follow configured stricter
+budgets when applicable. Wait through the artifact-backed terminal mechanism;
+do not create a recurring model poll. Continue only after the real terminal
+reports successful exit and matching clean source identity.
+
+The monitor records the command bytes/hash, actual argv, shell, budgets,
+checks and other inputs it consumed **before launching the child** in its
+state, terminal and central registry. The resolver compares all those records.
+Legacy jobs without this anchor remain insufficient; upgrade through the
+normal qualified release/install path and run a new execution. Never add
+acceptance fields to old receipts or replace a failed command's manifest.
+
+The following read-only assembler builds a request from the actual records.
+Run it with the qualified package's Python, outside the source checkout if
+validating an installed console. It creates input to the gate; it does not
+declare acceptance or stage success:
+
+```bash
+python - "$STATE" "$JOB_DIR" > "$EVIDENCE" <<'PY'
+import hashlib, json, subprocess, sys
+from pathlib import Path
+from genomes_agentic_os.development_delivery import FORWARD_STATES
+
+state_path = Path(sys.argv[1]).expanduser().resolve()
+job = Path(sys.argv[2]).expanduser().resolve()
+task = json.loads(state_path.read_text())
+
+def anchor(path):
+    path = Path(path).expanduser().resolve()
+    return {"ref": str(path),
+            "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+
+current_index = FORWARD_STATES.index(task["state"])
+required = FORWARD_STATES[FORWARD_STATES.index("planned"):current_index + 1]
+lineage = [row for row in task["receipts"] if row["state"] in required]
+head = subprocess.check_output(
+    ["git", "-C", task["worktree"]["path"], "rev-parse", "HEAD"],
+    text=True,
+).strip()
+request = {
+    "schema": "development-executor-forward-evidence/v1",
+    "task": anchor(state_path),
+    **{key: task[key] for key in
+       ("run_id", "ticket", "canonical_work_id", "work_item")},
+    "handoff": anchor(task["failure"]["receipt"]),
+    "policy": anchor(task["policy_receipt"]),
+    "context_sha256": hashlib.sha256(json.dumps(
+        task["context_selection"], sort_keys=True, separators=(",", ":"),
+    ).encode("utf-8")).hexdigest(),
+    "source_head_sha": head,
+    "lineage": lineage,
+    "execution": {
+        name: anchor(job / filename) for name, filename in (
+            ("terminal", "terminal-receipt.json"),
+            ("command", "command.json"),
+            ("state", "state.json"),
+        )
+    },
+}
+print(json.dumps(request, indent=2, sort_keys=True))
+PY
+```
+
+Keep `EVIDENCE` as a new durable packet-owned file. The task, original
+handoff, policy, stage lineage and execution anchors must still match.
+Execution must finish after the handoff and within the resolver's one-hour
+freshness window. A caller-written success boolean, copied old terminal,
+different executed command or source/context drift cannot pass.
+
+Plan and inspect first, then apply with the same immutable evidence and key:
+
+```bash
+agentic-os develop resolve-executor-handoff "$STATE" \
+  --evidence "$EVIDENCE" --idempotency-key "$RESOLUTION_KEY" --json
+agentic-os develop resolve-executor-handoff "$STATE" \
+  --evidence "$EVIDENCE" --idempotency-key "$RESOLUTION_KEY" --apply --json
+```
+
+Apply preserves the lifecycle position, attempts, earlier receipt bytes,
+siblings and review authority. It clears only the proved obsolete failure
+pointer and appends an immutable journal, history and event. The journal's
+original/post images support exact replay after interrupted task, portfolio
+or derived writes. Repeat the same apply command to finish replay; changing
+the key/evidence or shifting authority conflicts rather than granting a retry.
+
+A **HELD/PARTIAL** canonical synchronization/readback error retains that
+journal and preserves foreign ownership or an unrelated blocker. It does
+not roll back completed work or clear foreign authority. Resolve that
+authority through its own normal workflow, then replay the exact operation.
+Read back task, portfolio, Auto-Dev projection and canonical work; a trigger,
+local source check or journal alone is not full delivery or server readiness.
+
+Preserve all durable requests/journals/receipts and failed history. Remove only
+explicitly owned disposable qualification environments through normal cleanup
+after their evidence has been retained. This command never removes worktrees,
+starts providers, transfers server authority or installs a live runtime.
+
+---
+
 ## Validation Summary
 
 | Status | Count | Notes |

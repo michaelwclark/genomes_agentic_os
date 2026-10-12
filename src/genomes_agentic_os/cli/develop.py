@@ -12,6 +12,7 @@ from ..development_delivery import (
     TaskState,
     resolve_development_policy,
     run_development_stage,
+    resolve_executor_handoff,
     start_development_run,
 )
 from ._shared import DEFAULT_ROOT, yaml_dump
@@ -94,6 +95,15 @@ def handle_recover(args: argparse.Namespace) -> int:
     result = TaskState(Path(args.state_file).expanduser().resolve()).recover(
         receipt=args.receipt,
         idempotency_key=args.idempotency_key,
+    )
+    _print(result, json_output=args.json)
+    return 0
+
+
+def handle_resolve_executor_handoff(args: argparse.Namespace) -> int:
+    result = resolve_executor_handoff(
+        args.state_file, evidence_file=args.evidence,
+        idempotency_key=args.idempotency_key, apply=args.apply,
     )
     _print(result, json_output=args.json)
     return 0
@@ -222,6 +232,18 @@ def register(subparsers) -> None:
     recover.add_argument("--idempotency-key", required=True)
     _common_output(recover)
     recover.set_defaults(handler=handle_recover)
+
+    forward = sub.add_parser(
+        "resolve-executor-handoff",
+        help="Resolve an obsolete executor failure without rewinding completed stages.",
+        description="Dry-run first. Requires fresh governed execution, exact immutable lineage and source/policy/context; preserves prior authority.",
+    )
+    forward.add_argument("state_file")
+    forward.add_argument("--evidence", required=True, help="Path to development-executor-forward-evidence/v1; labels and login status are insufficient.")
+    forward.add_argument("--idempotency-key", required=True, help="Stable exact-resolution replay key.")
+    forward.add_argument("--apply", action="store_true", help="Append the proved forward resolution and refresh linked projections.")
+    _common_output(forward)
+    forward.set_defaults(handler=handle_resolve_executor_handoff)
 
     heartbeat = sub.add_parser("heartbeat", help="Renew a non-terminal task worker lease.")
     heartbeat.add_argument("state_file")

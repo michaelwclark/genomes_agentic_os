@@ -9,7 +9,7 @@ adapters selected by the project profile.
 
 from __future__ import annotations
 
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -19,6 +19,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 import sqlite3
 import stat
 import subprocess
@@ -4248,6 +4249,453 @@ def _recover_active_worktree_ready_delivery(
             recovery_event_type=recovery_event_type,
         )
         return result
+
+
+
+def _executor_resolution_time(value: Any, label: str) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            raise ValueError("timezone required")
+        return parsed
+    except (TypeError, ValueError) as exc:
+        raise DevelopmentDeliveryError(f"executor resolution has invalid {label}") from exc
+
+
+def _executor_resolution_anchor(
+    anchor: Any, *, label: str, within: Path | None = None
+) -> dict[str, Any]:
+    """Read a stable hash-bound input; an acceptance label is not proof."""
+    if not isinstance(anchor, Mapping) or set(anchor) != {"ref", "sha256"}:
+        raise DevelopmentDeliveryError(f"executor resolution requires a hash-bound {label}")
+    path = Path(str(anchor["ref"])).expanduser()
+    if not path.is_absolute() or not re.fullmatch(r"[a-f0-9]{64}", str(anchor["sha256"])):
+        raise DevelopmentDeliveryError(f"executor resolution requires an absolute hash-bound {label}")
+    _, content = _worktree_ready_recovery_read_file(path, label=label, work_item=within)
+    if hashlib.sha256(content).hexdigest() != anchor["sha256"]:
+        raise DevelopmentDeliveryError(f"executor resolution {label} hash changed")
+    return _worktree_ready_recovery_mapping(content, label=label)
+
+
+def _executor_resolution_execution(
+    task: Mapping[str, Any], evidence: Mapping[str, Any], profile: Mapping[str, Any]
+) -> None:
+    """Prove fresh registered execution of the task's frozen validation command."""
+    anchors = evidence.get("execution")
+    if not isinstance(anchors, Mapping) or set(anchors) != {"terminal", "command", "state"}:
+        raise DevelopmentDeliveryError("executor resolution requires governed execution receipts")
+    records = {
+        name: _executor_resolution_anchor(anchor, label=f"execution {name}", within=Path(task["work_item"]))
+        for name, anchor in anchors.items()
+    }
+    terminal, command, run = records["terminal"], records["command"], records["state"]
+    run_dir = Path(str(command.get("run_dir") or ""))
+    identity = terminal.get("expected_git_identity")
+    if not (
+        terminal.get("schema") == "agentic-os-long-running-terminal/v1"
+        and command.get("schema") == run.get("schema") == "agentic-os-long-running-state/v1"
+        and command.get("kind") == run.get("kind") == terminal.get("kind") == "test"
+        and command.get("id") == run.get("id") == terminal.get("id")
+        and command.get("root") == run.get("root") == task["os_root"]
+        and command.get("run_dir") == run.get("run_dir") == terminal.get("run_dir")
+        and command.get("work_dir") == run.get("work_dir") == task["worktree"]["path"]
+        and command.get("shell") is False
+        and terminal.get("execution_command") == run.get("execution_command") == anchors["command"]
+        and terminal.get("execution_inputs") == run.get("execution_inputs") == command
+        and terminal.get("executed_command") == run.get("executed_command") == command.get("command")
+        and terminal.get("status") == run.get("status") == "success"
+        and terminal.get("exit_code") == run.get("exit_code") == 0
+        and terminal.get("reason") == run.get("terminal_reason") == "command-exited"
+        and terminal.get("post_run_invariants_ok") is True
+        and run.get("terminal_receipt") == anchors["terminal"]["ref"]
+        and all(anchors[name]["ref"] == str(run_dir / filename) for name, filename in (
+            ("terminal", "terminal-receipt.json"), ("command", "command.json"), ("state", "state.json")
+        ))
+        and isinstance(identity, Mapping)
+        and identity.get("head") == evidence["source_head_sha"]
+        and identity.get("branch") == task["worktree"]["branch"]
+        and identity.get("clean") == "true"
+        and command.get("expected_git_identity") == run.get("expected_git_identity") == identity
+        and terminal.get("git_identity_pre") == terminal.get("git_identity_post") == identity
+        and run.get("git_identity_pre") == run.get("git_identity_post") == identity
+    ):
+        raise DevelopmentDeliveryError("executor resolution execution/source provenance does not match its task")
+    if not any(command.get("command") == shlex.split(value) for value in profile["validation"]["commands"]):
+        raise DevelopmentDeliveryError("executor resolution execution must run a frozen validation command")
+    created = _executor_resolution_time(command.get("created_at"), "execution creation")
+    started = _executor_resolution_time(run.get("started_at"), "execution start")
+    finished = _executor_resolution_time(terminal.get("finished_at"), "execution completion")
+    failed = _executor_resolution_time(task["failure"]["failed_at"], "handoff time")
+    if not (
+        failed < created <= started <= finished
+        and run.get("finished_at") == terminal.get("finished_at")
+        and terminal.get("created_at") == run.get("created_at") == command.get("created_at")
+        and 0 <= (datetime.now(timezone.utc) - finished).total_seconds() <= 3600
+    ):
+        raise DevelopmentDeliveryError("executor resolution execution is stale or predates the handoff")
+    registry = _read_mapping(Path(task["os_root"]) / "harness/shared_factory/00-control-plane/long-running-runs.json")
+    rows = [row for row in registry.get("runs", []) if isinstance(row, Mapping) and row.get("id") == run["id"]]
+    if not (
+        registry.get("schema") == "agentic-os-long-running-registry/v1" and len(rows) == 1
+        and all(rows[0].get(key) == run.get(key) for key in (
+            "id", "kind", "status", "run_dir", "work_dir", "exit_code", "terminal_reason",
+            "started_at", "finished_at", "terminal_receipt",
+            "execution_command", "execution_inputs", "executed_command",
+        ))
+    ):
+        raise DevelopmentDeliveryError("executor resolution execution is not registered at its terminal boundary")
+
+
+def _executor_resolution_authority(
+    task: Mapping[str, Any], state_path: Path, *, obsolete_failure: Mapping[str, Any] | None = None
+) -> None:
+    """Keep unrelated canonical blockers, owners and projections intact."""
+    packet = Path(task["work_item"])
+    canonical = _read_canonical_development_work(task["os_root"], canonical_work_id=task["canonical_work_id"], ticket=task["ticket"])
+    failure = task.get("failure") or obsolete_failure or {}
+    if not (
+        isinstance(canonical, Mapping)
+        and canonical.get("state") == "validating" and canonical.get("attention") == "active"
+        and canonical.get("packet_path") == str(packet)
+        and canonical.get("worktree_path") == task["worktree"]["path"]
+        and canonical.get("branch") == task["worktree"]["branch"]
+        and canonical.get("source_key") == task["ticket"]
+        and canonical.get("domain") == task["domain"] and canonical.get("project") == task["project"]
+        and canonical.get("source_system") == task.get("source", {}).get("system")
+        and not canonical.get("owner") and not (task.get("lease") or {}).get("owner")
+        and canonical.get("blocked_reason") in (None, "", failure.get("detail"))
+    ):
+        raise DevelopmentDeliveryError("executor resolution refuses canonical ownership or an unrelated blocker")
+    projection = _read_mapping(Path(task["autodev_path"]))
+    if not (
+        projection.get("canonical_work_id") == task["canonical_work_id"]
+        and projection.get("delivery", {}).get("task_state_ref") == str(state_path)
+        and projection.get("delivery", {}).get("state") == task["state"]
+        and projection.get("blocker") in (None, failure)
+    ):
+        raise DevelopmentDeliveryError("executor resolution refuses an unrelated Auto-Dev projection")
+
+
+def _executor_resolution_context(state_path: Path, evidence: Mapping[str, Any]) -> dict[str, Any]:
+    """Prove the advanced-but-stale handoff without changing any authority."""
+    task = TaskState(state_path).read()
+    if not (
+        task.get("schema") == "development-task/v1"
+        and all(isinstance(task.get(key), str) and task[key].strip() for key in (
+            "os_root", "domain", "project", "autodev_path", "work_item", "run_id", "ticket", "canonical_work_id"
+        ))
+        and all(isinstance(task.get(key), Mapping) for key in ("worktree", "repository", "source", "context_selection"))
+        and isinstance(task.get("receipts"), list)
+    ):
+        raise DevelopmentDeliveryError("executor resolution requires a fully linked canonical task")
+    required = {"schema", "task", "run_id", "ticket", "canonical_work_id", "work_item", "handoff",
+                "policy", "context_sha256", "source_head_sha", "lineage", "execution"}
+    if set(evidence) != required or evidence.get("schema") != "development-executor-forward-evidence/v1":
+        raise DevelopmentDeliveryError("executor resolution requires development-executor-forward-evidence/v1")
+    if _executor_resolution_anchor(evidence["task"], label="task state") != task or evidence["task"]["ref"] != str(state_path):
+        raise DevelopmentDeliveryError("executor resolution task binding changed")
+    for key in ("run_id", "ticket", "canonical_work_id", "work_item"):
+        if not task.get(key) or evidence[key] != task[key]:
+            raise DevelopmentDeliveryError(f"executor resolution {key} does not match the task")
+    current, failure = task.get("state"), task.get("failure")
+    if not (
+        current in FORWARD_STATES
+        and FORWARD_STATES.index("local_validation") <= FORWARD_STATES.index(current) < FORWARD_STATES.index("merged")
+        and isinstance(failure, Mapping) and failure.get("kind") == "executor_unavailable"
+        and failure.get("retry_state") == "worktree_ready" and failure.get("recoverable") is True
+        and not (task.get("lease") or {}).get("owner") and not task.get("subject_supersessions")
+    ):
+        raise DevelopmentDeliveryError("executor resolution requires an unowned advanced task with only its obsolete recoverable executor handoff")
+    packet = Path(task["work_item"])
+    project_path = project_root(task["os_root"], task["domain"], task["project"])
+    if _project_work_item_lane(packet, project_path) != "02-active" or (packet / "REOPEN.md").exists():
+        raise DevelopmentDeliveryError("executor resolution requires an active packet without a reopen hold")
+    handoff = _executor_resolution_anchor(evidence["handoff"], label="original handoff", within=state_path.parent)
+    count = (task.get("attempts") or {}).get("executor_unavailable")
+    if not (
+        type(count) is int and count > 0 and task.get("attempts") == {"executor_unavailable": count}
+        and evidence["handoff"]["ref"] == failure.get("receipt")
+        and Path(failure["receipt"]) == state_path.parent / "handoffs" / f"executor-unavailable-attempt-{count:02d}.json"
+        and handoff.get("schema") == "development-executor-handoff/v1"
+        and handoff.get("outcome") == "executor_unavailable"
+        and handoff.get("status") == "pending" and handoff.get("recoverable") is True
+        and handoff.get("attempt") == count and handoff.get("max_attempts") == task.get("max_attempts")
+        and task.get("last_failure_key") == f"{task['run_id']}:{task['ticket']}:executor-unavailable:{count}"
+        and handoff.get("recorded_at") == failure.get("failed_at") and handoff.get("reason") == failure.get("detail")
+        and handoff.get("task_state") == str(state_path) and handoff.get("task_state_before_handoff") == failure["retry_state"]
+        and handoff.get("worktree") == task.get("worktree") and handoff.get("runtime") == task.get("runtime")
+        and all(handoff.get(key) == task[key] for key in ("run_id", "ticket", "canonical_work_id"))
+        and handoff.get("policy") == {"fingerprint": task.get("policy_fingerprint"), "receipt": task.get("policy_receipt")}
+    ):
+        raise DevelopmentDeliveryError("executor resolution original failure/handoff identity changed")
+    policy = _executor_resolution_anchor(evidence["policy"], label="frozen policy")
+    profile = _validate_effective_policy_snapshot(policy, require_selected_profile=True)
+    if not (
+        evidence["policy"]["ref"] == task.get("policy_receipt") and isinstance(profile, Mapping)
+        and policy.get("fingerprint") == task.get("policy_fingerprint")
+        and profile.get("repository_id") == task.get("repository", {}).get("id")
+        and policy.get("context_selection") == task.get("context_selection")
+        and evidence["context_sha256"] == _json_sha256(task.get("context_selection"))
+        and evidence["source_head_sha"] == _worktree_ready_recovery_registered_head(task)
+    ):
+        raise DevelopmentDeliveryError("executor resolution source/policy/context binding changed")
+    expected_states = list(FORWARD_STATES[FORWARD_STATES.index("planned"):FORWARD_STATES.index(current) + 1])
+    rows = [row for row in task.get("receipts", []) if isinstance(row, Mapping) and row.get("state") in expected_states]
+    if [row.get("state") for row in rows] != expected_states or evidence["lineage"] != rows:
+        raise DevelopmentDeliveryError("executor resolution requires the exact complete immutable stage lineage")
+    failed_at = _executor_resolution_time(failure["failed_at"], "handoff time")
+    for row in rows:
+        payload = _executor_resolution_anchor({"ref": row.get("ref"), "sha256": row.get("sha256")}, label=f"{row['state']} lineage", within=packet)
+        if not (
+            payload.get("schema") == "development-stage-evidence/v1" and payload.get("state") == row["state"]
+            and payload.get("status") in {"passed", "completed", "verified"} and payload.get("summary") and payload.get("evidence")
+            and _executor_resolution_time(payload.get("verified_at"), "stage verification") >= failed_at
+            and _executor_resolution_time(row.get("recorded_at"), "stage recording") >= failed_at
+        ):
+            raise DevelopmentDeliveryError("executor resolution lineage is not completed after its handoff")
+        if row["state"] in {"implementing", "local_validation"} and not (
+            payload.get("source_commit") == evidence["source_head_sha"]
+            and payload.get("canonical_work_id") == task["canonical_work_id"]
+            and payload.get("policy_fingerprint") == task["policy_fingerprint"]
+            and payload.get("policy_receipt") == task["policy_receipt"]
+        ):
+            raise DevelopmentDeliveryError("executor resolution completed implementation lacks exact source/policy provenance")
+    for stage, row in (task.get("stage_receipts") or {}).items():
+        payload = _executor_resolution_anchor(row, label=f"{stage} receipt")
+        if payload.get("status") not in {"completed", "passed", "verified", "not_required"}:
+            raise DevelopmentDeliveryError("executor resolution refuses unresolved stage authority")
+    _executor_resolution_authority(task, state_path)
+    _executor_resolution_execution(task, evidence, profile)
+    return task
+
+
+def _executor_resolution_images(
+    task: Mapping[str, Any], portfolio: Mapping[str, Any], evidence: Mapping[str, Any],
+    *, state_path: Path, journal_path: Path, key: str, evidence_hash: str, recorded_at: str
+) -> tuple[dict[str, Any], dict[str, Any], list[dict[str, Any]]]:
+    """The only allowed task/portfolio delta, also checked on interrupted replay."""
+    history = {"idempotency_key": key, "receipt": str(journal_path), "evidence_sha256": evidence_hash,
+               "failure": deepcopy(task["failure"]), "recorded_at": recorded_at}
+    resolved = deepcopy(dict(task))
+    resolved.update({"failure": None, "updated_at": recorded_at, "last_executor_resolution_key": key})
+    resolved.setdefault("executor_handoff_resolutions", []).append(history)
+    resolved_portfolio = deepcopy(dict(portfolio))
+    resolved_portfolio.setdefault("executor_handoff_resolutions", []).append({**history, "task_state_ref": str(state_path)})
+    sibling_states = []
+    portfolio_inputs = []
+    run_dir = state_path.parent.parent.parent
+    for row in portfolio["tasks"]:
+        candidate = Path(str(row["state_ref"])).expanduser()
+        if not candidate.is_absolute():
+            candidate = run_dir / candidate
+        if candidate == state_path:
+            sibling = task
+        else:
+            _, content = _worktree_ready_recovery_read_file(candidate, label="portfolio sibling")
+            sibling = _worktree_ready_recovery_mapping(content, label="portfolio sibling")
+            portfolio_inputs.append({"ref": str(candidate), "sha256": hashlib.sha256(content).hexdigest()})
+        if not sibling.get("state"):
+            raise DevelopmentDeliveryError("executor resolution portfolio has an unverified sibling state")
+        sibling_states.append(str(sibling["state"]))
+    resolved_portfolio["state"] = _portfolio_rollup(sibling_states)
+    resolved_portfolio["updated_at"] = recorded_at
+    inputs = [evidence["handoff"], evidence["policy"], *evidence["execution"].values()]
+    inputs.extend({"ref": row["ref"], "sha256": row["sha256"]} for row in evidence["lineage"])
+    inputs.extend(task.get("stage_receipts", {}).values())
+    inputs.extend(portfolio_inputs)
+    return resolved, resolved_portfolio, inputs
+
+
+
+def _executor_resolution_canonical_readback(
+    state_path: Path, task: Mapping[str, Any], *, obsolete_failure: Mapping[str, Any]
+) -> None:
+    """Hold an already journaled apply if foreign canonical authority appears."""
+    def require_row(row: Any, *, allow_obsolete_detail: bool) -> None:
+        expected = {
+            "id": task["canonical_work_id"], "domain": task["domain"], "project": task["project"],
+            "source_system": task["source"]["system"], "source_key": task["ticket"],
+            "packet_path": task["work_item"], "worktree_path": task["worktree"]["path"],
+            "branch": task["worktree"]["branch"], "state": "validating", "attention": "active",
+        }
+        if not (
+            isinstance(row, Mapping) and all(row.get(key) == value for key, value in expected.items())
+            and isinstance(row.get("metadata"), Mapping)
+            and row["metadata"].get("development_run_id") == task["run_id"]
+            and not row.get("owner")
+            and row.get("blocked_reason") in ((None, "", obsolete_failure.get("detail")) if allow_obsolete_detail else (None, ""))
+        ):
+            raise DevelopmentDeliveryError("canonical binding, state, owner or blocker changed")
+    try:
+        # Inspect before invoking the existing writer so an unrelated blocker
+        # cannot be silently rewritten into this resolution's desired state.
+        prior = _read_canonical_development_work(
+            task["os_root"], canonical_work_id=task["canonical_work_id"], ticket=task["ticket"]
+        )
+        require_row(prior, allow_obsolete_detail=True)
+        synced = _sync_canonical_task_progress(state_path)
+        require_row(synced, allow_obsolete_detail=False)
+        fresh = _read_canonical_development_work(
+            task["os_root"], canonical_work_id=task["canonical_work_id"], ticket=task["ticket"]
+        )
+        require_row(fresh, allow_obsolete_detail=False)
+    except (DevelopmentDeliveryError, OSError, sqlite3.Error) as exc:
+        TaskState(state_path).emit(
+            event_type="development.task.executor_resolution_canonical_held",
+            idempotency_key=str(task["last_executor_resolution_key"]) + ":canonical-held",
+            payload={"ticket": task["ticket"], "state": task["state"], "journal_retained": True,
+                     "authority": "held_partial", "reason": str(exc), "foreign_authority_cleared": False},
+        )
+        raise DevelopmentDeliveryError(
+            "executor resolution HELD/PARTIAL: canonical synchronization/readback is incomplete; "
+            "journal retained, foreign authority preserved; resolve that authority through its "
+            "normal workflow, then replay this exact resolution"
+        ) from exc
+
+
+
+
+def _executor_resolution_ledgers(
+    state_path: Path, task: Mapping[str, Any]
+) -> list[Path]:
+    paths = [state_path.parent / "events.jsonl"]
+    if task.get("rollup_ledger"):
+        paths.append(Path(str(task["rollup_ledger"])).expanduser().absolute())
+    return sorted(set(paths), key=str)
+
+
+def _executor_resolution_event_rows(
+    ledger: Path, event: Mapping[str, Any], *, replayed: bool, require_event: bool = False
+) -> bool:
+    """Permit only the exact journaled event under an existing ledger key."""
+    rows = []
+    if ledger.exists() or ledger.is_symlink():
+        _, content = _worktree_ready_recovery_read_file(ledger, label="resolution ledger")
+        try:
+            for line in content.decode("utf-8").splitlines():
+                if line.strip():
+                    row = json.loads(line)
+                    if not isinstance(row, Mapping):
+                        raise ValueError("event must be a mapping")
+                    if row.get("idempotency_key") == event["idempotency_key"]:
+                        rows.append(row)
+        except (UnicodeDecodeError, ValueError) as exc:
+            raise DevelopmentDeliveryError("executor resolution ledger is malformed") from exc
+    if len(rows) > 1 or (rows and (not replayed or rows[0] != event)):
+        raise DevelopmentDeliveryError("executor resolution ledger idempotency key belongs to a different event")
+    if require_event and not rows:
+        raise DevelopmentDeliveryError("executor resolution required journaled event is missing")
+    return bool(rows)
+
+
+
+def resolve_executor_handoff(
+    state_file: str | Path, *, evidence_file: str | Path, idempotency_key: str, apply: bool = False
+) -> dict[str, Any]:
+    """Resolve a proved obsolete executor failure forward; never execute a stage.
+
+    The immutable journal precedes task/portfolio writes. Exact replay completes
+    an interrupted apply only at its original or exact post-write boundary.
+    Derived projection failure remains visible and retryable, not a clean result.
+    """
+    state_path = Path(state_file).expanduser().absolute()
+    if not idempotency_key.strip():
+        raise DevelopmentDeliveryError("executor resolution requires an idempotency key")
+    _, evidence_bytes = _worktree_ready_recovery_read_file(Path(evidence_file).expanduser().absolute(), label="forward evidence")
+    evidence = _worktree_ready_recovery_mapping(evidence_bytes, label="forward evidence")
+    evidence_hash = hashlib.sha256(evidence_bytes).hexdigest()
+    state = TaskState(state_path)
+    portfolio_path = state_path.parent.parent.parent / "portfolio.json"
+    journal_path = state_path.parent / "handoffs" / ("forward-resolution-" + hashlib.sha256(idempotency_key.encode()).hexdigest() + ".json")
+    with _task_provisioning_admission_lock(state_path), _file_lock(portfolio_path.with_suffix(".json.lock")), _file_lock(state_path.with_suffix(".json.lock")):
+        _worktree_ready_recovery_read_file(state_path, label="task state")
+        task, portfolio = state.read(), _read_mapping(portfolio_path)
+        selected = [row for row in portfolio.get("tasks", []) if isinstance(row, Mapping) and row.get("state_ref") == str(state_path)]
+        if portfolio.get("run_id") != task.get("run_id") or len(selected) != 1 or selected[0].get("ticket") != task.get("ticket"):
+            raise DevelopmentDeliveryError("executor resolution requires its exact linked portfolio")
+        replayed = journal_path.exists() or journal_path.is_symlink()
+        if replayed:
+            _, journal_bytes = _worktree_ready_recovery_read_file(journal_path, label="forward journal", work_item=state_path.parent)
+            journal = _worktree_ready_recovery_mapping(journal_bytes, label="forward journal")
+            if not (
+                journal.get("schema") == "development-executor-forward-resolution/v1"
+                and journal.get("idempotency_key") == idempotency_key and journal.get("evidence_sha256") == evidence_hash
+                and journal.get("task_state") == str(state_path)
+                and task in (journal.get("original_task"), journal.get("resolved_task"))
+                and portfolio in (journal.get("original_portfolio"), journal.get("resolved_portfolio"))
+            ):
+                raise DevelopmentDeliveryError("executor resolution conflicting replay or changed task/portfolio")
+            resolved, resolved_portfolio, inputs = _executor_resolution_images(
+                journal["original_task"], journal["original_portfolio"], evidence,
+                state_path=state_path, journal_path=journal_path, key=idempotency_key,
+                evidence_hash=evidence_hash, recorded_at=journal["recorded_at"],
+            )
+            if resolved != journal["resolved_task"] or resolved_portfolio != journal["resolved_portfolio"] or inputs != journal.get("immutable_inputs"):
+                raise DevelopmentDeliveryError("executor resolution journal contains an unauthorized delta")
+            for anchor in journal.get("immutable_inputs", []):
+                _executor_resolution_anchor(anchor, label="journal input")
+            if task == journal["original_task"]:
+                _executor_resolution_context(state_path, evidence)
+            else:
+                _executor_resolution_authority(task, state_path, obsolete_failure=journal["original_task"]["failure"])
+                if evidence["source_head_sha"] != _worktree_ready_recovery_registered_head(task):
+                    raise DevelopmentDeliveryError("executor resolution replay source changed")
+        else:
+            task = _executor_resolution_context(state_path, evidence)
+            now = utc_now()
+            resolved, resolved_portfolio, inputs = _executor_resolution_images(
+                task, portfolio, evidence, state_path=state_path, journal_path=journal_path,
+                key=idempotency_key, evidence_hash=evidence_hash, recorded_at=now,
+            )
+            journal = {"schema": "development-executor-forward-resolution/v1", "idempotency_key": idempotency_key,
+                       "task_state": str(state_path), "evidence_sha256": evidence_hash,
+                       "original_task": task, "resolved_task": resolved, "original_portfolio": portfolio,
+                       "resolved_portfolio": resolved_portfolio, "immutable_inputs": inputs, "recorded_at": now}
+        result = {"schema": "development-executor-forward-resolution-result/v1",
+                  "result": "replayed" if replayed else "resolved" if apply else "planned",
+                  "task_state": str(state_path), "state": task["state"], "receipt": str(journal_path),
+                  "receipt_sha256": _json_sha256(journal), "applied": apply}
+        event = {
+            "id": _event_id(idempotency_key), "type": "development.task.executor_handoff_resolved",
+            "occurred_at": journal["recorded_at"], "idempotency_key": idempotency_key,
+            "payload": {"ticket": task["ticket"], "state": task["state"], "receipt": str(journal_path),
+                        "original_failure_receipt": journal["original_task"]["failure"]["receipt"]},
+        }
+        ledgers = _executor_resolution_ledgers(state_path, task)
+        # Serialize identity admission and the append with ordinary ledger
+        # writers. Do not call their lock-taking wrapper while holding these
+        # locks; its generic replay semantics deliberately remain unchanged.
+        with ExitStack() as locks:
+            for ledger in ledgers:
+                locks.enter_context(_file_lock(ledger.with_suffix(ledger.suffix + ".lock")))
+            existing = {
+                ledger: _executor_resolution_event_rows(ledger, event, replayed=replayed)
+                for ledger in ledgers
+            }
+            for anchor in journal["immutable_inputs"]:
+                _executor_resolution_anchor(anchor, label="precommit immutable input")
+            if not apply:
+                return result
+            if not replayed:
+                _atomic_json(journal_path, journal)
+            if task == journal["original_task"]:
+                _atomic_json(state_path, journal["resolved_task"])
+            if portfolio == journal["original_portfolio"]:
+                _atomic_json(portfolio_path, journal["resolved_portfolio"])
+            for ledger in ledgers:
+                if not existing[ledger]:
+                    ledger.parent.mkdir(parents=True, exist_ok=True)
+                    with ledger.open("a", encoding="utf-8") as handle:
+                        handle.write(json.dumps(event, sort_keys=True) + "\n")
+                _executor_resolution_event_rows(ledger, event, replayed=True, require_event=True)
+    projection = _sync_auto_dev_projection(state_path)
+    if not isinstance(projection, Mapping) or projection.get("blocker") or projection.get("delivery", {}).get("state") != task["state"]:
+        raise DevelopmentDeliveryError("executor resolution projection incomplete; replay the same resolution")
+    _executor_resolution_canonical_readback(
+        state_path, state.read(), obsolete_failure=journal["original_task"]["failure"]
+    )
+    _refresh_portfolio_state(state_path)
+    return result
 
 
 def _former_v1_everything_stage_policies(value: Any) -> dict[str, Any]:

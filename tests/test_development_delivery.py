@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 import subprocess
 import threading
+import time
 
 import pytest
 import yaml
@@ -10846,6 +10847,584 @@ def test_recover_active_worktree_ready_pr_create_delivery_replay_refuses_backfil
     assert Path(recovered["receipt"]).read_bytes() == before["receipt"]
 
 
+
+def _executor_forward_anchor(path: Path) -> dict[str, str]:
+    return {"ref": str(path), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+
+
+def _executor_forward_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Build the real advanced-but-stale task via normal delivery recorders."""
+    repo, _ = _repository(tmp_path)
+    (repo / "tests").mkdir()
+    (repo / "tests/test_sample.py").write_text("def test_execution():\n    assert 2 + 2 == 4\n")
+    (repo / ".gitignore").write_text(".pytest_cache/\n__pycache__/\n")
+    _git("add", "tests", ".gitignore", cwd=repo)
+    _git("commit", "-m", "test fixture", cwd=repo)
+    _git("push", "origin", "main", cwd=repo)
+    root = tmp_path / "os"
+    _project(root, repo)
+    normal_clock = delivery.utc_now
+    old = (datetime.now(timezone.utc) - timedelta(minutes=10)).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    monkeypatch.setattr(delivery, "utc_now", lambda: old)
+    run = delivery.start_development_run(
+        root, "acme", "app", ["CC-254"], run_id="forward-executor",
+        auto_dev_mode="everything", provision_worktree=True,
+        require_executor_handoff=True, apply=True,
+    )
+    monkeypatch.setattr(delivery, "utc_now", normal_clock)
+    task = TaskState(Path(run["tasks"][0]["state_ref"]))
+    value = task.read()
+    packet = Path(value["work_item"])
+    head = _git("rev-parse", "HEAD", cwd=Path(value["worktree"]["path"]))
+    paths = {}
+    for target in ("planned", "implementing", "local_validation"):
+        path = packet / "artifacts" / f"{target}.json"
+        delivery._atomic_json(path, {
+            "schema": "development-stage-evidence/v1", "state": target,
+            "status": "passed" if target == "local_validation" else "completed",
+            "summary": f"Actual fixture {target} evidence", "verified_at": normal_clock(),
+            "canonical_work_id": value["canonical_work_id"], "source_commit": head,
+            "policy_fingerprint": value["policy_fingerprint"], "policy_receipt": value["policy_receipt"],
+            "evidence": {"fixture_execution": "local provider-free qualification"},
+        })
+        paths[target] = str(path)
+    run_development_stage(task.path, stage="readiness", receipts={"planned": paths["planned"]}, idempotency_prefix="fixture-plan")
+    run_development_stage(task.path, stage="implementation", receipts={k: paths[k] for k in ("implementing", "local_validation")}, idempotency_prefix="fixture-build")
+    value = task.read()
+    assert value["state"] == "local_validation" and value["failure"]["kind"] == "executor_unavailable"
+    execution_dir = packet / "artifacts/executor-run"
+    now = normal_clock()
+    identity = {"head": head, "branch": value["worktree"]["branch"], "clean": "true", "repository": _git("remote", "get-url", "origin", cwd=repo)}
+    command = {
+        "schema": "agentic-os-long-running-state/v1", "id": "fixture-execution",
+        "kind": "test", "root": str(root), "run_dir": str(execution_dir), "work_dir": value["worktree"]["path"],
+        "shell": False, "command": ["python3", "-m", "pytest", "tests", "-q"],
+        "created_at": now, "expected_git_identity": identity,
+    }
+    terminal = {
+        "schema": "agentic-os-long-running-terminal/v1", "id": command["id"], "kind": "test",
+        "run_dir": str(execution_dir), "status": "success", "exit_code": 0,
+        "reason": "command-exited", "created_at": now, "finished_at": now,
+        "post_run_invariants_ok": True, "expected_git_identity": identity,
+        "git_identity_pre": identity, "git_identity_post": identity,
+    }
+    execution_state = {
+        **command, "status": "success", "exit_code": 0, "terminal_reason": "command-exited",
+        "started_at": now, "finished_at": now, "terminal_receipt": str(execution_dir / "terminal-receipt.json"),
+        "git_identity_pre": identity, "git_identity_post": identity,
+    }
+    for name, payload in (("command.json", command), ("terminal-receipt.json", terminal), ("state.json", execution_state)):
+        delivery._atomic_json(execution_dir / name, payload)
+    for filename, payload in (("terminal-receipt.json", terminal), ("state.json", execution_state)):
+        payload.update({"execution_command": _executor_forward_anchor(execution_dir / "command.json"),
+                        "execution_inputs": command, "executed_command": command["command"]})
+        delivery._atomic_json(execution_dir / filename, payload)
+    from genomes_agentic_os.long_run import update_registry
+    update_registry(root, execution_state)
+    evidence = {
+        "schema": "development-executor-forward-evidence/v1",
+        "task": _executor_forward_anchor(task.path),
+        **{k: value[k] for k in ("run_id", "ticket", "canonical_work_id", "work_item")},
+        "handoff": _executor_forward_anchor(Path(value["failure"]["receipt"])),
+        "policy": _executor_forward_anchor(Path(value["policy_receipt"])),
+        "context_sha256": delivery._json_sha256(value["context_selection"]),
+        "source_head_sha": head,
+        "lineage": [row for row in value["receipts"] if row["state"] in paths],
+        "execution": {name: _executor_forward_anchor(execution_dir / filename) for name, filename in (
+            ("terminal", "terminal-receipt.json"), ("command", "command.json"), ("state", "state.json")
+        )},
+    }
+    evidence_path = packet / "artifacts/forward-evidence.json"
+    delivery._atomic_json(evidence_path, evidence)
+    return task, evidence_path, root
+
+
+def _executor_forward_apply(task: TaskState, evidence_path: Path, *, apply: bool = True):
+    return delivery.resolve_executor_handoff(task.path, evidence_file=evidence_path, idempotency_key="forward-1", apply=apply)
+
+
+def test_executor_forward_resolution_preserves_progress_history_and_foreign_siblings(tmp_path, monkeypatch):
+    task, evidence_path, root = _executor_forward_fixture(tmp_path, monkeypatch)
+    original = task.read()
+    portfolio_path = task.path.parent.parent.parent / "portfolio.json"
+    portfolio = json.loads(portfolio_path.read_text())
+    sibling_path = task.path.parent.parent / "foreign/state.json"
+    delivery._atomic_json(sibling_path, {"ticket": "FOREIGN", "state": "local_validation", "failure": {"kind": "approval_declined"}})
+    portfolio["tasks"].append({"ticket": "FOREIGN", "state_ref": str(sibling_path), "authority": "foreign"})
+    delivery._atomic_json(portfolio_path, portfolio)
+    sibling_bytes = sibling_path.read_bytes()
+    watched = [task.path, portfolio_path, Path(original["failure"]["receipt"]), Path(original["policy_receipt"]),
+               *[Path(row["ref"]) for row in json.loads(evidence_path.read_text())["lineage"]]]
+    before = {p: p.read_bytes() for p in watched}
+    planned = _executor_forward_apply(task, evidence_path, apply=False)
+    assert planned["result"] == "planned" and planned["applied"] is False
+    assert not Path(planned["receipt"]).exists()
+    assert {p: p.read_bytes() for p in watched} == before
+    applied = _executor_forward_apply(task, evidence_path)
+    assert applied["result"] == "resolved"
+    resolved = task.read()
+    assert resolved["state"] == "local_validation" and resolved["failure"] is None
+    for key in original:
+        if key not in {"failure", "updated_at"}:
+            assert resolved[key] == original[key]
+    assert resolved["executor_handoff_resolutions"][0]["failure"] == original["failure"]
+    assert sibling_path.read_bytes() == sibling_bytes
+    assert json.loads(portfolio_path.read_text())["tasks"] == portfolio["tasks"]
+    projection = json.loads(Path(original["autodev_path"]).read_text())
+    assert projection["blocker"] is None and projection["delivery"]["state"] == "local_validation"
+    canonical = delivery._read_canonical_development_work(root, canonical_work_id=original["canonical_work_id"], ticket=original["ticket"])
+    assert canonical["state"] == "validating" and canonical["blocked_reason"] is None
+    for p in watched[2:]:
+        assert p.read_bytes() == before[p]
+    after = {p: p.read_bytes() for p in watched}
+    replay = _executor_forward_apply(task, evidence_path)
+    assert replay["result"] == "replayed"
+    assert {p: p.read_bytes() for p in watched} == after
+    events = [json.loads(line) for line in task.ledger.read_text().splitlines()]
+    assert len([e for e in events if e["type"] == "development.task.executor_handoff_resolved"]) == 1
+
+
+@pytest.mark.parametrize("boundary", ["journal", "task", "portfolio", "projection", "canonical"])
+def test_executor_forward_resolution_replays_interrupted_apply(tmp_path, monkeypatch, boundary):
+    task, evidence_path, _ = _executor_forward_fixture(tmp_path, monkeypatch)
+    original_atomic = delivery._atomic_json
+    portfolio_path = task.path.parent.parent.parent / "portfolio.json"
+    tripped = False
+
+    def interrupt(path, value):
+        nonlocal tripped
+        match = ((boundary == "journal" and path.name.startswith("forward-resolution-"))
+                 or (boundary == "task" and path == task.path)
+                 or (boundary == "portfolio" and path == portfolio_path))
+        if match and not tripped:
+            tripped = True
+            raise OSError("interrupted boundary")
+        original_atomic(path, value)
+
+    if boundary in {"journal", "task", "portfolio"}:
+        monkeypatch.setattr(delivery, "_atomic_json", interrupt)
+    elif boundary == "projection":
+        original_sync = delivery._sync_auto_dev_projection
+        monkeypatch.setattr(delivery, "_sync_auto_dev_projection", lambda path: None)
+    else:
+        original_canonical = delivery._sync_canonical_task_progress
+        monkeypatch.setattr(delivery, "_sync_canonical_task_progress", lambda *a, **kw: (_ for _ in ()).throw(OSError("interrupted boundary")))
+    with pytest.raises((OSError, DevelopmentDeliveryError), match="interrupted|incomplete"):
+        _executor_forward_apply(task, evidence_path)
+    monkeypatch.setattr(delivery, "_atomic_json", original_atomic)
+    if boundary == "projection":
+        monkeypatch.setattr(delivery, "_sync_auto_dev_projection", original_sync)
+    if boundary == "canonical":
+        monkeypatch.setattr(delivery, "_sync_canonical_task_progress", original_canonical)
+    replay = _executor_forward_apply(task, evidence_path)
+    assert replay["result"] in {"replayed", "resolved"} and task.read()["failure"] is None
+    assert task.read()["state"] == "local_validation"
+
+
+@pytest.mark.parametrize("mutation", [
+    "task_hash", "handoff_hash", "policy_hash", "context_hash", "source_head", "missing_lineage",
+    "unrelated_lineage", "stage_tamper", "stage_status", "stage_source", "stage_policy", "stage_identity",
+    "failure_kind", "retry_state", "exhausted", "newer_failure", "owned", "not_advanced",
+    "terminal_status", "terminal_hash", "exit_code", "invariant", "execution_command", "execution_source",
+    "stale_execution", "future_execution", "unregistered", "metadata_only", "other_run", "symlink",
+    "canonical_owner", "canonical_blocker", "projection_blocker", "portfolio_identity",
+])
+def test_executor_forward_resolution_refuses_without_mutation(tmp_path, monkeypatch, mutation):
+    task, evidence_path, root = _executor_forward_fixture(tmp_path, monkeypatch)
+    evidence = json.loads(evidence_path.read_text())
+    value = task.read()
+    if mutation in {"task_hash", "handoff_hash", "policy_hash", "terminal_hash"}:
+        anchor = evidence["execution"]["terminal"] if mutation == "terminal_hash" else evidence[mutation.removesuffix("_hash")]
+        anchor["sha256"] = "0" * 64
+    elif mutation == "context_hash":
+        evidence["context_sha256"] = "0" * 64
+    elif mutation == "source_head":
+        evidence["source_head_sha"] = "0" * 40
+    elif mutation == "missing_lineage":
+        evidence["lineage"].pop()
+    elif mutation == "unrelated_lineage":
+        evidence["lineage"][0]["ref"] = str(evidence_path)
+    elif mutation.startswith("stage_"):
+        row = evidence["lineage"][-1]
+        path = Path(row["ref"])
+        payload = json.loads(path.read_text())
+        if mutation == "stage_tamper":
+            path.write_text("tamper")
+        else:
+            key, wrong = {"stage_status": ("status", "deferred_to_ci"), "stage_source": ("source_commit", "0" * 40),
+                          "stage_policy": ("policy_fingerprint", "0" * 64), "stage_identity": ("canonical_work_id", "foreign")}[mutation]
+            payload[key] = wrong
+            delivery._atomic_json(path, payload)
+            row["sha256"] = _executor_forward_anchor(path)["sha256"]
+            value["receipts"][-1]["sha256"] = row["sha256"]
+    elif mutation in {"failure_kind", "retry_state", "exhausted", "newer_failure", "owned", "not_advanced"}:
+        if mutation == "failure_kind":
+            value["failure"]["kind"] = "approval_declined"
+        elif mutation == "retry_state":
+            value["failure"]["retry_state"] = "planned"
+        elif mutation == "exhausted":
+            value["failure"]["recoverable"] = False
+        elif mutation == "newer_failure":
+            value["attempts"]["test_failed"] = 1
+        elif mutation == "owned":
+            value["lease"]["owner"] = "another-worker"
+        else:
+            value["state"] = "worktree_ready"
+    elif mutation in {"canonical_owner", "canonical_blocker"}:
+        connection = connect_state(default_db_path(root))
+        try:
+            connection.execute("UPDATE work_items SET " + ("owner = ?" if mutation == "canonical_owner" else "blocked_reason = ?") + " WHERE id = ?", ("foreign", value["canonical_work_id"]))
+            connection.commit()
+        finally:
+            connection.close()
+    elif mutation == "projection_blocker":
+        path = Path(value["autodev_path"])
+        payload = json.loads(path.read_text()); payload["blocker"] = {"kind": "approval_declined"}
+        delivery._atomic_json(path, payload)
+    elif mutation == "portfolio_identity":
+        path = task.path.parent.parent.parent / "portfolio.json"
+        payload = json.loads(path.read_text()); payload["run_id"] = "foreign"
+        delivery._atomic_json(path, payload)
+    elif mutation == "metadata_only":
+        evidence["execution"] = {"loggedIn": True, "accepted": True}
+    elif mutation == "other_run":
+        evidence["run_id"] = "foreign"
+    elif mutation == "unregistered":
+        registry = root / "harness/shared_factory/00-control-plane/long-running-runs.json"
+        payload = json.loads(registry.read_text()); payload["runs"] = []
+        delivery._atomic_json(registry, payload)
+    elif mutation == "symlink":
+        path = Path(evidence["execution"]["terminal"]["ref"])
+        target = path.with_suffix(".original"); path.rename(target); path.symlink_to(target)
+    else:
+        name = "command" if mutation == "execution_command" else "terminal"
+        path = Path(evidence["execution"][name]["ref"])
+        payload = json.loads(path.read_text())
+        if mutation == "terminal_status":
+            payload["status"] = "failure"
+        elif mutation == "exit_code":
+            payload["exit_code"] = 1
+        elif mutation == "invariant":
+            payload["post_run_invariants_ok"] = False
+        elif mutation == "execution_command":
+            payload["command"] = ["true"]
+        elif mutation == "execution_source":
+            payload["git_identity_pre"] = {**payload["git_identity_pre"], "head": "0" * 40}
+        else:
+            delta = timedelta(hours=-2 if mutation == "stale_execution" else 2)
+            payload["finished_at"] = (datetime.now(timezone.utc) + delta).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        delivery._atomic_json(path, payload)
+        evidence["execution"][name] = _executor_forward_anchor(path)
+    if mutation != "task_hash":
+        delivery._atomic_json(task.path, value)
+        evidence["task"] = _executor_forward_anchor(task.path)
+    delivery._atomic_json(evidence_path, evidence)
+    watched = [task.path, task.path.parent.parent.parent / "portfolio.json", Path(value["autodev_path"]), task.ledger]
+    before = {p: p.read_bytes() for p in watched}
+    with pytest.raises(DevelopmentDeliveryError):
+        _executor_forward_apply(task, evidence_path)
+    assert {p: p.read_bytes() for p in watched} == before
+    assert not list((task.path.parent / "handoffs").glob("forward-resolution-*.json"))
+
+
+def test_executor_forward_resolution_replay_refuses_new_failures_and_conflicting_evidence(tmp_path, monkeypatch):
+    task, evidence_path, _ = _executor_forward_fixture(tmp_path, monkeypatch)
+    _executor_forward_apply(task, evidence_path)
+    before = task.path.read_bytes()
+    evidence = json.loads(evidence_path.read_text()); evidence["source_head_sha"] = "0" * 40
+    delivery._atomic_json(evidence_path, evidence)
+    with pytest.raises(DevelopmentDeliveryError, match="conflicting replay"):
+        _executor_forward_apply(task, evidence_path)
+    assert task.path.read_bytes() == before
+
+
+def test_executor_forward_resolution_cli_dispatch_and_help(tmp_path, monkeypatch, capsys):
+    task, evidence_path, _ = _executor_forward_fixture(tmp_path, monkeypatch)
+    args = ["develop", "resolve-executor-handoff", str(task.path), "--evidence", str(evidence_path), "--idempotency-key", "cli-forward", "--json"]
+    before = task.path.read_bytes()
+    assert main(args) == 0
+    planned = json.loads(capsys.readouterr().out)
+    assert planned["result"] == "planned" and task.path.read_bytes() == before
+    assert main([*args, "--apply"]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["result"] == "resolved" and task.read()["state"] == "local_validation"
+    with pytest.raises(SystemExit) as exc:
+        main(["develop", "resolve-executor-handoff", "--help"])
+    assert exc.value.code == 0
+    help_text = capsys.readouterr().out
+    assert "Dry-run" in help_text and "--evidence" in help_text and "--apply" in help_text
+
+
+
+@pytest.mark.parametrize("substitute_manifest", [False, True])
+def test_executor_forward_resolution_accepts_actual_registered_monitor_execution(tmp_path, monkeypatch, capsys, substitute_manifest):
+    from genomes_agentic_os.long_run import start_run
+    task, evidence_path, root = _executor_forward_fixture(tmp_path, monkeypatch)
+    evidence = json.loads(evidence_path.read_text())
+    value = task.read()
+    run = start_run(
+        root, command=(["python3", "-c", "print('different actual execution')"] if substitute_manifest else ["python3", "-m", "pytest", "tests", "-q"]), kind="test",
+        label="fresh actual executor fixture", artifact_dir=str(Path(value["work_item"]) / "artifacts/real-execution"),
+        run_id="real-execution", work_dir=value["worktree"]["path"],
+        expected_git_identity=json.loads(Path(evidence["execution"]["terminal"]["ref"]).read_text())["expected_git_identity"],
+        budgets={"wall_clock_minutes": 1, "no_progress_minutes": 1, "sample_seconds": 0.1},
+    )
+    run_dir = Path(run["run_dir"])
+    deadline = time.monotonic() + 20
+    while not (run_dir / "terminal-receipt.json").exists() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    terminal = json.loads((run_dir / "terminal-receipt.json").read_text())
+    assert terminal["status"] == "success", terminal
+    assert ("different actual execution" if substitute_manifest else "1 passed") in (run_dir / "output.log").read_text()
+    # The monitor writes terminal then state/registry; wait for the durable
+    # registered boundary required by the actual resolution operation.
+    while time.monotonic() < deadline:
+        actual = json.loads((run_dir / "state.json").read_text())
+        if actual.get("terminal_receipt"):
+            break
+        time.sleep(0.05)
+    if substitute_manifest:
+        # A real registered successful different command cannot be relabeled
+        # by changing only the mutable manifest and its supplied anchor.
+        path = run_dir / "command.json"
+        manifest = json.loads(path.read_text())
+        manifest["command"] = ["python3", "-m", "pytest", "tests", "-q"]
+        delivery._atomic_json(path, manifest)
+    evidence["execution"] = {name: _executor_forward_anchor(run_dir / filename) for name, filename in (
+        ("terminal", "terminal-receipt.json"), ("command", "command.json"), ("state", "state.json")
+    )}
+    delivery._atomic_json(evidence_path, evidence)
+    if substitute_manifest:
+        before = task.path.read_bytes()
+        assert main(["develop", "resolve-executor-handoff", str(task.path), "--evidence", str(evidence_path),
+                     "--idempotency-key", "actual-cli-substitution", "--apply", "--json"]) == 2
+        assert "provenance" in capsys.readouterr().err
+        assert task.path.read_bytes() == before
+        return
+    assert main(["develop", "resolve-executor-handoff", str(task.path), "--evidence", str(evidence_path),
+                 "--idempotency-key", "actual-cli-execution", "--apply", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["result"] == "resolved"
+    assert task.read()["failure"] is None and task.read()["attempts"] == {"executor_unavailable": 1}
+
+
+def test_executor_forward_resolution_serializes_two_actual_applicants(tmp_path, monkeypatch):
+    task, evidence_path, _ = _executor_forward_fixture(tmp_path, monkeypatch)
+    outcomes, errors = [], []
+    barrier = threading.Barrier(2)
+
+    def apply():
+        barrier.wait()
+        try:
+            outcomes.append(_executor_forward_apply(task, evidence_path))
+        except Exception as exc:
+            errors.append(exc)
+
+    threads = [threading.Thread(target=apply) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=20)
+    assert not errors and all(not thread.is_alive() for thread in threads)
+    assert sorted(row["result"] for row in outcomes) == ["replayed", "resolved"]
+    assert len(task.read()["executor_handoff_resolutions"]) == 1
+    portfolio = json.loads((task.path.parent.parent.parent / "portfolio.json").read_text())
+    assert len(portfolio["executor_handoff_resolutions"]) == 1
+
+
+@pytest.mark.parametrize("mutation", ["new_failure", "new_owner", "journal_delta", "immutable_tamper", "source_drift"])
+def test_executor_forward_resolution_replay_refuses_changed_authority(tmp_path, monkeypatch, mutation):
+    task, evidence_path, _ = _executor_forward_fixture(tmp_path, monkeypatch)
+    applied = _executor_forward_apply(task, evidence_path)
+    journal_path = Path(applied["receipt"])
+    if mutation == "new_failure":
+        task.fail(kind="test_failed", detail="new failure", receipt="fixture:test_failed", idempotency_key="new-failure")
+    elif mutation == "new_owner":
+        task.heartbeat(owner="new-worker", lease_minutes=1, idempotency_key="new-worker")
+    elif mutation == "journal_delta":
+        journal = json.loads(journal_path.read_text())
+        journal["original_task"]["attempts"] = {"executor_unavailable": 500}
+        delivery._atomic_json(journal_path, journal)
+    elif mutation == "immutable_tamper":
+        Path(json.loads(evidence_path.read_text())["handoff"]["ref"]).write_text("tamper")
+    else:
+        worktree = Path(task.read()["worktree"]["path"])
+        (worktree / "README.md").write_text("new source")
+        _git("add", "README.md", cwd=worktree); _git("commit", "-m", "new source", cwd=worktree)
+    before = task.path.read_bytes()
+    with pytest.raises(DevelopmentDeliveryError):
+        _executor_forward_apply(task, evidence_path)
+    assert task.path.read_bytes() == before
+
+
+
+def test_executor_forward_resolution_normalizes_stale_portfolio_summary_in_replay_image(tmp_path, monkeypatch):
+    task, evidence_path, _ = _executor_forward_fixture(tmp_path, monkeypatch)
+    path = task.path.parent.parent.parent / "portfolio.json"
+    original = json.loads(path.read_text())
+    original["state"] = "dispatching"
+    original["updated_at"] = "2026-07-01T00:00:00Z"
+    delivery._atomic_json(path, original)
+    applied = _executor_forward_apply(task, evidence_path)
+    portfolio = json.loads(path.read_text())
+    assert portfolio["state"] == "local_validation"
+    journal = json.loads(Path(applied["receipt"]).read_text())
+    assert journal["resolved_portfolio"] == portfolio
+    assert journal["original_portfolio"] == original
+    before = path.read_bytes()
+    assert _executor_forward_apply(task, evidence_path)["result"] == "replayed"
+    assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize("race", ["owner", "blocker", "missing_sync", "failed_sync", "missing_readback", "wrong_run_readback"])
+def test_executor_forward_resolution_holds_partial_canonical_races_and_replays(tmp_path, monkeypatch, race):
+    task, evidence_path, root = _executor_forward_fixture(tmp_path, monkeypatch)
+    original = task.read()
+    original_sync = delivery._sync_canonical_task_progress
+    original_read = delivery._read_canonical_development_work
+    foreign_row = None
+
+    def canonical_race(path, **kwargs):
+        nonlocal foreign_row
+        assert kwargs.get("allow_unblock", False) is False
+        assert TaskState(path).read()["failure"] is None  # race after task commit
+        if race in {"owner", "blocker"}:
+            connection = connect_state(default_db_path(root))
+            try:
+                if race == "owner":
+                    connection.execute("UPDATE work_items SET owner = ? WHERE id = ?", ("foreign-worker", original["canonical_work_id"]))
+                else:
+                    connection.execute("UPDATE work_items SET state = ?, blocked_reason = ? WHERE id = ?", ("blocked", "unrelated approval hold", original["canonical_work_id"]))
+                connection.commit()
+            finally:
+                connection.close()
+        if race == "missing_sync":
+            return None
+        if race == "failed_sync":
+            raise OSError("actual fixture sync unavailable")
+        row = original_sync(path, **kwargs)
+        if race in {"owner", "blocker"}:
+            foreign_row = row
+        return row
+
+    read_count = 0
+    def read_race(*args, **kwargs):
+        nonlocal read_count
+        read_count += 1
+        row = original_read(*args, **kwargs)
+        # Context preflight is #1; pre-sync check #2; fresh post-sync #3.
+        if read_count == 3:
+            if race == "missing_readback":
+                return None
+            if race == "wrong_run_readback":
+                return {**row, "metadata": {**row["metadata"], "development_run_id": "foreign-run"}}
+        return row
+
+    monkeypatch.setattr(delivery, "_sync_canonical_task_progress", canonical_race)
+    monkeypatch.setattr(delivery, "_read_canonical_development_work", read_race)
+    with pytest.raises(DevelopmentDeliveryError, match="HELD/PARTIAL"):
+        _executor_forward_apply(task, evidence_path)
+    after = task.read()
+    assert after["state"] == "local_validation" and after["failure"] is None
+    assert after["attempts"] == original["attempts"]
+    assert after["receipts"] == original["receipts"]
+    journal = Path(after["executor_handoff_resolutions"][0]["receipt"])
+    assert journal.is_file()
+    if race == "owner":
+        assert foreign_row["owner"] == "foreign-worker"
+    if race == "blocker":
+        assert foreign_row["state"] == "blocked"
+        assert foreign_row["blocked_reason"] == "unrelated approval hold"
+    canonical = original_read(root, canonical_work_id=original["canonical_work_id"], ticket=original["ticket"])
+    if race == "owner":
+        assert canonical["owner"] == "foreign-worker"
+    if race == "blocker":
+        assert canonical["state"] == "blocked" and canonical["blocked_reason"] == "unrelated approval hold"
+    events = [json.loads(line) for line in task.ledger.read_text().splitlines()]
+    assert len([e for e in events if e["type"] == "development.task.executor_resolution_canonical_held"]) == 1
+    monkeypatch.setattr(delivery, "_sync_canonical_task_progress", original_sync)
+    monkeypatch.setattr(delivery, "_read_canonical_development_work", original_read)
+    if race in {"owner", "blocker"}:
+        # The foreign authority is resolved by its own normal canonical writer,
+        # never by resolution's allow_unblock or a task rollback.
+        connection = connect_state(default_db_path(root))
+        try:
+            canonical_work_items.upsert(
+                connection, item_id=canonical["id"], title=canonical["title"],
+                state="validating", attention="active", domain=canonical["domain"], project=canonical["project"],
+                source_system=canonical["source_system"], source_key=canonical["source_key"],
+                packet_path=canonical["packet_path"], worktree_path=canonical["worktree_path"],
+                branch=canonical["branch"], owner=None, metadata=canonical["metadata"],
+                context_summary=canonical["context_summary"],
+                blocked_reason=None, actor="foreign-authority-fixture", receipt_ref="fixture:authority-resolved", verified=True,
+            )
+        finally:
+            connection.close()
+    frozen_task = task.path.read_bytes()
+    frozen_journal = journal.read_bytes()
+    assert _executor_forward_apply(task, evidence_path)["result"] == "replayed"
+    assert task.path.read_bytes() == frozen_task and journal.read_bytes() == frozen_journal
+    assert original_read(root, canonical_work_id=original["canonical_work_id"], ticket=original["ticket"])["state"] == "validating"
+
+
+
+@pytest.mark.parametrize("ledger_kind", ["task", "rollup"])
+def test_executor_forward_resolution_refuses_unrelated_ledger_key_before_mutation(tmp_path, monkeypatch, ledger_kind):
+    task, evidence_path, _ = _executor_forward_fixture(tmp_path, monkeypatch)
+    original = task.read()
+    ledger = task.ledger if ledger_kind == "task" else Path(original["rollup_ledger"])
+    delivery.append_event(ledger, event_type="development.task.unrelated", idempotency_key="forward-1", payload={"ticket": original["ticket"]})
+    watched = [task.path, task.path.parent.parent.parent / "portfolio.json", Path(original["autodev_path"]), task.ledger, Path(original["rollup_ledger"])]
+    before = {path: path.read_bytes() for path in watched}
+    for apply in (False, True):
+        with pytest.raises(DevelopmentDeliveryError, match="different event"):
+            _executor_forward_apply(task, evidence_path, apply=apply)
+    assert {path: path.read_bytes() for path in watched} == before
+    assert not list((task.path.parent / "handoffs").glob("forward-resolution-*.json"))
+
+
+def test_executor_forward_resolution_replays_exact_task_and_rollup_events_and_refuses_event_tamper(tmp_path, monkeypatch):
+    task, evidence_path, _ = _executor_forward_fixture(tmp_path, monkeypatch)
+    result = _executor_forward_apply(task, evidence_path)
+    ledgers = [task.ledger, Path(task.read()["rollup_ledger"])]
+    before = {path: path.read_bytes() for path in ledgers}
+    assert _executor_forward_apply(task, evidence_path)["result"] == "replayed"
+    assert {path: path.read_bytes() for path in ledgers} == before
+    events = [[json.loads(line) for line in path.read_text().splitlines()] for path in ledgers]
+    selected = [next(row for row in rows if row["idempotency_key"] == "forward-1") for rows in events]
+    assert selected[0] == selected[1]
+    assert selected[0]["payload"]["receipt"] == result["receipt"]
+    selected[1]["type"] = "development.task.foreign"
+    ledgers[1].write_text("\n".join(json.dumps(row) for row in events[1]) + "\n")
+    frozen_task = task.path.read_bytes()
+    with pytest.raises(DevelopmentDeliveryError, match="different event"):
+        _executor_forward_apply(task, evidence_path)
+    assert task.path.read_bytes() == frozen_task
+
+
+def test_executor_forward_resolution_repairs_missing_rollup_event_after_interrupted_append(tmp_path, monkeypatch):
+    task, evidence_path, _ = _executor_forward_fixture(tmp_path, monkeypatch)
+    original = delivery._executor_resolution_event_rows
+    tripped = False
+    rollup = Path(task.read()["rollup_ledger"])
+
+    def interrupt(ledger, event, **kwargs):
+        nonlocal tripped
+        if ledger == rollup and kwargs.get("require_event") and not tripped:
+            tripped = True
+            rows = [json.loads(line) for line in ledger.read_text().splitlines()]
+            ledger.write_text("\n".join(json.dumps(row) for row in rows if row.get("idempotency_key") != "forward-1") + "\n")
+            raise OSError("interrupted rollup append")
+        return original(ledger, event, **kwargs)
+
+    monkeypatch.setattr(delivery, "_executor_resolution_event_rows", interrupt)
+    with pytest.raises(OSError, match="interrupted rollup"):
+        _executor_forward_apply(task, evidence_path)
+    monkeypatch.setattr(delivery, "_executor_resolution_event_rows", original)
+    assert _executor_forward_apply(task, evidence_path)["result"] == "replayed"
+    rows = [json.loads(line) for line in rollup.read_text().splitlines() if line.strip()]
+    assert len([row for row in rows if row.get("idempotency_key") == "forward-1"]) == 1
+
+
 def test_review_workflow_has_one_full_owner_and_receipt_only_finalize() -> None:
     repository = Path(__file__).parents[1]
     workflow = (
@@ -10873,3 +11452,98 @@ def test_review_workflow_has_one_full_owner_and_receipt_only_finalize() -> None:
     assert "sole owner of the canonical full review" in " ".join(review_self.split())
     assert "Never invoke another full review from Repair" in " ".join(repair.split())
     assert "Finalize must not invoke a reviewer" in " ".join(finalize.split())
+
+@pytest.mark.parametrize("mutation", [
+    "schema", "unlinked_task", "anchor_shape", "relative_anchor", "copied_task",
+    "reopen_hold", "pending_stage", "malformed_json_ledger", "nonmapping_ledger",
+    "blank_key", "unverified_sibling",
+])
+def test_executor_forward_resolution_refuses_malformed_boundary_inputs(tmp_path, monkeypatch, mutation):
+    task, evidence_path, _ = _executor_forward_fixture(tmp_path, monkeypatch)
+    evidence, value = json.loads(evidence_path.read_text()), task.read()
+    portfolio_path = task.path.parent.parent.parent / "portfolio.json"
+    key = "forward-1"
+    if mutation == "schema":
+        evidence["schema"] = "untrusted-acceptance/v1"
+    elif mutation == "unlinked_task":
+        value["autodev_path"] = None
+    elif mutation == "anchor_shape":
+        evidence["policy"].pop("sha256")
+    elif mutation == "relative_anchor":
+        evidence["policy"]["ref"] = "effective-policies.json"
+    elif mutation == "copied_task":
+        copied = evidence_path.parent / "copied-task.json"
+        copied.write_bytes(task.path.read_bytes())
+        evidence["task"] = _executor_forward_anchor(copied)
+    elif mutation == "reopen_hold":
+        (Path(value["work_item"]) / "REOPEN.md").write_text("An unresolved reopen hold.\n")
+    elif mutation == "pending_stage":
+        pending = evidence_path.parent / "pending-document.json"
+        delivery._atomic_json(pending, {"status": "pending", "stage": "document"})
+        value["stage_receipts"] = {"document": _executor_forward_anchor(pending)}
+    elif mutation in {"malformed_json_ledger", "nonmapping_ledger"}:
+        with task.ledger.open("a") as stream:
+            stream.write("\n" + ("not-json" if mutation == "malformed_json_ledger" else "[]") + "\n")
+    elif mutation == "blank_key":
+        key = " "
+    elif mutation == "unverified_sibling":
+        sibling = portfolio_path.parent / "tasks/unverified/state.json"
+        delivery._atomic_json(sibling, {"state": None})
+        portfolio = json.loads(portfolio_path.read_text())
+        portfolio["tasks"].append({"ticket": "CC-FOREIGN", "state_ref": str(sibling)})
+        delivery._atomic_json(portfolio_path, portfolio)
+    if mutation in {"unlinked_task", "pending_stage"}:
+        delivery._atomic_json(task.path, value)
+        evidence["task"] = _executor_forward_anchor(task.path)
+    delivery._atomic_json(evidence_path, evidence)
+    watched = [task.path, portfolio_path, task.ledger, Path(value["work_item"]) / "autodev.json"]
+    before = {path: path.read_bytes() if path.is_file() else None for path in watched}
+    with pytest.raises(delivery.DevelopmentDeliveryError):
+        delivery.resolve_executor_handoff(task.path, evidence_file=evidence_path, idempotency_key=key, apply=True)
+    assert {path: path.read_bytes() if path.is_file() else None for path in watched} == before
+    assert not list((task.path.parent / "handoffs").glob("forward-resolution-*.json"))
+
+
+def test_executor_forward_resolution_relative_portfolio_and_optional_rollup_replay(tmp_path, monkeypatch):
+    task, evidence_path, _ = _executor_forward_fixture(tmp_path, monkeypatch)
+    value = task.read()
+    value.pop("rollup_ledger")
+    delivery._atomic_json(task.path, value)
+    evidence = json.loads(evidence_path.read_text())
+    evidence["task"] = _executor_forward_anchor(task.path)
+    delivery._atomic_json(evidence_path, evidence)
+    portfolio_path = task.path.parent.parent.parent / "portfolio.json"
+    portfolio = json.loads(portfolio_path.read_text())
+    sibling = portfolio_path.parent / "tasks/foreign/state.json"
+    delivery._atomic_json(sibling, {"state": "local_validation", "run_id": "foreign"})
+    portfolio["tasks"].append({"ticket": "CC-FOREIGN", "state_ref": "tasks/foreign/state.json"})
+    delivery._atomic_json(portfolio_path, portfolio)
+    with task.ledger.open("a") as stream:
+        stream.write("\n")
+    assert _executor_forward_apply(task, evidence_path)["result"] == "resolved"
+    assert _executor_forward_apply(task, evidence_path)["result"] == "replayed"
+    assert task.read()["state"] == "local_validation"
+    assert task.read()["attempts"] == {"executor_unavailable": 1}
+
+
+def test_executor_forward_resolution_missing_event_is_partial_and_replay_repairs(tmp_path, monkeypatch):
+    task, evidence_path, _ = _executor_forward_fixture(tmp_path, monkeypatch)
+    original = delivery._executor_resolution_event_rows
+    tripped = False
+    def remove_before_readback(ledger, event, **kwargs):
+        nonlocal tripped
+        if kwargs.get("require_event") and not tripped:
+            tripped = True
+            lines = [json.loads(line) for line in ledger.read_text().splitlines() if line.strip()]
+            ledger.write_text("\n".join(json.dumps(row) for row in lines if row.get("idempotency_key") != "forward-1") + "\n")
+        return original(ledger, event, **kwargs)
+    monkeypatch.setattr(delivery, "_executor_resolution_event_rows", remove_before_readback)
+    with pytest.raises(delivery.DevelopmentDeliveryError, match="required journaled event is missing"):
+        _executor_forward_apply(task, evidence_path)
+    assert task.read()["failure"] is None
+    assert len(list((task.path.parent / "handoffs").glob("forward-resolution-*.json"))) == 1
+    monkeypatch.setattr(delivery, "_executor_resolution_event_rows", original)
+    assert _executor_forward_apply(task, evidence_path)["result"] == "replayed"
+    for ledger in delivery._executor_resolution_ledgers(task.path, task.read()):
+        rows = [json.loads(line) for line in ledger.read_text().splitlines() if line.strip()]
+        assert len([row for row in rows if row.get("idempotency_key") == "forward-1"]) == 1

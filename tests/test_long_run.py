@@ -108,6 +108,49 @@ def test_long_run_persists_expected_and_observed_git_identity_at_both_boundaries
     assert receipt["git_identity_post"] == identity
 
 
+
+def test_actual_monitor_retains_consumed_command_inputs_after_manifest_tamper(tmp_path: Path) -> None:
+    import hashlib
+    root = tmp_path / "os"
+    marker = tmp_path / "child-started"
+    argv = [sys.executable, "-c", f"from pathlib import Path;import time;Path({str(marker)!r}).write_text('started');time.sleep(2);print('actual')"]
+    initial = start_run(
+        root, command=argv, label="captured execution provenance",
+        artifact_dir=str(tmp_path / "artifacts"), work_dir=str(tmp_path),
+        budgets={"wall_clock_minutes": 1, "no_progress_minutes": 1},
+    )
+    run_dir = Path(initial["run_dir"])
+    consumed_bytes = (run_dir / "command.json").read_bytes()
+    consumed = json.loads(consumed_bytes)
+    deadline = time.monotonic() + 15
+    while not marker.exists() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert marker.exists()
+    altered = {**consumed, "command": [sys.executable, "-c", "print('replacement')"]}
+    (run_dir / "command.json").write_text(json.dumps(altered))
+    terminal_state = _wait_for(run_dir, {"success", "failure", "error"})
+    assert terminal_state["status"] == "success"
+    terminal = json.loads((run_dir / "terminal-receipt.json").read_text())
+    registered = next(row for row in read_registry(root)["runs"] if row["id"] == initial["id"])
+    expected_anchor = {"ref": str(run_dir / "command.json"), "sha256": hashlib.sha256(consumed_bytes).hexdigest()}
+    for record in (terminal_state, terminal, registered):
+        assert record["execution_command"] == expected_anchor
+        assert record["execution_inputs"] == consumed
+        assert record["executed_command"] == argv
+    assert (run_dir / "output.log").read_text() == "actual\n"
+
+
+def test_legacy_terminal_recovery_does_not_invent_execution_acceptance(tmp_path: Path) -> None:
+    from genomes_agentic_os.long_run import _terminal
+    run_dir = tmp_path / "legacy"
+    run_dir.mkdir()
+    command = {"id": "legacy", "kind": "test", "label": "legacy", "created_at": "2026-07-01T00:00:00Z",
+               "checkpoint_strategy": "restart-from-command-receipt", "command_display": "legacy command"}
+    (run_dir / "state.json").write_text(json.dumps({"schema": "agentic-os-long-running-state/v1", "id": "legacy", "run_dir": str(run_dir)}))
+    _terminal(tmp_path / "os", run_dir, command, status="stale", exit_code=None, reason="legacy-stale", checks=[])
+    terminal = json.loads((run_dir / "terminal-receipt.json").read_text())
+    assert "execution_command" not in terminal and "executed_command" not in terminal
+
 def test_legacy_quiet_run_start_shape_remains_compatible(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -304,3 +347,42 @@ def test_orphan_recovery_marks_stale_and_writes_terminal_receipt(tmp_path: Path)
     receipt = json.loads((run_dir / "terminal-receipt.json").read_text(encoding="utf-8"))
     assert receipt["status"] == "stale"
     assert status_for_run(run_dir)["status"] == "stale"
+
+def test_actual_monitor_in_process_captures_inputs_before_real_child_spawn(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    import hashlib
+    import genomes_agentic_os.long_run as long_run
+    root = tmp_path / "os"
+    argv = [sys.executable, "-c", "print('actual consumed inputs')"]
+    real_popen = long_run.subprocess.Popen
+    # Isolate background launch from this monitor component test; the monitor
+    # itself still spawns and supervises the real command under coverage.
+    monkeypatch.setattr(long_run.subprocess, "Popen", lambda *args, **kwargs: SimpleNamespace(pid=99999997))
+    run = start_run(root, command=argv, label="in-process actual monitor", kind="test",
+                    artifact_dir=str(tmp_path / "artifacts"), run_id="in-process-anchor",
+                    budgets={"wall_clock_minutes": 1, "no_progress_minutes": 1, "sample_seconds": 0.1})
+    run_dir = Path(run["run_dir"])
+    payload = json.loads((run_dir / "command.json").read_text())
+    original_sha = hashlib.sha256((run_dir / "command.json").read_bytes()).hexdigest()
+    observed = []
+    def real_spawn(command, *args, **kwargs):
+        if command != argv:
+            return real_popen(command, *args, **kwargs)
+        state = json.loads((run_dir / "state.json").read_text())
+        assert state["execution_command"] == {"ref": str(run_dir / "command.json"), "sha256": original_sha}
+        assert state["execution_inputs"] == payload
+        assert state["executed_command"] == argv == command
+        observed.append(command)
+        return real_popen(command, *args, **kwargs)
+    monkeypatch.setattr(long_run.subprocess, "Popen", real_spawn)
+    assert long_run.monitor_run(run_dir) == 0
+    assert observed == [argv]
+    assert "actual consumed inputs" in (run_dir / "output.log").read_text()
+    state = json.loads((run_dir / "state.json").read_text())
+    terminal = json.loads((run_dir / "terminal-receipt.json").read_text())
+    registered = next(row for row in read_registry(root)["runs"] if row["id"] == run["id"])
+    for row in (state, terminal, registered):
+        assert row["execution_command"]["sha256"] == original_sha
+        assert row["execution_inputs"] == payload
+        assert row["executed_command"] == argv
+    assert terminal["status"] == "success" and terminal["exit_code"] == 0
