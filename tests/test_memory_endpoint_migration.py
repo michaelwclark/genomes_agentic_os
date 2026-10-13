@@ -142,13 +142,65 @@ def test_file_drift_or_unsafe_custody_refused_before_effect(root, mutation):
     if mutation == "content": path.write_bytes(TOML+b"# concurrent\n")
     elif mutation == "mode": path.chmod(0o666)
     elif mutation == "inode":
-        path.unlink(); path.write_bytes(TOML); path.chmod(0o600)
+        replacement = root / "replacement"
+        replacement.write_bytes(TOML)
+        replacement.chmod(0o600)
+        assert replacement.stat().st_ino != path.stat().st_ino
+        replacement.replace(path)
     elif mutation == "symlink":
         path.unlink(); path.symlink_to(root / CONFIG)
     else: os.link(path, root / "extra-link")
     with pytest.raises(m.MemoryEndpointMigrationError):
         m.execute_memory_endpoint(root, p, operation="apply", apply=True)
     assert (root / CONFIG).read_bytes() == TOML
+
+
+def test_canonical_emitter_resource_is_bound_before_effects(root, tmp_path, monkeypatch):
+    data, _ = m._emitter_factory()
+    factory = tmp_path / "factory"
+    hook = factory / "hooks" / "harness-emit-trace.sh"
+    hook.parent.mkdir(parents=True)
+    hook.write_bytes(data)
+    monkeypatch.setattr(m, "harness_source_dir", lambda: factory)
+    p = plan(root)
+    assert p["runtime"]["emitter_factory_sha256"] == hashlib.sha256(data).hexdigest()
+    hook.write_bytes(data + b"# concurrent package change\n")
+    with pytest.raises(m.MemoryEndpointMigrationError, match="runtime binding"):
+        m.execute_memory_endpoint(root, p, operation="apply", apply=True)
+    assert (root / CONFIG).read_bytes() == TOML
+    assert not (root / m.LOCK_NAME).exists() and not (root / m.JOURNAL_DIR).exists()
+
+
+@pytest.mark.parametrize("body", [
+    b"no endpoint declaration\n",
+    EMITTER.replace(m.OLD_ENDPOINT.encode(), m.NEW_ENDPOINT.encode()) * 2,
+    EMITTER,
+    b"#" * (m.MAX_FILE_BYTES + 1),
+])
+def test_unqualified_canonical_emitter_refused(root, tmp_path, monkeypatch, body):
+    factory = tmp_path / "factory"
+    hook = factory / "hooks" / "harness-emit-trace.sh"
+    hook.parent.mkdir(parents=True)
+    hook.write_bytes(body)
+    monkeypatch.setattr(m, "harness_source_dir", lambda: factory)
+    with pytest.raises(m.MemoryEndpointMigrationError):
+        plan(root)
+    assert not (root / m.LOCK_NAME).exists() and not (root / m.JOURNAL_DIR).exists()
+
+
+def test_missing_canonical_emitter_refused(root, tmp_path, monkeypatch):
+    monkeypatch.setattr(m, "harness_source_dir", lambda: tmp_path / "missing")
+    with pytest.raises(m.MemoryEndpointMigrationError, match="resource unavailable"):
+        plan(root)
+
+
+def test_custom_secondary_emitter_override_is_preserved(root):
+    body = EMITTER.replace(b"LOSMON_MEMORY_MCP_URL", b"CUSTOM_MEMORY_OVERRIDE")
+    (root / HOOK).write_bytes(body)
+    p = plan(root, [HOOK])
+    assert p["entries"][0]["disposition"] == "current_or_custom_fallback_preserved"
+    assert m.execute_memory_endpoint(root, p, operation="apply", apply=True)["status"] == "already_matches"
+    assert (root / HOOK).read_bytes() == body
 
 
 def test_plan_digest_runtime_root_offset_and_output_guards(root, monkeypatch):

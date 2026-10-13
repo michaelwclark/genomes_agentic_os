@@ -20,6 +20,8 @@ from importlib.metadata import version
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from .scaffold import harness_source_dir
+
 try:
     import fcntl
 except ImportError:
@@ -90,9 +92,31 @@ def _identity(info: os.stat_result) -> dict:
             "gid": info.st_gid, "mode": stat.S_IMODE(info.st_mode)}
 
 
+def _emitter_factory() -> tuple[bytes, bytes]:
+    """Read the canonical package-owned declaration, without duplicating aliases."""
+    try:
+        with (harness_source_dir() / "hooks" / "harness-emit-trace.sh").open("rb") as stream:
+            data = stream.read(MAX_FILE_BYTES + 1)
+    except OSError:
+        raise MemoryEndpointMigrationError("canonical emitter resource unavailable") from None
+    if len(data) > MAX_FILE_BYTES:
+        raise MemoryEndpointMigrationError("canonical emitter resource exceeds bounded size")
+    declarations = re.findall(rb"(?m)^MCP_URL=.*$", data)
+    if len(declarations) != 1:
+        raise MemoryEndpointMigrationError("ambiguous canonical emitter declaration")
+    declaration = declarations[0].rstrip(b"\r")
+    if (not declaration.startswith(b'MCP_URL="${GENOMES_BRAIN_MCP_URL:-${')
+            or not declaration.endswith(NEW_ENDPOINT.encode() + b'}}"')
+            or declaration.count(NEW_ENDPOINT.encode()) != 1):
+        raise MemoryEndpointMigrationError("unqualified canonical emitter endpoint")
+    return data, declaration
+
+
 def _runtime() -> dict:
+    emitter, _ = _emitter_factory()
     return {"package_version": version("genomes-agentic-os"),
-            "module_sha256": _sha(Path(__file__).read_bytes())}
+            "module_sha256": _sha(Path(__file__).read_bytes()),
+            "emitter_factory_sha256": _sha(emitter)}
 
 
 def _regular(info: os.stat_result) -> None:
@@ -264,7 +288,8 @@ def _hook_patch(data: bytes) -> tuple[int | None, str]:
     declarations = re.findall(rb"(?m)^MCP_URL=.*$", data)
     if len(declarations) != 1:
         raise MemoryEndpointMigrationError("ambiguous emitter endpoint declaration")
-    expression = b'MCP_URL="${GENOMES_BRAIN_MCP_URL:-${LOSMON_MEMORY_MCP_URL:-' + OLD_ENDPOINT.encode() + b'}}"'
+    _, declaration = _emitter_factory()
+    expression = declaration.replace(NEW_ENDPOINT.encode(), OLD_ENDPOINT.encode())
     matches = list(re.finditer(rb"(?m)^" + re.escape(expression) + rb"\r?$", data))
     if not matches:
         return None, "current_or_custom_fallback_preserved"
