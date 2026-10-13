@@ -184,6 +184,14 @@ the control plane are not published on `0.0.0.0`. Internal container traffic
 uses the private Compose network. Host firewalls and Tailscale ACLs must still
 restrict the approved hosts.
 
+Before remote recovery, verify both usable Tailscale traffic and an authenticated
+SSH connection. A device may appear online while its expired node key blocks
+traffic. Follow the existing-account key renewal, alternate-access prerequisites,
+and daily backup/cold BigMac acceptance procedure in the
+[held restoration runbook](../../docs/development/fabric-held-restoration.md).
+Keep network recovery, datastore authority, installation and writer activation
+as separate verified steps.
+
 | Port | Purpose |
 | ---: | --- |
 | 3180 | control-plane API, snapshots, metrics |

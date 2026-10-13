@@ -1,5 +1,7 @@
 # Held Fabric restoration tools
 
+Last updated: 2026-10-13
+
 Use these tools to preserve and inspect recovery evidence and to prepare an inert release candidate. Their receipts separate source validation, recovered data authority, installation, activation and customer acceptance.
 
 The tools use Python's standard library. They do not invoke the product CLI, source Env/config, query databases, invoke Docker/systemd, provision credentials, execute an archived helper or contact a provider/model. The inventory never writes files. The staging tool writes six inert files and one receipt to one new directory. Its rollback command verifies and preserves that directory; it removes nothing.
@@ -17,6 +19,23 @@ git -C rubicon-restoration-tools rev-parse HEAD
 Replace the commit placeholder with the source revision accepted by the normal development/review/release workflow. The tools revision and the recovered runtime release revision are separate identities. A clean source checkout does not prove that the installed runtime has that version.
 
 Before an administrator executes a tool, provide a trusted immutable copy and its separately reviewed SHA-256. Python's isolated mode prevents user import configuration. Do not run an unreviewed mutable user file as root or add a new elevation mechanism to overcome a denied action.
+
+## Restore the existing host connection first
+
+Run this connection check from the recovery host before attempting remote inventory or restore. Obtain the existing primary address and SSH alias from the operator's protected host configuration. Replace the placeholders below with those verified values; retain normal SSH host-key checking.
+
+~~~sh
+tailscale ping --c 1 --timeout 5s --until-direct=false <verified-primary-address>
+ssh -o BatchMode=yes -o ConnectTimeout=10 <existing-primary-alias> /usr/bin/true
+~~~
+
+A device's "online" status does not establish usable traffic. Record the time, device identity and bounded connection result in the private recovery task. An SSH timeout before authentication does not establish a password or sudo problem. Do not repeat unchanged attempts after a node-key-expired result.
+
+For an expired key, use the existing administrator account and verify the exact device in the [Tailscale Machines console](https://console.tailscale.com/admin/machines). The [supported key-expiry recovery](https://tailscale.com/docs/features/access-control/key-expiry) offers a temporary 30-minute extension. Keep the device's existing permissions and expiry policy. Reauthenticate that device through the supported flow while retaining its approved configuration. `tailscale up --force-reauth` may drop the SSH connection; establish local console or another already authorized access method before using it remotely. Do not disable expiry, widen an ACL, create a replacement device or inject credentials to make the check pass.
+
+After an actual access change, repeat the bounded connection check once. Verify the existing remote account and its available administrative authority before the protected inventory step. If that step needs a password, enter it directly in the operator's terminal. Do not put it in this runbook, a command argument, a receipt or an agent message.
+
+Keep an independently reachable copy of the recovery runbook and protected host inventory. Record the Tailscale device identity, account owner, key-expiry renewal procedure, SSH host-key verification procedure, and a tested local-console or other authorized access route. Store secret references and recovery keys in their existing protected custody outside the source repository. A network-only copy is unavailable when the network is the failed component.
 
 ## Verify the original held bundle
 
@@ -97,6 +116,16 @@ Verification also requalifies the recorded staging-parent custody and opens the 
 After accepted recovery authority, qualify the target OS/package/container prerequisites and daemon suppression, then use the separately authorized supported operational installer. Provide protected role-specific secret references through ordinary custody. Do not copy secret values into plans or receipts.
 
 AGE-224 activation holds, account-only native Claude qualification and held provider families remain independent gates. Producers/workers/replay need their current admitted authority. Validate installed package version, installed source/assets, configuration composition, service/API behavior, datastore/witness/object authority and applicable customer acceptance separately. These utilities do not satisfy those gates.
+
+## Daily backup and cold BigMac recovery acceptance
+
+The cold recovery target uses an encrypted backup every day and a manual restore within a few hours. The source runbook alone does not establish that target. The installed backup owner must record the actual daily scheduler, its executable/source pin, last successful capture, next scheduled run, repository/snapshot identity, retention policy and an independently accessible encrypted copy. Existing MongoDB or transcript backups do not prove a complete Fabric recovery set.
+
+Bind each accepted set to a consistent PostgreSQL identity and recovery point, witness authority and fencing state, required object/report hashes, runtime release/image/configuration pins and the component inventory established above. Identify required memory, queue and other host state explicitly. Retain protected credentials and backup decryption keys through separate approved custody; receipts contain references rather than their values. Do not infer completeness from copied database files or a successful scheduler exit.
+
+Before admitting BigMac, verify its host/package/container prerequisites and the exact clone, configuration and restore commands for the accepted release. Restore into a fenced candidate while preserving existing BigMac data and the original backup. Prove decryption, datastore/object reconciliation, installed package/service behavior and relevant memory routing. Confirm the old primary cannot write before granting the replacement writer authority through the normal recovery workflow.
+
+Record actual start/end times, selected snapshot, recovered revision, validation results and rollback/failback disposition. Measure recovery duration and data age against the requested target. Keep scheduling, successful encrypted capture, off-host custody, successful restore and writer activation as separate receipts. Customer readiness requires this actual drill and acceptance; source tests and a local synthetic restore are intermediate evidence.
 
 ## Focused source checks
 
