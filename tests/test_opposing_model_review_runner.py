@@ -449,6 +449,7 @@ def test_runner_request_run_id_matches_created_artifact_directory(
         "state": "OPEN",
         "headRefOid": head,
         "baseRefName": "main",
+        "baseRefTargetOid": "a" * 40,
         "statusCheckRollup": [],
     }
 
@@ -481,6 +482,7 @@ def test_runner_request_run_id_matches_created_artifact_directory(
     monkeypatch.setattr(runner, "git_repository", lambda _worktree: "acme/widgets")
     monkeypatch.setattr(runner, "stable_review_key", lambda _subject: review_key)
     monkeypatch.setattr(runner, "diff_hash", lambda *_args: "d" * 64)
+    monkeypatch.setattr(runner, "full_pr_merge_base", lambda *_args: "a" * 40)
     monkeypatch.setattr(runner, "ReviewCoordinator", FakeCoordinator)
     monkeypatch.setattr(runner.shutil, "which", lambda _name: None)
     monkeypatch.setattr(runner, "decide", lambda _run_dir: {"decision": "blocked_model_identity"})

@@ -1535,6 +1535,8 @@ def _validate_health_stage_source(
     stage: str,
     status: str,
     path: Path,
+    *,
+    post_provider_merge: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     def validate_delivery_policy(evidence_payload: Mapping[str, Any], policy_stage: str) -> None:
         if evidence_payload.get("status") != "not_required":
@@ -1582,26 +1584,97 @@ def _validate_health_stage_source(
         validate_delivery_policy(evidence, "release_propagation")
         return payload
     expected_state = _DELIVERY_STAGE_RECEIPT_STATES.get(stage)
+    deferred_develop = (
+        stage == "develop"
+        and expected_state == "local_validation"
+        and payload.get("status") == "deferred_to_ci"
+    )
     if not (
         expected_state
         and payload.get("schema") == "development-stage-evidence/v1"
         and payload.get("state") == expected_state
-        and payload.get("status") in {"verified", "passed", "completed", "not_required"}
+        and (
+            payload.get("status") in {"verified", "passed", "completed", "not_required"}
+            or deferred_develop
+        )
         and str(payload.get("summary") or "").strip()
         and str(payload.get("verified_at") or "").strip()
     ):
         raise AutoDevStateError(f"{stage} delivery receipt is malformed or not terminal")
+    if deferred_develop:
+        from .development_delivery import (
+            DevelopmentDeliveryError,
+            validate_local_validation_ci_deferral,
+        )
+
+        current = read_auto_dev_state(work_item / "autodev.json")
+        _validate_delivery_stage_task_binding(current, work_item, stage, path)
+        task_ref = current.get("delivery", {}).get("task_state_ref")
+        try:
+            validate_local_validation_ci_deferral(
+                payload, _read_json(Path(task_ref).expanduser().resolve()),
+                require_frozen=True,
+            )
+        except DevelopmentDeliveryError as exc:
+            raise AutoDevStateError(str(exc)) from exc
+    structured = payload.get("evidence")
+    if stage == "review_self" and isinstance(structured, Mapping):
+        coordination_ref = structured.get("review_coordination_receipt")
+        if coordination_ref:
+            from .development_delivery import (
+                DevelopmentDeliveryError,
+                recorded_post_provider_merge_evidence,
+                validate_policy_approved_unavailable_review,
+            )
+            from .review_coordination import (
+                ReviewCoordinationError,
+                assert_exact_head_review_receipt,
+                load_review_receipt,
+            )
+
+            coordination_path = _resolve_health_receipt(coordination_ref, work_item)
+            try:
+                if coordination_path is None:
+                    raise AutoDevStateError("review_self coordination receipt is missing")
+                coordinated = load_review_receipt(coordination_path)
+                if coordinated.get("outcome") == "unavailable":
+                    current = read_auto_dev_state(work_item / "autodev.json")
+                    _validate_delivery_stage_task_binding(current, work_item, stage, path)
+                    task_ref = current["delivery"]["task_state_ref"]
+                    task = _read_json(Path(task_ref).expanduser().resolve())
+                    assert_exact_head_review_receipt(
+                        coordination_path,
+                        head_sha=str(structured.get("subject_revision") or ""),
+                        repository=str(structured.get("repository") or ""),
+                        pull_request=str(structured.get("pull_request") or ""),
+                        policy_fingerprint=task.get("policy_fingerprint"),
+                        require_clean=False,
+                    )
+                    completion = post_provider_merge
+                    if completion is None:
+                        completion = recorded_post_provider_merge_evidence(task)
+                    validate_policy_approved_unavailable_review(
+                        coordinated, task, post_provider_merge=completion,
+                        eligibility_receipt=structured.get("unavailable_review_eligibility"),
+                    )
+            except (DevelopmentDeliveryError, ReviewCoordinationError) as exc:
+                raise AutoDevStateError(str(exc)) from exc
     validate_delivery_policy(payload, "deploy" if stage == "deploy" else stage)
     return payload
 
 
-def _health_stage_receipt_path(work_item: Path, stage: str, status: str, refs: Any) -> Path:
+def _health_stage_receipt_path(
+    work_item: Path, stage: str, status: str, refs: Any, *,
+    post_provider_merge: Mapping[str, Any] | None = None,
+) -> Path:
     if not isinstance(refs, list):
         raise AutoDevStateError("health stage receipt references must be a list")
     for ref in refs:
         resolved = _resolve_health_receipt(ref, work_item)
         if resolved is not None:
-            _validate_health_stage_source(work_item, stage, status, resolved)
+            _validate_health_stage_source(
+                work_item, stage, status, resolved, post_provider_merge=post_provider_merge,
+            )
             return resolved
     raise AutoDevStateError("health stage lacks a readable receipt")
 
@@ -2365,13 +2438,18 @@ def validate_recorded_auto_dev_health(
     return path
 
 
-def require_auto_dev_predecessors(state_file: str | Path, stage: str) -> dict[str, Any]:
+def require_auto_dev_predecessors(
+    state_file: str | Path, stage: str, *,
+    post_provider_merge: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     """Fail unless every in-scope configured predecessor is terminal."""
 
     current = read_auto_dev_state(state_file)
     name = stage.strip().lower().replace("-", "_")
     if name not in AUTO_DEV_STAGE_ORDER:
         raise AutoDevStateError(f"unknown Auto-Dev predecessor target: {name}")
+    if post_provider_merge is not None and name != "merge":
+        raise AutoDevStateError("post-provider completion evidence is restricted to Merge recording")
     stages = current.get("stages") if isinstance(current.get("stages"), Mapping) else {}
     work_item = Path(state_file).expanduser().resolve()
     if work_item.is_file():
@@ -2480,6 +2558,7 @@ def require_auto_dev_predecessors(state_file: str | Path, stage: str) -> dict[st
                     predecessor,
                     str(row.get("status") or ""),
                     row.get("receipt_refs"),
+                    post_provider_merge=post_provider_merge,
                 )
                 _validate_delivery_stage_task_binding(
                     current, work_item, predecessor, receipt_path

@@ -82,6 +82,24 @@ In particular, a completed `merged` receipt requires `merge_sha`, provider-read
 `pull_request`, and `readback_verified: true`. See the Auto-Dev Merge template;
 Health later reuses that provider, PR reference, and merge revision exactly.
 
+If a genuine frozen `continue_with_receipt` / `cli_timeout` review stopped at
+`pending_checks`, qualify later green CI without another model attempt:
+
+```bash
+agentic-os develop review-eligibility <state.json> \
+  --coordination-receipt <original-shared-coordination.json> \
+  --output-dir <work-item>/artifacts/review-eligibility --json
+```
+
+This writes only a separate immutable `{ref, sha256}` eligibility artifact.
+Supply that descriptor as `evidence.unavailable_review_eligibility` with the
+original coordination reference in Ready evidence. Frozen policy, family,
+runner hashes, source bytes, native head/target, every observed check and fully
+paginated threads must agree; consumers read current provider gates again.
+The original result remains unavailable and its budget stays unchanged.
+See `docs/45-auto-dev-review-coordination.md` for expiry and completed-merge
+consumption. This command neither records a stage nor grants merge authority.
+
 Manual named stage skills are `/auto-dev-readiness`, `/auto-dev-develop`,
 `/auto-dev-pr-create`, `/auto-dev-review-self`, `/auto-dev-merge`,
 `/auto-dev-deploy`, and `/auto-dev-closeout`. Develop delegates to

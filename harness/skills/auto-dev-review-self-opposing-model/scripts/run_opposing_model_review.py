@@ -18,6 +18,7 @@ import re
 import shutil
 import subprocess
 import sys
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -43,6 +44,9 @@ from genomes_agentic_os.development_delivery import (  # noqa: E402
     DevelopmentDeliveryError,
     load_development_profile,
     select_development_repository,
+    selected_review_profile_authority,
+    verified_review_family_member,
+    historical_review_seed_provenance,
 )
 from genomes_agentic_os.review_verdicts import reconcile_json_verdict  # noqa: E402
 
@@ -368,7 +372,10 @@ def prior_request(work_item: Path, ticket: str) -> dict[str, Any] | None:
     for path in requests:
         value = json.loads(path.read_text(encoding="utf-8"))
         if str(value.get("work_item_id", "")).upper() == ticket.upper():
-            return value
+            return {**value, "_native_source": {
+                "kind": "prior_request", "ref": str(path.resolve()),
+                "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            }}
     return None
 
 
@@ -403,11 +410,12 @@ def initial_request(work_item: Path, ticket: str, worktree: Path) -> dict[str, A
     if readback["state"] != "OPEN":
         raise ReviewError("PR Create provider readback is not OPEN")
     subject_revision = str(manifest.get("subject_revision") or "")
-    if subject_revision and subject_revision != str(readback["head_sha"]):
+    delivery = manifest.get("delivery") or {}
+    historical_subject = bool(subject_revision and subject_revision != str(readback["head_sha"]))
+    if historical_subject and not delivery.get("task_state_ref"):
         raise ReviewError(
             "PR Create provider readback head does not match the packet subject revision"
         )
-    delivery = manifest.get("delivery") or {}
     supplied_policy_fingerprint = str(delivery.get("policy_fingerprint") or "")
     if len(supplied_policy_fingerprint) != 64:
         raise ReviewError("packet delivery policy fingerprint is missing or invalid")
@@ -433,16 +441,52 @@ def initial_request(work_item: Path, ticket: str, worktree: Path) -> dict[str, A
         "policy_fingerprint": supplied_policy_fingerprint,
         "request_origin": "auto-dev-pr-create-provider-readback",
         "provider_readback_ref": str(readback_path.relative_to(work_item)),
+        "_native_source": {
+            "kind": "initial_pr_create", "ref": str(readback_path.resolve()),
+            "sha256": hashlib.sha256(readback_path.read_bytes()).hexdigest(),
+            "historical_subject": historical_subject,
+        },
     }
 
 
 def provider_pr(pr_number: int, worktree: Path) -> dict[str, Any]:
-    completed = run(["gh", "pr", "view", str(pr_number), "--json", "number,url,state,headRefOid,baseRefName,baseRefOid,statusCheckRollup"], cwd=worktree)
+    completed = run(["gh", "pr", "view", str(pr_number), "--json", "number,url,state,headRefOid,headRefName,baseRefName,baseRefOid,statusCheckRollup"], cwd=worktree)
     if completed.returncode:
         raise ReviewError("GitHub PR readback failed")
     value = json.loads(completed.stdout)
     if value.get("state") != "OPEN":
         raise ReviewError(f"PR #{pr_number} is not open")
+    owner, repository = git_repository(worktree).split("/", 1)
+    query = """
+query($owner:String!,$repository:String!,$number:Int!){
+  repository(owner:$owner,name:$repository){
+    pullRequest(number:$number){
+      number url state headRefOid headRefName baseRefName baseRefOid
+      baseRef{name target{oid}}
+    }
+  }
+}
+"""
+    current = run([
+        "gh", "api", "graphql", "-f", "query=" + query,
+        "-F", "owner=" + owner, "-F", "repository=" + repository,
+        "-F", "number=" + str(pr_number),
+    ], cwd=worktree)
+    if current.returncode:
+        raise ReviewError("GitHub current target readback failed")
+    observed = json.loads(current.stdout)["data"]["repository"]["pullRequest"]
+    branch = observed.get("baseRef") or {}
+    target = (branch.get("target") or {}).get("oid")
+    if not (
+        all(observed.get(key) == value.get(key) for key in (
+            "number", "url", "state", "headRefOid", "headRefName", "baseRefName", "baseRefOid",
+        ))
+        and branch.get("name") == value["baseRefName"]
+        and isinstance(target, str) and re.fullmatch(r"[a-fA-F0-9]{40}", target)
+    ):
+        raise ReviewError("GitHub current target readback does not bind the PR")
+    value["baseRefTargetOid"] = target
+    value["current_target_readback"] = observed
     return value
 
 
@@ -475,19 +519,29 @@ def policy_fingerprint(source: dict[str, Any]) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
-def review_unavailable_policy(source: dict[str, Any]) -> str:
+def review_unavailable_policy(
+    source: dict[str, Any], selected_profile: dict[str, Any] | None = None,
+) -> str:
     """Read the routed project fallback policy without silently weakening it."""
 
     candidates: list[Any] = [source.get("review_unavailable_policy")]
+    opposing = ((selected_profile or {}).get("review") or {}).get("opposing_harness") or {}
+    if not isinstance(opposing, dict):
+        raise ReviewError("review.opposing_harness must be an object")
+    candidates.append(opposing.get("unavailable_policy"))
     for key in ("review_policy", "effective_policy"):
         value = source.get(key)
         if isinstance(value, dict):
             candidates.extend(
                 [value.get("review_unavailable_policy"), value.get("unavailable_policy")]
             )
-    for candidate in candidates:
-        if candidate in {"block", "continue_with_receipt"}:
-            return str(candidate)
+    supplied = [candidate for candidate in candidates if candidate not in (None, "")]
+    if any(not isinstance(candidate, str) or candidate not in {"block", "continue_with_receipt"} for candidate in supplied):
+        raise ReviewError("review_unavailable_policy must be block or continue_with_receipt")
+    if len(set(supplied)) > 1:
+        raise ReviewError("contradictory review_unavailable_policy authority")
+    if supplied:
+        return str(supplied[0])
     # The routed Development Delivery policy configures a receipt-backed
     # fallback by default.  Unknown explicit values fail closed rather than
     # being treated as permission to continue.
@@ -496,11 +550,36 @@ def review_unavailable_policy(source: dict[str, Any]) -> str:
     return "continue_with_receipt"
 
 
+def review_model(
+    selected_profile: dict[str, Any], source: dict[str, Any] | None = None,
+) -> str:
+    opposing = (selected_profile.get("review") or {}).get("opposing_harness") or {}
+    if not isinstance(opposing, dict):
+        raise ReviewError("review.opposing_harness must be an object")
+    if opposing.get("transport", "claude_cli") != "claude_cli":
+        raise ReviewError("opposing reviewer transport must be claude_cli")
+    for authority in (source or {}, (source or {}).get("review_policy") or {}, (source or {}).get("effective_policy") or {}):
+        if isinstance(authority, dict) and authority.get("reviewer_transport") not in (None, "", "claude_cli"):
+            raise ReviewError("contradictory opposing reviewer transport authority")
+    model = opposing.get("model", "opus")
+    if not isinstance(model, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", model):
+        raise ReviewError("opposing reviewer model must be a configured model identifier")
+    return model
+
+
 def diff_hash(worktree: Path, base: str, head: str) -> str:
     completed = run(["git", "diff", "--binary", f"{base}..{head}"], cwd=worktree)
     if completed.returncode:
         raise ReviewError("review diff could not be read")
     return hashlib.sha256(completed.stdout.encode()).hexdigest()
+
+
+def full_pr_merge_base(worktree: Path, target: str, head: str) -> str:
+    completed = run(["git", "merge-base", target, head], cwd=worktree)
+    result = completed.stdout.strip()
+    if completed.returncode or not re.fullmatch(r"[a-fA-F0-9]{40}", result):
+        raise ReviewError("current target and head need a verifiable local common ancestor")
+    return result
 
 
 def validated_delta_hash(worktree: Path, parent_head: str, head: str) -> str:
@@ -533,7 +612,7 @@ def render_prompt(request: dict[str, Any], provider: dict[str, Any]) -> str:
     values = {
         "WORK_ITEM_ID": str(request["work_item_id"]), "PROJECT": "Auto-Dev",
         "TRACKER_ID": str(request["work_item_id"]), "TRACKER_URL": "provider-read ticket context",
-        "BUILDER_FAMILY": "gpt", "REVIEWER_FAMILY": "opus", "MODE": str(request["mode"]),
+        "BUILDER_FAMILY": "gpt", "REVIEWER_FAMILY": str(request.get("selected_reviewer_model", "opus")), "MODE": str(request["mode"]),
         "PR_URL": str(provider["url"]), "BASE_SHA": str(request["base_sha"]), "HEAD_SHA": str(request["head_sha"]),
         "SPEC": str(request.get("spec_source", "provider ticket")),
         "ACCEPTANCE_CRITERIA": str(request.get("spec_source", "provider ticket")),
@@ -543,7 +622,7 @@ def render_prompt(request: dict[str, Any], provider: dict[str, Any]) -> str:
         "DIFF_OR_FILE_LIST": (
             f"Review only git diff {request['delta_base_sha']}..{request['head_sha']}."
             if request.get("review_mode") == "delta"
-            else "Read the exact local PR diff."
+            else f"Review only git diff {request['diff_base_sha']}..{request['head_sha']}; the diff base is the verified common ancestor of the current target and head."
         ),
         "TOKENS": "Do not expose secrets, local paths, private links, or internal operational detail.",
     }
@@ -558,8 +637,9 @@ def receipt_markdown(
     status: str,
     unavailable_policy: str,
     failure: str | None = None,
+    model: str = "opus",
 ) -> str:
-    lines = ["# Model Receipt", "", f"- Review run: `{run_id}`", "- Reviewer model: `opus`", "- Reviewer family: `opus`", "- Transport: `claude_cli`", "- Authentication: `cli_native`", f"- Reviewer status: `{status}`", f"- Unavailable policy: `{unavailable_policy}`"]
+    lines = ["# Model Receipt", "", f"- Review run: `{run_id}`", f"- Reviewer model: `{model}`", "- Reviewer family: `claude`", "- Transport: `claude_cli`", "- Authentication: `cli_native`", f"- Reviewer status: `{status}`", f"- Unavailable policy: `{unavailable_policy}`"]
     if failure:
         lines.append(f"- Failure code: `{failure}`")
     return "\n".join(lines) + "\n"
@@ -611,12 +691,11 @@ def main() -> int:
         source = prior_request(work_item, args.ticket) or initial_request(
             work_item, args.ticket, worktree
         )
-        unavailable_policy = review_unavailable_policy(source)
         head = git_head(worktree)
         base = str(source["base_sha"])
         policy = policy_fingerprint(source)
         domain, project = project_identity(work_item, os_root)
-        profile, _profile_path = load_development_profile(os_root, domain, project)
+        profile, profile_path = load_development_profile(os_root, domain, project)
         try:
             selected_profile = validate_review_repository_selection(
                 profile, args.repository
@@ -647,14 +726,68 @@ def main() -> int:
                 )
             )
             return 2
+        selected_review_authority = None
+        source_family_authority = None
+        manifest_path = work_item / "autodev.json"
+        if manifest_path.is_file():
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            task_ref = (manifest.get("delivery") or {}).get("task_state_ref")
+            if task_ref:
+                task = json.loads(Path(task_ref).expanduser().read_text(encoding="utf-8"))
+                if task.get("work_item") != str(work_item) or task.get("ticket", "").upper() != args.ticket.upper():
+                    raise ReviewError("review authority task does not bind its work item")
+                selected_review_authority = selected_review_profile_authority(
+                    task, selected_profile, profile_path, args.repository,
+                )
+                repository = git_repository(worktree)
+                if "git:github.com/" + repository != task["repository"]["id"]:
+                    raise ReviewError("review worktree repository does not bind the selected task")
+                branch_read = run(["git", "branch", "--show-current"], cwd=worktree)
+                source_branch = branch_read.stdout.strip()
+                if branch_read.returncode or not source_branch:
+                    raise ReviewError("review worktree branch is not verifiable")
+                source_family_authority = verified_review_family_member(
+                    task, head_sha=head, source_branch=source_branch,
+                )
+                if source.get("head_sha") != head or (source.get("_native_source") or {}).get("historical_subject"):
+                    provenance = historical_review_seed_provenance(source, task, source_family_authority)
+                    obsolete = {"_native_source", "review_policy", "effective_policy", "review_unavailable_policy",
+                                "effective_policy_context", "family_receipt_ref", "validation_evidence"}
+                    source = {key: value for key, value in source.items() if key not in obsolete}
+                    source.update({
+                        "source_seed_provenance": provenance,
+                        "policy_fingerprint": selected_review_authority["task_policy_fingerprint"],
+                        "reviewer_selection_source": "verified_current_task_profile_and_family",
+                    })
+                    policy = source["policy_fingerprint"]
+                if policy != selected_review_authority["task_policy_fingerprint"]:
+                    raise ReviewError("review request policy does not bind its immutable task authority")
+                source = {
+                    **source,
+                    "source_seed_pr_number": source["pr_number"],
+                    "source_seed_base_sha": source["base_sha"],
+                    "pr_number": source_family_authority["number"],
+                    "target_branch": source_family_authority["base_branch"],
+                    "head_sha": head, "source_worktree_branch": source_branch,
+                    "request_origin": "verified_current_pr_family",
+                }
+        unavailable_policy = review_unavailable_policy(source, selected_profile)
+        model = review_model(selected_profile, source)
+        source = {key: value for key, value in source.items() if key != "_native_source"}
         pr_number = int(source["pr_number"])
         provider = provider_pr(pr_number, worktree)
         if provider["headRefOid"] != head:
             raise ReviewError(f"exact-head mismatch: provider={provider['headRefOid']} worktree={head}")
-        if provider.get("baseRefOid") and provider["baseRefOid"] != base:
-            raise ReviewError(
-                f"exact-base mismatch: provider={provider['baseRefOid']} request={base}"
-            )
+        if source_family_authority is not None and not (
+            provider["baseRefName"] == source_family_authority["base_branch"]
+            and provider.get("headRefName") == source_family_authority["source_branch"]
+            and provider["url"] == source_family_authority["url"]
+        ):
+            raise ReviewError("provider PR does not match the selected immutable family member")
+        source_request_base = base
+        base = str(provider.get("baseRefTargetOid") or "")
+        if not re.fullmatch(r"[a-fA-F0-9]{40}", base):
+            raise ReviewError("current target branch SHA is not verified")
         repository = git_repository(worktree)
         purpose, _scope = normalize_review_purpose(args.purpose, args.scope)
         subject = ReviewSubject(
@@ -705,7 +838,7 @@ def main() -> int:
         # required deterministic identity, so use it directly rather than a
         # second display-oriented identifier.
         run_id = run_dir.name
-        review_diff_base = base
+        review_diff_base = full_pr_merge_base(worktree, base, head)
         review_diff_hash: str | None = None
         continuation: dict[str, object] | None = None
         if args.mode == "delta":
@@ -719,9 +852,20 @@ def main() -> int:
             review_diff_hash = validated_delta_hash(worktree, review_diff_base, head)
 
         def execute_review() -> dict[str, Any]:
+            nonlocal run_dir, run_id
+            # Unavailable attempts keep their coordinator key and budget, but
+            # each task-bound native proof owns immutable artifact paths.
+            if selected_review_authority is not None:
+                run_dir = run_dir / ("attempt-" + uuid.uuid4().hex)
+                run_id = run_dir.name
             failure: str | None = None
             request = {
                 **source,
+                "selected_reviewer_model": model,
+                "reviewer_model": model,
+                "review_unavailable_policy": unavailable_policy,
+                "selected_review_authority": selected_review_authority,
+                "source_family_authority": source_family_authority,
                 "run_id": run_id,
                 "artifact_dir": str(run_dir.relative_to(work_item)),
                 "review_key": review_key,
@@ -730,6 +874,9 @@ def main() -> int:
                 "delta_base_sha": review_diff_base,
                 "head_sha": head,
                 "base_sha": base,
+                "source_request_base_sha": source_request_base,
+                "provider_historical_base_sha": provider.get("baseRefOid"),
+                "diff_base_sha": review_diff_base,
                 "diff_hash": review_diff_hash
                 or diff_hash(worktree, review_diff_base, head),
                 "reviewer_transport": "claude_cli",
@@ -759,6 +906,7 @@ def main() -> int:
                 "user_decision_blocker": False,
             }
             write_json(run_dir / "review-request.json", request)
+            write_json(run_dir / "provider-readback-before.json", provider)
             write_json(run_dir / "validation-plan.json", plan)
             (run_dir / "review-ledger.jsonl").write_text("", encoding="utf-8")
             prompt = render_prompt(request, provider)
@@ -768,6 +916,11 @@ def main() -> int:
             parsed_outcome = "findings"
             verdict_structured = False
             findings: list[dict[str, Any]] = []
+            runtime = {
+                "schema": "opposing-review-runtime/v1", "transport": "claude_cli",
+                "model": model, "started_at": now(), "timeout_seconds": args.timeout_seconds,
+                "cli_discovered": bool(claude),
+            }
             if not claude:
                 failure = "cli_not_found"
                 plan["reviewer_status"] = "unavailable"
@@ -781,7 +934,7 @@ def main() -> int:
                             claude,
                             "-p",
                             "--model",
-                            "opus",
+                            model,
                             "--safe-mode",
                             "--permission-mode",
                             "dontAsk",
@@ -796,6 +949,11 @@ def main() -> int:
                         timeout=args.timeout_seconds,
                         env=env,
                     )
+                    runtime.update({
+                        "returncode": completed.returncode,
+                        "stdout_sha256": hashlib.sha256(completed.stdout.encode()).hexdigest(),
+                        "stderr_sha256": hashlib.sha256(completed.stderr.encode()).hexdigest(),
+                    })
                     if completed.returncode:
                         failure = "cli_runtime_failed"
                     elif not completed.stdout.strip():
@@ -825,12 +983,19 @@ def main() -> int:
                     failure = "cli_timeout"
                 if failure:
                     plan["reviewer_status"] = "runtime_failure"
+            runtime.update({"failure_code": failure, "completed_at": now()})
+            write_json(run_dir / "reviewer-runtime-receipt.json", runtime)
 
             # The paid review is not terminal until provider and worktree still
             # prove the same exact head after the model returns.
             post_provider = provider_pr(pr_number, worktree)
             post_head = git_head(worktree)
-            if post_provider["headRefOid"] != head or post_head != head:
+            write_json(run_dir / "provider-readback-after.json", post_provider)
+            if (
+                post_provider["headRefOid"] != head or post_head != head
+                or post_provider.get("baseRefTargetOid") != base
+                or post_provider.get("headRefName") != provider.get("headRefName")
+            ):
                 failure = "head_changed_after_review"
                 plan["reviewer_status"] = "runtime_failure"
             write_json(run_dir / "validation-plan.json", plan)
@@ -840,6 +1005,7 @@ def main() -> int:
                     plan["reviewer_status"],
                     unavailable_policy,
                     failure,
+                    model,
                 ),
                 encoding="utf-8",
             )
@@ -862,6 +1028,27 @@ def main() -> int:
                 "head_sha": head,
                 "review_run_dir": str(run_dir),
                 "reviewer_status": plan["reviewer_status"],
+                "review_unavailable_policy": unavailable_policy,
+                "selected_reviewer_model": model,
+                "deterministic_review_downgraded": (
+                    plan["reviewer_status"] in {"unavailable", "runtime_failure"}
+                    and unavailable_policy == "continue_with_receipt"
+                    and failure != "head_changed_after_review"
+                    and decision["decision"].startswith("ready_")
+                    and decision.get("review_downgraded") is True
+                    and selected_review_authority is not None
+                    and not findings
+                ),
+                "unavailable_review_artifacts": {
+                    name: hashlib.sha256((run_dir / name).read_bytes()).hexdigest()
+                    for name in (
+                        "review-request.json", "validation-plan.json", "model-receipt.md",
+                        "readiness-decision.json", "review-ledger.jsonl",
+                        "provider-readback-before.json", "provider-readback-after.json",
+                        "reviewer-runtime-receipt.json", "reviewer-response.md",
+                    )
+                    if (run_dir / name).is_file()
+                },
                 "failure_code": failure,
                 "decision": decision["decision"],
                 "response": response,
@@ -901,7 +1088,7 @@ def main() -> int:
         write_json(run_dir / "opposing-model-review-receipt.json", receipt)
         print(json.dumps(receipt, indent=2))
         return 0 if result.receipt["outcome"] == "clean" else 2
-    except (ReviewError, ReviewCoordinationError, KeyError) as exc:
+    except (ReviewError, ReviewCoordinationError, DevelopmentDeliveryError, KeyError) as exc:
         print(json.dumps({"ok": False, "error": str(exc)}, indent=2))
         return 2
 

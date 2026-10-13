@@ -109,6 +109,16 @@ def handle_heartbeat(args: argparse.Namespace) -> int:
     return 0
 
 
+def handle_review_eligibility(args: argparse.Namespace) -> int:
+    from ..review_eligibility import produce_unavailable_review_eligibility
+
+    result = produce_unavailable_review_eligibility(
+        args.state_file, args.coordination_receipt, args.output_dir,
+    )
+    _print(result, json_output=args.json)
+    return 0
+
+
 def handle_policy(args: argparse.Namespace) -> int:
     result = resolve_development_policy(
         args.root,
@@ -222,6 +232,16 @@ def register(subparsers) -> None:
     recover.add_argument("--idempotency-key", required=True)
     _common_output(recover)
     recover.set_defaults(handler=handle_recover)
+
+    eligibility = sub.add_parser(
+        "review-eligibility",
+        help="Qualify late CI for an immutable timed-out review; no model or lifecycle writes.",
+    )
+    eligibility.add_argument("state_file")
+    eligibility.add_argument("--coordination-receipt", required=True)
+    eligibility.add_argument("--output-dir", required=True)
+    _common_output(eligibility)
+    eligibility.set_defaults(handler=handle_review_eligibility)
 
     heartbeat = sub.add_parser("heartbeat", help="Renew a non-terminal task worker lease.")
     heartbeat.add_argument("state_file")
