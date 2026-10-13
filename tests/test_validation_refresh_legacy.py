@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import py_compile
 import shlex
+import shutil
 import time
 
 import pytest
@@ -35,10 +37,10 @@ def test_genuinely_recorded_legacy_shape_refreshes_without_rewriting_history(tmp
 
 
 def test_only_configured_registered_item_artifacts_are_admitted(tmp_path: Path) -> None:
-    fixture = _fixture(tmp_path)
+    fixture = _fixture(tmp_path, registered_metadata=True)
     ticket = fixture["task"].read()["ticket"]
     artifact = fixture["worktree"] / ".features" / ticket / "checks" / "watch-state.json"
-    artifact.parent.mkdir(parents=True)
+    artifact.parent.mkdir(parents=True, exist_ok=True)
     artifact.write_text('{"status":"success"}\n')
     original = artifact.read_bytes()
 
@@ -85,7 +87,7 @@ def test_real_green_alternate_pytest_execution_cannot_replace_frozen_tests(tmp_p
     }
     _write(fixture["request"], request)
     before = fixture["task"].path.read_bytes()
-    with pytest.raises(delivery.DevelopmentDeliveryError, match="command/terminal"):
+    with pytest.raises(delivery.DevelopmentDeliveryError):
         _refresh(fixture)
     assert fixture["task"].path.read_bytes() == before
 
@@ -108,6 +110,121 @@ def test_same_head_deferral_labels_without_bound_pass_and_failure_cannot_create_
             receipts={"release_propagation": _family(fixture)}, idempotency_prefix="unproved-defer")
     assert fixture["task"].path.read_bytes() == before
     assert not (fixture["task"].path.parent / "stages/release-propagation.json").exists()
+
+
+def _actual_replacement_proof(fixture: dict, *, checksum: str | None = None) -> dict:
+    current = fixture["task"].read()
+    old = json.loads(fixture["request"].read_text())["evidence"]["validation_runs"][0]
+    command_receipt = json.loads(Path(old["command_receipt"]["path"]).read_text())
+    state = start_run(fixture["root"],
+        command=["env", "REVIEW_POLICY_FINGERPRINT=" + current["policy_fingerprint"], *shlex.split(fixture["command"])],
+        label="actual adversarial code or checksum replacement",
+        artifact_dir=str(fixture["packet"] / "artifacts/command-runs"),
+        work_dir=str(fixture["worktree"]), expected_git_identity=command_receipt["expected_git_identity"],
+        preflight_checks=[checksum] if checksum else [], post_run_checks=[checksum] if checksum else [],
+        budgets={"wall_clock_minutes": 0.5, "no_progress_minutes": 0.33})
+    run = Path(state["run_dir"])
+    terminal = run / "terminal-receipt.json"
+    deadline = time.monotonic() + 15
+    while not terminal.is_file() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert terminal.is_file()
+    payload = json.loads(terminal.read_text())
+    assert payload["status"] == "success" and payload["exit_code"] == 0
+    proof = {"command": fixture["command"], "terminal": _bound(terminal),
+             "command_receipt": _bound(run / "command.json")}
+    if checksum:
+        proof["preflight"] = _bound(run / "preflight.json")
+    return {"proof": proof, "run": run, "terminal": payload}
+
+
+@pytest.mark.parametrize("replacement", ["sourceless_bytecode", "ignored_venv_launcher"])
+def test_real_clean_git_green_ignored_code_is_never_validation_authority(tmp_path: Path, replacement: str) -> None:
+    fixture = _fixture(tmp_path, annotated=True)
+    marker = "ignored alternate code ran zero configured tests"
+    if replacement == "sourceless_bytecode":
+        source = fixture["packet"] / "artifacts/alternate_pytest.py"
+        source.write_text("print(" + repr(marker) + ")\n")
+        py_compile.compile(str(source), cfile=str(fixture["worktree"] / "pytest.pyc"), doraise=True)
+    else:
+        runtime = fixture["worktree"] / ".venv"
+        assert runtime.is_symlink()
+        runtime.unlink()  # Remove only the disposable symlink, never its shared target.
+        executable = runtime / "bin/python"
+        executable.parent.mkdir(parents=True)
+        executable.write_text("#!/bin/sh\nprintf '%s\\n' " + shlex.quote(marker) + "\n")
+        executable.chmod(0o755)
+    actual = _actual_replacement_proof(fixture)
+    assert marker in (actual["run"] / "output.log").read_text()
+    assert actual["terminal"]["git_identity_pre"]["clean"] == "true"
+    assert actual["terminal"]["git_identity_post"]["clean"] == "true"
+    request = json.loads(fixture["request"].read_text())
+    request["verified_at"] = _now()
+    request["evidence"]["validation_runs"] = [actual["proof"]]
+    request["evidence"]["self_asserted_runtime"] = {"sha256": _bound(actual["run"] / "command.json")["sha256"], "trusted": True}
+    _write(fixture["request"], request)
+    before = fixture["task"].path.read_bytes()
+    with pytest.raises(delivery.DevelopmentDeliveryError):
+        _refresh(fixture)
+    assert fixture["task"].path.read_bytes() == before
+
+
+def test_frozen_base_diagnostic_requires_actual_exact_checksum_execution(tmp_path: Path) -> None:
+    fixture = _fixture(tmp_path)
+    proof = json.loads(fixture["request"].read_text())["evidence"]["validation_runs"][0]
+    command = json.loads(Path(proof["command_receipt"]["path"]).read_text())
+    assert command["preflight_checks"] == command["post_run_checks"]
+    assert command["preflight_checks"][0].startswith("/usr/bin/shasum -a 256 ")
+    assert _refresh(fixture)["task"]["validation_head_sha"] == fixture["head"]
+
+
+def test_a_genuine_green_checksum_substring_is_not_interpreter_provenance(tmp_path: Path) -> None:
+    fixture = _fixture(tmp_path)
+    profile = delivery.frozen_selected_task_profile(fixture["task"].read())
+    digest = profile["validation"]["isolated_python_interpreters"][fixture["command"]]["sha256"]
+    actual = _actual_replacement_proof(fixture, checksum="/usr/bin/printf '%s\\n' " + digest)
+    request = json.loads(fixture["request"].read_text())
+    request["verified_at"] = _now()
+    request["evidence"]["validation_runs"] = [actual["proof"]]
+    _write(fixture["request"], request)
+    before = fixture["task"].path.read_bytes()
+    with pytest.raises(delivery.DevelopmentDeliveryError, match="exact executed pre/post checksum"):
+        _refresh(fixture)
+    assert fixture["task"].path.read_bytes() == before
+
+
+def test_a_caller_hash_cannot_add_missing_frozen_interpreter_authority(tmp_path: Path) -> None:
+    fixture = _fixture(tmp_path, declare_interpreter=False)
+    request = json.loads(fixture["request"].read_text())
+    interpreter = Path(shlex.split(fixture["command"])[0])
+    request["evidence"]["isolated_python_interpreters"] = {
+        fixture["command"]: {"sha256": _bound(interpreter)["sha256"], "authority": "frozen_selected_profile"}
+    }
+    _write(fixture["request"], request)
+    before = fixture["task"].path.read_bytes()
+    with pytest.raises(delivery.DevelopmentDeliveryError, match="unsafe Python execution"):
+        _refresh(fixture)
+    assert fixture["task"].path.read_bytes() == before
+
+
+@pytest.mark.skipif(shutil.which("npx") is None, reason="actual Node tool unavailable")
+def test_actual_green_npx_without_a_passed_frozen_install_cannot_attest_dependencies(tmp_path: Path) -> None:
+    fixture = _fixture(tmp_path, npm_without_ci=True)
+    before = fixture["task"].path.read_bytes()
+    with pytest.raises(delivery.DevelopmentDeliveryError, match="prior actual passed frozen npm ci"):
+        _refresh(fixture)
+    assert fixture["task"].path.read_bytes() == before
+
+
+def test_missing_executed_preflight_binding_is_not_replaced_by_a_current_hash(tmp_path: Path) -> None:
+    fixture = _fixture(tmp_path)
+    request = json.loads(fixture["request"].read_text())
+    request["evidence"]["validation_runs"][0].pop("preflight")
+    _write(fixture["request"], request)
+    before = fixture["task"].path.read_bytes()
+    with pytest.raises(delivery.DevelopmentDeliveryError, match="path and SHA"):
+        _refresh(fixture)
+    assert fixture["task"].path.read_bytes() == before
 
 
 @pytest.mark.parametrize("corruption", [

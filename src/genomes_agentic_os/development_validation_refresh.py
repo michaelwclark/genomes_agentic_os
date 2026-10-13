@@ -6,6 +6,7 @@ import hashlib
 import importlib.util
 import json
 from pathlib import Path
+import shlex
 import subprocess
 from typing import Any, Mapping
 
@@ -107,6 +108,16 @@ def _repository_matches(value: Any, current: Mapping[str, Any]) -> bool:
 
 def _clean_worktree(current: Mapping[str, Any], project: Path, worktree: Path) -> bool:
     """Exclude only configured metadata in the registered task's artifact namespace."""
+    ignored = _git(worktree, "ls-files", "--others", "--ignored", "--exclude-standard", "-z").split("\0")
+    for item in filter(None, ignored):
+        path = Path(item)
+        # npm dependencies are rebuilt by the actual frozen npm-ci layer.
+        # No Python recovery may import them or any working-tree/venv modules.
+        if path.parts[0] != "node_modules" and (path.parts[0] == ".venv"
+                or path.name in {".npmrc", ".coveragerc", "pyvenv.cfg"}
+                or path.suffix.lower() in {".py", ".pyc", ".pyo", ".pth", ".pyd", ".so", ".dylib",
+                                          ".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx", ".sh", ".exe"}):
+            return False
     entries = _git(worktree, "status", "--porcelain=v1", "--untracked-files=all", "-z").split("\0")
     entries = [entry for entry in entries if entry]
     if not entries:
@@ -382,19 +393,24 @@ def pr_create_validation_authority(state_file: str | Path, family: Mapping[str, 
 def _commands(evidence: Mapping[str, Any], current: Mapping[str, Any], packet: Path,
               worktree: Path, profile: Mapping[str, Any], head: str,
               unavailable: Mapping[str, Any] | None = None) -> None:
-    from .validation_command_authority import execution_argv, matches_command
+    from .validation_command_authority import execution_argv, matches_command, runtime_provenance_check
+    from .development_delivery import project_root
     commands = profile.get("validation", {}).get("commands")
     runs = evidence.get("validation_runs")
     if (not isinstance(commands, list) or not commands or not all(isinstance(c, str) and c for c in commands)
             or not isinstance(runs, list) or not all(isinstance(r, Mapping) for r in runs)
             or [r.get("command") for r in runs] != commands):
         _error("fresh validation requires complete ordered frozen-command proof")
+    if not _clean_worktree(current, project_root(current["os_root"], current["domain"], current["project"]), worktree):
+        _error("frozen execution requires the registered tracked/source cleanliness guard")
     identity = {"repository": _git(worktree, "config", "--get", "remote.origin.url"),
-                "branch": current["worktree"]["branch"], "head": head, "clean": "true"}
+                "branch": current["worktree"]["branch"], "head": head,
+                "clean": "false" if _git(worktree, "status", "--porcelain") else "true"}
     expected_identity = {**identity, "worktree": str(worktree)}
     verified = _timestamp(evidence.get("verified_at"))
     passed = 0
     deferred = 0
+    npm_installed = False
     for run in runs:
         terminal_path, terminal, _ = _bound(run.get("terminal"), packet)
         command_path, command, _ = _bound(run.get("command_receipt"), packet)
@@ -422,6 +438,35 @@ def _commands(evidence: Mapping[str, Any], current: Mapping[str, Any], packet: P
                 or terminal.get("expected_git_identity") != expected_identity
                 or command.get("expected_git_identity") != expected_identity):
             _error("fresh validation command/terminal identity is incomplete or unsuccessful")
+        launcher = Path(actual_argv[0]).name.lower()
+        npm_ci = shlex.split(run["command"]) == ["npm", "ci"]
+        if launcher in {"npm", "npx", "node"}:
+            if npm_ci:
+                _git(worktree, "ls-files", "--error-unmatch", "package-lock.json")
+                npm_installed = not is_unavailable
+            elif not npm_installed:
+                _error("Node dependency validation requires prior actual passed frozen npm ci")
+        try:
+            check = runtime_provenance_check(run["command"], actual_argv, current, profile)
+        except ValueError as exc:
+            _error(str(exc))
+        if check is not None:
+            preflight_path, preflight, _ = _bound(run.get("preflight"), packet)
+            def checked(rows: Any, phase: str) -> bool:
+                if not isinstance(rows, list) or not all(isinstance(row, Mapping) for row in rows):
+                    return False
+                matches = [row for row in rows if row.get("phase") == phase]
+                return (len(matches) == 1 and matches[0].get("command") == check
+                        and matches[0].get("ok") is True and type(matches[0].get("exit_code")) is int
+                        and matches[0]["exit_code"] == 0)
+            if (command.get("preflight_checks") != [check] or command.get("post_run_checks") != [check]
+                    or preflight_path != command_path.parent / "preflight.json"
+                    or preflight.get("ok") is not True or not isinstance(preflight.get("checks"), list)
+                    or len(preflight["checks"]) != 1
+                    or not checked(preflight.get("checks"), "preflight")
+                    or not isinstance(terminal.get("checks"), list) or len(terminal["checks"]) != 2
+                    or not checked(terminal["checks"], "preflight") or not checked(terminal["checks"], "post-run")):
+                _error("declared base interpreter requires exact executed pre/post checksum proof")
         deferred += int(is_unavailable)
         passed += int(not is_unavailable)
         started = _timestamp(terminal.get("created_at"))

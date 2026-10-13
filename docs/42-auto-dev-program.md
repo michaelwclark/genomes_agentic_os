@@ -177,20 +177,46 @@ Source cleanliness remains required. The only permitted untracked exception
 is non-executable metadata inside the registered task's `.features/<TICKET>`
 namespace when `config/output-artifacts.yml` explicitly declares its legacy
 artifact template. Foreign item paths, executable/source files and symlinks
-are refused. The same checks run again under the task lock.
-The executed argv keeps the frozen command prefix. The task's absolute venv
-launcher is equivalent only to its configured relative path; an alternate
-launcher requires explicit frozen selected-profile/v2 executable authority.
+are refused. Ignored executable/source artifacts, Python bytecode, venvs and
+local runtime/coverage configuration cannot be hidden by ordinary Git status.
+The same checks run again under the task lock. Native command receipts retain
+their actual raw `clean=false` when the approved item metadata is present;
+the registered tracked/source guard supplies cleanliness authority without
+deleting metadata or relabeling Git output.
+The executed argv keeps the frozen command prefix. Launcher path equivalence
+alone never establishes runtime or dependency provenance.
 An executed `env REVIEW_POLICY_FINGERPRINT=<pinned-fingerprint>` prefix binds
 the readiness producer to the policy. Declared prefix and runner environment
 overrides admit only that fingerprint, empty `PYTEST_ADDOPTS`, bytecode
 suppression, and coverage/npm cache destinations contained in task artifacts.
 Code, plugin, launcher and coverage-configuration environment injection and
-`env -i` are refused. Acceptance thresholds must remain in the frozen command;
-appended `--cov-fail-under` options are refused. Nonselecting pytest coverage/report and
+`env -i` are refused. Coverage targets, branch mode, configuration and thresholds
+must remain in the frozen command; adding or replacing them is refused. Only report and
 contained basetemp annotations are allowed. Only one `-o cache_dir=<absolute
 packet-artifacts-private-path>` override is allowed; selectors, extra test
 paths and other overrides are refused.
+
+This bounded recovery API supports `npm ci`, `npx tsc --noEmit` and the unscoped
+`npx playwright test --list` through
+a genuinely passed frozen `npm ci` with tracked `package-lock.json` before
+dependent `npx`/Node commands. Ordinary host tool trust remains governed by the
+project's environment-access policy; this is not a host-compromise attestation.
+
+Python dependency/module/script recovery and worktree venv launchers remain
+unsupported without independently qualified dependency provenance. The bounded
+Python diagnostic exception requires an external, fully resolved base interpreter
+whose path and SHA were declared before the task in frozen
+`validation.isolated_python_interpreters[<exact-command>]`, with
+`authority: frozen_selected_profile` and
+`dependency_mode: isolated_stdlib_diagnostic`. It accepts only exact `-I -S -c`
+diagnostics with the restricted grammar (print, frozen os/sys environment reads
+and exit), preventing worktree paths, site packages, imports, code execution or
+flag additions from reloading dependencies. The real native runner must execute
+the exact declared interpreter checksum check before and after the command;
+the successor binds its preflight file by SHA and verifies both terminal check
+records. A caller-supplied hash, hash substring, `-B` or bytecode-write suppression
+does not establish trust or prevent loading old bytecode. This exception never
+pretends that a full pytest command ran.
 `repair_lineage` binds the predecessor file/hash,
 `from_head_sha`, `to_head_sha` and reason. An identical replay reuses its receipt;
 changed or stale evidence fails before mutation. Document and PR Create must

@@ -1,6 +1,8 @@
 """Narrow frozen-command matching shared by validation and readiness proof readers."""
 from __future__ import annotations
 
+import ast
+import hashlib
 import os
 from pathlib import Path
 import re
@@ -69,15 +71,9 @@ def _annotations(extras: list[str], task: Mapping[str, Any]) -> bool:
     cache_seen = False
     while index < len(extras):
         token = extras[index]
-        if token == "--cov-branch":
-            index += 1
-            continue
-        if token.startswith("--cov="):
-            if not re.fullmatch(r"--cov=[A-Za-z_][A-Za-z0-9_.]*", token):
-                return False
-        elif token.startswith("--cov-fail-under="):
-            # Acceptance thresholds belong in the frozen command. A duplicate
-            # trailing threshold can override it, unlike an output annotation.
+        if token == "--cov-branch" or token.startswith(("--cov=", "--cov-fail-under=", "--cov-config=")):
+            # Targets, branch mode, configuration and thresholds alter the
+            # gate's denominator or acceptance. Only the frozen prefix owns them.
             return False
         elif token.startswith("--basetemp="):
             if not _contained_annotation(token.split("=", 1)[1], task):
@@ -102,6 +98,75 @@ def _annotations(extras: list[str], task: Mapping[str, Any]) -> bool:
             return False
         index += 1
     return True
+
+
+def _isolated_diagnostic(code: str) -> bool:
+    """Small frozen diagnostic grammar; no path loading, site hooks or dependencies."""
+    try:
+        tree = ast.parse(code)
+    except (SyntaxError, ValueError):
+        return False
+    allowed = (ast.Module, ast.Import, ast.alias, ast.Assign, ast.Expr, ast.Call,
+               ast.Name, ast.Load, ast.Store, ast.Constant, ast.Attribute,
+               ast.UnaryOp, ast.Not, ast.IfExp, ast.Compare, ast.Eq, ast.NotEq)
+    protected = {"os", "sys", "print"}
+    attributes = {"os.environ", "os.environ.get", "sys.exit"}
+    for node in ast.walk(tree):
+        if not isinstance(node, allowed):
+            return False
+        if isinstance(node, ast.Import) and any(a.name not in {"os", "sys"} or a.asname for a in node.names):
+            return False
+        if isinstance(node, ast.Name) and node.id.startswith("__"):
+            return False
+        if isinstance(node, ast.Assign) and any(not isinstance(t, ast.Name) or t.id in protected for t in node.targets):
+            return False
+        if isinstance(node, ast.Attribute) and ast.unparse(node) not in attributes:
+            return False
+        if isinstance(node, ast.Call):
+            name = ast.unparse(node.func)
+            if name not in {"print", "os.environ.get", "sys.exit"} or node.keywords:
+                return False
+            if name == "os.environ.get" and (len(node.args) != 1 or not isinstance(node.args[0], ast.Constant)
+                                             or not isinstance(node.args[0].value, str)):
+                return False
+    return True
+
+
+def runtime_provenance_check(configured: str, actual: list[str], task: Mapping[str, Any],
+                             selected: Mapping[str, Any]) -> str | None:
+    """Reject Python dependency recovery; bind a declared isolated base diagnostic."""
+    if not actual:
+        raise ValueError("executed command is unavailable")
+    executable = Path(actual[0])
+    roots = (Path(task["work_item"]).resolve(), Path(task["worktree"]["path"]).resolve())
+    lexical = Path(os.path.abspath(roots[1] / executable)) if actual[0].startswith(".") else executable
+    if lexical.is_absolute() and any(lexical.is_relative_to(root) for root in roots):
+        raise ValueError("work-item executable requires independently declared dependency provenance")
+    if shlex.split(configured) in (["npm", "ci"], ["npx", "tsc", "--noEmit"],
+                                  ["npx", "playwright", "test", "--list"]):
+        return None
+    if not re.match(r"^(python|pypy)", executable.name, re.IGNORECASE):
+        raise ValueError("command runtime/dependency provenance is unsupported for validation recovery")
+    declarations = selected.get("validation", {}).get("isolated_python_interpreters") or {}
+    declaration = declarations.get(configured) if isinstance(declarations, Mapping) else None
+    if (not isinstance(declaration, Mapping) or declaration.get("authority") != "frozen_selected_profile"
+            or declaration.get("dependency_mode") != "isolated_stdlib_diagnostic"
+            or not executable.is_absolute() or executable != executable.resolve()
+            or declaration.get("executable") != str(executable)
+            or not re.fullmatch(r"[0-9a-f]{64}", str(declaration.get("sha256") or ""))
+            or len(actual) != 5 or actual[1:4] != ["-I", "-S", "-c"]
+            or not _isolated_diagnostic(actual[4])):
+        raise ValueError("unsafe Python execution requires frozen interpreter/dependency provenance")
+    try:
+        observed = hashlib.sha256(executable.read_bytes()).hexdigest()
+    except OSError as exc:
+        raise ValueError("declared base interpreter is unavailable") from exc
+    if observed != declaration["sha256"]:
+        raise ValueError("declared base interpreter SHA changed")
+    # The real governed runner must execute this exact checksum before and
+    # after the diagnostic. Caller evidence alone never declares interpreter trust.
+    return (shlex.join(["/usr/bin/shasum", "-a", "256", str(executable)])
+            + " | /usr/bin/awk " + shlex.quote('$1 == "' + observed + '" {ok=1} END {exit !ok}'))
 
 
 def matches_command(configured: str, actual: list[str], task: Mapping[str, Any],

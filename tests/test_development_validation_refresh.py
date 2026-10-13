@@ -22,6 +22,7 @@ from genomes_agentic_os.auto_dev_orchestration import (
 )
 from genomes_agentic_os.cli import main
 from genomes_agentic_os.long_run import start_run
+from genomes_agentic_os.validation_command_authority import runtime_provenance_check
 from test_development_delivery import (
     _git, _project, _record_standalone_stage, _repository, _stage_receipt,
 )
@@ -42,21 +43,27 @@ def _now() -> str:
 
 
 def _command_proof(root: Path, packet: Path, worktree: Path, command: str, head: str, policy: str,
-                   annotated: bool = False, expected_status: str = "success") -> dict:
+                   annotated: bool = False, expected_status: str = "success", verify_interpreter: bool = True) -> dict:
     identity = {"repository": _git("config", "--get", "remote.origin.url", cwd=worktree),
                 "branch": _git("branch", "--show-current", cwd=worktree),
-                "head": head, "clean": "true", "worktree": str(worktree)}
+                "head": head, "clean": "false" if _git("status", "--porcelain", cwd=worktree) else "true",
+                "worktree": str(worktree)}
     argv = shlex.split(command)
     if annotated:
         argv[0] = str(worktree / ".venv/bin/python")
         argv.extend(["--basetemp=" + str(packet / "artifacts/actor-tmp/tests"),
             "-o", "cache_dir=" + str(packet / "artifacts/actor-cache"),
-            "--cov=genomes_agentic_os", "--cov-branch",
             "--cov-report=json:" + str(packet / "artifacts/actor-coverage.json")])
+    check = None
+    if not annotated and verify_interpreter:
+        manifest = json.loads((packet / "autodev.json").read_text())
+        current = delivery.TaskState(Path(manifest["delivery"]["task_state_ref"])).read()
+        check = runtime_provenance_check(command, argv, current, delivery.frozen_selected_task_profile(current))
     state = start_run(root, command=["env", "REVIEW_POLICY_FINGERPRINT=" + policy, *argv], label="actual validation proof",
                       artifact_dir=str(packet / "artifacts/command-runs"),
                       work_dir=str(worktree), expected_git_identity=identity,
                       environment_overrides={"PYTEST_ADDOPTS": "", "COVERAGE_FILE": str(packet / "artifacts/actor-coverage-data")},
+                      preflight_checks=[check] if check else [], post_run_checks=[check] if check else [],
                       budgets={"wall_clock_minutes": 0.5, "no_progress_minutes": 0.33})
     run = Path(state["run_dir"])
     deadline = time.monotonic() + 15
@@ -64,17 +71,21 @@ def _command_proof(root: Path, packet: Path, worktree: Path, command: str, head:
         time.sleep(0.05)
     assert (run / "terminal-receipt.json").is_file(), (run / "state.json").read_text()
     assert json.loads((run / "terminal-receipt.json").read_text())["status"] == expected_status
-    return {"command": command, "terminal": _bound(run / "terminal-receipt.json"),
-            "command_receipt": _bound(run / "command.json")}
+    proof = {"command": command, "terminal": _bound(run / "terminal-receipt.json"),
+             "command_receipt": _bound(run / "command.json")}
+    if check:
+        proof["preflight"] = _bound(run / "preflight.json")
+    return proof
 
 
 def _fixture(tmp_path: Path, *, changed: bool = True, mode: str = "single_stage",
              historical_command: bool = True, multiple_commands: bool = False,
               annotated: bool = False, legacy: bool = False, deferred_successor: bool = False,
-              fallback: bool = True) -> dict:
+              fallback: bool = True, registered_metadata: bool = False, declare_interpreter: bool = True,
+              npm_without_ci: bool = False) -> dict:
     repo, old_head = _repository(tmp_path)
     if annotated:
-        (repo / ".gitignore").write_text(".venv\n.pytest_cache/\n__pycache__/\n")
+        (repo / ".gitignore").write_text(".venv\n.pytest_cache/\n__pycache__/\n*.pyc\n")
         (repo / "tests").mkdir()
         (repo / "tests/test_execution.py").write_text("def test_execution():\n    assert 2 + 2 == 4\n")
         _git("add", ".gitignore", "tests", cwd=repo)
@@ -85,16 +96,27 @@ def _fixture(tmp_path: Path, *, changed: bool = True, mode: str = "single_stage"
     project = _project(root, repo, repository_id="git:github.com/acme/app")
     config = project / "config/development.yml"
     profile = yaml.safe_load(config.read_text())
-    command = ".venv/bin/python -m pytest tests/ -q" if annotated else shlex.join([sys.executable, "-c", "print('validated')"])
+    interpreter = str(Path(sys._base_executable).resolve())
+    diagnostic = [interpreter, "-I", "-S", "-c"]
+    command = (".venv/bin/python -m pytest tests/ -q --cov=genomes_agentic_os --cov-branch" if annotated
+               else shlex.join([*diagnostic, "print('validated')"]))
+    if npm_without_ci:
+        command = "npx --version"
     commands = [command]
     if multiple_commands:
-        commands.append(shlex.join([sys.executable, "-c", "print('validated second layer')"]))
+        commands.append(shlex.join([*diagnostic, "print('validated second layer')"]))
     if deferred_successor:
-        commands.append(shlex.join([sys.executable, "-c",
+        commands.append(shlex.join([*diagnostic,
             "import os,sys; missing=not os.environ.get('VALIDATION_REFRESH_FIXTURE_ENDPOINT'); "
             "print('Required disposable fixture endpoint is absent' if missing else 'configured'); "
             "sys.exit(17 if missing else 0)"]))
     profile["validation"]["commands"] = commands
+    if not annotated and declare_interpreter and not npm_without_ci:
+        profile["validation"]["isolated_python_interpreters"] = {
+            configured: {"authority": "frozen_selected_profile", "dependency_mode": "isolated_stdlib_diagnostic",
+                         "executable": interpreter, "sha256": hashlib.sha256(Path(interpreter).read_bytes()).hexdigest()}
+            for configured in commands
+        }
     profile["validation"]["ci_fallback_on_environment_failure"] = fallback
     config.write_text(yaml.safe_dump(profile))
     args = {"auto_dev_mode": mode}
@@ -152,8 +174,11 @@ def _fixture(tmp_path: Path, *, changed: bool = True, mode: str = "single_stage"
         _git("add", "README.md", cwd=worktree)
         _git("commit", "-m", "successor implementation", cwd=worktree)
     head = _git("rev-parse", "HEAD", cwd=worktree)
+    if registered_metadata:
+        _write(worktree / ".features" / current["ticket"] / "checks/watch-state.json", {"status": "success"})
     proofs = [_command_proof(root, packet, worktree, c, head, current["policy_fingerprint"], annotated,
-                           "failure" if deferred_successor and i == len(commands) - 1 else "success")
+                           "failure" if deferred_successor and i == len(commands) - 1 else "success",
+                           verify_interpreter=declare_interpreter and not npm_without_ci)
               for i, c in enumerate(commands)]
     current = task.read()
     evidence = {"ticket": current["ticket"], "canonical_work_id": current["canonical_work_id"],
@@ -467,15 +492,12 @@ def test_historical_deferred_command_is_not_current_pr_create_authority(tmp_path
     assert _refresh(f)["task"]["receipts"][-1]["kind"] == "validation_refresh"
 
 
-def test_actual_annotated_pytest_execution_binds_successor_and_pr_family(tmp_path):
+def test_dependency_pytest_execution_without_declared_provenance_is_refused(tmp_path):
     f = _fixture(tmp_path, annotated=True)
-    result = _refresh(f)
-    assert result["task"]["validation_head_sha"] == f["head"]
-    _document(f)
-    delivery.run_development_stage(f["task"].path, stage="release_propagation",
-        receipts={"release_propagation": _family(f)}, idempotency_prefix="annotated-family")
-    wrapper = json.loads((f["task"].path.parent / "stages/release-propagation.json").read_text())
-    assert wrapper["validation_authority"]["status"] == "passed"
+    before = f["task"].path.read_bytes()
+    with pytest.raises(delivery.DevelopmentDeliveryError):
+        _refresh(f)
+    assert f["task"].path.read_bytes() == before
 
 
 @pytest.mark.parametrize("corruption", ["deleted_head", "deleted_lineage", "deleted_successor",

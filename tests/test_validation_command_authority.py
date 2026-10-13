@@ -1,9 +1,9 @@
 """Shared matcher rejects selectors and unpinned launcher equivalence."""
 from pathlib import Path
 import pytest
-from genomes_agentic_os.validation_command_authority import execution_argv, matches_command
+from genomes_agentic_os.validation_command_authority import execution_argv, matches_command, _isolated_diagnostic
 
-FROZEN = ".venv/bin/python -m pytest tests/ -q"
+FROZEN = ".venv/bin/python -m pytest tests/ -q --cov=genomes_agentic_os --cov-branch"
 
 
 def _task(tmp_path):
@@ -15,9 +15,10 @@ def _actual(task):
     p = Path(task["work_item"]) / "artifacts/v4"
     return ["env", "REVIEW_POLICY_FINGERPRINT=" + "f" * 64,
             str(Path(task["worktree"]["path"]) / ".venv/bin/python"),
-            "-m", "pytest", "tests/", "-q", "--basetemp=" + str(p / "tmp/tests"),
+            "-m", "pytest", "tests/", "-q", "--cov=genomes_agentic_os", "--cov-branch",
+            "--basetemp=" + str(p / "tmp/tests"),
             "-o", "cache_dir=" + str(p / "pytest-cache"),
-            "--cov=genomes_agentic_os", "--cov-branch", "--cov-report=json:" + str(p / "coverage.json")]
+            "--cov-report=json:" + str(p / "coverage.json")]
 
 
 def test_actual_age233_v4_annotated_vector_matches_without_receipt_changes(tmp_path):
@@ -79,7 +80,8 @@ def test_symlink_output_escape_and_root_replacement_are_rejected(tmp_path):
     packet = Path(task["work_item"]); packet.mkdir()
     outside = tmp_path / "other-lane"; outside.mkdir()
     (packet / "escaped").symlink_to(outside, target_is_directory=True)
-    prefix = [str(Path(task["worktree"]["path"]) / ".venv/bin/python"), "-m", "pytest", "tests/", "-q"]
+    prefix = [str(Path(task["worktree"]["path"]) / ".venv/bin/python"), "-m", "pytest", "tests/", "-q",
+              "--cov=genomes_agentic_os", "--cov-branch"]
     assert not matches_command(FROZEN, prefix + ["-o", "cache_dir=" + str(packet / "escaped/cache")], task, {})
     assert not matches_command(FROZEN, prefix + ["--basetemp=" + str(packet)], task, {})
     assert not matches_command(FROZEN, prefix + ["-o", "cache_dir=" + task["worktree"]["path"] + "/cache"], task, {})
@@ -149,6 +151,33 @@ def test_an_appended_coverage_floor_cannot_override_the_frozen_threshold(tmp_pat
     task = _task(tmp_path)
     configured = FROZEN + " --cov=app --cov-fail-under=80"
     actual = [str(Path(task["worktree"]["path"]) / ".venv/bin/python"),
-              "-m", "pytest", "tests/", "-q", "--cov=app", "--cov-fail-under=80"]
+              "-m", "pytest", "tests/", "-q", "--cov=genomes_agentic_os", "--cov-branch",
+              "--cov=app", "--cov-fail-under=80"]
     assert matches_command(configured, actual, task, {})
     assert not matches_command(configured, actual + ["--cov-fail-under=" + extra_floor], task, {})
+
+
+@pytest.mark.parametrize("extra", [["--cov=alternate_package"], ["--cov="], ["--cov-branch"],
+    ["--cov-config=alternate.ini"], ["--cov-config", "alternate.ini"], ["--no-cov"],
+    ["--cov-reset"], ["--cov-append"]])
+def test_coverage_denominator_and_configuration_cannot_be_annotated(tmp_path, extra):
+    task = _task(tmp_path)
+    actual, _ = execution_argv({"command": _actual(task)})
+    assert matches_command(FROZEN, actual, task, {})
+    assert not matches_command(FROZEN, actual + extra, task, {})
+
+
+@pytest.mark.parametrize("code", [
+    "import sys; sys.path.insert(0, '.')", "import importlib; importlib.import_module('pytest')",
+    "exec('import pytest')", "__import__('pytest')", "import os; os.system('true')",
+    "import sys; sys=__import__('os')", "print=eval; print('import pytest')",
+    "import os as other; print(other)", "open('pytest.pyc', 'rb')", "import site",
+    "print('text', file=open('override', 'w'))", "os.environ['PYTHONPATH']='.'",
+])
+def test_isolated_diagnostic_cannot_reload_worktree_or_dependency_code(code):
+    assert not _isolated_diagnostic(code)
+
+
+def test_isolated_diagnostic_keeps_bounded_environment_diagnostics():
+    assert _isolated_diagnostic("import os,sys; missing=not os.environ.get('FIXTURE_ENDPOINT'); "
+                               "print('missing' if missing else 'configured'); sys.exit(17 if missing else 0)")
