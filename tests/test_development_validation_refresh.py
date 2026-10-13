@@ -42,7 +42,7 @@ def _now() -> str:
 
 
 def _command_proof(root: Path, packet: Path, worktree: Path, command: str, head: str, policy: str,
-                   annotated: bool = False) -> dict:
+                   annotated: bool = False, expected_status: str = "success") -> dict:
     identity = {"repository": _git("config", "--get", "remote.origin.url", cwd=worktree),
                 "branch": _git("branch", "--show-current", cwd=worktree),
                 "head": head, "clean": "true", "worktree": str(worktree)}
@@ -63,14 +63,15 @@ def _command_proof(root: Path, packet: Path, worktree: Path, command: str, head:
     while not (run / "terminal-receipt.json").is_file() and time.monotonic() < deadline:
         time.sleep(0.05)
     assert (run / "terminal-receipt.json").is_file(), (run / "state.json").read_text()
-    assert json.loads((run / "terminal-receipt.json").read_text())["status"] == "success"
+    assert json.loads((run / "terminal-receipt.json").read_text())["status"] == expected_status
     return {"command": command, "terminal": _bound(run / "terminal-receipt.json"),
             "command_receipt": _bound(run / "command.json")}
 
 
 def _fixture(tmp_path: Path, *, changed: bool = True, mode: str = "single_stage",
              historical_command: bool = True, multiple_commands: bool = False,
-              annotated: bool = False, legacy: bool = False) -> dict:
+              annotated: bool = False, legacy: bool = False, deferred_successor: bool = False,
+              fallback: bool = True) -> dict:
     repo, old_head = _repository(tmp_path)
     if annotated:
         (repo / ".gitignore").write_text(".venv\n.pytest_cache/\n__pycache__/\n")
@@ -88,7 +89,13 @@ def _fixture(tmp_path: Path, *, changed: bool = True, mode: str = "single_stage"
     commands = [command]
     if multiple_commands:
         commands.append(shlex.join([sys.executable, "-c", "print('validated second layer')"]))
+    if deferred_successor:
+        commands.append(shlex.join([sys.executable, "-c",
+            "import os,sys; missing=not os.environ.get('VALIDATION_REFRESH_FIXTURE_ENDPOINT'); "
+            "print('Required disposable fixture endpoint is absent' if missing else 'configured'); "
+            "sys.exit(17 if missing else 0)"]))
     profile["validation"]["commands"] = commands
+    profile["validation"]["ci_fallback_on_environment_failure"] = fallback
     config.write_text(yaml.safe_dump(profile))
     args = {"auto_dev_mode": mode}
     if mode == "single_stage":
@@ -122,11 +129,15 @@ def _fixture(tmp_path: Path, *, changed: bool = True, mode: str = "single_stage"
         old = {"subject_revision": old_head, "typescript": "passed",
                "unit_suite": "passed", "targeted_discovery": "passed",
                "unavailable_check": old["unavailable_check"]}
+    old_status = "deferred_to_ci" if fallback else "passed"
+    if not fallback:
+        old.pop("unavailable_check")
     local_receipt = _stage_receipt(packet, "local_validation",
-                                  status="deferred_to_ci", evidence=old)
+                                  status=old_status, evidence=old)
     if legacy:
         local_payload = json.loads(Path(local_receipt).read_text())
         local_payload["verified_at"] = _now()
+        local_payload["stage"] = "implementation"
         _write(Path(local_receipt), local_payload)
     delivery.run_development_stage(task.path, stage="implementation",
         receipts={"implementing": _stage_receipt(packet, "implementing"),
@@ -135,13 +146,15 @@ def _fixture(tmp_path: Path, *, changed: bool = True, mode: str = "single_stage"
     _record_standalone_stage(task, "document", revision=old_head)
     current = task.read()
     predecessor = Path([r for r in current["receipts"] if r["state"] == "local_validation"][-1]["ref"])
-    assert json.loads(predecessor.read_text())["status"] == "deferred_to_ci"
+    assert json.loads(predecessor.read_text())["status"] == old_status
     if changed:
         (worktree / "README.md").write_text("successor implementation\n")
         _git("add", "README.md", cwd=worktree)
         _git("commit", "-m", "successor implementation", cwd=worktree)
     head = _git("rev-parse", "HEAD", cwd=worktree)
-    proofs = [_command_proof(root, packet, worktree, c, head, current["policy_fingerprint"], annotated) for c in commands]
+    proofs = [_command_proof(root, packet, worktree, c, head, current["policy_fingerprint"], annotated,
+                           "failure" if deferred_successor and i == len(commands) - 1 else "success")
+              for i, c in enumerate(commands)]
     current = task.read()
     evidence = {"ticket": current["ticket"], "canonical_work_id": current["canonical_work_id"],
         "repository_id": current["repository"]["id"], "repository": "acme/app",
@@ -156,6 +169,14 @@ def _fixture(tmp_path: Path, *, changed: bool = True, mode: str = "single_stage"
         "schema": "development-stage-evidence/v1", "state": "local_validation",
         "status": "passed", "summary": "Full frozen command passed on current head",
         "verified_at": _now(), "evidence": evidence})
+    if deferred_successor:
+        evidence["configured_local_checks"] = "passed"
+        evidence["unavailable_check"] = {"command": commands[-1], "classification": "environment_unavailable",
+            "reason": "Required disposable fixture endpoint is absent", "exit_code": 17,
+            "receipt_ref": proofs[-1]["terminal"]["path"]}
+        _write(request, {"schema": "development-stage-evidence/v1", "state": "local_validation",
+            "status": "deferred_to_ci", "summary": "One local layer passed; actual fixture absence defers full validation to CI",
+            "verified_at": _now(), "evidence": evidence})
     return dict(root=root, task=task, packet=packet, worktree=worktree, request=request,
                 head=head, old_head=old_head, predecessor=predecessor, command=command)
 

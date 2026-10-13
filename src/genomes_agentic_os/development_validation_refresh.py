@@ -9,6 +9,8 @@ from pathlib import Path
 import subprocess
 from typing import Any, Mapping
 
+import yaml
+
 
 def _error(message: str) -> None:
     from .development_delivery import DevelopmentDeliveryError
@@ -68,8 +70,11 @@ def _snapshot_target(packet: Path, digest: str) -> Path:
 
 
 def _git(worktree: Path, *args: str) -> str:
-    result = subprocess.run(["git", *args], cwd=worktree, text=True,
-                            capture_output=True, timeout=10)
+    try:
+        result = subprocess.run(["git", *args], cwd=worktree, text=True,
+                                capture_output=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        _error(f"registered validation worktree Git identity is unavailable: {type(exc).__name__}")
     if result.returncode:
         _error("registered validation worktree Git identity is unavailable")
     return result.stdout.strip()
@@ -100,6 +105,37 @@ def _repository_matches(value: Any, current: Mapping[str, Any]) -> bool:
     return isinstance(value, str) and value in _repository_names(current)
 
 
+def _clean_worktree(current: Mapping[str, Any], project: Path, worktree: Path) -> bool:
+    """Exclude only configured metadata in the registered task's artifact namespace."""
+    entries = _git(worktree, "status", "--porcelain=v1", "--untracked-files=all", "-z").split("\0")
+    entries = [entry for entry in entries if entry]
+    if not entries:
+        return True
+    if any(not entry.startswith("?? ") for entry in entries):
+        return False
+    try:
+        config = yaml.safe_load((project / "config/output-artifacts.yml").read_text())
+        template = config["output_artifacts"]["legacy_source_feature_root"]
+        if template != "src/.features/{ticket_or_slug}":
+            return False
+        owned = worktree / ".features" / current["ticket"]
+        for entry in entries:
+            path = worktree / entry[3:]
+            if (not path.is_relative_to(owned) or path.suffix not in {".json", ".jsonl", ".md", ".log", ".txt"}
+                    or not path.is_file() or path.stat().st_mode & 0o111):
+                return False
+            candidate = path
+            while candidate != worktree:
+                if candidate.is_symlink():
+                    return False
+                candidate = candidate.parent
+            if not path.resolve().is_relative_to(owned):
+                return False
+    except (OSError, ValueError, KeyError, TypeError, yaml.YAMLError):
+        return False
+    return True
+
+
 def _context(state_file: str | Path) -> tuple[Any, dict[str, Any], Path, Path, dict[str, Any]]:
     from .development_delivery import (TaskState, _validate_effective_policy_snapshot,
                                        project_root, worktree_entries_for_project)
@@ -111,6 +147,7 @@ def _context(state_file: str | Path) -> tuple[Any, dict[str, Any], Path, Path, d
         _error("validation refresh requires a modern local_validation task")
     packet = Path(str(current.get("work_item") or "")).resolve()
     manifest = read_auto_dev_state(packet / "autodev.json")
+    linked = manifest.get("delivery") or {}
     window = auto_dev_workflow_window(current.get("auto_dev_stage_order") or AUTO_DEV_STAGE_ORDER,
                                      current.get("auto_dev_start_stage") or "groom",
                                      current.get("auto_dev_completion_stage") or "health")
@@ -119,6 +156,12 @@ def _context(state_file: str | Path) -> tuple[Any, dict[str, Any], Path, Path, d
             or manifest.get("start_stage") != window[0] or manifest.get("completion_stage") != window[-1]
             or current.get("autodev_path") != str(packet / "autodev.json")
             or manifest.get("canonical_work_id") != current["canonical_work_id"]
+            or manifest.get("domain") != current["domain"] or manifest.get("project") != current["project"]
+            or manifest.get("source", {}).get("key") != current["ticket"]
+            or linked.get("policy_fingerprint") != current["policy_fingerprint"]
+            or linked.get("repository") != current.get("repository")
+            or linked.get("worktree") != current.get("worktree")
+            or linked.get("work_item") != str(packet)
             or Path(str(manifest.get("delivery", {}).get("task_state_ref") or "")).resolve() != task.path
             or any(current.get(key) for key in ("historical_delivery_reconciliations",
                        "active_pr_create_delivery_escalations", "worktree_ready_delivery_recoveries"))):
@@ -142,7 +185,7 @@ def _context(state_file: str | Path) -> tuple[Any, dict[str, Any], Path, Path, d
     if (mappings != {str(worktree)} or worktree == source or common != source_common
             or record.get("repository_id") != repository.get("id")
             or not record.get("branch") or _git(worktree, "branch", "--show-current") != record["branch"]
-            or _git(worktree, "status", "--porcelain")):
+            or not _clean_worktree(current, project, worktree)):
         _error("validation selection must match one clean registered feature worktree")
     frozen, _ = _read(Path(str(current.get("policy_receipt") or "")))
     profile = _validate_effective_policy_snapshot(frozen, require_selected_profile=True)
@@ -185,7 +228,7 @@ def _refresh_history(current: Mapping[str, Any], packet: Path) -> None:
             _error("validation refresh history lost its repair lineage")
         lineage_path, _, lineage_digest = _bound(lineage.get("predecessor"), packet)
         if (successor.get("schema") != "development-stage-evidence/v1"
-                or successor.get("state") != "local_validation" or successor.get("status") != "passed"
+                or successor.get("state") != "local_validation" or successor.get("status") not in {"passed", "deferred_to_ci"}
                 or (lineage_path, lineage_digest) != (predecessor_path, predecessor_digest)
                 or lineage.get("from_head_sha") != row["from_head_sha"]
                 or lineage.get("to_head_sha") != row["head_sha"]
@@ -199,6 +242,11 @@ def _refresh_history(current: Mapping[str, Any], packet: Path) -> None:
                 or recorded.timestamp() > datetime.now().astimezone().timestamp()
                 or (previous is not None and previous != (predecessor_path, predecessor_digest))):
             _error("validation refresh lineage no longer matches immutable history")
+        attestation = _predecessor_identity(current, packet, predecessor_path, predecessor, predecessor_digest)
+        recorded_attestation = row.get("predecessor_identity_attestation")
+        if (recorded_attestation is not None and recorded_attestation != attestation
+                or attestation["kind"] == "task_bound_legacy_identity" and recorded_attestation != attestation):
+            _error("validation predecessor identity attestation changed")
         runs = evidence.get("validation_runs")
         if not isinstance(runs, list) or not runs or not all(isinstance(run, Mapping) for run in runs):
             _error("validation refresh history lost its command proof")
@@ -224,6 +272,41 @@ def _latest(current: Mapping[str, Any], packet: Path) -> tuple[Path, dict[str, A
         _error("validation refresh lacks an immutable predecessor")
     row = rows[-1]
     return _bound({"path": row.get("ref"), "sha256": row.get("sha256")}, packet)
+
+
+def _predecessor_identity(current: Mapping[str, Any], packet: Path, path: Path,
+                          payload: Mapping[str, Any], digest: str) -> dict[str, Any]:
+    """Attest absent legacy identity from one original hash-bound task receipt."""
+    evidence = payload.get("evidence")
+    if (payload.get("schema") != "development-stage-evidence/v1" or payload.get("state") != "local_validation"
+            or not isinstance(evidence, Mapping)):
+        _error("validation predecessor identity/policy mismatch")
+    checks = {"ticket": evidence.get("ticket") == current["ticket"],
+              "repository": _repository_matches(evidence.get("repository"), current),
+              "policy_fingerprint": evidence.get("policy_fingerprint") == current["policy_fingerprint"]}
+    if any(key in evidence and not matches for key, matches in checks.items()):
+        _error("validation predecessor identity/policy mismatch")
+    missing = [key for key in checks if key not in evidence]
+    kind = "embedded_identity"
+    if missing:
+        rows = [row for row in current.get("receipts") or [] if isinstance(row, Mapping)
+                and row.get("state") == "local_validation" and row.get("kind") is None
+                and row.get("sha256") == digest
+                and Path(str(row.get("ref") or "")).resolve() == path]
+        if (len(rows) != 1 or payload.get("stage") != "implementation"
+                or current.get("canonical_work_id") != f"{current['domain']}:{current['project']}:{current['ticket'].lower()}"):
+            _error("legacy predecessor lacks original task-bound authority")
+        created = int(_timestamp(current.get("created_at")).timestamp())
+        verified = int(_timestamp(payload.get("verified_at")).timestamp())
+        recorded = int(_timestamp(rows[0].get("recorded_at")).timestamp())
+        if not created <= verified <= recorded <= int(datetime.now().astimezone().timestamp()):
+            _error("legacy predecessor timestamps do not attest original task authority")
+        _git(Path(current["worktree"]["path"]), "merge-base", "--is-ancestor", _head(evidence), "HEAD")
+        kind = "task_bound_legacy_identity"
+    return {"schema": "development-validation-predecessor-attestation/v1", "kind": kind,
+            "canonical_work_id": current["canonical_work_id"], "ticket": current["ticket"],
+            "repository_id": current["repository"]["id"], "policy_fingerprint": current["policy_fingerprint"],
+            "predecessor_ref": str(path), "predecessor_sha256": digest, "head_sha": _head(evidence)}
 
 
 def _deferred(payload: Mapping[str, Any], validation: Mapping[str, Any], *,
@@ -293,7 +376,8 @@ def pr_create_validation_authority(state_file: str | Path, family: Mapping[str, 
 
 
 def _commands(evidence: Mapping[str, Any], current: Mapping[str, Any], packet: Path,
-              worktree: Path, profile: Mapping[str, Any], head: str) -> None:
+              worktree: Path, profile: Mapping[str, Any], head: str,
+              unavailable: Mapping[str, Any] | None = None) -> None:
     from .validation_command_authority import execution_argv, matches_command
     commands = profile.get("validation", {}).get("commands")
     runs = evidence.get("validation_runs")
@@ -305,13 +389,21 @@ def _commands(evidence: Mapping[str, Any], current: Mapping[str, Any], packet: P
                 "branch": current["worktree"]["branch"], "head": head, "clean": "true"}
     expected_identity = {**identity, "worktree": str(worktree)}
     verified = _timestamp(evidence.get("verified_at"))
+    passed = 0
+    deferred = 0
     for run in runs:
         terminal_path, terminal, _ = _bound(run.get("terminal"), packet)
         command_path, command, _ = _bound(run.get("command_receipt"), packet)
         actual_argv, environment = execution_argv(command)
+        is_unavailable = unavailable is not None and run["command"] == unavailable["command"]
+        outcome_ok = terminal.get("status") == "success" and terminal.get("exit_code") == 0
+        if is_unavailable:
+            outcome_ok = (terminal.get("status") == "failure" and type(terminal.get("exit_code")) is int
+                          and terminal["exit_code"] > 0 and type(unavailable.get("exit_code")) is int
+                          and unavailable["exit_code"] == terminal["exit_code"]
+                          and unavailable.get("receipt_ref") == str(terminal_path))
         if (terminal.get("schema") != "agentic-os-long-running-terminal/v1"
-                or terminal.get("status") != "success" or type(terminal.get("exit_code")) is not int
-                or terminal.get("exit_code") != 0
+                or not outcome_ok or type(terminal.get("exit_code")) is not int
                 or terminal.get("post_run_invariants_ok") is not True
                 or command.get("schema") != "agentic-os-long-running-state/v1" or command.get("shell") is not False
                 or not matches_command(run["command"], actual_argv, current, profile)
@@ -326,11 +418,15 @@ def _commands(evidence: Mapping[str, Any], current: Mapping[str, Any], packet: P
                 or terminal.get("expected_git_identity") != expected_identity
                 or command.get("expected_git_identity") != expected_identity):
             _error("fresh validation command/terminal identity is incomplete or unsuccessful")
+        deferred += int(is_unavailable)
+        passed += int(not is_unavailable)
         started = _timestamp(terminal.get("created_at"))
         finished = _timestamp(terminal.get("finished_at"))
         commit_time = int(_git(worktree, "show", "-s", "--format=%ct", head))
         if not commit_time <= started.timestamp() <= finished.timestamp() <= verified.timestamp() <= datetime.now().astimezone().timestamp():
             _error("fresh validation command timestamps are stale or contradictory")
+    if unavailable is not None and (deferred != 1 or passed < 1):
+        _error("fresh CI deferral requires one actual unavailable command and a passed local layer")
 
 
 def _timestamp(value: Any) -> datetime:
@@ -353,7 +449,7 @@ def _emit_readiness(task: Any, head: str, policy: str) -> dict[str, Any]:
 
 def refresh_development_validation(state_file: str | Path, *, evidence_file: str | Path,
                                    idempotency_key: str) -> dict[str, Any]:
-    """Bind fresh passed validation without relabeling or transitioning history."""
+    """Bind passed validation or honest configured CI deferral without rewriting history."""
     from .development_delivery import (_atomic_json, _file_lock, _refresh_portfolio_state,
                                        _sync_auto_dev_projection, _sync_canonical_task_progress, utc_now)
     if not isinstance(idempotency_key, str) or not idempotency_key.strip():
@@ -365,10 +461,15 @@ def refresh_development_validation(state_file: str | Path, *, evidence_file: str
     payload, request_digest = _read(request_path)
     evidence = payload.get("evidence") or {}
     if (payload.get("schema") != "development-stage-evidence/v1" or payload.get("state") != "local_validation"
-            or payload.get("status") != "passed" or not isinstance(payload.get("summary"), str)
+            or payload.get("status") not in {"passed", "deferred_to_ci"} or not isinstance(payload.get("summary"), str)
             or not payload["summary"].strip() or not payload.get("verified_at")
-            or not isinstance(evidence, dict) or evidence.get("unavailable_check") is not None):
+            or not isinstance(evidence, dict)
+            or payload.get("status") == "passed" and evidence.get("unavailable_check") is not None):
         _error("successor validation requires actual passed local evidence")
+    unavailable = None
+    if payload["status"] == "deferred_to_ci":
+        _deferred(payload, profile["validation"])
+        unavailable = evidence["unavailable_check"]
     head = _head(evidence)
     if (evidence.get("head_sha") != head or evidence.get("ticket") != current["ticket"]
             or evidence.get("canonical_work_id") != current["canonical_work_id"]
@@ -382,7 +483,7 @@ def refresh_development_validation(state_file: str | Path, *, evidence_file: str
             or head != _git(worktree, "rev-parse", "HEAD")):
         _error("successor validation task/repository/worktree/branch/head/policy mismatch")
     _commands({**evidence, "verified_at": payload["verified_at"]}, current, packet,
-              worktree, profile, head)
+              worktree, profile, head, unavailable)
     lineage = evidence.get("repair_lineage") or {}
     if (not isinstance(lineage, dict) or not isinstance(lineage.get("reason"), str)
             or not lineage["reason"].strip()):
@@ -397,12 +498,7 @@ def refresh_development_validation(state_file: str | Path, *, evidence_file: str
         _deferred(predecessor, profile["validation"], require_frozen_command=False)
     elif predecessor.get("status") not in ("passed", "verified", "completed"):
         _error("validation predecessor is not terminal authority")
-    old_evidence = predecessor.get("evidence") or {}
-    if (predecessor.get("schema") != "development-stage-evidence/v1" or predecessor.get("state") != "local_validation"
-            or old_evidence.get("ticket") != current["ticket"]
-            or not _repository_matches(old_evidence.get("repository"), current)
-            or old_evidence.get("policy_fingerprint") != current["policy_fingerprint"]):
-        _error("validation predecessor identity/policy mismatch")
+    attestation = _predecessor_identity(current, packet, predecessor_path, predecessor, predecessor_digest)
     latest_path, _, latest_digest = _latest(current, packet)
     replay = next((row for row in current.get("validation_refreshes") or []
                    if isinstance(row, Mapping) and row.get("idempotency_key") == idempotency_key), None)
@@ -418,7 +514,7 @@ def refresh_development_validation(state_file: str | Path, *, evidence_file: str
         with _file_lock(task.path.with_suffix(task.path.suffix + ".lock")):
             if (task.read() != current or _git(worktree, "rev-parse", "HEAD") != head
                     or _git(worktree, "branch", "--show-current") != current["worktree"]["branch"]
-                    or _git(worktree, "status", "--porcelain")):
+                    or _context(state_file)[1] != current):
                 _error("validation task/head changed during refresh preflight")
             if _read(request_path)[1] != request_digest:
                 _error("successor validation changed during refresh preflight")
@@ -427,7 +523,7 @@ def refresh_development_validation(state_file: str | Path, *, evidence_file: str
             if _read(Path(current["policy_receipt"]))[1] != evidence["policy_sha256"]:
                 _error("validation frozen policy changed during refresh preflight")
             _commands({**evidence, "verified_at": payload["verified_at"]}, current, packet,
-                      worktree, profile, head)
+                      worktree, profile, head, unavailable)
             snapshot = _snapshot_target(packet, request_digest)
             try:
                 if snapshot.exists() and snapshot.read_bytes() != request_path.read_bytes():
@@ -446,7 +542,8 @@ def refresh_development_validation(state_file: str | Path, *, evidence_file: str
                 "idempotency_key": idempotency_key, "request_sha256": request_digest,
                 "predecessor_ref": str(predecessor_path), "predecessor_sha256": predecessor_digest,
                 "from_head_sha": old_head, "head_sha": head, "successor_ref": str(snapshot),
-                "successor_sha256": request_digest, "policy_fingerprint": current["policy_fingerprint"], "recorded_at": now})
+                "successor_sha256": request_digest, "policy_fingerprint": current["policy_fingerprint"], "recorded_at": now,
+                "predecessor_identity_attestation": attestation})
             current["validation_head_sha"] = head
             current["updated_at"] = now
             _atomic_json(task.path, current)

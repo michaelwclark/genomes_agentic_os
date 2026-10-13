@@ -276,7 +276,7 @@ def register(subparsers) -> None:
         "refresh-validation", help="Append fresh exact-head validation to a modern local_validation task.",
     )
     refresh.add_argument("state_file")
-    refresh.add_argument("--evidence", required=True, help="Packet-contained passed validation with repair lineage and frozen-command receipts.")
+    refresh.add_argument("--evidence", required=True, help="Packet-contained passed validation or configured CI deferral with repair lineage and actual frozen-command receipts.")
     refresh.add_argument("--idempotency-key", required=True)
     _common_output(refresh)
     refresh.set_defaults(handler=handle_validation_refresh)

@@ -154,11 +154,30 @@ For a modern task still at `local_validation`, bind successor validation with
 <successor-evidence.json> --idempotency-key <stable-key>`. This appends a receipt
 and explicit predecessor/head repair lineage; it never relabels historical
 Develop evidence. The packet-contained `development-stage-evidence/v1` must
-report `passed`, bind the task, selected repository, registered clean worktree,
+report `passed` or an honestly configured `deferred_to_ci`, bind the task, selected repository, registered clean worktree,
 branch, current head and frozen policy bytes, and include `validation_runs` for
 every frozen command in order. Each run binds `command_receipt` and `terminal`
-files by path and SHA-256, with successful governed execution and unchanged Git
+files by path and SHA-256, with actual governed execution and unchanged Git
 identity before and after. Expected Git identity also binds the worktree path.
+For `passed`, every frozen command must succeed. A CI deferral requires the
+frozen fallback policy, at least one genuinely successful local command, and
+exactly one actually failed frozen command classified as environment or
+infrastructure unavailable. Its `unavailable_check.exit_code` must match the
+nonzero terminal result and `receipt_ref` must name that bound terminal receipt.
+It never substitutes scoped discovery or marks failed/unexecuted commands passed.
+
+Legacy nested predecessor identity may be omitted only when one original
+hash-bound task receipt attests it. Task/manifest/repository/frozen-policy
+identity, original recording timestamps and source ancestry must agree; a
+present contradictory or null identity still refuses. The appended lineage
+records `development-validation-predecessor-attestation/v1` while preserving
+the original bytes and reviewed subject.
+
+Source cleanliness remains required. The only permitted untracked exception
+is non-executable metadata inside the registered task's `.features/<TICKET>`
+namespace when `config/output-artifacts.yml` explicitly declares its legacy
+artifact template. Foreign item paths, executable/source files and symlinks
+are refused. The same checks run again under the task lock.
 The executed argv keeps the frozen command prefix. The task's absolute venv
 launcher is equivalent only to its configured relative path; an alternate
 launcher requires explicit frozen selected-profile/v2 executable authority.
@@ -178,8 +197,10 @@ recording validation authority.
 
 A policy-pinned `deferred_to_ci` Develop receipt can admit only same-head PR
 Create when it names an unavailable frozen command and a verified focused check.
-It provides pending CI authority and cannot satisfy Review, QA, Finalize or Merge.
-A changed head requires fresh passed validation through the explicit refresh.
+It provides pending CI authority and cannot independently satisfy Review, QA,
+Finalize or Merge. A changed head requires a fresh passed or honestly deferred
+successor through the explicit refresh; owning review/QA/finalization stages
+must separately verify current provider checks and their required evidence.
 
 ### Documentation delivery
 
