@@ -9564,6 +9564,95 @@ def _normalize_exact_legacy_family_identity(
     return normalized, provenance
 
 
+def frozen_selected_task_profile(task: Mapping[str, Any]) -> Mapping[str, Any]:
+    """Read the integrity-checked selected repository policy pinned to this task."""
+
+    policy_ref = str(task.get("policy_receipt") or "").strip()
+    if not policy_ref:
+        raise DevelopmentDeliveryError("pinned effective policy receipt reference is missing")
+    policy_path = Path(policy_ref).expanduser()
+    if not policy_path.is_file():
+        raise DevelopmentDeliveryError("pinned effective policy receipt is missing")
+    policies = _read_mapping(policy_path)
+    profile = _validate_effective_policy_snapshot(policies, require_selected_profile=True)
+    repository = task.get("repository")
+    if not (
+        isinstance(repository, Mapping) and isinstance(profile, Mapping)
+        and profile.get("repository_id") == repository.get("id")
+        and policies.get("fingerprint") == task.get("policy_fingerprint")
+    ):
+        raise DevelopmentDeliveryError("pinned selected repository validation policy is invalid")
+    return profile
+
+
+def validate_local_validation_ci_deferral(
+    payload: Mapping[str, Any],
+    task_value: Mapping[str, Any],
+    *,
+    require_frozen: bool = False,
+) -> None:
+    """Validate the same bounded infrastructure deferral at delivery and health gates."""
+
+    evidence = payload.get("evidence")
+    if not (payload.get("state") == "local_validation" and payload.get("status") == "deferred_to_ci" and isinstance(evidence, Mapping)):
+        raise DevelopmentDeliveryError("CI deferral requires local_validation deferred_to_ci evidence")
+    unavailable = evidence.get("unavailable_check")
+    validation: Mapping[str, Any] = {}
+    policy_ref = str(task_value.get("policy_receipt") or "").strip()
+    policy_path = Path(policy_ref).expanduser() if policy_ref else None
+    if policy_path is not None:
+        validation = frozen_selected_task_profile(task_value)["validation"]
+    else:
+        # Compatibility is limited to tasks that predate policy
+        # receipts entirely. A missing or legacy run receipt may
+        # never fall through to mutable base repository policy.
+        if require_frozen or task_value.get("policy_fingerprint"):
+            raise DevelopmentDeliveryError(
+                "pinned effective policy receipt reference is missing"
+            )
+        profile_ref = str(task_value.get("profile_source") or "").strip()
+        profile_path = (
+            Path(profile_ref).expanduser() if profile_ref else None
+        )
+        profile = (
+            _read_mapping(profile_path)
+            if profile_path is not None and profile_path.is_file()
+            else {}
+        )
+        validation = (
+            profile.get("validation")
+            if isinstance(profile.get("validation"), Mapping)
+            else {}
+        )
+    if validation.get("ci_fallback_on_environment_failure") is not True:
+        raise DevelopmentDeliveryError(
+            "local_validation may defer to CI only when the pinned project "
+            "profile enables ci_fallback_on_environment_failure"
+        )
+    if not isinstance(unavailable, Mapping):
+        raise DevelopmentDeliveryError(
+            "deferred_to_ci local_validation requires evidence.unavailable_check"
+        )
+    if not all(
+        str(unavailable.get(key) or "").strip()
+        for key in ("command", "classification", "reason")
+    ):
+        raise DevelopmentDeliveryError(
+            "deferred_to_ci unavailable_check requires command, classification, and reason"
+        )
+    if unavailable.get("classification") not in {
+        "environment_unavailable",
+        "infrastructure",
+    }:
+        raise DevelopmentDeliveryError(
+            "deferred_to_ci is reserved for environment or infrastructure failures"
+        )
+    if not any(value == "passed" for key, value in evidence.items() if key != "unavailable_check"):
+        raise DevelopmentDeliveryError(
+            "deferred_to_ci local_validation requires at least one passed local check"
+        )
+
+
 def run_development_stage(
     state_file: str | Path,
     *,

@@ -1596,15 +1596,39 @@ def _validate_health_stage_source(
         validate_delivery_policy(evidence, "release_propagation")
         return payload
     expected_state = _DELIVERY_STAGE_RECEIPT_STATES.get(stage)
+    deferred_develop = (
+        stage == "develop"
+        and expected_state == "local_validation"
+        and payload.get("status") == "deferred_to_ci"
+    )
     if not (
         expected_state
         and payload.get("schema") == "development-stage-evidence/v1"
         and payload.get("state") == expected_state
-        and payload.get("status") in {"verified", "passed", "completed", "not_required"}
+        and (
+            payload.get("status") in {"verified", "passed", "completed", "not_required"}
+            or deferred_develop
+        )
         and str(payload.get("summary") or "").strip()
         and str(payload.get("verified_at") or "").strip()
     ):
         raise AutoDevStateError(f"{stage} delivery receipt is malformed or not terminal")
+    if deferred_develop:
+        from .development_delivery import (
+            DevelopmentDeliveryError,
+            validate_local_validation_ci_deferral,
+        )
+
+        current = read_auto_dev_state(work_item / "autodev.json")
+        _validate_delivery_stage_task_binding(current, work_item, stage, path)
+        task_ref = current.get("delivery", {}).get("task_state_ref")
+        try:
+            validate_local_validation_ci_deferral(
+                payload, _read_json(Path(task_ref).expanduser().resolve()),
+                require_frozen=True,
+            )
+        except DevelopmentDeliveryError as exc:
+            raise AutoDevStateError(str(exc)) from exc
     validate_delivery_policy(payload, "deploy" if stage == "deploy" else stage)
     return payload
 
