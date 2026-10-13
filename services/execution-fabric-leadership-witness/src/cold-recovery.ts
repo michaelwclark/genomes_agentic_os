@@ -11,12 +11,26 @@ const host = z.string().regex(/^[a-zA-Z0-9._-]{1,128}$/);
 const counter = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
 const stamp = z.string().datetime({ offset: true });
 const path = z.string().refine((s) => s.startsWith("/") && resolve(s) === s, "path must be absolute and normalized");
+const dispositionSelectionSchema = z.object({
+  enabled: z.boolean(), acceptedPolicySha256: hash.length(64).nullable(), sourceRelease: z.string().min(1).refine((s) => Array.from(s).length <= 128).nullable(),
+  authority: z.object({ backend: z.literal("sqlite"), databasePath: path,
+    domain: z.string().min(1).refine((s) => Array.from(s).length <= 128), project: z.string().min(1).refine((s) => Array.from(s).length <= 128) }).strict().nullable(),
+  executionPolicyFile: path.nullable(),
+  allowedLocalTaskTypes: z.array(z.string().max(128).regex(/^[a-z][a-z0-9_.-]*$(?![\s\S])/)).max(32),
+  heldProviders: z.array(z.string().max(128).regex(/^[a-z][a-z0-9_]*$(?![\s\S])/)).max(32),
+}).strict().superRefine((p, context) => {
+  if ((p.enabled && (!p.acceptedPolicySha256 || !p.sourceRelease || !p.authority || !p.executionPolicyFile))
+    || new Set(p.allowedLocalTaskTypes).size !== p.allowedLocalTaskTypes.length
+    || new Set(p.heldProviders).size !== p.heldProviders.length)
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "selective disposition policy incomplete or duplicated" });
+});
 export const coldPolicySchema = z.object({
   schemaVersion: z.literal("execution-fabric-cold-recovery-policy/v1"),
   enabled: z.boolean(), clusterId: z.string().min(1), allowedHosts: z.array(host).min(2),
   recoveryPublicKeyPem: z.string().min(1), fencePublicKeyPem: z.string().min(1),
   maxApprovalSeconds: z.number().int().min(60).max(3600),
   witnessActorSha256: hash, controlPlaneActorSha256: hash,
+  selectiveDisposition: dispositionSelectionSchema.optional(),
 }).strict();
 export const coldPlanSchema = z.object({
   schemaVersion: z.literal("execution-fabric-cold-recovery-plan/v1"),
@@ -28,6 +42,8 @@ export const coldPlanSchema = z.object({
   originalDatabasePath: path, originalBackupPath: path, targetDatabasePath: path,
   databaseSha256: hash, sentinelSha256: hash, backupSha256: hash, hostMarkerSha256: hash,
   oldPublicKeySha256: hash, newPublicKeySha256: hash, candidateConfigDigest: hash,
+  policyTransition: z.object({ expectedSourceFingerprint: hash.length(64), candidateExecutionPolicyFile: path,
+    candidateExecutionPolicySha256: hash.length(64) }).strict().optional(),
   newPgSystemId: z.string().regex(/^[0-9]{1,32}$/), timelineId: counter,
   walPosition: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
   createdAt: stamp, expiresAt: stamp,
@@ -154,11 +170,13 @@ export function inspectColdWitness(auth: VerifiedColdRequest, hostMarkerFile: st
     const lease = db.prepare("SELECT lease_expires_at FROM witness_process_lease WHERE cluster_id=?").get(p.clusterId) as {lease_expires_at: number} | undefined;
     if (lease && Number(lease.lease_expires_at) > Date.now()) throw new Error("a witness process still owns the restored database");
     if (receipt) {
-      if (receipt.planSha256 !== digest(p) || snapshot.state?.currentLeader !== p.targetHost || snapshot.state.fabricEpoch !== p.nextEpoch) throw new Error("committed cold witness receipt differs");
+      if (receipt.planSha256 !== digest(p) || snapshot.state?.currentLeader !== p.targetHost || snapshot.state.fabricEpoch !== p.nextEpoch
+        || snapshot.state.configDigest !== p.candidateConfigDigest || snapshot.state.upstreamSystemId !== p.newPgSystemId) throw new Error("committed cold witness receipt differs");
       if (!((sentinel.database === p.originalDatabasePath && sentinel.backup === p.originalBackupPath) || (sentinel.database === p.targetDatabasePath && sentinel.backup === p.targetDatabasePath + ".backup"))) throw new Error("committed cold path binding differs");
       return {alreadyCommitted: true, version: Number(row.version)};
     }
     if (Number(row.version) !== p.snapshotVersion || snapshot.state?.currentLeader !== p.sourceHost || snapshot.state.fabricEpoch !== p.expectedEpoch || snapshot.state.authorityMode !== "standalone_primary" || sentinel.database !== p.originalDatabasePath || sentinel.backup !== p.originalBackupPath || fileHash(database) !== p.databaseSha256 || fileHash(sentinelPath) !== p.sentinelSha256 || fileHash(backupPath) !== p.backupSha256) throw new Error("restored cold witness history/hash/path binding differs");
+    if (snapshot.state.configDigest !== (p.policyTransition?.expectedSourceFingerprint ?? p.candidateConfigDigest)) throw new Error("restored source witness execution policy differs or signed transition is missing");
     return {alreadyCommitted: false, version: Number(row.version)};
   } finally { db.close(); }
 }
@@ -176,6 +194,7 @@ export async function commitColdWitness(request: Record<string, unknown>, policy
     const old = await store.getColdRecovery(p.recoveryId);
     if (old) { store.repairColdRecoveryArtifacts(auth); return old; }
     const state = await store.getState(), now = new Date().toISOString();
+    if (state.configDigest !== (p.policyTransition?.expectedSourceFingerprint ?? p.candidateConfigDigest)) throw new Error("source witness execution policy changed before commit");
     const receipt: ColdRecoveryReceipt = {schemaVersion:"execution-fabric-cold-witness-receipt/v1", recoveryId:p.recoveryId, planSha256:digest(p), previousLeader:p.sourceHost,currentLeader:p.targetHost,fabricEpoch:p.nextEpoch,generation:p.generation,originalDatabasePath:p.originalDatabasePath,targetDatabasePath:p.targetDatabasePath,newPublicKeySha256:p.newPublicKeySha256,committedAt:now,held:true};
     return await store.commitColdRecovery({expectedLeader:p.sourceHost,expectedEpoch:p.expectedEpoch,nextState:{...state,currentLeader:p.targetHost,fabricEpoch:p.nextEpoch,configDigest:p.candidateConfigDigest,upstreamSystemId:p.newPgSystemId,timelineId:p.timelineId,leaderWalPosition:p.walPosition,leaderBaselineAt:now,updatedAt:now,fenceDigest:digest(receipt),authorityMode:"standalone_primary",degradedUntil:null,degradedIncidentDigest:null},receipt,audit:{auditId:randomUUID(),eventType:"cold_recovery_committed",actor:"offline-cold-recovery",occurredAt:now,previousLeader:p.sourceHost,newLeader:p.targetHost,previousEpoch:p.expectedEpoch,newEpoch:p.nextEpoch,requestDigest:digest(p),detail:{recoveryId:p.recoveryId,generation:p.generation,originalDatabasePath:p.originalDatabasePath,targetDatabasePath:p.targetDatabasePath}}});
   } finally { await store.close(); }

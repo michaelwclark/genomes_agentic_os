@@ -1,21 +1,36 @@
 import { createHash, createPrivateKey, createPublicKey, verify, randomUUID } from "node:crypto";
-import { readFileSync, lstatSync, realpathSync } from "node:fs";
+import { readFileSync, lstatSync, realpathSync, type Stats } from "node:fs";
 import { resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import type pg from "pg";
+import { PolicyManager } from "./policy.js";
 
 const hash = z.string().regex(/^[a-f0-9]{64}$/);
 const host = z.string().regex(/^[a-zA-Z0-9._-]{1,128}$/);
 const counter = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
 const stamp = z.string().datetime({ offset: true });
 const path = z.string().refine((s) => s.startsWith("/") && resolve(s) === s, "path must be absolute and normalized");
+const dispositionSelectionSchema = z.object({
+  enabled: z.boolean(), acceptedPolicySha256: hash.length(64).nullable(), sourceRelease: z.string().min(1).refine((s) => Array.from(s).length <= 128).nullable(),
+  authority: z.object({ backend: z.literal("sqlite"), databasePath: path,
+    domain: z.string().min(1).refine((s) => Array.from(s).length <= 128), project: z.string().min(1).refine((s) => Array.from(s).length <= 128) }).strict().nullable(),
+  executionPolicyFile: path.nullable(),
+  allowedLocalTaskTypes: z.array(z.string().max(128).regex(/^[a-z][a-z0-9_.-]*$(?![\s\S])/)).max(32),
+  heldProviders: z.array(z.string().max(128).regex(/^[a-z][a-z0-9_]*$(?![\s\S])/)).max(32),
+}).strict().superRefine((p, context) => {
+  if ((p.enabled && (!p.acceptedPolicySha256 || !p.sourceRelease || !p.authority || !p.executionPolicyFile))
+    || new Set(p.allowedLocalTaskTypes).size !== p.allowedLocalTaskTypes.length
+    || new Set(p.heldProviders).size !== p.heldProviders.length)
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "selective disposition policy incomplete or duplicated" });
+});
 export const coldPolicySchema = z.object({
   schemaVersion: z.literal("execution-fabric-cold-recovery-policy/v1"),
   enabled: z.boolean(), clusterId: z.string().min(1), allowedHosts: z.array(host).min(2),
   recoveryPublicKeyPem: z.string().min(1), fencePublicKeyPem: z.string().min(1),
   maxApprovalSeconds: z.number().int().min(60).max(3600),
   witnessActorSha256: hash, controlPlaneActorSha256: hash,
+  selectiveDisposition: dispositionSelectionSchema.optional(),
 }).strict();
 export const coldPlanSchema = z.object({
   schemaVersion: z.literal("execution-fabric-cold-recovery-plan/v1"),
@@ -27,6 +42,8 @@ export const coldPlanSchema = z.object({
   originalDatabasePath: path, originalBackupPath: path, targetDatabasePath: path,
   databaseSha256: hash, sentinelSha256: hash, backupSha256: hash, hostMarkerSha256: hash,
   oldPublicKeySha256: hash, newPublicKeySha256: hash, candidateConfigDigest: hash,
+  policyTransition: z.object({ expectedSourceFingerprint: hash.length(64), candidateExecutionPolicyFile: path,
+    candidateExecutionPolicySha256: hash.length(64) }).strict().optional(),
   newPgSystemId: z.string().regex(/^[0-9]{1,32}$/), timelineId: counter,
   walPosition: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
   createdAt: stamp, expiresAt: stamp,
@@ -141,6 +158,55 @@ export function authorizeColdRequest(request: Record<string, unknown>, policyVal
 }
 
 export type ColdLedgerReceipt = {schemaVersion:"execution-fabric-cold-ledger-receipt/v1"; operation:string; recoveryId:string; planSha256:string; fabricEpoch:number; generation:number; held:boolean; residualQuarantine:boolean};
+const ledgerReceiptSchema = z.object({ schemaVersion: z.literal("execution-fabric-cold-ledger-receipt/v1"),
+  operation: z.enum(["hold", "commit", "canary", "accept"]), recoveryId: z.string().uuid(), planSha256: hash,
+  fabricEpoch: counter, generation: counter, held: z.boolean(), residualQuarantine: z.literal(true) }).strict();
+
+type CandidatePolicy = { file: string; identity: Stats; manager: PolicyManager };
+function recheckCandidatePolicy(candidate: CandidatePolicy | null, plan: ColdPlan): void {
+  if (!candidate) return;
+  const transition = plan.policyTransition!, file = safeFile(candidate.file), current = lstatSync(file);
+  if (current.dev !== candidate.identity.dev || current.ino !== candidate.identity.ino
+    || fileHash(file) !== transition.candidateExecutionPolicySha256) throw new Error("signed candidate execution policy identity or bytes differ");
+  candidate.manager.assertOperational();
+  const after = lstatSync(safeFile(file));
+  if (candidate.manager.snapshot().appliedFingerprint !== plan.candidateConfigDigest
+    || after.dev !== candidate.identity.dev || after.ino !== candidate.identity.ino
+    || fileHash(file) !== transition.candidateExecutionPolicySha256) throw new Error("signed candidate applied execution policy differs");
+}
+function candidatePolicy(plan: ColdPlan): CandidatePolicy | null {
+  if (!plan.policyTransition) return null;
+  const file = safeFile(plan.policyTransition.candidateExecutionPolicyFile), identity = lstatSync(file);
+  if (fileHash(file) !== plan.policyTransition.candidateExecutionPolicySha256) throw new Error("signed candidate execution policy bytes differ");
+  const candidate = { file, identity, manager: new PolicyManager(file, "canonical-policy-schema-in-source") };
+  recheckCandidatePolicy(candidate, plan);
+  return candidate;
+}
+
+function currentCommittedWitness(plan: ColdPlan): void {
+  // Reuse the selected existing SQLite store contract; no bootstrap, signer,
+  // relocation or mutation is allowed by this current-authority readback.
+  const database = safeFile(plan.targetDatabasePath);
+  const sentinel = z.object({ schemaVersion: z.literal("execution-fabric-witness-bootstrap/v1"), clusterId: z.string().min(1),
+    initializedAt: stamp, database: path, backup: path }).strict().parse(JSON.parse(readFileSync(safeFile(database + ".initialized"), "utf8")));
+  if (sentinel.clusterId !== plan.clusterId || sentinel.database !== database || sentinel.backup !== database + ".backup") throw new Error("current selected witness bootstrap differs");
+  safeFile(sentinel.backup);
+  const witness = new DatabaseSync(database, { readOnly: true });
+  try {
+    if (witness.prepare("PRAGMA quick_check").get()?.quick_check !== "ok") throw new Error("current selected witness integrity differs");
+    const row = witness.prepare("SELECT payload FROM witness_snapshot WHERE cluster_id=?").get(plan.clusterId);
+    const snapshot = row ? JSON.parse(String(row.payload)) as { state?: Record<string, unknown>; coldRecoveries?: Record<string, unknown>[] } : undefined;
+    const receipt = snapshot?.coldRecoveries?.find((item) => item.recoveryId === plan.recoveryId);
+    if (snapshot?.state?.currentLeader !== plan.targetHost || snapshot.state.fabricEpoch !== plan.nextEpoch
+      || snapshot.state.configDigest !== plan.candidateConfigDigest || snapshot.state.upstreamSystemId !== plan.newPgSystemId
+      || snapshot.state.authorityMode !== "standalone_primary" || !receipt
+      || receipt.schemaVersion !== "execution-fabric-cold-witness-receipt/v1" || receipt.planSha256 !== digest(plan)
+      || receipt.fabricEpoch !== plan.nextEpoch || receipt.generation !== plan.generation || receipt.held !== true
+      || receipt.previousLeader !== plan.sourceHost || receipt.currentLeader !== plan.targetHost
+      || receipt.originalDatabasePath !== plan.originalDatabasePath || receipt.targetDatabasePath !== database
+      || receipt.newPublicKeySha256 !== plan.newPublicKeySha256) throw new Error("current selected witness authority differs");
+  } finally { witness.close(); }
+}
 async function ioFootprint(client:pg.PoolClient):Promise<string> {
   const rows=await client.query(`SELECT 'effect' AS kind,id::text,encode(sha256(convert_to(row_to_json(e)::text,'UTF8')),'hex') AS digest FROM fabric_effect_outbox e
     UNION ALL SELECT 'alarm',id::text,encode(sha256(convert_to(row_to_json(a)::text,'UTF8')),'hex') FROM fabric_alarm_outbox a
@@ -150,6 +216,7 @@ async function ioFootprint(client:pg.PoolClient):Promise<string> {
 export async function runColdLedgerOperation(pool: pg.Pool, operation: string, request: Record<string, unknown>, policyValue: unknown, anchorValue: unknown): Promise<ColdLedgerReceipt> {
   if (!["hold","commit","canary","accept"].includes(operation)) throw new Error("unsupported offline ledger operation");
   const auth = authorizeColdRequest(request, policyValue, anchorValue, Date.now(), operation === "accept"), p=auth.plan, planHash=digest(p);
+  const candidate = candidatePolicy(p);
   const client=await pool.connect();
   try {
     await client.query("BEGIN");
@@ -161,18 +228,43 @@ export async function runColdLedgerOperation(pool: pg.Pool, operation: string, r
     const stateResult=await client.query("SELECT * FROM fabric_state WHERE singleton=true FOR UPDATE");
     const state=stateResult.rows[0] as Record<string,unknown> | undefined;
     if (!state) throw new Error("restored PostgreSQL authority row is missing");
-    const old=await client.query("SELECT plan_sha256,phase,receipts,canary_io_baseline_sha256 FROM fabric_cold_recoveries WHERE recovery_id=$1 FOR UPDATE",[p.recoveryId]);
-    const previous=old.rows[0] as {plan_sha256:string;phase:string;receipts:Record<string,ColdLedgerReceipt>;canary_io_baseline_sha256:string|null} | undefined;
+    const old=await client.query("SELECT plan_sha256,phase,receipts,canary_io_baseline_sha256,generation,expected_epoch,next_epoch,source_host,target_host,plan FROM fabric_cold_recoveries WHERE recovery_id=$1 FOR UPDATE",[p.recoveryId]);
+    const previous=old.rows[0] as {plan_sha256:string;phase:string;receipts:Record<string,ColdLedgerReceipt>;canary_io_baseline_sha256:string|null;
+      generation:unknown;expected_epoch:unknown;next_epoch:unknown;source_host:unknown;target_host:unknown;plan:unknown} | undefined;
     if (previous && previous.plan_sha256 !== planHash) throw new Error("cold recovery identity has another ledger plan");
+    if (previous && (Number(previous.generation) !== p.generation || Number(previous.expected_epoch) !== p.expectedEpoch
+      || Number(previous.next_epoch) !== p.nextEpoch || previous.source_host !== p.sourceHost
+      || previous.target_host !== p.targetHost || digest(previous.plan) !== planHash)) throw new Error("stored cold predecessor identity differs");
     if (auth.anchor.pending === null && (!previous?.receipts.accept || auth.anchor.lastReceiptSha256 !== digest(previous.receipts.accept))) throw new Error("accepted anchor requires the exact durable acceptance receipt");
-    if (previous?.receipts[operation]) { await client.query("COMMIT"); return previous.receipts[operation]!; }
+    if (previous?.receipts[operation]) {
+      const receipt = ledgerReceiptSchema.parse(previous.receipts[operation]);
+      const heldPhase = previous.phase === "LEDGER_HELD";
+      if (state.cold_recovery_id !== p.recoveryId || Number(state.cold_recovery_generation) !== p.generation
+        || state.cold_recovery_phase !== previous.phase || !["LEDGER_HELD", "LEDGER_COMMITTED_HELD", "CANARY_ADMITTED", "ACCEPTED"].includes(previous.phase)
+        || state.cold_canary_task_id !== p.canary.taskId || state.cold_canary_worker_id !== p.canary.workerId
+        || Number(state.current_epoch) !== (heldPhase ? p.expectedEpoch : p.nextEpoch)
+        || state.leader_host_id !== (heldPhase ? p.sourceHost : p.targetHost)
+        || (heldPhase && state.policy_fingerprint !== (p.policyTransition?.expectedSourceFingerprint ?? p.candidateConfigDigest))
+        || (!heldPhase && (state.leadership_cluster_id !== p.clusterId || state.policy_fingerprint !== p.candidateConfigDigest))
+        || receipt.operation !== operation || receipt.recoveryId !== p.recoveryId || receipt.planSha256 !== planHash
+        || receipt.generation !== p.generation || receipt.fabricEpoch !== (operation === "hold" ? p.expectedEpoch : p.nextEpoch)
+        || receipt.held !== (operation !== "accept") || (operation === "accept" && previous.phase !== "ACCEPTED")) throw new Error("cached cold receipt current authority differs");
+      if (!heldPhase) currentCommittedWitness(p);
+      recheckCandidatePolicy(candidate, p);
+      assertVerifiedColdRequest(auth);
+      await client.query("COMMIT");
+      return receipt;
+    }
     if (operation === "hold") {
       if (previous || Number(state.current_epoch) !== p.expectedEpoch || state.leader_host_id !== p.sourceHost || (state.cold_recovery_phase && state.cold_recovery_phase !== "ACCEPTED") || Number(state.cold_recovery_generation ?? 0) >= p.generation) throw new Error("restored ledger authority differs or another recovery owns it");
+      if (state.policy_fingerprint !== (p.policyTransition?.expectedSourceFingerprint ?? p.candidateConfigDigest)) throw new Error("restored source execution policy differs");
       await client.query("INSERT INTO fabric_cold_recoveries(recovery_id,plan_sha256,generation,expected_epoch,next_epoch,source_host,target_host,phase,plan) VALUES($1,$2,$3,$4,$5,$6,$7,'LEDGER_HELD',$8::jsonb)",[p.recoveryId,planHash,p.generation,p.expectedEpoch,p.nextEpoch,p.sourceHost,p.targetHost,JSON.stringify(p)]);
-      await client.query("INSERT INTO fabric_cold_task_quarantine(recovery_id,task_id,original_status,reason) SELECT $1,id,status,'post_snapshot_delivery_unknown' FROM fabric_tasks WHERE status IN ('queued','running') ON CONFLICT DO NOTHING",[p.recoveryId]);
-      await client.query("INSERT INTO fabric_cold_effect_quarantine(recovery_id,effect_id,original_status,reason) SELECT $1,id,status,'post_snapshot_provider_delivery_unknown' FROM fabric_effect_outbox WHERE status <> 'delivered' ON CONFLICT DO NOTHING",[p.recoveryId]);
-      await client.query("INSERT INTO fabric_cold_alarm_quarantine(recovery_id,alarm_id,original_status,reason) SELECT $1,id,status,'post_snapshot_alarm_delivery_unknown' FROM fabric_alarm_outbox WHERE status <> 'delivered' ON CONFLICT DO NOTHING",[p.recoveryId]);
-      await client.query("INSERT INTO fabric_cold_artifact_quarantine(recovery_id,artifact_id,original_status,reason) SELECT $1,id,status,'post_snapshot_object_write_unknown' FROM fabric_artifacts WHERE status <> 'available' ON CONFLICT DO NOTHING",[p.recoveryId]);
+      // Every prior history item receives a fresh generation hold, including a
+      // terminal item whose old release must not authorize later failback replay.
+      await client.query("INSERT INTO fabric_cold_task_quarantine_history(recovery_id,task_id,original_status,reason) SELECT $1,id,status,'post_snapshot_delivery_unknown' FROM fabric_tasks t WHERE status IN ('queued','running') OR EXISTS(SELECT 1 FROM fabric_cold_task_quarantine_history q WHERE q.task_id=t.id) ON CONFLICT DO NOTHING",[p.recoveryId]);
+      await client.query("INSERT INTO fabric_cold_effect_quarantine_history(recovery_id,effect_id,original_status,reason) SELECT $1,id,status,'post_snapshot_provider_delivery_unknown' FROM fabric_effect_outbox e WHERE status <> 'delivered' OR EXISTS(SELECT 1 FROM fabric_cold_effect_quarantine_history q WHERE q.effect_id=e.id) ON CONFLICT DO NOTHING",[p.recoveryId]);
+      await client.query("INSERT INTO fabric_cold_alarm_quarantine_history(recovery_id,alarm_id,original_status,reason) SELECT $1,id,status,'post_snapshot_alarm_delivery_unknown' FROM fabric_alarm_outbox a WHERE status <> 'delivered' OR EXISTS(SELECT 1 FROM fabric_cold_alarm_quarantine_history q WHERE q.alarm_id=a.id) ON CONFLICT DO NOTHING",[p.recoveryId]);
+      await client.query("INSERT INTO fabric_cold_artifact_quarantine_history(recovery_id,artifact_id,original_status,reason) SELECT $1,id,status,'post_snapshot_object_write_unknown' FROM fabric_artifacts a WHERE status <> 'available' OR EXISTS(SELECT 1 FROM fabric_cold_artifact_quarantine_history q WHERE q.artifact_id=a.id) ON CONFLICT DO NOTHING",[p.recoveryId]);
       await client.query("UPDATE fabric_attempts SET status='fenced',finished_at=now(),error_code='cold_recovery_held',error_summary='restored attempt quarantined by offline cold recovery' WHERE status='running'");
       await client.query("UPDATE fabric_runs SET status='expired',finished_at=now() WHERE status='running'");
       await client.query("UPDATE fabric_worker_sessions SET status='fenced',ended_at=now(),end_reason='cold_recovery_held' WHERE status='active'");
@@ -182,29 +274,36 @@ export async function runColdLedgerOperation(pool: pg.Pool, operation: string, r
       if (!previous || state.cold_recovery_id !== p.recoveryId || Number(state.cold_recovery_generation) !== p.generation) throw new Error("ledger has no matching held cold operation");
       if (operation === "commit") {
         if (previous.phase !== "LEDGER_HELD") throw new Error("ledger cold commit predecessor differs");
+        if (state.cold_recovery_phase !== previous.phase || Number(state.current_epoch) !== p.expectedEpoch
+          || state.leader_host_id !== p.sourceHost || state.cold_canary_task_id !== p.canary.taskId
+          || state.cold_canary_worker_id !== p.canary.workerId) throw new Error("ledger cold commit current source authority differs");
+        if (state.policy_fingerprint !== (p.policyTransition?.expectedSourceFingerprint ?? p.candidateConfigDigest)) throw new Error("ledger cold commit source policy differs or signed transition is missing");
         // The separate store commit must actually exist; a coordinator claim alone is insufficient.
-        const witness=new DatabaseSync(safeFile(p.targetDatabasePath),{readOnly:true});
-        try {
-          const row=witness.prepare("SELECT payload FROM witness_snapshot WHERE cluster_id=?").get(p.clusterId) as {payload:string} | undefined;
-          const snapshot=row ? JSON.parse(row.payload) as {state?:{currentLeader:string;fabricEpoch:number};coldRecoveries?:Array<{recoveryId:string;planSha256:string}>} : undefined;
-          if (snapshot?.state?.currentLeader !== p.targetHost || snapshot.state.fabricEpoch !== p.nextEpoch || !snapshot.coldRecoveries?.some((r)=>r.recoveryId===p.recoveryId && r.planSha256===planHash)) throw new Error("witness cold commit has not been read back");
-        } finally { witness.close(); }
-        await client.query("UPDATE fabric_state SET current_epoch=$1,leader_host_id=$2,leadership_cluster_id=$3,leadership_receipt_id=$4,leadership_fence_digest=$5,leader_lease_expires_at=NULL,leader_recovery_hold_until=NULL,cold_recovery_phase='LEDGER_COMMITTED_HELD',updated_at=now() WHERE singleton=true",[p.nextEpoch,p.targetHost,p.clusterId,p.recoveryId,planHash]);
+        currentCommittedWitness(p);
+        recheckCandidatePolicy(candidate, p);
+        await client.query("UPDATE fabric_state SET current_epoch=$1,leader_host_id=$2,leadership_cluster_id=$3,leadership_receipt_id=$4,leadership_fence_digest=$5,policy_fingerprint=$6,leader_lease_expires_at=NULL,leader_recovery_hold_until=NULL,cold_recovery_phase='LEDGER_COMMITTED_HELD',updated_at=now() WHERE singleton=true",[p.nextEpoch,p.targetHost,p.clusterId,p.recoveryId,planHash,p.candidateConfigDigest]);
       } else {
         if (Number(state.current_epoch)!==p.nextEpoch || state.leader_host_id!==p.targetHost || auth.anchor.highestEpoch!==p.nextEpoch || auth.anchor.leader!==p.targetHost || auth.anchor.publicKeySha256!==p.newPublicKeySha256 || auth.anchor.pending?.phase!=="ANCHOR_COMMITTED") throw new Error("committed anchor/ledger authority differs");
         if (operation === "canary") {
           if (previous.phase!=="LEDGER_COMMITTED_HELD") throw new Error("canary predecessor differs");
+          if (state.cold_recovery_phase !== previous.phase || state.leadership_cluster_id !== p.clusterId
+            || state.policy_fingerprint !== p.candidateConfigDigest || state.cold_canary_task_id !== p.canary.taskId
+            || state.cold_canary_worker_id !== p.canary.workerId) throw new Error("canary current predecessor authority differs");
           if ((await client.query("SELECT id FROM fabric_tasks WHERE id=$1",[p.canary.taskId])).rowCount) throw new Error("canary task identity already exists");
           await client.query("UPDATE fabric_cold_recoveries SET canary_io_baseline_sha256=$2 WHERE recovery_id=$1",[p.recoveryId,await ioFootprint(client)]);
           await client.query("INSERT INTO fabric_tasks(id,namespace,queue_name,task_type,idempotency_key,request_hash,payload,required_capabilities,priority,status,max_attempts,provider,retry_backoff_seconds,config_fingerprint,available_at) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,'[\"fabric.cold_canary\"]'::jsonb,0,'queued',1,'local',0,$8,now())",[p.canary.taskId,p.canary.namespace,p.canary.queue,p.canary.taskType,p.recoveryId,p.canary.payloadSha256,JSON.stringify(p.canary.payload),p.candidateConfigDigest]);
           await client.query("UPDATE fabric_state SET cold_recovery_phase='CANARY_ADMITTED',updated_at=now() WHERE singleton=true");
         } else {
           if (previous.phase!=="CANARY_ADMITTED") throw new Error("acceptance predecessor differs");
+          if (state.cold_recovery_phase !== previous.phase || state.leadership_cluster_id !== p.clusterId
+            || state.policy_fingerprint !== p.candidateConfigDigest || state.cold_canary_task_id !== p.canary.taskId
+            || state.cold_canary_worker_id !== p.canary.workerId) throw new Error("acceptance current predecessor authority differs");
           const canary=await client.query("SELECT t.status,t.payload,t.task_type,t.queue_name,t.namespace,t.result,a.fabric_epoch,a.worker_id,a.status AS attempt_status,a.result AS attempt_result,w.host_id,w.provider,w.metadata FROM fabric_tasks t JOIN LATERAL (SELECT * FROM fabric_attempts WHERE task_id=t.id ORDER BY attempt_number DESC LIMIT 1) a ON true JOIN fabric_workers w ON w.worker_id=a.worker_id WHERE t.id=$1",[p.canary.taskId]);
           const c=canary.rows[0] as Record<string,unknown> | undefined;
           const effects=await client.query("SELECT count(*)::int AS count FROM fabric_effect_outbox WHERE task_id=$1",[p.canary.taskId]);
           const artifacts=await client.query("SELECT count(*)::int AS count FROM fabric_artifacts WHERE task_id=$1",[p.canary.taskId]);
           if (!c || c.status!=="succeeded" || c.attempt_status!=="succeeded" || Number(c.fabric_epoch)!==p.nextEpoch || c.worker_id!==p.canary.workerId || c.host_id!==p.targetHost || c.provider!=="local" || (c.metadata as Record<string,unknown>|null)?.coldCanaryHandler!=="fabric_cold_canary_v1" || digest(c.result)!==digest(expectedCanaryResult(p)) || digest(c.attempt_result)!==digest(expectedCanaryResult(p)) || c.task_type!==p.canary.taskType || c.queue_name!==p.canary.queue || c.namespace!==p.canary.namespace || digest(c.payload)!==p.canary.payloadSha256 || Number(effects.rows[0]?.count)!==0 || Number(artifacts.rows[0]?.count)!==0 || !previous.canary_io_baseline_sha256 || previous.canary_io_baseline_sha256!==await ioFootprint(client)) throw new Error("declared effect-free runtime canary has not completed without artifact or provider writes");
+          currentCommittedWitness(p);
           await client.query("UPDATE fabric_state SET cold_recovery_phase='ACCEPTED',updated_at=now() WHERE singleton=true");
         }
       }
@@ -213,6 +312,8 @@ export async function runColdLedgerOperation(pool: pg.Pool, operation: string, r
     const phase=operation==="hold"?"LEDGER_HELD":operation==="commit"?"LEDGER_COMMITTED_HELD":operation==="canary"?"CANARY_ADMITTED":"ACCEPTED";
     await client.query("UPDATE fabric_cold_recoveries SET phase=$2,receipts=receipts || jsonb_build_object($3::text,$4::jsonb),updated_at=now() WHERE recovery_id=$1",[p.recoveryId,phase,operation,JSON.stringify(receipt)]);
     await client.query("INSERT INTO fabric_events(event_id,aggregate_type,aggregate_id,event_type,fabric_epoch,data) VALUES($1,'cold_recovery',$2,$3,$4,$5::jsonb)",[randomUUID(),p.recoveryId,"cold_recovery."+operation,receipt.fabricEpoch,JSON.stringify(receipt)]);
+    recheckCandidatePolicy(candidate, p);
+    assertVerifiedColdRequest(auth);
     await client.query("COMMIT");
     return receipt;
   } catch (error) { await client.query("ROLLBACK"); throw error; }

@@ -18,6 +18,7 @@ required_assets:
   - deploy/execution-fabric/witness
   - installers/execution-fabric
   - schemas/execution-fabric-cold-recovery.schema.json
+  - schemas/execution-fabric-cold-disposition.schema.json
   - docs/development/execution-fabric-cold-recovery.md
 image_lock:
   file: execution-fabric-image-lock.json

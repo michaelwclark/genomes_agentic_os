@@ -838,6 +838,7 @@ export class PostgresLedger implements LedgerPort {
          JOIN fabric_tasks t ON t.id = a.task_id
          CROSS JOIN fabric_state s
          WHERE a.id = $1 AND s.singleton = true
+           AND NOT EXISTS (SELECT 1 FROM fabric_cold_task_quarantine q WHERE q.task_id=t.id)
          FOR UPDATE OF a, t`,
         [attemptId],
       );
@@ -1046,6 +1047,7 @@ export class PostgresLedger implements LedgerPort {
         `SELECT a.*, t.max_attempts, t.retry_backoff_seconds
          FROM fabric_attempts a JOIN fabric_tasks t ON t.id=a.task_id
          WHERE a.status='running' AND a.lease_expires_at <= now()
+           AND NOT EXISTS (SELECT 1 FROM fabric_cold_task_quarantine q WHERE q.task_id=t.id)
          ORDER BY a.task_id, a.attempt_number
          FOR UPDATE OF a, t SKIP LOCKED`,
       );
@@ -1126,7 +1128,8 @@ export class PostgresLedger implements LedgerPort {
     await this.transaction(async (client) => {
       await client.query(
         `UPDATE fabric_tasks SET delivery_published_at=now(),updated_at=now()
-         WHERE id=$1 AND status='queued'`,
+         WHERE id=$1 AND status='queued'
+           AND NOT EXISTS (SELECT 1 FROM fabric_cold_task_quarantine q WHERE q.task_id=fabric_tasks.id)`,
         [taskId],
       );
     }, true, { kind: "publish", taskId });

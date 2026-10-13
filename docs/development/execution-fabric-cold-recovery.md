@@ -70,13 +70,43 @@ The command defaults to a validated dry run. Inspect its exact result, then use 
 
 Run preparation and operator approval, then apply the same closed transition. Keep the signed artifacts, actor hashes, old/new identities and immutable journal. Cross-store changes are forward-only: interrupted transitions remain held and resume the exact identity through `resume`. Never restore an older anchor or start a second transition to escape a partial operation.
 
+`status` returns the immutable historical journal. It does not validate current
+authority. Repeating `accept`, `apply` or `resume` for an accepted journal must
+still have the unchanged unexpired signed authorization, the exact current
+selected anchor and actual native PostgreSQL/witness readbacks. The native
+actor verifies the current recovery generation, epoch, host, phase, cluster,
+policy and selected witness snapshot/bootstrap/retained receipt before returning
+the identical durable acceptance receipt. Drift, a missing actor/store or expired
+authorization refuses without replacing history, receipt or anchor bytes.
+Historical status remains available for diagnosis; it never grants work release.
+
+When the restored source execution policy A differs from reviewed target policy
+B, include the optional closed `policyTransition` in the signed plan before
+preparation and approval. It contains `expectedSourceFingerprint` for the actual
+restored source, `candidateExecutionPolicyFile` for the canonical existing target
+file, and `candidateExecutionPolicySha256` for its exact reviewed bytes. The
+native control plane loads that file with its existing `PolicyManager`, checks
+its operational applied fingerprint against `candidateConfigDigest`, and checks
+its file identity and bytes again before commit. The original PostgreSQL and
+witness source fingerprints must still equal A. After the witness commits B,
+the already held PostgreSQL cold commit writes B in the same transaction as the
+target epoch and leader. Original task associations, approvals and quarantine
+history keep their original A bindings. Ordinary policy reload is not part of
+this transfer.
+
+Omitting `policyTransition` preserves legacy plan hashes and permits an unchanged
+execution policy. A differing source policy without the signed descriptor stays
+held. A missing, changed, unsafe or unqualified target file also stays held;
+never prebind the restored ledger to B or rewrite original associations to make
+validation pass.
+
 ## Reconcile before releasing work
 
 Restored queued/running tasks and undelivered effects enter quarantine. Identify work after the backup cutoff, in-flight external actions, provider idempotency keys and actual delivery receipts. An older snapshot cannot prove that those effects did not already happen.
 
 Reconcile the separate personal fallback queue through its existing owner workflow. It is not the shared PostgreSQL ledger. Clearing its latch does not authorize a shared transfer, and a cold transfer does not clear the latch.
 
-Run one exactly approved harmless canary under the new current authority and retain its semantic terminal receipt. It must create no customer/provider effect. Acceptance requires this canary and current epoch/hold readback. Resume only individually reconciled work through normal owner-bound transitions; existing held provider scopes and sealed reviews remain held.
+Run one exactly approved harmless canary under the new current authority and retain its semantic terminal receipt. It must create no customer/provider effect. Acceptance requires this canary and current epoch/hold readback. Acceptance retains quarantine; it does not resume restored tasks or effects. Existing held provider scopes and sealed reviews remain held.
 
 The shipped canary is `fabric.cold_canary`, using queue and namespace
 `fabric_cold_recovery`, pool `fabric_cold_recovery_workers` and handler
@@ -97,6 +127,127 @@ Keep customer/provider lanes held throughout this canary. Restore Claude access
 through the authenticated claude.ai subscription on the target host and verify
 it separately before admitting provider work. This recovery procedure does not
 authorize API keys, injected tokens or retries of sealed or held reviews.
+
+## Inspect and record an individual quarantine disposition
+
+The optional `selectiveDisposition` policy defaults to disabled. This version
+supports signed inspection, an immutable decision to keep an item held, and
+owner-approved **metadata-only task cancellation**. Cancellation leaves the
+task and every effect, alarm and artifact quarantined. It never cancels a
+provider request, delivers an effect, clears an alarm, releases an artifact or
+requeues work. Ordinary administrative requeue, effect replay and queue drain
+also refuse quarantined items. Keep all provider/runtime holds in place.
+
+Positive requeue and provider outcome verification are unavailable. The only
+qualified inert route is the single `fabric.cold_canary` created by the cold
+protocol, with one attempt. Ordinary admission refuses that type, and acceptance
+requires its success. A local provider label or `read_only` task class does not
+establish that other work has no effects. Do not create substitute database rows
+or provide a generic success receipt to manufacture eligibility.
+
+Enable the optional policy only through an independently reviewed configuration
+change. Bind the original accepted policy digest, exact reviewed source release,
+existing canonical SQLite authority path/domain/project and current execution
+policy file. The signed accepted receipt, recovery generation/epoch, cluster,
+target host and PostgreSQL system identity must remain current. A configured
+hash alone does not qualify a policy rotation, backend, package or host.
+Apply the reviewed release's additive PostgreSQL migrations through its existing
+migration procedure against the exact backed-up, held target before running
+these new actors. Retain the nonempty migration-016 to migration-017 preservation
+proof and current schema readback. These actors require the generation-keyed
+history tables; they refuse an older or unknown schema. Source compilation does
+not migrate a restored database or authorize an empty primary bootstrap.
+
+An item needs a genuine original association in the canonical work registry.
+Its `executionFabricBinding` metadata must preserve the exact task UUID,
+request hash, original queue/namespace/type/provider/configuration fingerprint,
+original development policy fingerprint, logical context digest and immutable
+context receipt URI/file digest. The actual owner-written work history must
+have recorded that same binding with `receipt_ref="fabric-task:<task UUID>"`
+before the first quarantine hold. The original effective-policy receipt must
+already have an `internal` artifact reference for the same work ID and bytes,
+also predating the first hold. Its real context assembler digest is checked;
+it is distinct from the receipt file's SHA-256. Missing, retroactively supplied,
+specialized unsupported or conflicting associations remain held. This operation
+does not write associations or migrate/create an authority database.
+
+Construct a closed signed inspection selector using
+`schemas/execution-fabric-cold-disposition.schema.json`'s `inspectionRequest`
+definition. Use the independently held recovery signing key and the existing
+canonical serializer; include the exact current owner/work/context and a
+bounded authorization window. The standard command first checks only static
+structure and signature:
+
+```sh
+agentic-os runtime cold-recovery inspect-disposition \
+  --request /private/operator/item-inspection.json \
+  --policy /private/operator/cold-policy.json \
+  --anchor /private/operator/recovery-anchor.json \
+  --journal-dir /private/operator/recovery-journal \
+  --service-root /reviewed/source/services \
+  --database-url-file /private/operator/target-database-url \
+  --json
+```
+
+Add `--apply` to this **inspection** command to obtain actual database and
+canonical-authority readback. The native actor owns the SQLite writer barrier
+and PostgreSQL locks during the read, then rolls them back without changing
+item, event or decision records. Its receipt reports current item/history/
+dependency/work digests, the previous disposition digest and bounded dependency
+counts. Its bounded `decisionHistory` contains immutable receipt/predecessor/
+event references and generations; it verifies the retained events and each
+generation's chain without exposing context bodies or provider data.
+`routeQualified=false` is explicit: the accepted canary was created after the
+first hold and cannot satisfy this required pre-hold association/history.
+`requeueAvailable=false` and `providerOutcomeVerifier="unavailable"` remain
+explicit. Static dry-run results report that database and canonical authority
+have not been validated.
+
+For a hold or cancellation, construct the closed `request` definition from
+those actual readbacks. Bind a stable new idempotency key and the current
+predecessor. Cancellation additionally requires the real owner's work to have
+reached `finished`, `documented` or `archived` through its normal workflow, no
+active attempts/runs/claim, and reason `owner_cancelled`. Do not edit old task
+attempts, receipts or history to obtain those states.
+
+Use the existing canonical approval producer
+`state.control_plane_facts.request_approval` with subject type
+`execution_fabric_cold_disposition`, subject ID equal to the task/effect UUID,
+the actual owner as requester and the explicit operator as named approver.
+Its metadata `requestSha256` is produced by
+`cold_quarantine_disposition.approval_binding(payload)`, which excludes only
+`approvalSha256` to avoid a circular row hash. The named operator records the
+decision with the existing `decide_approval` API before expiry. Hash the actual
+approved SQLite row, including its stored metadata JSON string, into
+`approvalSha256`, then sign the complete request. There is no new CLI that
+implicitly creates or approves this authority; a missing qualified owner/
+approval integration is a hold, not an invitation to write raw SQLite rows.
+
+Run `disposition` with the same explicit references, first without `--apply`,
+then add `--apply` only for the exact reviewed request. The fixed native actor
+holds the existing canonical SQLite writer fence through PostgreSQL commit,
+checks the current accepted recovery and loaded/applied execution policy,
+preserves all dependency/history bytes, appends one immutable decision and
+event, and verifies their readbacks. Unsupported backends and provider verbs
+refuse. Each independent item needs its own original association and approval.
+
+Keep the returned private local receipt and actual database receipt. If the
+database committed but local publication failed, exact unchanged replay of the
+same signed request can retrieve the committed proof and publish only a missing
+local receipt. It never overwrites a conflicting receipt. Expired authorization
+can retrieve an already committed unchanged proof; it cannot authorize a new
+decision. A changed item, dependency, owner, policy, event or successor decision
+refuses replay. Fresh decisions need a new key, current predecessor, fresh
+readbacks and a new approval. Preserve refused attempts and investigate their
+cause; do not retry an unchanged refusal.
+
+Migration `017_cold_quarantine_dispositions` preserves every migration-016 hold
+as immutable generation-keyed history. Existing consumers read active-hold
+views under their original names. A later recovery/failback records fresh holds
+and rejects old generation/epoch proofs. This revision's database constraints
+prohibit every quarantine release, including through the disposition journal.
+Local fixture qualification of these operations is separate from an installed
+release, current host recovery, customer data restoration and provider readiness.
 
 ## Validate and record the drill
 

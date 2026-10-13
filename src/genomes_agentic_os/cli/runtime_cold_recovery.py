@@ -8,8 +8,9 @@ from pathlib import Path
 import shutil
 
 from ..cold_recovery import cold_recovery_operation
+from ..cold_quarantine_disposition import cold_disposition_operation
 
-ACTIONS = ("inspect", "prepare", "approve", "apply", "status", "resume", "canary", "accept", "initialize-anchor")
+ACTIONS = ("inspect", "prepare", "approve", "apply", "status", "resume", "canary", "accept", "initialize-anchor", "inspect-disposition", "disposition")
 
 
 def handle(args: argparse.Namespace) -> int:
@@ -22,16 +23,22 @@ def handle(args: argparse.Namespace) -> int:
     witness = service_root / "execution-fabric-leadership-witness/dist/src/cold-recovery-main.js"
     ledger = service_root / "execution-fabric-control-plane/dist/src/cold-recovery-main.js"
     try:
-        result = cold_recovery_operation(
-            args.cold_action,
-            args.request,
+        common = dict(
             policy_file=args.policy,
             anchor_file=args.anchor,
             journal_dir=args.journal_dir,
-            witness_command=[node, str(witness)],
             ledger_command=[node, str(ledger), "--database-url-file", args.database_url_file],
             dry_run=not args.apply,
         )
+        if args.cold_action in {"disposition", "inspect-disposition"}:
+            result = cold_disposition_operation(args.cold_action, args.request, **common)
+        else:
+            result = cold_recovery_operation(
+                args.cold_action,
+                args.request,
+                witness_command=[node, str(witness)],
+                **common,
+            )
     except (OSError, ValueError, RuntimeError) as exc:
         # Paths are references only; actor/database exception text may contain secrets.
         print(json.dumps({"ok": False, "error": "cold_recovery_refused", "error_class": type(exc).__name__}))

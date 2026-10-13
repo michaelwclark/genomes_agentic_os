@@ -31,6 +31,7 @@ def test_registered_cli_defaults_to_read_only_plan(tmp_path, monkeypatch, capsys
         return {"ok": True, "status": "validated_plan"}
 
     monkeypatch.setattr(cli, "cold_recovery_operation", operation)
+    monkeypatch.setattr(cli, "cold_disposition_operation", operation)
     monkeypatch.setattr(cli.shutil, "which", lambda _: "/reviewed/node")
     assert main(arguments(tmp_path, action)) == 0
     assert json.loads(capsys.readouterr().out)["status"] == "validated_plan"
@@ -38,10 +39,13 @@ def test_registered_cli_defaults_to_read_only_plan(tmp_path, monkeypatch, capsys
     assert args == (action, str(tmp_path / "request.json"))
     assert kw["dry_run"] is True
     root = tmp_path / "reviewed-services"
-    assert kw["witness_command"] == [
-        "/reviewed/node",
-        str(root / "execution-fabric-leadership-witness/dist/src/cold-recovery-main.js"),
-    ]
+    if action in {"disposition", "inspect-disposition"}:
+        assert "witness_command" not in kw
+    else:
+        assert kw["witness_command"] == [
+            "/reviewed/node",
+            str(root / "execution-fabric-leadership-witness/dist/src/cold-recovery-main.js"),
+        ]
     assert kw["ledger_command"] == [
         "/reviewed/node",
         str(root / "execution-fabric-control-plane/dist/src/cold-recovery-main.js"),
@@ -101,8 +105,21 @@ def test_fresh_policy_delivery_and_update_preserve_operator_binding(tmp_path):
     assert policy["enabled"] is False
     assert policy["recoveryPublicKeyPem"] is None
     assert (tmp_path / "harness/schemas/execution-fabric-cold-recovery.schema.json").is_file()
+    assert (tmp_path / "harness/schemas/execution-fabric-cold-disposition.schema.json").is_file()
+    assert policy["selectiveDisposition"]["enabled"] is False
     policy["clusterId"] = "operator-bound-cluster"
     configured = json.dumps(policy, sort_keys=True).encode()
     policy_file.write_bytes(configured)
     install_docs(tmp_path)
     assert policy_file.read_bytes() == configured
+
+
+@pytest.mark.parametrize("action", ["disposition", "inspect-disposition"])
+def test_selective_actor_refusal_is_safe_and_explicit(tmp_path, monkeypatch, capsys, action):
+    def operation(*args, **kwargs):
+        assert kwargs["dry_run"] is False
+        raise RuntimeError("private database reference must never be emitted")
+    monkeypatch.setattr(cli, "cold_disposition_operation", operation)
+    monkeypatch.setattr(cli.shutil, "which", lambda _: "/reviewed/node")
+    assert main(arguments(tmp_path, action) + ["--apply"]) == 1
+    assert json.loads(capsys.readouterr().out) == {"ok": False, "error": "cold_recovery_refused", "error_class": "RuntimeError"}

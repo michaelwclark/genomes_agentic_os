@@ -99,10 +99,14 @@ def _safe_relative(path: Path, root: Path) -> str:
         return path.as_posix()
 
 
-def _is_report_candidate(path: Path) -> bool:
+def _is_report_candidate(path: Path, root: Path) -> bool:
+    try:
+        relative = path.relative_to(root)
+    except ValueError:
+        return False
     if path.suffix.lower() not in REPORT_EXTENSIONS or path.suffix.lower() in RAW_SUFFIXES:
         return False
-    lower_parts = tuple(part.lower() for part in path.parts)
+    lower_parts = tuple(part.lower() for part in relative.parts)
     if any(part in PRUNED_DIRS for part in lower_parts):
         return False
     stem = path.stem.lower()
@@ -115,7 +119,7 @@ def _is_report_candidate(path: Path) -> bool:
     return in_report_dir or named_report or work_item_result or run_receipt
 
 
-def _walk_files(start: Path, *, max_dirs: int, max_candidates: int) -> Iterable[Path]:
+def _walk_files(start: Path, *, root: Path, max_dirs: int, max_candidates: int) -> Iterable[Path]:
     if not start.is_dir() or start.is_symlink():
         return
     visited_dirs = 0
@@ -130,7 +134,7 @@ def _walk_files(start: Path, *, max_dirs: int, max_candidates: int) -> Iterable[
         )
         for filename in sorted(filenames, reverse=True):
             path = Path(dirpath) / filename
-            if not path.is_symlink() and _is_report_candidate(path):
+            if not path.is_symlink() and _is_report_candidate(path, root):
                 yield path
                 candidates += 1
                 if candidates >= max_candidates:
@@ -426,7 +430,7 @@ def collect_reports(root: str | Path, *, now: datetime | None = None, max_files:
     candidates: set[Path] = set()
     traversal_limit = max(250, max_files * 4)
     for start in _discovery_roots(os_root):
-        candidates.update(_walk_files(start, max_dirs=traversal_limit, max_candidates=traversal_limit))
+        candidates.update(_walk_files(start, root=os_root, max_dirs=traversal_limit, max_candidates=traversal_limit))
 
     def freshness(path: Path) -> tuple[float, str]:
         try:

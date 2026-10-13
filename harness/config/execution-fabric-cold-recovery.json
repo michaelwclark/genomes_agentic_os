@@ -10,5 +10,14 @@
   "fencePublicKeyPem": null,
   "maxApprovalSeconds": 3600,
   "witnessActorSha256": null,
-  "controlPlaneActorSha256": null
+  "controlPlaneActorSha256": null,
+  "selectiveDisposition": {
+    "enabled": false,
+    "acceptedPolicySha256": null,
+    "sourceRelease": null,
+    "authority": null,
+    "executionPolicyFile": null,
+    "allowedLocalTaskTypes": [],
+    "heldProviders": ["claude", "codex"]
+  }
 }

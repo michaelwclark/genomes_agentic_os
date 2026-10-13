@@ -1,0 +1,1170 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "execution-fabric-cold-disposition/v1",
+  "title": "Exact-item offline cold quarantine disposition; provider outcome verification unavailable",
+  "$ref": "#/$defs/request",
+  "$defs": {
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schemaVersion": {
+          "const": "execution-fabric-cold-disposition/v1"
+        },
+        "recoveryId": {
+          "type": "string",
+          "format": "uuid",
+          "minLength": 36,
+          "maxLength": 36,
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$(?![\\s\\S])"
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "fabricEpoch": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "clusterId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "targetHost": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._-]+$(?![\\s\\S])"
+        },
+        "pgSystemId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32,
+          "pattern": "^[0-9]+$(?![\\s\\S])"
+        },
+        "planSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$(?![\\s\\S])",
+          "minLength": 64,
+          "maxLength": 64
+        },
+        "acceptedReceiptSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$(?![\\s\\S])",
+          "minLength": 64,
+          "maxLength": 64
+        },
+        "acceptedPolicySha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$(?![\\s\\S])",
+          "minLength": 64,
+          "maxLength": 64
+        },
+        "policySha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$(?![\\s\\S])",
+          "minLength": 64,
+          "maxLength": 64
+        },
+        "configFingerprint": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$(?![\\s\\S])",
+          "minLength": 64,
+          "maxLength": 64
+        },
+        "executionPolicySha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$(?![\\s\\S])",
+          "minLength": 64,
+          "maxLength": 64
+        },
+        "sourceRelease": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "itemKind": {
+          "enum": [
+            "task",
+            "effect"
+          ]
+        },
+        "itemId": {
+          "type": "string",
+          "format": "uuid",
+          "minLength": 36,
+          "maxLength": 36,
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$(?![\\s\\S])"
+        },
+        "itemSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$(?![\\s\\S])",
+          "minLength": 64,
+          "maxLength": 64
+        },
+        "historySha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$(?![\\s\\S])",
+          "minLength": 64,
+          "maxLength": 64
+        },
+        "dependencySha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$(?![\\s\\S])",
+          "minLength": 64,
+          "maxLength": 64
+        },
+        "workItemId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "workItemSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$(?![\\s\\S])",
+          "minLength": 64,
+          "maxLength": 64
+        },
+        "owner": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "operator": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "contextSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$(?![\\s\\S])",
+          "minLength": 64,
+          "maxLength": 64
+        },
+        "approvalId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "approvalSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$(?![\\s\\S])",
+          "minLength": 64,
+          "maxLength": 64
+        },
+        "disposition": {
+          "enum": [
+            "hold",
+            "task_cancel",
+            "task_requeue",
+            "effect_delivered",
+            "effect_retry"
+          ]
+        },
+        "priorDispositionSha256": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$(?![\\s\\S])",
+              "minLength": 64,
+              "maxLength": 64
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "idempotencyKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$(?![\\s\\S])"
+        },
+        "reason": {
+          "enum": [
+            "outcome_unknown",
+            "owner_cancelled",
+            "local_task_reconciled"
+          ]
+        },
+        "issuedAt": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|[+-]\\d{2}:\\d{2})$(?![\\s\\S])"
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|[+-]\\d{2}:\\d{2})$(?![\\s\\S])"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "recoveryId",
+        "generation",
+        "fabricEpoch",
+        "clusterId",
+        "targetHost",
+        "pgSystemId",
+        "planSha256",
+        "acceptedReceiptSha256",
+        "acceptedPolicySha256",
+        "policySha256",
+        "configFingerprint",
+        "executionPolicySha256",
+        "sourceRelease",
+        "itemKind",
+        "itemId",
+        "itemSha256",
+        "historySha256",
+        "dependencySha256",
+        "workItemId",
+        "workItemSha256",
+        "owner",
+        "operator",
+        "contextSha256",
+        "approvalId",
+        "approvalSha256",
+        "disposition",
+        "priorDispositionSha256",
+        "idempotencyKey",
+        "reason",
+        "issuedAt",
+        "expiresAt"
+      ]
+    },
+    "request": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "payload": {
+          "$ref": "#/$defs/payload"
+        },
+        "signature": {
+          "type": "string",
+          "minLength": 88,
+          "maxLength": 88,
+          "pattern": "^[A-Za-z0-9+/]{86}==$(?![\\s\\S])"
+        }
+      },
+      "required": [
+        "payload",
+        "signature"
+      ]
+    },
+    "inspectionPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schemaVersion": {
+          "const": "execution-fabric-cold-disposition-inspection/v1"
+        },
+        "recoveryId": {
+          "type": "string",
+          "format": "uuid",
+          "minLength": 36,
+          "maxLength": 36,
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$(?![\\s\\S])"
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "fabricEpoch": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "clusterId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "targetHost": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._-]+$(?![\\s\\S])"
+        },
+        "itemKind": {
+          "enum": [
+            "task",
+            "effect"
+          ]
+        },
+        "itemId": {
+          "type": "string",
+          "format": "uuid",
+          "minLength": 36,
+          "maxLength": 36,
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$(?![\\s\\S])"
+        },
+        "workItemId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "owner": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "operator": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "contextSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$(?![\\s\\S])",
+          "minLength": 64,
+          "maxLength": 64
+        },
+        "policySha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$(?![\\s\\S])",
+          "minLength": 64,
+          "maxLength": 64
+        },
+        "issuedAt": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|[+-]\\d{2}:\\d{2})$(?![\\s\\S])"
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|[+-]\\d{2}:\\d{2})$(?![\\s\\S])"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "recoveryId",
+        "generation",
+        "fabricEpoch",
+        "clusterId",
+        "targetHost",
+        "itemKind",
+        "itemId",
+        "workItemId",
+        "owner",
+        "operator",
+        "contextSha256",
+        "policySha256",
+        "issuedAt",
+        "expiresAt"
+      ]
+    },
+    "inspectionRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "payload": {
+          "$ref": "#/$defs/inspectionPayload"
+        },
+        "signature": {
+          "type": "string",
+          "minLength": 88,
+          "maxLength": 88,
+          "pattern": "^[A-Za-z0-9+/]{86}==$(?![\\s\\S])"
+        }
+      },
+      "required": [
+        "payload",
+        "signature"
+      ]
+    },
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schemaVersion": {
+          "const": "execution-fabric-cold-recovery-policy/v1"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "clusterId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "allowedHosts": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9._-]{1,128}$(?![\\s\\S])"
+          },
+          "minItems": 2,
+          "uniqueItems": true
+        },
+        "recoveryPublicKeyPem": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "fencePublicKeyPem": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "maxApprovalSeconds": {
+          "type": "integer",
+          "minimum": 60,
+          "maximum": 3600
+        },
+        "witnessActorSha256": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$(?![\\s\\S])"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "controlPlaneActorSha256": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$(?![\\s\\S])"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "selectiveDisposition": {
+          "$ref": "#/$defs/selectiveDisposition"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "enabled",
+        "clusterId",
+        "allowedHosts",
+        "recoveryPublicKeyPem",
+        "fencePublicKeyPem",
+        "maxApprovalSeconds",
+        "witnessActorSha256",
+        "controlPlaneActorSha256"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "enabled": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "recoveryPublicKeyPem": {
+                "type": "string",
+                "minLength": 1
+              },
+              "fencePublicKeyPem": {
+                "type": "string",
+                "minLength": 1
+              },
+              "witnessActorSha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$(?![\\s\\S])"
+              },
+              "controlPlaneActorSha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$(?![\\s\\S])"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "selectiveDisposition": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "acceptedPolicySha256": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$(?![\\s\\S])",
+              "minLength": 64,
+              "maxLength": 64
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sourceRelease": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "authority": {
+          "anyOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "backend": {
+                  "const": "sqlite"
+                },
+                "databasePath": {
+                  "type": "string",
+                  "pattern": "^/(?!\\.\\.?(/|$))(?!.*\\/\\.\\.?(\\/|$))(?!.*\\/\\/)(?:[^/]+(?:/[^/]+)*)?$(?![\\s\\S])",
+                  "minLength": 1
+                },
+                "domain": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                },
+                "project": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                }
+              },
+              "required": [
+                "backend",
+                "databasePath",
+                "domain",
+                "project"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "executionPolicyFile": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^/(?!\\.\\.?(/|$))(?!.*\\/\\.\\.?(\\/|$))(?!.*\\/\\/)(?:[^/]+(?:/[^/]+)*)?$(?![\\s\\S])",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "allowedLocalTaskTypes": {
+          "type": "array",
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[a-z][a-z0-9_.-]*$(?![\\s\\S])"
+          }
+        },
+        "heldProviders": {
+          "type": "array",
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[a-z][a-z0-9_]*$(?![\\s\\S])"
+          }
+        }
+      },
+      "required": [
+        "enabled",
+        "acceptedPolicySha256",
+        "sourceRelease",
+        "authority",
+        "executionPolicyFile",
+        "allowedLocalTaskTypes",
+        "heldProviders"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "enabled": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "acceptedPolicySha256": {
+                "not": {
+                  "type": "null"
+                }
+              },
+              "sourceRelease": {
+                "not": {
+                  "type": "null"
+                }
+              },
+              "authority": {
+                "not": {
+                  "type": "null"
+                }
+              },
+              "executionPolicyFile": {
+                "not": {
+                  "type": "null"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "decisionHistoryEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "sequence": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "recoveryId": {
+          "type": "string",
+          "format": "uuid",
+          "minLength": 36,
+          "maxLength": 36,
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$(?![\\s\\S])"
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "fabricEpoch": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "disposition": {
+          "enum": [
+            "hold",
+            "task_cancel"
+          ]
+        },
+        "receiptSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$(?![\\s\\S])",
+          "minLength": 64,
+          "maxLength": 64
+        },
+        "predecessorSha256": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$(?![\\s\\S])",
+              "minLength": 64,
+              "maxLength": 64
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "eventId": {
+          "type": "string",
+          "format": "uuid",
+          "minLength": 36,
+          "maxLength": 36,
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$(?![\\s\\S])"
+        }
+      },
+      "required": [
+        "sequence",
+        "recoveryId",
+        "generation",
+        "fabricEpoch",
+        "disposition",
+        "receiptSha256",
+        "predecessorSha256",
+        "eventId"
+      ]
+    },
+    "inspectionReceipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "recoveryId": {
+          "type": "string",
+          "format": "uuid",
+          "minLength": 36,
+          "maxLength": 36,
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$(?![\\s\\S])"
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "fabricEpoch": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "clusterId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "targetHost": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._-]+$(?![\\s\\S])"
+        },
+        "pgSystemId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32,
+          "pattern": "^[0-9]+$(?![\\s\\S])"
+        },
+        "planSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$(?![\\s\\S])",
+          "minLength": 64,
+          "maxLength": 64
+        },
+        "acceptedReceiptSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$(?![\\s\\S])",
+          "minLength": 64,
+          "maxLength": 64
+        },
+        "acceptedPolicySha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$(?![\\s\\S])",
+          "minLength": 64,
+          "maxLength": 64
+        },
+        "policySha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$(?![\\s\\S])",
+          "minLength": 64,
+          "maxLength": 64
+        },
+        "configFingerprint": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$(?![\\s\\S])",
+              "minLength": 64,
+              "maxLength": 64
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "executionPolicySha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$(?![\\s\\S])",
+          "minLength": 64,
+          "maxLength": 64
+        },
+        "sourceRelease": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "itemKind": {
+          "enum": [
+            "task",
+            "effect"
+          ]
+        },
+        "itemId": {
+          "type": "string",
+          "format": "uuid",
+          "minLength": 36,
+          "maxLength": 36,
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$(?![\\s\\S])"
+        },
+        "itemSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$(?![\\s\\S])",
+          "minLength": 64,
+          "maxLength": 64
+        },
+        "historySha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$(?![\\s\\S])",
+          "minLength": 64,
+          "maxLength": 64
+        },
+        "dependencySha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$(?![\\s\\S])",
+          "minLength": 64,
+          "maxLength": 64
+        },
+        "workItemId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "workItemSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$(?![\\s\\S])",
+          "minLength": 64,
+          "maxLength": 64
+        },
+        "owner": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "operator": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "contextSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$(?![\\s\\S])",
+          "minLength": 64,
+          "maxLength": 64
+        },
+        "priorDispositionSha256": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$(?![\\s\\S])",
+              "minLength": 64,
+              "maxLength": 64
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "schemaVersion": {
+          "const": "execution-fabric-cold-disposition-inspection-receipt/v1"
+        },
+        "routeQualified": {
+          "const": false
+        },
+        "ownerBlocked": {
+          "type": "boolean"
+        },
+        "requeueAvailable": {
+          "const": false
+        },
+        "providerOutcomeVerifier": {
+          "const": "unavailable"
+        },
+        "mutationCount": {
+          "const": 0,
+          "type": "integer"
+        },
+        "dependencyCounts": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "attempts": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
+            },
+            "runs": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
+            },
+            "effects": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
+            },
+            "artifacts": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
+            },
+            "alarms": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
+            }
+          },
+          "required": [
+            "attempts",
+            "runs",
+            "effects",
+            "artifacts",
+            "alarms"
+          ]
+        },
+        "decisionHistory": {
+          "type": "array",
+          "maxItems": 1000,
+          "items": {
+            "$ref": "#/$defs/decisionHistoryEntry"
+          }
+        }
+      },
+      "required": [
+        "recoveryId",
+        "generation",
+        "fabricEpoch",
+        "clusterId",
+        "targetHost",
+        "pgSystemId",
+        "planSha256",
+        "acceptedReceiptSha256",
+        "acceptedPolicySha256",
+        "policySha256",
+        "configFingerprint",
+        "executionPolicySha256",
+        "sourceRelease",
+        "itemKind",
+        "itemId",
+        "itemSha256",
+        "historySha256",
+        "dependencySha256",
+        "workItemId",
+        "workItemSha256",
+        "owner",
+        "operator",
+        "contextSha256",
+        "priorDispositionSha256",
+        "schemaVersion",
+        "routeQualified",
+        "ownerBlocked",
+        "requeueAvailable",
+        "providerOutcomeVerifier",
+        "mutationCount",
+        "dependencyCounts",
+        "decisionHistory"
+      ]
+    },
+    "receipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "recoveryId": {
+          "type": "string",
+          "format": "uuid",
+          "minLength": 36,
+          "maxLength": 36,
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$(?![\\s\\S])"
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "fabricEpoch": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "clusterId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "targetHost": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._-]+$(?![\\s\\S])"
+        },
+        "pgSystemId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32,
+          "pattern": "^[0-9]+$(?![\\s\\S])"
+        },
+        "planSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$(?![\\s\\S])",
+          "minLength": 64,
+          "maxLength": 64
+        },
+        "configFingerprint": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$(?![\\s\\S])",
+          "minLength": 64,
+          "maxLength": 64
+        },
+        "acceptedReceiptSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$(?![\\s\\S])",
+          "minLength": 64,
+          "maxLength": 64
+        },
+        "executionPolicySha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$(?![\\s\\S])",
+          "minLength": 64,
+          "maxLength": 64
+        },
+        "itemKind": {
+          "enum": [
+            "task",
+            "effect"
+          ]
+        },
+        "itemId": {
+          "type": "string",
+          "format": "uuid",
+          "minLength": 36,
+          "maxLength": 36,
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$(?![\\s\\S])"
+        },
+        "disposition": {
+          "enum": [
+            "hold",
+            "task_cancel"
+          ]
+        },
+        "historySha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$(?![\\s\\S])",
+          "minLength": 64,
+          "maxLength": 64
+        },
+        "dependencySha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$(?![\\s\\S])",
+          "minLength": 64,
+          "maxLength": 64
+        },
+        "owner": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "operator": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "contextSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$(?![\\s\\S])",
+          "minLength": 64,
+          "maxLength": 64
+        },
+        "workItemSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$(?![\\s\\S])",
+          "minLength": 64,
+          "maxLength": 64
+        },
+        "approvalSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$(?![\\s\\S])",
+          "minLength": 64,
+          "maxLength": 64
+        },
+        "policySha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$(?![\\s\\S])",
+          "minLength": 64,
+          "maxLength": 64
+        },
+        "schemaVersion": {
+          "const": "execution-fabric-cold-disposition-receipt/v1"
+        },
+        "requestSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$(?![\\s\\S])",
+          "minLength": 64,
+          "maxLength": 64
+        },
+        "beforeSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$(?![\\s\\S])",
+          "minLength": 64,
+          "maxLength": 64
+        },
+        "afterSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$(?![\\s\\S])",
+          "minLength": 64,
+          "maxLength": 64
+        },
+        "predecessorSha256": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$(?![\\s\\S])",
+              "minLength": 64,
+              "maxLength": 64
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "eventId": {
+          "type": "string",
+          "format": "uuid",
+          "minLength": 36,
+          "maxLength": 36,
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$(?![\\s\\S])"
+        },
+        "released": {
+          "const": false
+        }
+      },
+      "required": [
+        "recoveryId",
+        "generation",
+        "fabricEpoch",
+        "clusterId",
+        "targetHost",
+        "pgSystemId",
+        "planSha256",
+        "configFingerprint",
+        "acceptedReceiptSha256",
+        "executionPolicySha256",
+        "itemKind",
+        "itemId",
+        "disposition",
+        "historySha256",
+        "dependencySha256",
+        "owner",
+        "operator",
+        "contextSha256",
+        "workItemSha256",
+        "approvalSha256",
+        "policySha256",
+        "schemaVersion",
+        "requestSha256",
+        "beforeSha256",
+        "afterSha256",
+        "predecessorSha256",
+        "eventId",
+        "released"
+      ]
+    }
+  }
+}

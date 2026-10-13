@@ -65,6 +65,9 @@
               "type": "null"
             }
           ]
+        },
+        "selectiveDisposition": {
+          "$ref": "#/$defs/selectiveDisposition"
         }
       },
       "required": [
@@ -134,13 +137,36 @@
         "payload": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["schema_version", "recovery_id", "cluster_id", "epoch", "generation"],
+          "required": [
+            "schema_version",
+            "recovery_id",
+            "cluster_id",
+            "epoch",
+            "generation"
+          ],
           "properties": {
-            "schema_version": {"const": "execution-fabric-cold-canary/v1"},
-            "recovery_id": {"type": "string", "format": "uuid"},
-            "cluster_id": {"type": "string", "minLength": 1, "maxLength": 128},
-            "epoch": {"type": "integer", "minimum": 1, "maximum": 9007199254740991},
-            "generation": {"type": "integer", "minimum": 1, "maximum": 9007199254740991}
+            "schema_version": {
+              "const": "execution-fabric-cold-canary/v1"
+            },
+            "recovery_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "cluster_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "epoch": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "generation": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            }
           }
         },
         "payloadSha256": {
@@ -291,6 +317,9 @@
         },
         "canary": {
           "$ref": "#/$defs/canary"
+        },
+        "policyTransition": {
+          "$ref": "#/$defs/policyTransition"
         }
       },
       "required": [
@@ -871,6 +900,183 @@
         "policySha256": {
           "type": "string",
           "pattern": "^[a-f0-9]{64}$"
+        }
+      }
+    },
+    "selectiveDisposition": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "acceptedPolicySha256": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$(?![\\s\\S])",
+              "minLength": 64,
+              "maxLength": 64
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sourceRelease": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "authority": {
+          "anyOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "backend": {
+                  "const": "sqlite"
+                },
+                "databasePath": {
+                  "type": "string",
+                  "pattern": "^/(?!\\.\\.?(/|$))(?!.*\\/\\.\\.?(\\/|$))(?!.*\\/\\/)(?:[^/]+(?:/[^/]+)*)?$(?![\\s\\S])",
+                  "minLength": 1
+                },
+                "domain": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                },
+                "project": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                }
+              },
+              "required": [
+                "backend",
+                "databasePath",
+                "domain",
+                "project"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "executionPolicyFile": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^/(?!\\.\\.?(/|$))(?!.*\\/\\.\\.?(\\/|$))(?!.*\\/\\/)(?:[^/]+(?:/[^/]+)*)?$(?![\\s\\S])",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "allowedLocalTaskTypes": {
+          "type": "array",
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[a-z][a-z0-9_.-]*$(?![\\s\\S])"
+          }
+        },
+        "heldProviders": {
+          "type": "array",
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[a-z][a-z0-9_]*$(?![\\s\\S])"
+          }
+        }
+      },
+      "required": [
+        "enabled",
+        "acceptedPolicySha256",
+        "sourceRelease",
+        "authority",
+        "executionPolicyFile",
+        "allowedLocalTaskTypes",
+        "heldProviders"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "enabled": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "acceptedPolicySha256": {
+                "not": {
+                  "type": "null"
+                }
+              },
+              "sourceRelease": {
+                "not": {
+                  "type": "null"
+                }
+              },
+              "authority": {
+                "not": {
+                  "type": "null"
+                }
+              },
+              "executionPolicyFile": {
+                "not": {
+                  "type": "null"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "policyTransition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "expectedSourceFingerprint",
+        "candidateExecutionPolicyFile",
+        "candidateExecutionPolicySha256"
+      ],
+      "properties": {
+        "expectedSourceFingerprint": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$(?![\\s\\S])",
+          "minLength": 64,
+          "maxLength": 64
+        },
+        "candidateExecutionPolicyFile": {
+          "type": "string",
+          "pattern": "^/(?!\\.\\.?(/|$))(?!.*\\/\\.\\.?(\\/|$))(?!.*\\/\\/)(?:[^/]+(?:/[^/]+)*)?$(?![\\s\\S])",
+          "minLength": 1
+        },
+        "candidateExecutionPolicySha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$(?![\\s\\S])",
+          "minLength": 64,
+          "maxLength": 64
         }
       }
     }

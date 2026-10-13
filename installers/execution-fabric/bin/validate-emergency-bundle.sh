@@ -24,6 +24,7 @@ source/installers/bin/promote.sh
 source/installers/bin/failback.sh
 source/installers/bin/materialize-image-lock.sh
 source/schemas/execution-fabric-cold-recovery.schema.json
+source/schemas/execution-fabric-cold-disposition.schema.json
 source/docs/development/execution-fabric-cold-recovery.md
 config/harness/config/execution-fabric-cold-recovery.json
 "

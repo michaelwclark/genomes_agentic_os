@@ -2,6 +2,7 @@ import { readFileSync, lstatSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import pg from "pg";
 import { runColdLedgerOperation, fileHash, safeFile } from "./cold-recovery.js";
+import { inspectColdDisposition, runColdDisposition } from "./cold-disposition.js";
 
 async function main():Promise<void> {
   const [flag,secretFile,operation,policyFile,anchorFile,...extra]=process.argv.slice(2);
@@ -18,7 +19,10 @@ async function main():Promise<void> {
   const pool=new pg.Pool({connectionString:databaseUrl,max:1,connectionTimeoutMillis:5000,application_name:"agentic-os-offline-cold-recovery"});
   try {
     const request=JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<string,unknown>;
-    const result=await runColdLedgerOperation(pool,operation,request,policy,JSON.parse(readFileSync(safeFile(anchorFile),"utf8")));
+    const anchor = JSON.parse(readFileSync(safeFile(anchorFile),"utf8"));
+    const result = operation === "disposition" ? await runColdDisposition(pool, request, policy, anchor)
+      : operation === "inspect-disposition" ? await inspectColdDisposition(pool, request, policy, anchor)
+      : await runColdLedgerOperation(pool,operation,request,policy,anchor);
     process.stdout.write(JSON.stringify(result)+"\n");
   } finally {await pool.end();}
 }

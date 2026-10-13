@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
-import { authorizeColdRequest, canonical, commitColdWitness, digest, fileHash, inspectColdWitness, safeFile, type ColdPlan, type VerifiedColdRequest } from "../src/cold-recovery.js";
+import { authorizeColdRequest, canonical, coldPlanSchema, coldPolicySchema, commitColdWitness, digest, fileHash, inspectColdWitness, safeFile, type ColdPlan, type VerifiedColdRequest } from "../src/cold-recovery.js";
 import { SqliteWitnessStore } from "../src/sqlite-store.js";
 import type { LeadershipState } from "../src/contracts.js";
 
@@ -33,6 +33,10 @@ async function fixture() {
   const now=Date.now(), stamp=(offset:number)=>new Date(now+offset*1000).toISOString();
   const payload={schema_version:"execution-fabric-cold-canary/v1" as const,recovery_id:"9b4bf200-4ac8-4a64-9969-07812e617d81",cluster_id:policy.clusterId,epoch:7,generation:3};
   const plan:ColdPlan={schemaVersion:"execution-fabric-cold-recovery-plan/v1",recoveryId:"9b4bf200-4ac8-4a64-9969-07812e617d81",direction:"recovery",clusterId:policy.clusterId,sourceHost:"genomesbox",targetHost:"bigmac",expectedEpoch:4,nextEpoch:7,generation:3,anchorSha256:digest(initialAnchor),policySha256:digest(policy),restoreInputSha256:"d".repeat(64),manifestSha256:"e".repeat(64),restoreReceiptSha256:"f".repeat(64),snapshotVersion:version,originalDatabasePath:original,originalBackupPath:original+".backup",targetDatabasePath:target,databaseSha256:fileHash(target),sentinelSha256:fileHash(target+".initialized"),backupSha256:fileHash(target+".backup"),hostMarkerSha256:fileHash(marker),oldPublicKeySha256:initialAnchor.publicKeySha256,newPublicKeySha256:keyHash(nextKey.publicKey),candidateConfigDigest:"1".repeat(64),newPgSystemId:"12345",timelineId:1,walPosition:0,createdAt:stamp(-1),expiresAt:stamp(500),canary:{taskId:"c86c6c43-e638-4d37-a0f6-9e423ff7d764",workerId:"isolated-canary",taskType:"fabric.cold_canary",queue:"fabric_cold_recovery",namespace:"fabric_cold_recovery",payload,payloadSha256:digest(payload)}};
+  // Witness-only storage fixture. Actual candidate PolicyManager qualification
+  // belongs to the native control-plane actor and the separate genuine PG seam.
+  const candidateFile=privateFile(join(root,"candidate-policy.yml"),"witness-only signed storage fixture\n");
+  plan.policyTransition={expectedSourceFingerprint:state.configDigest,candidateExecutionPolicyFile:candidateFile,candidateExecutionPolicySha256:fileHash(candidateFile)};
   const restoreInput={schemaVersion:"execution-fabric-cold-restore-input/v1",recoverySetId:"20261009T230000Z-012345abcdef",manifestSha256:plan.manifestSha256,restoreReceiptSha256:plan.restoreReceiptSha256,sourceRelease:"0.10.1",imageLockSha256:"f".repeat(64),capturedAt:stamp(-5),commonWatermark:"isolated-quiescent-watermark",custodyReceiptSha256:"b".repeat(64),witness:{clusterId:plan.clusterId,version:plan.snapshotVersion,leader:plan.sourceHost,epoch:plan.expectedEpoch,auditTailSha256:"a".repeat(64),databaseSha256:plan.databaseSha256,sentinelSha256:plan.sentinelSha256,backupSha256:plan.backupSha256,hostMarkerSha256:plan.hostMarkerSha256,originalDatabasePath:plan.originalDatabasePath,originalBackupPath:plan.originalBackupPath,signingPublicKeySha256:plan.oldPublicKeySha256},postgres:{dumpSha256:"d".repeat(64),restoreReadbackSha256:"e".repeat(64),systemId:plan.newPgSystemId,majorVersion:17},artifacts:{inventorySha256:"f".repeat(64),verifiedReferences:true},osAuthority:{snapshotSha256:"a".repeat(64),immutableReceiptInventorySha256:"b".repeat(64)}};
   plan.restoreInputSha256=digest(restoreInput);
   const signed = (payload: unknown, key=operator.privateKey) => ({payload,signature:sign(null,Buffer.from(canonical(payload)),key).toString("base64")});
@@ -42,6 +46,51 @@ async function fixture() {
   return {root,original,target,policy,anchor,request,plan,marker,signingPrivateKeyFile,signed,fence,stamp,fencer};
 }
 describe("offline standalone cold authority",()=>{
+  it("optional plan transition preserves absent plan bytes and rejects closed-field drift",async()=>{
+    const f=await fixture(),legacy={...f.plan};delete legacy.policyTransition;
+    expect(digest(coldPlanSchema.parse(legacy))).toBe(digest(legacy));
+    for(const transition of [null, {...f.plan.policyTransition,extra:true}, {...f.plan.policyTransition,expectedSourceFingerprint:"f".repeat(63)}, {...f.plan.policyTransition,candidateExecutionPolicyFile:"/tmp/../foreign"}])
+      expect(()=>coldPlanSchema.parse({...f.plan,policyTransition:transition})).toThrow();
+  });
+  it.each(["expectedSourceFingerprint","candidateExecutionPolicySha256"])("optional transition %s rejects a final newline before witness mutation",async(field)=>{
+    const f=await fixture(),before=["",".initialized",".backup"].map((suffix)=>fileHash(f.target+suffix));
+    expect(coldPlanSchema.parse(f.plan).policyTransition).toEqual(f.plan.policyTransition);
+    const parsed=coldPlanSchema.safeParse({...f.plan,policyTransition:{...f.plan.policyTransition,[field]:"a".repeat(64)+"\n"}});
+    expect(parsed.success).toBe(false);
+    if(!parsed.success)expect(parsed.error.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({code:"too_big",maximum:64,exact:true,path:["policyTransition",field]}),
+    ]));
+    expect(["",".initialized",".backup"].map((suffix)=>fileHash(f.target+suffix))).toEqual(before);
+  });
+  it.each(["wrong-source","missing-transition"])("source witness policy %s refuses before mutation",async(kind)=>{
+    const f=await fixture();
+    if(kind==="wrong-source")f.plan.policyTransition!.expectedSourceFingerprint="e".repeat(64);else delete f.plan.policyTransition;
+    f.anchor.pending.planSha256=digest(f.plan);
+    f.request.approval=f.signed({...((f.request.approval as {payload:Record<string,unknown>}).payload),planSha256:digest(f.plan)});
+    const before=[fileHash(f.target),fileHash(f.target+".initialized"),fileHash(f.target+".backup")];
+    await expect(commitColdWitness(f.request,f.policy,f.anchor)).rejects.toThrow(/source witness execution policy/);
+    expect([fileHash(f.target),fileHash(f.target+".initialized"),fileHash(f.target+".backup")]).toEqual(before);
+  });
+  it("optional selective policy retains absent digest and disabled shape without activating a witness",async()=>{
+    const f=await fixture(),before=fileHash(f.target),original=digest(f.policy);
+    expect(digest(coldPolicySchema.parse(f.policy))).toBe(original);
+    const selection={enabled:false,acceptedPolicySha256:null,sourceRelease:null,authority:null,executionPolicyFile:null,allowedLocalTaskTypes:[],heldProviders:["claude","codex"]};
+    expect(coldPolicySchema.parse({...f.policy,selectiveDisposition:selection}).selectiveDisposition).toEqual(selection);
+    expect(fileHash(f.target)).toBe(before);
+  });
+  it.each(["incomplete","unknown","duplicate","newline","backend","path","oversized"])("closed selective policy rejects %s without witness mutation",async(kind)=>{
+    const f=await fixture(),before=fileHash(f.target);
+    const selection:Record<string,unknown>={enabled:true,acceptedPolicySha256:"a".repeat(64),sourceRelease:"reviewed-release",authority:{backend:"sqlite",databasePath:join(f.root,"canonical.sqlite"),domain:"isolated",project:"test"},executionPolicyFile:join(f.root,"policy.yml"),allowedLocalTaskTypes:["fabric.cold_canary"],heldProviders:["claude","codex"]};
+    if(kind==="incomplete")selection.authority=null;
+    if(kind==="unknown")selection.approved=true;
+    if(kind==="duplicate")selection.heldProviders=["claude","claude"];
+    if(kind==="newline")selection.allowedLocalTaskTypes=["fabric.cold_canary\n"];
+    if(kind==="backend")(selection.authority as Record<string,unknown>).backend="postgres";
+    if(kind==="path")selection.executionPolicyFile="/private/../foreign";
+    if(kind==="oversized")selection.sourceRelease="💥".repeat(129);
+    expect(()=>coldPolicySchema.parse({...f.policy,selectiveDisposition:selection})).toThrow();
+    expect(fileHash(f.target)).toBe(before);
+  });
   function rebindSetId(f:Awaited<ReturnType<typeof fixture>>,recoverySetId:string):void {
     const input=f.request.restoreInput as {recoverySetId:string};input.recoverySetId=recoverySetId;
     f.plan.restoreInputSha256=digest(input);
@@ -141,6 +190,7 @@ describe("offline standalone cold authority",()=>{
     const signingPrivateKeyFile=privateFile(join(f.root,"failback-key.pem"),key.privateKey.export({type:"pkcs8",format:"pem"}).toString());
     const prior={...f.anchor,leader:"bigmac",highestEpoch:7,publicKeySha256:f.plan.newPublicKeySha256,pending:null};
     const plan:ColdPlan={...f.plan,recoveryId:"9b4bf200-4ac8-4a64-9969-07812e617d82",direction:"failback",sourceHost:"bigmac",targetHost:"genomesbox",expectedEpoch:7,nextEpoch:8,generation:4,anchorSha256:digest(prior),snapshotVersion:version,originalDatabasePath:f.target,originalBackupPath:f.target+".backup",targetDatabasePath:target,databaseSha256:fileHash(target),sentinelSha256:fileHash(target+".initialized"),backupSha256:fileHash(target+".backup"),hostMarkerSha256:fileHash(marker),oldPublicKeySha256:f.plan.newPublicKeySha256,newPublicKeySha256:keyHash(key.publicKey)};
+    plan.policyTransition={...f.plan.policyTransition!,expectedSourceFingerprint:f.plan.candidateConfigDigest};
     plan.canary={...plan.canary,payload:{...plan.canary.payload,recovery_id:plan.recoveryId,epoch:plan.nextEpoch,generation:plan.generation}};
     plan.canary.payloadSha256=digest(plan.canary.payload);
     const restoreInput=structuredClone(f.request.restoreInput) as {witness:Record<string,unknown>};

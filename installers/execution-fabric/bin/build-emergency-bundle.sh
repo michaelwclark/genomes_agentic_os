@@ -74,6 +74,7 @@ copy_source() {
 }
 
 copy_source schemas/execution-fabric-cold-recovery.schema.json
+copy_source schemas/execution-fabric-cold-disposition.schema.json
 copy_source docs/development/execution-fabric-cold-recovery.md
 
 [ -f "$bundle/config/harness/config/execution-fabric.yml" ] || {

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from importlib import resources
+import hashlib
 import json
 from pathlib import Path
 import runpy
@@ -225,13 +226,82 @@ def test_release_builder_emits_digest_locked_portable_assets(tmp_path: Path) -> 
             "release-generated/execution-fabric-image-lock.json"
             in archive.getnames()
         )
-        for relative in ["schemas/execution-fabric-cold-recovery.schema.json","harness/config/execution-fabric-cold-recovery.json","docs/development/execution-fabric-cold-recovery.md"]:
+        for relative in ["schemas/execution-fabric-cold-recovery.schema.json","schemas/execution-fabric-cold-disposition.schema.json","harness/config/execution-fabric-cold-recovery.json","docs/development/execution-fabric-cold-recovery.md"]:
             member = archive.extractfile(relative)
             assert member is not None, relative
             assert member.read() == (ROOT / relative).read_bytes()
     assert "execution-fabric-image-lock.json" in (
         tmp_path / "SHA256SUMS"
     ).read_text(encoding="utf-8")
+    checksums = dict(line.split("  ", 1)[::-1] for line in (tmp_path / "SHA256SUMS").read_text().splitlines())
+    for name in ["execution-fabric-config-schema.tar.gz", "execution-fabric-emergency-bundle.tar.gz"]:
+        archive_path = tmp_path / name
+        assert checksums[name] == hashlib.sha256(archive_path.read_bytes()).hexdigest()
+        with tarfile.open(archive_path, "r:gz") as archive:
+            member = archive.extractfile("schemas/execution-fabric-cold-disposition.schema.json")
+            assert member is not None
+            assert member.read() == (ROOT / "schemas/execution-fabric-cold-disposition.schema.json").read_bytes()
+
+
+def test_cold_disposition_resource_bytes_determine_real_archive_digest(tmp_path: Path) -> None:
+    namespace = runpy.run_path(str(SCRIPT))
+    resource = ROOT / "schemas/execution-fabric-cold-disposition.schema.json"
+    original = resource.read_bytes()
+    copied = tmp_path / resource.name
+    copied.write_bytes(original)
+    first, repeated, changed = [tmp_path / name for name in ["first.tar.gz", "repeated.tar.gz", "changed.tar.gz"]]
+    namespace["deterministic_tar"](first, [copied])
+    namespace["deterministic_tar"](repeated, [copied])
+    assert first.read_bytes() == repeated.read_bytes()
+    # Whitespace changes the copied resource bytes without changing its JSON
+    # meaning; the real archive digest must still bind those exact bytes.
+    copied.write_bytes(original + b"\n")
+    namespace["deterministic_tar"](changed, [copied])
+    assert namespace["digest"](first) != namespace["digest"](changed)
+    with tarfile.open(changed, "r:gz") as archive:
+        member = archive.extractfile("release-generated/" + resource.name)
+        assert member is not None and member.read() == original + b"\n"
+    assert resource.read_bytes() == original
+
+
+def test_missing_cold_disposition_resource_refuses_build_without_completed_checksums(tmp_path: Path, monkeypatch) -> None:
+    namespace = runpy.run_path(str(SCRIPT))
+    validated = namespace["validate_versions"]()
+    # The private fixture retains real validated release metadata; only its
+    # archive input tree omits the required cold-disposition schema.
+    root = tmp_path / "private-release-source"
+    relatives = [
+        validated["static"]["contracts"]["config"],
+        validated["static"]["contracts"]["schema"],
+        str(namespace["STATIC_MANIFEST"].relative_to(ROOT)),
+        str(namespace["DEPENDENCY_IMAGE_SOURCES"].relative_to(ROOT)),
+        "schemas/execution-fabric-cold-recovery.schema.json",
+        "harness/config/execution-fabric-cold-recovery.json",
+    ]
+    for relative in relatives:
+        destination = root / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes((ROOT / relative).read_bytes())
+    missing = root / "schemas/execution-fabric-cold-disposition.schema.json"
+    output = tmp_path / "failed-release-assets"
+    globals_ = namespace["build"].__globals__
+    monkeypatch.setitem(globals_, "ROOT", root)
+    monkeypatch.setitem(globals_, "STATIC_MANIFEST", root / namespace["STATIC_MANIFEST"].relative_to(ROOT))
+    monkeypatch.setitem(globals_, "DEPENDENCY_IMAGE_SOURCES", root / namespace["DEPENDENCY_IMAGE_SOURCES"].relative_to(ROOT))
+    monkeypatch.setitem(globals_, "validate_versions", lambda: validated)
+    # Digest-pinned image strings are metadata fixtures, never an OCI pull or
+    # runtime-image qualification.
+    images = _image_arguments("a" * 64)[1::2]
+    with pytest.raises(FileNotFoundError) as error:
+        namespace["build"](output, *images)
+    assert Path(error.value.filename) == missing
+    assert not missing.exists()
+    # The current builder writes provisional manifest/lock before archives.
+    # Preserve that truthful partial failure rather than claiming atomic build.
+    assert (output / "execution-fabric-release-manifest.json").is_file()
+    assert (output / "execution-fabric-image-lock.json").is_file()
+    assert not (output / "execution-fabric-emergency-bundle.tar.gz").exists()
+    assert not (output / "SHA256SUMS").exists()
 
 
 def test_release_builder_rejects_mutable_or_wrong_repository_images(

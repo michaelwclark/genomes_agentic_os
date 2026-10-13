@@ -1412,12 +1412,26 @@ export class PostgresReliabilityStore {
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
+      // Serialize the quarantine check with the offline disposition/hold actor.
+      // A check made before this lock could miss a newly appended held decision.
+      const state = await client.query<{
+        current_epoch: string;
+        leader_host_id: string | null;
+        leader_lease_expires_at: string | Date | null;
+      }>(
+        `SELECT current_epoch,leader_host_id,leader_lease_expires_at
+         FROM fabric_state WHERE singleton=true FOR UPDATE`,
+      );
       await this.assertColdMutation(client);
       if(targetType==="effect" || targetType==="task") {
         const table=targetType==="effect" ? "fabric_cold_effect_quarantine" : "fabric_cold_task_quarantine";
         const column=targetType==="effect" ? "effect_id" : "task_id";
         const held=await client.query(`SELECT 1 FROM ${table} WHERE ${column}=$1`,[targetId]);
         if(held.rowCount) throw new FencedError("cold recovery holds restored delivery reconciliation");
+      }
+      if (targetType === "queue") {
+        const held = await client.query("SELECT 1 FROM fabric_tasks t JOIN fabric_cold_task_quarantine q ON q.task_id=t.id WHERE t.queue_name=$1 LIMIT 1", [targetId]);
+        if (held.rowCount) throw new FencedError("queue drain would mutate cold quarantine history");
       }
       const existing = await client.query(
         "SELECT * FROM fabric_operator_receipts WHERE idempotency_key=$1",
@@ -1436,14 +1450,6 @@ export class PostgresReliabilityStore {
         await client.query("COMMIT");
         return row;
       }
-      const state = await client.query<{
-        current_epoch: string;
-        leader_host_id: string | null;
-        leader_lease_expires_at: string | Date | null;
-      }>(
-        `SELECT current_epoch,leader_host_id,leader_lease_expires_at
-         FROM fabric_state WHERE singleton=true FOR UPDATE`,
-      );
       const current = state.rows[0];
       if (
         current?.leader_host_id !== this.hostId ||

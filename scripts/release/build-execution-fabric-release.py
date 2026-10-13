@@ -311,6 +311,7 @@ def build(
         [
             config, schema, STATIC_MANIFEST,
             ROOT / "schemas/execution-fabric-cold-recovery.schema.json",
+            ROOT / "schemas/execution-fabric-cold-disposition.schema.json",
             ROOT / "harness/config/execution-fabric-cold-recovery.json",
         ],
     )
@@ -325,6 +326,7 @@ def build(
             manifest_path,
             image_lock_path,
             ROOT / "schemas/execution-fabric-cold-recovery.schema.json",
+            ROOT / "schemas/execution-fabric-cold-disposition.schema.json",
             ROOT / "harness/config/execution-fabric-cold-recovery.json",
             ROOT / "docs/development/execution-fabric-cold-recovery.md",
         ],

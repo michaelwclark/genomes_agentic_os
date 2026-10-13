@@ -158,7 +158,10 @@ def _signed(envelope: Any, key: str, keys: set[str], label: str) -> dict[str, An
     return payload
 
 def validate_policy(value: Mapping[str, Any], *, require_enabled: bool = True) -> dict[str, Any]:
-    p = _closed(dict(value), POLICY_KEYS, "cold policy")
+    keys = POLICY_KEYS | ({"selectiveDisposition"} if "selectiveDisposition" in value else set())
+    p = _closed(dict(value), keys, "cold policy")
+    if "selectiveDisposition" in p:
+        validate_disposition_selection(p["selectiveDisposition"])
     if p["schemaVersion"] != "execution-fabric-cold-recovery-policy/v1" or type(p["enabled"]) is not bool:
         raise ColdRecoveryError("cold policy schema is invalid")
     if p["enabled"] is not True:
@@ -177,8 +180,44 @@ def validate_policy(value: Mapping[str, Any], *, require_enabled: bool = True) -
             raise ColdRecoveryError("reviewed offline actor identity is missing")
     return p
 
+
+def validate_disposition_selection(value: Any) -> dict[str, Any]:
+    """Optional closed policy; absence preserves the original policy digest."""
+    p = _closed(value, {"enabled", "acceptedPolicySha256", "sourceRelease", "authority", "executionPolicyFile", "allowedLocalTaskTypes", "heldProviders"}, "selective disposition policy")
+    if type(p["enabled"]) is not bool:
+        raise ColdRecoveryError("selective disposition enabled must be boolean")
+    if p["acceptedPolicySha256"] is not None and (not isinstance(p["acceptedPolicySha256"], str) or not HEX.fullmatch(p["acceptedPolicySha256"])):
+        raise ColdRecoveryError("accepted policy hash is invalid")
+    if p["sourceRelease"] is not None and (not isinstance(p["sourceRelease"], str) or not 1 <= len(p["sourceRelease"]) <= 128):
+        raise ColdRecoveryError("source release is invalid")
+    for field, pattern in (("allowedLocalTaskTypes", r"[a-z][a-z0-9_.-]*"), ("heldProviders", r"[a-z][a-z0-9_]*")):
+        entries = p[field]
+        if not isinstance(entries, list) or len(entries) > 32 or any(not isinstance(v, str) or not 1 <= len(v) <= 128 or not re.fullmatch(pattern, v) for v in entries) or len(set(entries)) != len(entries):
+            raise ColdRecoveryError("selective disposition allow/deny list is invalid")
+    paths = [p["executionPolicyFile"]]
+    if p["authority"] is not None:
+        a = _closed(p["authority"], {"backend", "databasePath", "domain", "project"}, "selected canonical authority")
+        if a["backend"] != "sqlite" or any(not isinstance(a[k], str) or not 1 <= len(a[k]) <= 128 for k in ("domain", "project")):
+            raise ColdRecoveryError("selected authority backend or identity is unsupported")
+        if not isinstance(a["databasePath"], str):
+            raise ColdRecoveryError("selected authority database path is invalid")
+        paths.append(a["databasePath"])
+    if any(v is not None and (not isinstance(v, str) or not v.startswith("/") or v.startswith("//") or os.path.normpath(v) != v) for v in paths):
+        raise ColdRecoveryError("selected policy paths must be absolute and normalized")
+    if p["enabled"] and any(p[k] is None for k in ("acceptedPolicySha256", "sourceRelease", "authority", "executionPolicyFile")):
+        raise ColdRecoveryError("selective disposition enabled policy is incomplete")
+    return p
+
 def validate_plan(value: Any, policy: Mapping[str, Any], now: dt.datetime, *, check_window: bool = True) -> dict[str, Any]:
-    p = _closed(value, PLAN_KEYS, "cold plan")
+    keys = PLAN_KEYS | {"policyTransition"} if isinstance(value, dict) and "policyTransition" in value else PLAN_KEYS
+    p = _closed(value, keys, "cold plan")
+    if "policyTransition" in p:
+        transition = _closed(p["policyTransition"], {"expectedSourceFingerprint", "candidateExecutionPolicyFile", "candidateExecutionPolicySha256"}, "cold policy transition")
+        if any(not isinstance(transition[k], str) or not HEX.fullmatch(transition[k]) for k in ("expectedSourceFingerprint", "candidateExecutionPolicySha256")):
+            raise ColdRecoveryError("cold policy transition digest is invalid")
+        file = transition["candidateExecutionPolicyFile"]
+        if not isinstance(file, str) or not file.startswith("/") or file.startswith("//") or os.path.normpath(file) != file:
+            raise ColdRecoveryError("cold candidate policy path is not absolute and normalized")
     if p["schemaVersion"] != "execution-fabric-cold-recovery-plan/v1" or p["direction"] not in {"recovery", "failback"}:
         raise ColdRecoveryError("cold plan schema/direction is invalid")
     try:
@@ -317,7 +356,7 @@ def _authorization(request: dict[str, Any], plan: dict[str, Any], policy: dict[s
     _window(f["issuedAt"], f["expiresAt"], policy["maxApprovalSeconds"], now)
     _window(a["issuedAt"], a["expiresAt"], policy["maxApprovalSeconds"], now)
 
-def _actor(command: Sequence[str], operation: str, policy_file: Path, anchor_file: Path, request: dict[str, Any]) -> dict[str, Any]:
+def _invoke_actor(command: Sequence[str], operation: str, policy_file: Path, anchor_file: Path, request: dict[str, Any]) -> dict[str, Any]:
     if not command or any(not isinstance(s, str) or not s for s in command):
         raise ColdRecoveryError("trusted installed actor is unavailable")
     if len(command) not in {2, 4} or not Path(command[0]).is_absolute() or Path(command[0]).name not in {"node", "nodejs"} or not os.access(command[0], os.X_OK) or Path(command[1]).name != "cold-recovery-main.js" or (len(command) == 4 and command[2] != "--database-url-file"):
@@ -341,6 +380,13 @@ def _actor(command: Sequence[str], operation: str, policy_file: Path, anchor_fil
         value = json.loads(result.stdout)
     except (ValueError, UnicodeError) as exc:
         raise ColdRecoveryError("offline actor produced no verifiable receipt") from exc
+    if not isinstance(value, dict):
+        raise ColdRecoveryError("offline actor receipt must be an object")
+    return value
+
+
+def _actor(command: Sequence[str], operation: str, policy_file: Path, anchor_file: Path, request: dict[str, Any]) -> dict[str, Any]:
+    value = _invoke_actor(command, operation, policy_file, anchor_file, request)
     p = request["plan"]
     expected_epoch = p["expectedEpoch"] if operation == "hold" else p["nextEpoch"]
     role = "witness" if len(command) == 2 else "ledger"
@@ -428,6 +474,16 @@ def cold_recovery_operation(action: str, request_file: str | Path, *, policy_fil
         if action == "status":
             return operation
         if operation["phase"] == "ACCEPTED" and action in {"accept", "apply", "resume"}:
+            # Historical success remains sealed. Current acceptance must still
+            # bind the selected external anchor and both actual native stores.
+            _authorization(request, plan, policy, anchor, now)
+            accepted = operation["receipts"][-1]
+            original_receipt = read_document(accepted["ref"])
+            if anchor["pending"] is not None or anchor["generation"] != plan["generation"] or anchor["highestEpoch"] != plan["nextEpoch"] or anchor["leader"] != plan["targetHost"] or anchor["publicKeySha256"] != plan["newPublicKeySha256"] or anchor["lastReceiptSha256"] != digest(original_receipt):
+                raise ColdRecoveryError("accepted history current anchor differs")
+            current_receipt = _actor(ledger_command, "accept", policy_path, anchor_path, request)
+            if canonical(current_receipt) != canonical(original_receipt):
+                raise ColdRecoveryError("accepted history current native receipt differs")
             return operation
         if operation["phase"] == "ACCEPTED":
             raise ColdRecoveryError("accepted recovery history is sealed; use a new recovery identity")
