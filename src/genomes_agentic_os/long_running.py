@@ -119,6 +119,7 @@ class MutationLock:
         self.path = path
         self.run_id = run_id
         self.operation = operation
+        self._owner: tuple[int, int, int] | None = None
 
     @staticmethod
     def _pid_is_live(pid: int) -> bool:
@@ -163,15 +164,24 @@ class MutationLock:
                 continue
             with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
                 stream.write(json.dumps(payload, sort_keys=True) + "\n")
+                stream.flush()
+                created = os.fstat(stream.fileno())
+            self._owner = (payload["pid"], created.st_dev, created.st_ino)
             return
         raise RuntimeError(f"could not acquire {self.operation} lock")
 
     def release(self) -> None:
+        owner, self._owner = self._owner, None
+        if owner is None or owner[0] != os.getpid():
+            return
         try:
+            observed = self.path.lstat()
             existing = json.loads(self.path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
-            existing = {}
-        if existing.get("run_id") == self.run_id:
+            return
+        if (isinstance(existing, dict) and existing.get("run_id") == self.run_id
+                and type(existing.get("pid")) is int and existing["pid"] == owner[0]
+                and (observed.st_dev, observed.st_ino) == owner[1:]):
             self.path.unlink(missing_ok=True)
 
 

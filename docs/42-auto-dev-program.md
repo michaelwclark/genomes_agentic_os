@@ -215,7 +215,12 @@ Generate these native checks with
 from the qualified current OS package. Declare the same native mutation lock
 `<packet>/artifacts/node-validation.lock` on all three runs, using artifact
 directory `<packet>/artifacts/command-runs`. The native runner acquires it before
-preflight and holds it through the command and post-check. The isolated
+preflight and holds it through the command and post-check. It never
+releases after failed acquisition, including another live
+monitor with the same run ID. Normal release requires this lock instance's
+successfully acquired file identity and actual owning PID. Existing standalone
+helpers continue to acquire/release their own instance; orphan recovery remains
+explicit in acquisition and release is not a force-unlock operation. The isolated
 stdlib helper checks actual lock ownership and executes with exact package
 file and qualified base-interpreter checksums before and after; request hashes
 cannot substitute its execution. A Playwright run additionally declares

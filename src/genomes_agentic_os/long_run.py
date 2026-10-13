@@ -583,10 +583,9 @@ def monitor_run(run_dir_value: str | Path) -> int:
                 return _terminal(root, run_dir, command, status="error", exit_code=None,
                     reason=f"mutation-lock-acquire-failed: {type(exc).__name__}: {exc}", checks=[])
             finally:
-                try:
-                    lock.release()  # Ownership check preserves another live run's lock.
-                finally:
-                    restore_signal_handlers()
+                # Failed acquisition grants no ownership. A duplicate monitor
+                # can share the run ID while a different live PID owns the file.
+                restore_signal_handlers()
     try:
         preflight = _run_checks(command.get("preflight_checks") or [], work_dir=command["work_dir"], phase="preflight")
         atomic_json(run_dir / "preflight.json", {"checks": preflight, "ok": all(row["ok"] for row in preflight)})

@@ -201,6 +201,49 @@ def test_actual_native_lock_cleanup_on_error_conflict_and_cancellation(tmp_path,
         assert not lock.exists()
 
 
+def test_actual_native_same_run_id_different_live_pid_conflict_preserves_owner(tmp_path):
+    import time
+    lock, ready, finish = tmp_path / "shared.lock", tmp_path / "owner-ready", tmp_path / "finish-owner"
+    code = ("from pathlib import Path;import time;Path(" + repr(str(ready)) + ").write_text('ready');"
+            "deadline=time.monotonic()+15;\n"
+            "while not Path(" + repr(str(finish)) + ").exists() and time.monotonic()<deadline: time.sleep(.02)\n"
+            "assert Path(" + repr(str(finish)) + ").exists();print('owner finished')")
+    first = start_run(tmp_path / "owner-os", command=[sys.executable, "-c", code],
+        label="first actual monitor holds lock", run_id="same-run-id",
+        artifact_dir=str(tmp_path / "owner-artifacts"), work_dir=str(tmp_path), mutation_lock=str(lock),
+        budgets={"wall_clock_minutes": 1, "no_progress_minutes": 1})
+    deadline = time.monotonic() + 10
+    while not ready.exists() and time.monotonic() < deadline: time.sleep(.02)
+    assert ready.exists() and lock.exists()
+    original = lock.read_bytes(); owner = json.loads(original)
+    assert owner["run_id"] == "same-run-id" and owner["pid"] == first["monitor_pid"]
+    try:
+        second = start_run(tmp_path / "contender-os", command=[sys.executable, "-c", "print('must not execute')"],
+            label="second actual monitor same ID different PID", run_id="same-run-id",
+            artifact_dir=str(tmp_path / "contender-artifacts"), work_dir=str(tmp_path), mutation_lock=str(lock),
+            budgets={"wall_clock_minutes": 1, "no_progress_minutes": 1})
+        assert second["monitor_pid"] != owner["pid"]
+        outcome = _wait_for(Path(second["run_dir"]), {"success", "failure", "error"})
+        assert outcome["status"] == "error" and "mutation-lock-acquire-failed" in outcome["terminal_reason"]
+        os.kill(owner["pid"], 0)
+        assert lock.is_file() and lock.read_bytes() == original
+        assert not (Path(second["run_dir"]) / "output.log").exists()
+        # Actual continued exclusivity: a third native monitor still cannot
+        # enter the first monitor's preflight/command/post-check window.
+        third = start_run(tmp_path / "third-os", command=[sys.executable, "-c", "print('must not execute')"],
+            label="third actual monitor cannot enter", run_id="other-run-id",
+            artifact_dir=str(tmp_path / "third-artifacts"), work_dir=str(tmp_path), mutation_lock=str(lock),
+            budgets={"wall_clock_minutes": 1, "no_progress_minutes": 1})
+        assert _wait_for(Path(third["run_dir"]), {"success", "failure", "error"})["status"] == "error"
+        assert lock.read_bytes() == original
+    finally:
+        finish.write_text("finish")
+        assert _wait_for(Path(first["run_dir"]), {"success", "failure", "error"})["status"] == "success"
+    deadline = time.monotonic() + 2
+    while lock.exists() and time.monotonic() < deadline: time.sleep(.02)
+    assert not lock.exists()
+
+
 @pytest.mark.parametrize("change", ["missing", "redirected-root", "fifo", "group-write", "symlink-directory"])
 def test_unqualified_closure_is_refused(tmp_path, change):
     root = tmp_path / "node_modules"; root.mkdir()

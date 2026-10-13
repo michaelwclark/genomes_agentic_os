@@ -4,6 +4,8 @@ import json
 import os
 from pathlib import Path
 import signal
+import subprocess
+import sys
 
 import pytest
 
@@ -63,6 +65,64 @@ def test_mutation_lock_rejects_live_owner(tmp_path: Path) -> None:
 
     with pytest.raises(RuntimeError, match="live PID"):
         MutationLock(path, run_id="other", operation="fixture").acquire()
+
+
+def test_unacquired_same_id_instance_cannot_release_another_owner(tmp_path: Path) -> None:
+    path = tmp_path / "operation.lock"
+    owner = MutationLock(path, run_id="same-id", operation="fixture")
+    owner.acquire()
+    original = path.read_bytes()
+    contender = MutationLock(path, run_id="same-id", operation="fixture")
+    try:
+        with pytest.raises(RuntimeError, match="live PID"):
+            contender.acquire()
+        contender.release()
+        assert path.is_file() and path.read_bytes() == original
+    finally:
+        owner.release()
+    assert not path.exists()
+
+
+def test_release_does_not_remove_a_replacement_owned_file(tmp_path: Path) -> None:
+    path = tmp_path / "operation.lock"
+    first = MutationLock(path, run_id="same-id", operation="fixture")
+    first.acquire()
+    path.rename(tmp_path / "prior-owner-receipt.json")
+    replacement = MutationLock(path, run_id="same-id", operation="fixture")
+    replacement.acquire()
+    original = path.read_bytes()
+    try:
+        first.release()
+        assert path.is_file() and path.read_bytes() == original
+    finally:
+        replacement.release()
+    assert not path.exists()
+
+
+def test_acquired_lock_requires_its_actual_owning_pid_on_release(tmp_path: Path) -> None:
+    path = tmp_path / "operation.lock"
+    lock = MutationLock(path, run_id="same-id", operation="fixture")
+    lock.acquire()
+    original = path.read_bytes()
+    sleeper = subprocess.Popen([sys.executable, "-c", "import time;time.sleep(10)"])
+    try:
+        payload = json.loads(original); payload["pid"] = sleeper.pid
+        path.write_text(json.dumps(payload))
+        changed = path.read_bytes()
+        lock.release()
+        assert path.is_file() and path.read_bytes() == changed
+    finally:
+        sleeper.terminate(); sleeper.wait(timeout=5)
+        # Remove only this deliberately altered synthetic fixture. Production
+        # orphan recovery stays in acquire(); release is not force-unlock.
+        path.unlink()
+
+
+def test_standalone_acquired_release_remains_idempotent(tmp_path: Path) -> None:
+    path = tmp_path / "operation.lock"
+    lock = MutationLock(path, run_id="standalone", operation="fixture")
+    lock.acquire(); lock.release(); lock.release()
+    assert not path.exists()
 
 
 def test_signal_guard_translates_sigterm_to_recoverable_interrupt() -> None:
