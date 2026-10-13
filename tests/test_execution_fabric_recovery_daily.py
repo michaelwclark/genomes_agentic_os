@@ -12,6 +12,254 @@ from genomes_agentic_os import execution_fabric_recovery_daily as daily
 from test_execution_fabric_recovery_sets import PG_SOURCE, capture, write
 
 
+def _daily_independent_qualification_fixture(plan, root, monkeypatch):
+    """Closed file protocol seam; never a released writer/actor qualification."""
+    write(root / ".agentic_root", b"isolated fixture root")
+    node = write(root / "node-fixture", b"inert node actor")
+    plan["node"] = str(node)
+    release = Path(plan["releaseRoot"])
+    actor_paths = {
+        "exportMainSha256": release / "services/execution-fabric-control-plane/dist/src/recovery-export-main.js",
+        "exportModuleSha256": release / "services/execution-fabric-control-plane/dist/src/recovery-export.js",
+        "backupHealthSha256": release / "bin/backup-health.sh",
+        "backupLibSha256": release / "bin/_lib.sh",
+        "backupReceiptValidatorSha256": release / "bin/validate-backup-health-receipt.sh",
+        "postgresBackupScriptSha256": Path(plan["backupSourceScript"]),
+        "nodeSha256": node,
+    }
+    now = datetime.now(timezone.utc)
+    lifetime = {"qualifiedAt": (now - timedelta(minutes=1)).isoformat(),
+                "validUntil": (now + timedelta(hours=1)).isoformat()}
+    participants = []
+    for role in sorted(daily.ROLES):
+        receipt = write(root / (role + "-qualified.json"), {
+            "schemaVersion": "execution-fabric-recovery-participant-qualification/v1", "status": "qualified",
+            "role": role, "root": str(root), "reviewRoots": [], "sourceRelease": plan["sourceRelease"],
+            "protocol": "producer-admission/v1", "allWriterEntryPointsParticipate": True,
+            "admissionModuleSha256": "a" * 64, **lifetime})
+        participants.append({"role": role, "root": str(root), "reviewRoots": [],
+                             "qualificationReceipt": str(receipt), "qualificationSha256": r.sha256(receipt)})
+    hashes = {}
+    for name, path in actor_paths.items():
+        if not path.is_file():
+            write(path, b"inert qualified actor fixture")
+        hashes[name] = r.sha256(path)
+    qualified = {"schemaVersion": "execution-fabric-recovery-daily-qualification/v1", "status": "qualified",
+        **{name: plan[name] for name in ("sourceHost", "sourceRelease", "imageLockSha256", "policySha256")},
+        "allWritersParticipate": True, "participants": participants,
+        "admissionModuleSha256": "a" * 64, **lifetime, **hashes}
+    write(Path(plan["qualificationFile"]), qualified)
+    monkeypatch.setattr(daily, "_installed_admission", lambda _: object())
+    return qualified, participants
+
+
+@pytest.mark.parametrize("failure", ["changed-receipt", "symlink-receipt", "future-participant", "invalid-lifetime"])
+def test_daily_changed_independent_evidence_refuses_before_any_hold(daily_plan, tmp_path, monkeypatch, failure):
+    path, plan = daily_plan
+    qualified, participants = _daily_independent_qualification_fixture(plan, tmp_path, monkeypatch)
+    receipt = Path(participants[0]["qualificationReceipt"])
+    evidence = json.loads(receipt.read_text())
+    if failure == "changed-receipt":
+        evidence["status"] = "changed fixture"
+        write(receipt, evidence)
+    elif failure == "symlink-receipt":
+        actual = receipt.with_name("actual-participant.json")
+        receipt.rename(actual)
+        receipt.symlink_to(actual)
+    else:
+        evidence["qualifiedAt" if failure == "future-participant" else "validUntil"] = (
+            (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()
+            if failure == "future-participant" else "invalid fixture time")
+        write(receipt, evidence)
+        participants[0]["qualificationSha256"] = r.sha256(receipt)
+        write(Path(plan["qualificationFile"]), qualified)
+    write(path, plan)
+    calls = []
+    with pytest.raises(r.RecoverySetError, match="bytes differ|lifetime"):
+        daily.run_daily_recovery(path, apply=True, runner=lambda argv: calls.append(argv))
+    assert not calls and not Path(plan["stagingRoot"]).exists()
+    assert not (tmp_path / "hold.json").exists()
+
+
+@pytest.mark.parametrize("failure", ["schema", "relative-path", "relative-node", "template-policy"])
+def test_daily_plan_binding_refuses_before_loading_admission(daily_plan, monkeypatch, failure):
+    path, plan = daily_plan
+    if failure == "schema":
+        plan["schemaVersion"] = "unsupported-fixture/v1"
+    elif failure == "relative-path":
+        plan["stagingRoot"] = "relative-staging"
+    elif failure == "relative-node":
+        plan["node"] = "relative-node"
+    else:
+        plan["policySha256"] = "e" * 64
+    write(path, plan)
+    monkeypatch.setattr(daily, "_qualification", lambda _: pytest.fail("invalid plan cannot load admission"))
+    with pytest.raises(r.RecoverySetError):
+        daily.run_daily_recovery(path, apply=True, runner=lambda _: pytest.fail("no actor"))
+
+
+def _export_receipt_fixture(plan, *, watermark_only=False):
+    return {"schemaVersion": "execution-fabric-recovery-export/v1",
+            "status": "watermark_verified" if watermark_only else "exported_bytes_verified",
+            "sourceHost": plan["sourceHost"], "postgresWalLsn": "0/ABCD",
+            "postgresSource": dict(PG_SOURCE), "postgresSourceVerified": True,
+            "versionInventorySha256": "b" * 64, "ledgerReferenceSha256": "c" * 64}
+
+
+@pytest.mark.parametrize("watermark_only", [False, True])
+@pytest.mark.parametrize("failure", [None, "status", "host", "unverified-source", "invalid-source", "missing-receipt", "invalid-json"])
+def test_real_python_export_validator_binds_protocol_with_zero_external_actors(
+        daily_plan, tmp_path, watermark_only, failure):
+    _, plan = daily_plan
+    working = tmp_path / "isolated-export"
+    working.mkdir(mode=0o700)
+    calls = []
+    def protocol_only(argv):
+        calls.append(argv)
+        assert argv[:2] == [plan["node"], str(Path(plan["releaseRoot"]) /
+            "services/execution-fabric-control-plane/dist/src/recovery-export-main.js")]
+        assert ("--watermark-only" in argv) is watermark_only
+        assert ("--output" in argv) is (not watermark_only)
+        path = Path(argv[argv.index("--receipt") + 1])
+        value = _export_receipt_fixture(plan, watermark_only=watermark_only)
+        if failure == "status":
+            value["status"] = "unverified fixture output"
+        elif failure == "host":
+            value["sourceHost"] = "foreign-fixture-host"
+        elif failure == "unverified-source":
+            value["postgresSourceVerified"] = False
+        elif failure == "invalid-source":
+            value["postgresSource"]["majorVersion"] = True
+        if failure != "missing-receipt":
+            write(path, b"invalid fixture JSON" if failure == "invalid-json" else value)
+        return subprocess.CompletedProcess(argv, 0, b"INERT_FIXTURE_OUTPUT")
+    if failure:
+        with pytest.raises(r.RecoverySetError):
+            daily._export(plan, working, "after" if watermark_only else "before", protocol_only,
+                          watermark_only=watermark_only)
+    else:
+        result = daily._export(plan, working, "after" if watermark_only else "before", protocol_only,
+                               watermark_only=watermark_only)
+        assert result == _export_receipt_fixture(plan, watermark_only=watermark_only)
+    assert len(calls) == 1 and not (working / "artifact-export").exists()
+
+
+@pytest.mark.parametrize("failure", ["barrier-protocol", "barrier-drain", "barrier-lock", "health-status", "health-future", "health-source", "sidecar-path"])
+def test_daily_invalid_barrier_or_health_restores_once_and_preserves_last_good(
+        daily_plan, tmp_path, monkeypatch, failure):
+    path, plan = daily_plan
+    fixture = AdmissionFixture(tmp_path)
+    monkeypatch.setattr(daily, "_qualification", lambda _: (fixture, fixture_participants(tmp_path)))
+    if failure.startswith("barrier-"):
+        @contextmanager
+        def invalid_barrier(root, **kwargs):
+            fixture.events.append("guard-enter")
+            evidence = {"protocol": "producer-admission/v1", "drained": True, "admission_lock_retained": True}
+            evidence[{"barrier-protocol": "protocol", "barrier-drain": "drained", "barrier-lock": "admission_lock_retained"}[failure]] = False
+            try:
+                yield evidence
+            finally:
+                fixture.events.append("guard-exit")
+        fixture.migration_admission_guard = invalid_barrier
+    write(Path(plan["releaseRoot"]) / "bin/backup-health.sh", b"inert backup actor")
+    health_path = Path(plan["backupHealthReceipt"])
+    health = json.loads(health_path.read_text())
+    health.update(verifiedAt=datetime.now(timezone.utc).isoformat(), backupFile="ledger.dump")
+    if failure == "health-status":
+        health["status"] = "failed fixture proof"
+    elif failure == "health-future":
+        health["verifiedAt"] = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+    elif failure == "health-source":
+        health["sourceIdentityVerified"] = False
+    elif failure == "sidecar-path":
+        health["restoreManifest"]["file"] = "../foreign.json"
+    write(health_path, health)
+    staging = Path(plan["stagingRoot"])
+    previous = write(staging / "current-success.json", {"recoverySetId": "previous-good"})
+    previous_bytes = previous.read_bytes()
+    foreign = write(tmp_path / "foreign-hold.json", {"owner": "foreign-original-owner", "status": "holding"})
+    foreign_bytes = foreign.read_bytes()
+    calls = []
+    monkeypatch.setattr(daily, "_export", lambda *a, **kw: pytest.fail("refused barrier/health cannot export"))
+    with pytest.raises(r.RecoverySetError):
+        daily.run_daily_recovery(path, apply=True,
+            runner=lambda argv: (calls.append(argv) or subprocess.CompletedProcess(argv, 0, b"")))
+    assert fixture.events.count("pause") == fixture.events.count("resume") == 1
+    assert len(calls) == (0 if failure.startswith("barrier-") else 1)
+    assert previous.read_bytes() == previous_bytes and foreign.read_bytes() == foreign_bytes
+    assert not (staging / "sets").exists()
+    attempt = next((staging / ".attempts").iterdir())
+    failed = json.loads((attempt / "failure.json").read_text())
+    assert failed["status"] == "held" and failed["lastGoodPreserved"] is True
+    assert failed["restoredRoots"] == [str(tmp_path)] and failed["unresolvedRoots"] == []
+    assert failed["authorityTransferAuthorized"] is False and not (attempt / "daily.receipt.json").exists()
+
+
+def test_daily_after_watermark_change_preserves_history_and_restores_fixture_hold_once(
+        daily_plan, capture, tmp_path, monkeypatch):
+    path, plan = daily_plan
+    fixture = AdmissionFixture(tmp_path)
+    monkeypatch.setattr(daily, "_qualification", lambda _: (fixture, fixture_participants(tmp_path)))
+    backup = write(Path(plan["releaseRoot"]) / "bin/backup-health.sh", b"inert backup actor")
+    health_path = Path(plan["backupHealthReceipt"])
+    health = json.loads(health_path.read_text())
+    dump = capture[2] / "postgres/ledger.dump"
+    sidecar_path = capture[2] / "postgres/restore.json"
+    sidecar = json.loads(sidecar_path.read_text())
+    health.update(verifiedAt=datetime.now(timezone.utc).isoformat(), backupFile="ledger.dump",
+        restoreManifest={"file": "restore.json", "sha256": r.sha256(sidecar_path)})
+    assert r.sha256(dump) == health["backupSha256"] == sidecar["backupSha256"]
+    assert dump.stat().st_size == sidecar["backupBytes"]
+    assert (health_path.parent / health["restoreManifest"]["file"]) == sidecar_path
+    assert sidecar["sourceIdentityBefore"] == sidecar["sourceIdentityAfter"] == health["sourceIdentity"] == PG_SOURCE
+    write(health_path, health)
+    staging = Path(plan["stagingRoot"])
+    previous = write(staging / "current-success.json", {"recoverySetId": "previous-good"})
+    previous_bytes = previous.read_bytes()
+    calls = []
+    captures = []
+    prepare = r.prepare_recovery_set
+    def actual_capture(*args, **kwargs):
+        result = prepare(*args, **kwargs)
+        captures.append(result)
+        return result
+    monkeypatch.setattr(r, "prepare_recovery_set", actual_capture)
+    def protocol_only(argv):
+        calls.append(argv)
+        if argv[0] == str(backup):
+            return subprocess.CompletedProcess(argv, 0, b"")
+        assert argv[0] == plan["node"]
+        after = "--watermark-only" in argv
+        value = _export_receipt_fixture(plan, watermark_only=after)
+        assert value["postgresSource"] == PG_SOURCE
+        if after:
+            assert len(captures) == 1 and captures[0]["status"] == "local_capture_complete"
+            value["versionInventorySha256"] = "e" * 64
+        else:
+            output = Path(argv[argv.index("--output") + 1])
+            payload = write(output / "object-version", b"inert original object payload")
+            write(output / "inventory.json", {"schemaVersion": "execution-fabric-recovery-artifacts/v1",
+                "references": [{"relativePath": "artifactStore/object-version", "sha256": r.sha256(payload),
+                    "bytes": payload.stat().st_size, "ownerBinding": "original-fixture-owner",
+                    "artifactId": "fixture-artifact", "objectKey": "fixture/object", "versionId": "fixture-version"}]})
+        write(Path(argv[argv.index("--receipt") + 1]), value)
+        return subprocess.CompletedProcess(argv, 0, b"")
+    with pytest.raises(r.RecoverySetError, match="watermarks changed"):
+        daily.run_daily_recovery(path, apply=True, runner=protocol_only)
+    assert len(calls) == 3 and fixture.events.count("resume") == 1
+    assert calls[0][0] == str(backup)
+    assert calls[1][0] == plan["node"] and "--watermark-only" not in calls[1]
+    assert calls[2][0] == plan["node"] and "--watermark-only" in calls[2]
+    assert len(captures) == 1 and captures[0]["status"] == "local_capture_complete"
+    assert previous.read_bytes() == previous_bytes and not (staging / "sets").exists()
+    attempt = next((staging / ".attempts").iterdir())
+    assert (attempt / "capture/manifest.json").is_file()
+    assert not (attempt / "daily.receipt.json").exists()
+    failed = json.loads((attempt / "failure.json").read_text())
+    assert failed["restoredRoots"] == [str(tmp_path)] and failed["unresolvedRoots"] == []
+    assert failed["lastGoodPreserved"] is True and failed["authorityTransferAuthorized"] is False
+
+
 @pytest.fixture
 def daily_plan(capture, tmp_path):
     plan = json.loads(capture[0].read_text())

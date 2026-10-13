@@ -24,6 +24,304 @@ from genomes_agentic_os.cli import runtime_recovery
 from genomes_agentic_os.cli import main
 
 
+# Recovery behavior qualification additions use only disposable fixtures. Native
+# source-test cases remain opt-in; installed/native measurements are separate.
+
+
+@pytest.mark.parametrize("refusal", ["short-id", "nonhex-id", "existing", "dangling-symlink", "missing-repository", "symlink-repository"])
+def test_isolated_restore_refuses_unsafe_targets_before_key_or_actor(tmp_path, monkeypatch, refusal):
+    target = tmp_path / "restore"
+    repo = tmp_path / "repository"
+    repo.mkdir(mode=0o700)
+    snapshot = "a" * 64
+    prior = None
+    if refusal == "short-id":
+        snapshot = "a" * 12
+    elif refusal == "nonhex-id":
+        snapshot = "x" * 64
+    elif refusal == "existing":
+        prior = write(target / "original", b"inert original restore target")
+    elif refusal == "dangling-symlink":
+        target.symlink_to(tmp_path / "absent")
+    elif refusal == "missing-repository":
+        repo.rmdir()
+    else:
+        actual = tmp_path / "actual-repository"
+        repo.rename(actual)
+        repo.symlink_to(actual, target_is_directory=True)
+    calls = []
+    monkeypatch.setattr(r, "_password", lambda _: pytest.fail("key preflight must not run"))
+    with pytest.raises(r.RecoverySetError):
+        r.restore_recovery_set_isolated(str(repo), tmp_path / "never-read-key", snapshot, target,
+                                        apply=True, runner=lambda argv: calls.append(argv))
+    assert not calls
+    if prior:
+        assert prior.read_bytes() == b"inert original restore target"
+    else:
+        assert not target.exists()
+    assert target.is_symlink() == (refusal == "dangling-symlink")
+
+
+@pytest.mark.parametrize("outcome", ["os-error", "timeout", "nonzero", "success"])
+def test_native_command_classifies_failure_without_private_output_or_fallback(monkeypatch, outcome):
+    calls = []
+    def process(argv, **kwargs):
+        calls.append((argv, kwargs))
+        if outcome == "os-error":
+            raise OSError("INERT_FIXTURE_PRIVATE_OUTPUT")
+        if outcome == "timeout":
+            raise subprocess.TimeoutExpired(argv, 1, output=b"INERT_FIXTURE_PRIVATE_OUTPUT")
+        return subprocess.CompletedProcess(argv, 1 if outcome == "nonzero" else 0,
+                                           b"INERT_FIXTURE_PRIVATE_OUTPUT", b"INERT_FIXTURE_PRIVATE_OUTPUT")
+    monkeypatch.setattr(r.subprocess, "run", process)
+    if outcome == "success":
+        assert r.native_command(["fixture-native-only"], timeout=1).returncode == 0
+    else:
+        with pytest.raises(r.RecoverySetError) as error:
+            r.native_command(["fixture-native-only"], timeout=1)
+        assert "INERT_FIXTURE_PRIVATE_OUTPUT" not in str(error.value)
+    assert len(calls) == 1 and calls[0][1]["timeout"] == 1
+
+
+@pytest.mark.parametrize("metadata", [[], [{"id": "a" * 64, "paths": ["relative"]}],
+    [{"id": "b" * 64, "paths": ["/source"]}],
+    [{"id": "a" * 64, "paths": ["/source", "/foreign"]}],
+    [{"id": "a" * 64, "paths": ["/source/../foreign"]}]])
+def test_restore_catalog_refusal_does_not_create_target_or_call_restore(tmp_path, metadata):
+    repo = tmp_path / "repository"
+    repo.mkdir(mode=0o700)
+    password = write(tmp_path / "fixture-key", b"inert local fixture key")
+    calls = []
+    def catalog(argv):
+        calls.append(argv)
+        assert "snapshots" in argv
+        return subprocess.CompletedProcess(argv, 0, json.dumps(metadata).encode())
+    target = tmp_path / "new-restore"
+    with pytest.raises(r.RecoverySetError, match="snapshot source identity|unsafe relative path"):
+        r.restore_recovery_set_isolated(str(repo), password, "a" * 64, target, apply=True, runner=catalog)
+    assert len(calls) == 1 and not target.exists()
+
+
+def _retention_survivor_fixture(tmp_path):
+    receipts = tmp_path / "custody"
+    repo = tmp_path / "repository"
+    repo.mkdir(mode=0o700)
+    password = write(tmp_path / "fixture-key", b"inert local fixture key")
+    now = datetime.now(timezone.utc)
+    rows = {}
+    for number in range(1, 4):
+        custody = custody_fixture(f"{number:064x}", (now - timedelta(days=number)).isoformat())
+        write(receipts / (str(number) + ".json"), custody)
+        rows[custody["snapshotId"]] = catalog_row(custody)
+    plan = r.plan_retention(receipts, keep=3, weekly=0, monthly=0)
+    reference = write(tmp_path / "independent-copy.json", {"status": "isolated custody seam only"})
+    proof = {"schemaVersion": "execution-fabric-recovery-retention-approval/v1", "status": "verified",
+             "planSha256": plan["planSha256"], "repositoryId": plan["repositoryId"],
+             "repository": str(repo), "drillPinnedSnapshots": [], "custodianIdentity": "fixture-custodian",
+             "independentDeletionProtectionVerified": True, "verifiedAt": now.isoformat(),
+             "verificationReceipts": [{"path": str(reference), "sha256": r.sha256(reference)}]}
+    return receipts, repo, password, rows, write(tmp_path / "approval.json", proof), reference
+
+
+@pytest.mark.parametrize("failure", ["changed-proof", "symlink-proof", "future", "invalid-time"])
+def test_retention_refuses_uncertain_approval_before_key_or_native(tmp_path, monkeypatch, failure):
+    receipts, repo, password, rows, approval, reference = _retention_survivor_fixture(tmp_path)
+    before = {p.name: p.read_bytes() for p in receipts.glob("*.json")}
+    proof = json.loads(approval.read_text())
+    if failure == "changed-proof":
+        write(reference, {"status": "changed independent fixture"})
+    elif failure == "symlink-proof":
+        actual = reference.with_name("actual-proof.json")
+        reference.rename(actual)
+        reference.symlink_to(actual)
+    else:
+        proof["verifiedAt"] = ((datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+                                if failure == "future" else "invalid fixture time")
+        write(approval, proof)
+    monkeypatch.setattr(r, "_password", lambda _: pytest.fail("refused approval must not access key"))
+    calls = []
+    with pytest.raises(r.RecoverySetError):
+        r.apply_retention(receipts, str(repo), password, approval, keep=3, weekly=0, monthly=0,
+                          apply=True, runner=lambda argv: calls.append(argv))
+    assert not calls and before == {p.name: p.read_bytes() for p in receipts.glob("*.json")}
+
+
+@pytest.mark.parametrize("failure", ["missing-survivor", "changed-survivor", "repository-drift"])
+def test_retention_failed_survivor_readback_preserves_history_without_forget(tmp_path, failure):
+    receipts, repo, password, rows, approval, _ = _retention_survivor_fixture(tmp_path)
+    unknown = {"id": "f" * 64, "paths": ["/foreign/fixture"], "tags": [],
+               "time": datetime.now(timezone.utc).isoformat()}
+    rows[unknown["id"]] = unknown
+    before = {p.name: p.read_bytes() for p in receipts.glob("*.json")}
+    calls, catalogs = [], 0
+    def native(argv):
+        nonlocal catalogs
+        calls.append(argv)
+        assert "forget" not in argv and "prune" not in argv and "unlock" not in argv
+        if "cat" in argv:
+            identity = "d" * 64 if failure == "repository-drift" and catalogs >= 3 else "e" * 64
+            return subprocess.CompletedProcess(argv, 0, json.dumps({"id": identity}).encode())
+        assert "snapshots" in argv
+        catalogs += 1
+        value = [dict(row) for row in rows.values()]
+        if catalogs >= 3 and failure == "missing-survivor":
+            value = [row for row in value if row["id"] != unknown["id"]]
+        elif catalogs >= 3 and failure == "changed-survivor":
+            value[-1]["tags"] = ["changed-foreign-fixture"]
+        return subprocess.CompletedProcess(argv, 0, json.dumps(value).encode())
+    with pytest.raises(r.RecoverySetError, match="survivor readback"):
+        r.apply_retention(receipts, str(repo), password, approval, keep=3, weekly=0, monthly=0,
+                          apply=True, runner=native)
+    assert catalogs == 3 and all("forget" not in argv for argv in calls)
+    assert before == {p.name: p.read_bytes() for p in receipts.glob("*.json")}
+
+
+@pytest.mark.parametrize("failure", ["symlink", "missing", "copied-byte-mismatch"])
+def test_capture_source_refusal_preserves_previous_set_and_authority_bytes(capture, tmp_path, monkeypatch, failure):
+    plan_file, maintenance, source = capture
+    plan = json.loads(plan_file.read_text())
+    previous, _ = prepared(capture, tmp_path)
+    prior = {p.relative_to(previous).as_posix(): p.read_bytes() for p in previous.rglob("*") if p.is_file()}
+    source_item = next(s for values in plan["components"].values() for s in values if s["kind"] == "file")
+    original = Path(source_item["source"])
+    original_bytes = original.read_bytes()
+    if failure == "symlink":
+        link = tmp_path / "unbound-source"
+        link.symlink_to(original)
+        source_item["source"] = str(link)
+    elif failure == "missing":
+        source_item["source"] = str(tmp_path / "missing-component")
+    else:
+        copy = shutil.copyfile
+        def corrupt_destination(src, dst, **kwargs):
+            result = copy(src, dst, **kwargs)
+            if Path(src) == original:
+                Path(dst).write_bytes(b"changed isolated copied bytes")
+            return result
+        monkeypatch.setattr(r.shutil, "copyfile", corrupt_destination)
+    write(plan_file, plan)
+    output = tmp_path / "refused-set"
+    source_before = {p.relative_to(source).as_posix(): p.read_bytes()
+                     for p in source.rglob("*") if p.is_file() and not p.is_symlink()}
+    binding_before = {p: p.read_bytes() for p in (plan_file, maintenance)}
+    native_calls = []
+    def forbidden_native(*args, **kwargs):
+        native_calls.append((args, kwargs))
+        pytest.fail("capture refusal must not launch a native/provider actor")
+    monkeypatch.setattr(r, "native_command", forbidden_native)
+    with pytest.raises(r.RecoverySetError, match="symlink|missing|changed during capture"):
+        r.prepare_recovery_set(plan_file, maintenance, output, apply=True)
+    assert output.is_dir() and not output.is_symlink()
+    failed = output / "failed.receipt.json"
+    assert failed.is_file() and not failed.is_symlink()
+    assert json.loads(failed.read_text()) == {
+        "schemaVersion": "execution-fabric-recovery-failure/v1",
+        "recoverySetId": plan["recoverySetId"], "status": "incomplete"}
+    assert not (output / "manifest.json").exists()
+    assert not (output / "capture.receipt.json").exists()
+    with pytest.raises(r.RecoverySetError, match="required JSON input is unavailable"):
+        r.verify_recovery_set(output)
+    retained = {p.relative_to(output).as_posix() for p in output.rglob("*") if p.is_file()}
+    if failure == "copied-byte-mismatch":
+        assert retained == {"failed.receipt.json", source_item["path"]}
+        assert (output / source_item["path"]).read_bytes() != original_bytes
+    else:
+        assert retained == {"failed.receipt.json"}
+    assert native_calls == []
+    assert original.read_bytes() == original_bytes
+    assert source_before == {p.relative_to(source).as_posix(): p.read_bytes()
+                             for p in source.rglob("*") if p.is_file() and not p.is_symlink()}
+    assert binding_before == {p: p.read_bytes() for p in (plan_file, maintenance)}
+    assert prior == {p.relative_to(previous).as_posix(): p.read_bytes() for p in previous.rglob("*") if p.is_file()}
+
+
+@pytest.mark.parametrize("forgery", ["duplicate-inventory", "empty-owner", "witness-path", "signing-key", "os-authority", "public-mode"])
+def test_forged_private_set_cannot_qualify_inventory_or_authority_closure(capture, tmp_path, forgery):
+    original, _ = prepared(capture, tmp_path)
+    before = {p.relative_to(original).as_posix(): p.read_bytes() for p in original.rglob("*") if p.is_file()}
+    candidate = tmp_path / "forged-set"
+    shutil.copytree(original, candidate)
+    manifest_path = candidate / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    if forgery == "duplicate-inventory":
+        manifest["files"].append(dict(manifest["files"][0]))
+        manifest["fileInventorySha256"] = r._digest(manifest["files"])
+    elif forgery == "empty-owner":
+        manifest["files"][0]["sourceBinding"] = ""
+        manifest["fileInventorySha256"] = r._digest(manifest["files"])
+    elif forgery == "witness-path":
+        manifest["components"]["witness"]["originalDatabasePath"] = "/foreign/fixture-authority.db"
+    elif forgery == "signing-key":
+        manifest["components"]["witness"]["signingPublicKeySha256"] = "0" * 64
+    elif forgery == "os-authority":
+        manifest["components"]["osAuthorities"]["authorityId"] = ""
+    else:
+        candidate.chmod(0o755)
+    write(manifest_path, manifest)
+    receipt = json.loads((candidate / "capture.receipt.json").read_text())
+    receipt["manifestSha256"] = r.sha256(manifest_path)
+    write(candidate / "capture.receipt.json", receipt)
+    with pytest.raises(r.RecoverySetError):
+        r.verify_recovery_set(candidate)
+    assert before == {p.relative_to(original).as_posix(): p.read_bytes() for p in original.rglob("*") if p.is_file()}
+
+
+@pytest.mark.parametrize("action,change", [("daily", "daily-plan"), ("pull", "primary"),
+    ("collect-current", "primary"), ("collect-current", "staging"),
+    ("collect", "repository"), ("collect", "key"),
+    ("restore-isolated", "repository"), ("restore-isolated", "key"),
+    ("retention-apply", "repository"), ("retention-apply", "key"),
+    ("collect", "disabled"), ("collect", "actor")])
+def test_public_cli_refuses_foreign_configured_inputs_before_operation(tmp_path, monkeypatch, capsys, action, change):
+    settings = {"enabled": True, "primary_host_id": "fixture-primary", "custodian_host_id": "fixture-custodian",
+                "repository": str(tmp_path / "repository"), "password_file": str(tmp_path / "fixture-key"),
+                "local_staging_root": str(tmp_path / "staging"), "daily_plan_file": str(tmp_path / "daily-plan")}
+    args = argparse.Namespace(recovery_action=action, root=str(tmp_path), apply=True, json=True,
+        daily_plan=settings["daily_plan_file"], source_host="fixture-primary", remote_source="/fixture/remote",
+        output=str(tmp_path / "never-output"), local_root=settings["local_staging_root"],
+        source_dir=str(tmp_path / "fixture-set"), repository=settings["repository"], password_file=settings["password_file"],
+        set_id="fixture-set", snapshot_id="a" * 64, target=str(tmp_path / "never-output"), restic="fixture-native",
+        verify_target=None, receipts_dir=str(tmp_path / "receipts"), maintenance_receipt=str(tmp_path / "approval"),
+        daily=1, weekly=0, monthly=0, pin=[])
+    if change == "primary":
+        args.source_host = "foreign-fixture-primary"
+    elif change == "staging":
+        args.local_root = str(tmp_path / "foreign-staging")
+    elif change == "daily-plan":
+        args.daily_plan = str(tmp_path / "foreign-plan")
+    elif change == "repository":
+        args.repository = str(tmp_path / "foreign-repository")
+    elif change == "key":
+        args.password_file = str(tmp_path / "foreign-key")
+    elif change == "disabled":
+        settings["enabled"] = False
+    host = ("foreign-fixture-actor" if change == "actor" else
+            "fixture-primary" if action == "daily" else "fixture-custodian")
+    monkeypatch.setattr(runtime_recovery, "load_execution_fabric_config",
+                        lambda _: SimpleNamespace(value={"execution_fabric": {"recovery_sets": settings}}))
+    monkeypatch.setattr(runtime_recovery, "resolve_execution_fabric_host_id", lambda _: host)
+    for name in ("pull_recovery_set", "collect_recovery_set", "collect_current_recovery_set",
+                 "restore_recovery_set_isolated", "apply_retention"):
+        monkeypatch.setattr(r, name, lambda *a, **kw: pytest.fail("refused CLI must not reach operation"))
+    monkeypatch.setattr(runtime_recovery.daily, "run_daily_recovery", lambda *a, **kw: pytest.fail("no daily operation"))
+    assert runtime_recovery.handle(args) == 1
+    result = json.loads(capsys.readouterr().out)
+    assert result["status"] == "held" and result["authorityTransferAuthorized"] is False
+    assert not (tmp_path / "never-output").exists()
+
+
+@pytest.mark.parametrize("problem", [ValueError, OSError, TypeError, KeyError, AttributeError])
+def test_public_cli_invalid_input_redacts_detail_instead_of_echoing_fixture_payload(monkeypatch, capsys, problem):
+    def invalid(_):
+        raise problem("INERT_FIXTURE_DETAIL")
+    monkeypatch.setattr(r, "plan_recovery_set", invalid)
+    assert runtime_recovery.handle(argparse.Namespace(recovery_action="plan", capture_plan="fixture", json=True)) == 1
+    output = capsys.readouterr().out
+    assert "INERT_FIXTURE_DETAIL" not in output
+    assert json.loads(output) == {"status": "held", "reason": "required recovery input or canonical policy is invalid",
+                                  "authorityTransferAuthorized": False}
+
+
 SOURCE = Path(__file__).resolve().parents[1]
 PG_SOURCE = {"schemaVersion": "execution-fabric-postgres-source/v1", "systemId": "7432345656789123456",
              "database": "execution_fabric", "databaseOid": "16384", "majorVersion": 17, "serverVersionNum": 170006}
