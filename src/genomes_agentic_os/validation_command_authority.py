@@ -8,22 +8,39 @@ import shlex
 from typing import Any, Mapping
 
 
-def execution_argv(command: Mapping[str, Any]) -> tuple[list[str], dict[str, str]]:
-    """Parse only an executed env prefix; inherited overrides are not proof."""
+def execution_argv(command: Mapping[str, Any], task: Mapping[str, Any] | None = None) -> tuple[list[str], dict[str, str]]:
+    """Admit only receipt-bound metadata and contained output/cache controls."""
     argv = command.get("command")
     if not isinstance(argv, list) or not argv or not all(isinstance(x, str) for x in argv):
         return [], {}
     argv = list(argv)
     environment: dict[str, str] = {}
+    overrides = command.get("environment_overrides", {})
+    if not isinstance(overrides, Mapping):
+        return [], {}
+    assignments = list(overrides.items())
     if argv[0] == "env":
         argv = argv[1:]
-        if argv and argv[0] == "-i":
-            argv = argv[1:]
+        if argv and argv[0].startswith("-"):
+            return [], {}  # Clearing or changing inherited execution is not a frozen annotation.
         while argv and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", argv[0]):
-            key, value = argv.pop(0).split("=", 1)
-            if key in environment or key == "PYTEST_ADDOPTS":
-                return [], {}
-            environment[key] = value
+            assignments.append(tuple(argv.pop(0).split("=", 1)))
+    for key, value in assignments:
+        if not isinstance(key, str) or not isinstance(value, str) or key in environment:
+            return [], {}
+        if key == "REVIEW_POLICY_FINGERPRINT":
+            allowed = bool(re.fullmatch(r"[0-9a-f]{64}", value))
+        elif key == "PYTEST_ADDOPTS":
+            allowed = value == ""  # Explicitly neutralize inherited test selection.
+        elif key == "PYTHONDONTWRITEBYTECODE":
+            allowed = value == "1"
+        elif key in {"COVERAGE_FILE", "NPM_CONFIG_CACHE"}:
+            allowed = task is not None and _contained_annotation(value, task, cache_only=True)
+        else:
+            allowed = False
+        if not allowed:
+            return [], {}
+        environment[key] = value
     return argv, environment
 
 
@@ -59,12 +76,9 @@ def _annotations(extras: list[str], task: Mapping[str, Any]) -> bool:
             if not re.fullmatch(r"--cov=[A-Za-z_][A-Za-z0-9_.]*", token):
                 return False
         elif token.startswith("--cov-fail-under="):
-            try:
-                threshold = float(token.split("=", 1)[1])
-            except ValueError:
-                return False
-            if not 0 <= threshold <= 100:
-                return False
+            # Acceptance thresholds belong in the frozen command. A duplicate
+            # trailing threshold can override it, unlike an output annotation.
+            return False
         elif token.startswith("--basetemp="):
             if not _contained_annotation(token.split("=", 1)[1], task):
                 return False

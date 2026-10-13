@@ -253,8 +253,12 @@ def test_real_producer_refresh_preserves_history_invalidates_old_document_and_re
     assert read_auto_dev_state(task.read()["autodev_path"])["stages"]["pr_create"]["status"] == "completed"
 
 
-def test_same_head_policy_defer_admits_only_pr_create(tmp_path):
-    f = _fixture(tmp_path, changed=False, mode="everything", historical_command=False)
+def test_same_head_policy_defer_admits_only_pr_create(tmp_path, monkeypatch):
+    monkeypatch.delenv("VALIDATION_REFRESH_FIXTURE_ENDPOINT", raising=False)
+    f = _fixture(tmp_path, changed=False, mode="everything", historical_command=False,
+                 deferred_successor=True)
+    _refresh(f)
+    _document(f)
     task = f["task"]
     require_auto_dev_predecessors(task.read()["autodev_path"], "pr_create")
     for stage in ("review_self", "review_others", "qa", "finalize", "merge"):

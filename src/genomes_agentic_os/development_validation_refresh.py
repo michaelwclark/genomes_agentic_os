@@ -321,8 +321,7 @@ def _deferred(payload: Mapping[str, Any], validation: Mapping[str, Any], *,
             or not isinstance(evidence, Mapping) or not isinstance(unavailable, Mapping)
             or unavailable.get("classification") not in ("environment_unavailable", "infrastructure")
             or not all(isinstance(unavailable.get(key), str) and unavailable[key].strip() for key in ("command", "reason"))
-            or (require_frozen_command and unavailable.get("command") not in (validation.get("commands") or []))
-            or not any(value == "passed" for key, value in evidence.items() if key != "unavailable_check")):
+            or (require_frozen_command and unavailable.get("command") not in (validation.get("commands") or []))):
         _error("PR Create CI deferral requires exact pinned fallback policy and unavailable-command proof")
 
 
@@ -339,6 +338,11 @@ def validate_deferred_pr_create(state_file: str | Path, receipt: Path) -> None:
             or evidence.get("policy_fingerprint") != current["policy_fingerprint"]
             or _head(evidence) != _git(worktree, "rev-parse", "HEAD")):
         _error("changed-head CI deferral requires fresh successor validation")
+    # Historical labels preserve lineage only. PR creation requires actual
+    # current frozen-command terminals, including both a passed layer and the
+    # exact unavailable command's failure. Missing old proof needs a refresh.
+    _commands({**evidence, "verified_at": payload.get("verified_at")}, current, packet,
+              worktree, profile, _head(evidence), evidence["unavailable_check"])
 
 
 def pr_create_validation_authority(state_file: str | Path, family: Mapping[str, Any]) -> dict[str, Any] | None:
@@ -394,7 +398,7 @@ def _commands(evidence: Mapping[str, Any], current: Mapping[str, Any], packet: P
     for run in runs:
         terminal_path, terminal, _ = _bound(run.get("terminal"), packet)
         command_path, command, _ = _bound(run.get("command_receipt"), packet)
-        actual_argv, environment = execution_argv(command)
+        actual_argv, environment = execution_argv(command, current)
         is_unavailable = unavailable is not None and run["command"] == unavailable["command"]
         outcome_ok = terminal.get("status") == "success" and terminal.get("exit_code") == 0
         if is_unavailable:
@@ -407,8 +411,8 @@ def _commands(evidence: Mapping[str, Any], current: Mapping[str, Any], packet: P
                 or terminal.get("post_run_invariants_ok") is not True
                 or command.get("schema") != "agentic-os-long-running-state/v1" or command.get("shell") is not False
                 or not matches_command(run["command"], actual_argv, current, profile)
-                or (command.get("command", [None])[0] == "env"
-                    and environment.get("REVIEW_POLICY_FINGERPRINT") != current["policy_fingerprint"])
+                or ("REVIEW_POLICY_FINGERPRINT" in environment
+                    and environment["REVIEW_POLICY_FINGERPRINT"] != current["policy_fingerprint"])
                 or Path(str(command.get("work_dir") or "")).resolve() != worktree
                 or command.get("id") != terminal.get("id")
                 or terminal_path.parent != command_path.parent

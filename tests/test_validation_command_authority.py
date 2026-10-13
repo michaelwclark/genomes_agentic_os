@@ -97,3 +97,58 @@ def test_explicit_env_binding_rejects_duplicate_fingerprint_or_hidden_pytest_opt
 def test_annotations_do_not_apply_to_arbitrary_commands(tmp_path):
     task = _task(tmp_path)
     assert not matches_command("python -c pass", ["python", "-c", "pass", "--cov=app"], task, {})
+
+
+@pytest.mark.parametrize("assignment", [
+    "PYTHONPATH=/alternate/package", "PYTEST_PLUGINS=alternate.plugin",
+    "PYTEST_ADDOPTS=-k one", "PATH=/alternate/bin", "NODE_OPTIONS=--require alternate",
+    "LD_PRELOAD=/alternate/code", "npm_config_ignore_scripts=true",
+    "COVERAGE_RCFILE=/alternate/coverage.ini",
+])
+@pytest.mark.parametrize("transport", ["env_prefix", "runner_override"])
+def test_execution_affecting_environment_is_rejected_in_both_receipt_transports(tmp_path, assignment, transport):
+    task = _task(tmp_path)
+    command = {"command": _actual(task)}
+    if transport == "env_prefix":
+        command["command"].insert(2, assignment)
+    else:
+        key, value = assignment.split("=", 1)
+        command["environment_overrides"] = {key: value}
+    assert execution_argv(command, task) == ([], {})
+
+
+def test_safe_environment_controls_are_bound_to_the_owned_artifacts(tmp_path):
+    task = _task(tmp_path)
+    artifact = Path(task["work_item"]) / "artifacts/owned"
+    command = {"command": _actual(task), "environment_overrides": {
+        "PYTEST_ADDOPTS": "", "PYTHONDONTWRITEBYTECODE": "1",
+        "COVERAGE_FILE": str(artifact / "coverage-data"),
+        "NPM_CONFIG_CACHE": str(artifact / "npm-cache"),
+    }}
+    argv, environment = execution_argv(command, task)
+    assert matches_command(FROZEN, argv, task, {})
+    assert environment["REVIEW_POLICY_FINGERPRINT"] == "f" * 64
+    command["environment_overrides"]["COVERAGE_FILE"] = "/another/item/coverage-data"
+    assert execution_argv(command, task) == ([], {})
+
+
+@pytest.mark.parametrize("override", [None, [], {"PYTEST_ADDOPTS": False},
+    {"PYTHONDONTWRITEBYTECODE": "0"}, {"REVIEW_POLICY_FINGERPRINT": "e" * 64}])
+def test_malformed_or_contradictory_environment_never_establishes_authority(tmp_path, override):
+    command = {"command": _actual(_task(tmp_path)), "environment_overrides": override}
+    assert execution_argv(command, _task(tmp_path)) == ([], {})
+
+
+def test_env_clear_option_is_not_frozen_execution(tmp_path):
+    vector = _actual(_task(tmp_path)); vector.insert(1, "-i")
+    assert execution_argv({"command": vector}, _task(tmp_path)) == ([], {})
+
+
+@pytest.mark.parametrize("extra_floor", ["0", "79", "80", "100", "nan"])
+def test_an_appended_coverage_floor_cannot_override_the_frozen_threshold(tmp_path, extra_floor):
+    task = _task(tmp_path)
+    configured = FROZEN + " --cov=app --cov-fail-under=80"
+    actual = [str(Path(task["worktree"]["path"]) / ".venv/bin/python"),
+              "-m", "pytest", "tests/", "-q", "--cov=app", "--cov-fail-under=80"]
+    assert matches_command(configured, actual, task, {})
+    assert not matches_command(configured, actual + ["--cov-fail-under=" + extra_floor], task, {})

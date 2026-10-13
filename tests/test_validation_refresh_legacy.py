@@ -3,12 +3,15 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import shlex
+import time
 
 import pytest
 
 from genomes_agentic_os import development_delivery as delivery
 from genomes_agentic_os import development_validation_refresh as refresh
-from test_development_validation_refresh import _bound, _document, _family, _fixture, _refresh, _write
+from genomes_agentic_os.long_run import start_run
+from test_development_validation_refresh import _bound, _document, _family, _fixture, _now, _refresh, _write
 
 
 def test_genuinely_recorded_legacy_shape_refreshes_without_rewriting_history(tmp_path: Path) -> None:
@@ -41,6 +44,70 @@ def test_only_configured_registered_item_artifacts_are_admitted(tmp_path: Path) 
 
     assert _refresh(fixture)["task"]["validation_head_sha"] == fixture["head"]
     assert artifact.read_bytes() == original
+
+
+@pytest.mark.parametrize("transport", ["env_prefix", "runner_override"])
+def test_real_green_alternate_pytest_execution_cannot_replace_frozen_tests(tmp_path: Path, transport: str) -> None:
+    fixture = _fixture(tmp_path, annotated=True)
+    current = fixture["task"].read()
+    injected = fixture["packet"] / "artifacts/alternate-package"
+    package = injected / "pytest"
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text("")
+    (package / "__main__.py").write_text("print('alternate pytest ran zero configured tests')\n")
+    command = ["env", "REVIEW_POLICY_FINGERPRINT=" + current["policy_fingerprint"],
+               *shlex.split(fixture["command"])]
+    overrides = {}
+    if transport == "env_prefix":
+        command.insert(2, "PYTHONPATH=" + str(injected))
+    else:
+        overrides["PYTHONPATH"] = str(injected)
+    original_proof = json.loads(fixture["request"].read_text())["evidence"]["validation_runs"][0]
+    old_command = json.loads(Path(original_proof["command_receipt"]["path"]).read_text())
+    state = start_run(fixture["root"], command=command, label="adversarial frozen-command package replacement",
+        artifact_dir=str(fixture["packet"] / "artifacts/command-runs"),
+        work_dir=str(fixture["worktree"]), expected_git_identity=old_command["expected_git_identity"],
+        environment_overrides=overrides, budgets={"wall_clock_minutes": 0.5, "no_progress_minutes": 0.33})
+    run = Path(state["run_dir"])
+    terminal = run / "terminal-receipt.json"
+    deadline = time.monotonic() + 15
+    while not terminal.is_file() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert terminal.is_file()
+    result = json.loads(terminal.read_text())
+    assert result["status"] == "success" and result["exit_code"] == 0
+    assert "alternate pytest ran zero configured tests" in (run / "output.log").read_text()
+    request = json.loads(fixture["request"].read_text())
+    request["verified_at"] = _now()
+    request["evidence"]["validation_runs"][0] = {
+        "command": fixture["command"], "terminal": _bound(terminal),
+        "command_receipt": _bound(run / "command.json"),
+    }
+    _write(fixture["request"], request)
+    before = fixture["task"].path.read_bytes()
+    with pytest.raises(delivery.DevelopmentDeliveryError, match="command/terminal"):
+        _refresh(fixture)
+    assert fixture["task"].path.read_bytes() == before
+
+
+@pytest.mark.parametrize("label", ["arbitrary_claim", "focused_checks"])
+def test_same_head_deferral_labels_without_bound_pass_and_failure_cannot_create_a_pr(tmp_path: Path, label: str) -> None:
+    fixture = _fixture(tmp_path, changed=False, historical_command=False)
+    payload = json.loads(fixture["predecessor"].read_text())
+    payload["evidence"].pop("focused_checks")
+    payload["evidence"][label] = "passed"
+    _write(fixture["predecessor"], payload)
+    current = fixture["task"].read()
+    current["receipts"][-1]["sha256"] = _bound(fixture["predecessor"])["sha256"]
+    _write(fixture["task"].path, current)
+    before = fixture["task"].path.read_bytes()
+    with pytest.raises(delivery.DevelopmentDeliveryError, match="frozen-command proof"):
+        refresh.validate_deferred_pr_create(fixture["task"].path, fixture["predecessor"])
+    with pytest.raises(delivery.DevelopmentDeliveryError):
+        delivery.run_development_stage(fixture["task"].path, stage="release_propagation",
+            receipts={"release_propagation": _family(fixture)}, idempotency_prefix="unproved-defer")
+    assert fixture["task"].path.read_bytes() == before
+    assert not (fixture["task"].path.parent / "stages/release-propagation.json").exists()
 
 
 @pytest.mark.parametrize("corruption", [

@@ -182,7 +182,12 @@ The executed argv keeps the frozen command prefix. The task's absolute venv
 launcher is equivalent only to its configured relative path; an alternate
 launcher requires explicit frozen selected-profile/v2 executable authority.
 An executed `env REVIEW_POLICY_FINGERPRINT=<pinned-fingerprint>` prefix binds
-the readiness producer to the policy. Nonselecting pytest coverage/report and
+the readiness producer to the policy. Declared prefix and runner environment
+overrides admit only that fingerprint, empty `PYTEST_ADDOPTS`, bytecode
+suppression, and coverage/npm cache destinations contained in task artifacts.
+Code, plugin, launcher and coverage-configuration environment injection and
+`env -i` are refused. Acceptance thresholds must remain in the frozen command;
+appended `--cov-fail-under` options are refused. Nonselecting pytest coverage/report and
 contained basetemp annotations are allowed. Only one `-o cache_dir=<absolute
 packet-artifacts-private-path>` override is allowed; selectors, extra test
 paths and other overrides are refused.
@@ -196,7 +201,10 @@ targets or parent directories and conflicting immutable bytes are refused before
 recording validation authority.
 
 A policy-pinned `deferred_to_ci` Develop receipt can admit only same-head PR
-Create when it names an unavailable frozen command and a verified focused check.
+Create with complete current frozen-command terminal proofs, including a
+successful local command and the exact unavailable command's failure. Historical
+`passed` labels and unavailable-command metadata alone preserve lineage only;
+missing old terminal proof requires a freshly executed validation refresh.
 It provides pending CI authority and cannot independently satisfy Review, QA,
 Finalize or Merge. A changed head requires a fresh passed or honestly deferred
 successor through the explicit refresh; owning review/QA/finalization stages
