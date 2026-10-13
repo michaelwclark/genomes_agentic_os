@@ -568,31 +568,8 @@ def monitor_run(run_dir_value: str | Path) -> int:
     pre_identity = git_identity()
     _write_state(root, run_dir, {"status": "preflight", "phase": "preflight", "started_at": utc_now(), "expected_git_identity": expected_git_identity, "git_identity_pre": pre_identity})
     assert_expected_git_identity(pre_identity)
-    preflight = _run_checks(command.get("preflight_checks") or [], work_dir=command["work_dir"], phase="preflight")
-    atomic_json(run_dir / "preflight.json", {"checks": preflight, "ok": all(row["ok"] for row in preflight)})
-    if interrupted:
-        signalled_state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
-        cancelled = signalled_state.get("status") == "cancelling"
-        result = _terminal(
-            root,
-            run_dir,
-            command,
-            status="cancelled" if cancelled else "interrupted",
-            exit_code=None,
-            reason=(
-                "operator-cancelled-during-preflight"
-                if cancelled
-                else f"monitor-received-{signal.Signals(interrupted[-1]).name}-during-preflight"
-            ),
-            checks=preflight,
-        )
-        restore_signal_handlers()
-        return result
-    if any(not row["ok"] for row in preflight):
-        result = _terminal(root, run_dir, command, status="failure", exit_code=None, reason="preflight-check-failed", checks=preflight)
-        restore_signal_handlers()
-        return result
-
+    # A declared lock protects the checks as well as the command. Otherwise an
+    # execution-time dependency guard runs before the lock that it must attest.
     lock: MutationLock | None = None
     if command.get("mutation_lock"):
         lock_path = Path(command["mutation_lock"]).expanduser()
@@ -602,24 +579,55 @@ def monitor_run(run_dir_value: str | Path) -> int:
         try:
             lock.acquire()
         except BaseException as exc:
-            result = _terminal(
-                root,
-                run_dir,
-                command,
-                status="error",
-                exit_code=None,
-                reason=f"mutation-lock-acquire-failed: {type(exc).__name__}: {exc}",
-                checks=preflight,
-            )
-            restore_signal_handlers()
-            return result
-    process: subprocess.Popen[bytes] | None = None
-    logger = _BoundedLog(
-        run_dir / "output.log",
-        max_bytes=int(float(budgets["max_log_mb"]) * 1024 * 1024),
-        rotations=int(budgets["log_rotations"]),
-    )
+            try:
+                return _terminal(root, run_dir, command, status="error", exit_code=None,
+                    reason=f"mutation-lock-acquire-failed: {type(exc).__name__}: {exc}", checks=[])
+            finally:
+                try:
+                    lock.release()  # Ownership check preserves another live run's lock.
+                finally:
+                    restore_signal_handlers()
     try:
+        preflight = _run_checks(command.get("preflight_checks") or [], work_dir=command["work_dir"], phase="preflight")
+        atomic_json(run_dir / "preflight.json", {"checks": preflight, "ok": all(row["ok"] for row in preflight)})
+    except BaseException as exc:
+        try:
+            return _terminal(root, run_dir, command, status="error", exit_code=None,
+                reason=f"preflight-check-error: {type(exc).__name__}: {exc}", checks=[])
+        finally:
+            try:
+                if lock is not None:
+                    lock.release()
+            finally:
+                restore_signal_handlers()
+    if interrupted:
+        try:
+            signalled_state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
+            cancelled = signalled_state.get("status") == "cancelling"
+            return _terminal(root, run_dir, command, status="cancelled" if cancelled else "interrupted",
+                exit_code=None, reason="operator-cancelled-during-preflight" if cancelled else
+                f"monitor-received-{signal.Signals(interrupted[-1]).name}-during-preflight", checks=preflight)
+        finally:
+            try:
+                if lock is not None:
+                    lock.release()
+            finally:
+                restore_signal_handlers()
+    if any(not row["ok"] for row in preflight):
+        try:
+            return _terminal(root, run_dir, command, status="failure", exit_code=None,
+                reason="preflight-check-failed", checks=preflight)
+        finally:
+            try:
+                if lock is not None:
+                    lock.release()
+            finally:
+                restore_signal_handlers()
+    process: subprocess.Popen[bytes] | None = None
+    logger: _BoundedLog | None = None
+    try:
+        logger = _BoundedLog(run_dir / "output.log",
+            max_bytes=int(float(budgets["max_log_mb"]) * 1024 * 1024), rotations=int(budgets["log_rotations"]))
         process = subprocess.Popen(
             command["command_display"] if command.get("shell") else command["command"],
             cwd=command["work_dir"],
@@ -770,10 +778,15 @@ def monitor_run(run_dir_value: str | Path) -> int:
             _terminate_group(process)
         return _terminal(root, run_dir, command, status="error", exit_code=None, reason=f"{type(exc).__name__}: {exc}", checks=preflight)
     finally:
-        logger.close()
-        if lock is not None:
-            lock.release()
-        restore_signal_handlers()
+        try:
+            if logger is not None:
+                logger.close()
+        finally:
+            try:
+                if lock is not None:
+                    lock.release()
+            finally:
+                restore_signal_handlers()
 
 
 def _terminal(

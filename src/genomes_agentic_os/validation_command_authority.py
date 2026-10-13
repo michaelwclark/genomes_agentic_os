@@ -36,7 +36,7 @@ def execution_argv(command: Mapping[str, Any], task: Mapping[str, Any] | None = 
             allowed = value == ""  # Explicitly neutralize inherited test selection.
         elif key == "PYTHONDONTWRITEBYTECODE":
             allowed = value == "1"
-        elif key in {"COVERAGE_FILE", "NPM_CONFIG_CACHE"}:
+        elif key in {"COVERAGE_FILE", "NPM_CONFIG_CACHE", "PWTEST_CACHE_DIR"}:
             allowed = task is not None and _contained_annotation(value, task, cache_only=True)
         else:
             allowed = False

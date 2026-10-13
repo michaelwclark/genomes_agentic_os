@@ -188,7 +188,7 @@ alone never establishes runtime or dependency provenance.
 An executed `env REVIEW_POLICY_FINGERPRINT=<pinned-fingerprint>` prefix binds
 the readiness producer to the policy. Declared prefix and runner environment
 overrides admit only that fingerprint, empty `PYTEST_ADDOPTS`, bytecode
-suppression, and coverage/npm cache destinations contained in task artifacts.
+suppression, and coverage/npm/Playwright cache destinations contained in task artifacts.
 Code, plugin, launcher and coverage-configuration environment injection and
 `env -i` are refused. Coverage targets, branch mode, configuration and thresholds
 must remain in the frozen command; adding or replacing them is refused. Only report and
@@ -199,7 +199,32 @@ paths and other overrides are refused.
 This bounded recovery API supports `npm ci`, `npx tsc --noEmit` and the unscoped
 `npx playwright test --list` through
 a genuinely passed frozen `npm ci` with tracked `package-lock.json` before
-dependent `npx`/Node commands. Ordinary host tool trust remains governed by the
+dependent `npx`/Node commands. Git cleanliness does not attest ignored dependencies.
+Each ordered `validation_runs` entry must bind `preflight` and
+`node_install_closure` files by SHA. The install's native post-check captures
+the full installed closure into its exclusive `node-install-closure.json`;
+the capture's SHA must match the actual native terminal check output. Every
+dependent command executes the exact approved helper before and after the
+frozen argv, verifying all files, modes, directories and symlink text/contained
+targets against that capture. Added, deleted or changed dependencies, outside
+or dangling targets and unqualified local executables are refused. The same
+full comparison runs under the task lock at refresh admission.
+
+Generate these native checks with
+`validation_node_provenance.guard_checks(install_run, run, worktree, snapshot_sha)`
+from the qualified current OS package. Declare the same native mutation lock
+`<packet>/artifacts/node-validation.lock` on all three runs, using artifact
+directory `<packet>/artifacts/command-runs`. The native runner acquires it before
+preflight and holds it through the command and post-check. The isolated
+stdlib helper checks actual lock ownership and executes with exact package
+file and qualified base-interpreter checksums before and after; request hashes
+cannot substitute its execution. A Playwright run additionally declares
+`PWTEST_CACHE_DIR=<run-dir>/playwright-cache`. Its pre-check creates that fresh
+run-owned cache exclusively, so prior generated JavaScript cannot masquerade as
+current source. Normal cache output remains outside the immutable dependency
+closure and cannot hide executable changes. Older runner receipts without
+these actual checks require fresh execution; no historical receipts are edited.
+Ordinary host tool trust remains governed by the
 project's environment-access policy; this is not a host-compromise attestation.
 
 Python dependency/module/script recovery and worktree venv launchers remain

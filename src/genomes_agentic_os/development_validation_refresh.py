@@ -111,7 +111,8 @@ def _clean_worktree(current: Mapping[str, Any], project: Path, worktree: Path) -
     ignored = _git(worktree, "ls-files", "--others", "--ignored", "--exclude-standard", "-z").split("\0")
     for item in filter(None, ignored):
         path = Path(item)
-        # npm dependencies are rebuilt by the actual frozen npm-ci layer.
+        # Node dependencies require the separately verified actual npm-ci
+        # closure and native execution-time checks below; Git never attests them.
         # No Python recovery may import them or any working-tree/venv modules.
         if path.parts[0] != "node_modules" and (path.parts[0] == ".venv"
                 or path.name in {".npmrc", ".coveragerc", "pyvenv.cfg"}
@@ -410,7 +411,7 @@ def _commands(evidence: Mapping[str, Any], current: Mapping[str, Any], packet: P
     verified = _timestamp(evidence.get("verified_at"))
     passed = 0
     deferred = 0
-    npm_installed = False
+    node_install = None
     for run in runs:
         terminal_path, terminal, _ = _bound(run.get("terminal"), packet)
         command_path, command, _ = _bound(run.get("command_receipt"), packet)
@@ -443,9 +444,13 @@ def _commands(evidence: Mapping[str, Any], current: Mapping[str, Any], packet: P
         if launcher in {"npm", "npx", "node"}:
             if npm_ci:
                 _git(worktree, "ls-files", "--error-unmatch", "package-lock.json")
-                npm_installed = not is_unavailable
-            elif not npm_installed:
+                if is_unavailable:
+                    _error("Node recovery requires actual passed npm ci install provenance")
+                node_install = _node_proof(run, command_path, command, terminal, packet, worktree)
+            elif node_install is None:
                 _error("Node dependency validation requires prior actual passed frozen npm ci")
+            else:
+                _node_proof(run, command_path, command, terminal, packet, worktree, node_install)
         try:
             check = runtime_provenance_check(run["command"], actual_argv, current, profile)
         except ValueError as exc:
@@ -476,6 +481,50 @@ def _commands(evidence: Mapping[str, Any], current: Mapping[str, Any], packet: P
             _error("fresh validation command timestamps are stale or contradictory")
     if unavailable is not None and (deferred != 1 or passed < 1):
         _error("fresh CI deferral requires one actual unavailable command and a passed local layer")
+
+
+def _node_proof(run: Mapping[str, Any], command_path: Path, command: Mapping[str, Any],
+                terminal: Mapping[str, Any], packet: Path, worktree: Path,
+                install: tuple[Path, str] | None = None) -> tuple[Path, str]:
+    from .validation_node_provenance import (LOCK, SCHEMA, SNAPSHOT, dependency_closure, guard_checks)
+    install_run = install[0] if install else command_path.parent
+    snapshot_path, snapshot, digest = _bound(run.get("node_install_closure"), packet)
+    if (snapshot_path != install_run / SNAPSHOT or install is not None and digest != install[1]
+            or snapshot.get("schema") != SCHEMA or snapshot.get("run_id") != install_run.name
+            or snapshot.get("command_sha256") != _read(install_run / "command.json")[1]
+            or snapshot.get("identity") != command.get("expected_git_identity")
+            or snapshot.get("worktree") != str(worktree)
+            or snapshot.get("lockfile_sha256") != hashlib.sha256((worktree / "package-lock.json").read_bytes()).hexdigest()
+            or command.get("mutation_lock") != str(install_run.parents[2] / LOCK)
+            or not Path(command["mutation_lock"]).is_relative_to(packet / "artifacts")):
+        _error("Node install closure must bind its actual passed npm ci and item-owned lock")
+    try:
+        if snapshot.get("entries") != dependency_closure(worktree):
+            _error("installed Node dependency closure changed after npm ci")
+        pre_check, post_check = guard_checks(install_run, command_path.parent, worktree, digest if install else None)
+        preflight_path, preflight, _ = _bound(run.get("preflight"), packet)
+        pre_capsule = {"operation": "prepare", "run_id": install_run.name} if install is None else {
+            "operation": "verify", "run_id": command_path.parent.name,
+            "install_run_id": install_run.name, "snapshot_sha256": digest}
+        post_capsule = {"operation": "capture" if install is None else "verify",
+            "run_id": command_path.parent.name, "install_run_id": install_run.name, "snapshot_sha256": digest}
+        def checked(rows: Any, phase: str, expected: str, capsule: dict) -> bool:
+            matches = [row for row in rows if isinstance(row, Mapping) and row.get("phase") == phase]
+            return (len(matches) == 1 and matches[0].get("command") == expected
+                    and matches[0].get("ok") is True and type(matches[0].get("exit_code")) is int
+                    and matches[0]["exit_code"] == 0
+                    and json.loads(matches[0].get("output_tail", "")) == capsule)
+        if (command.get("preflight_checks") != [pre_check] or command.get("post_run_checks") != [post_check]
+                or preflight_path != command_path.parent / "preflight.json" or preflight.get("ok") is not True
+                or not isinstance(preflight.get("checks"), list) or len(preflight["checks"]) != 1
+                or not isinstance(terminal.get("checks"), list) or len(terminal["checks"]) != 2
+                or not checked(preflight["checks"], "preflight", pre_check, pre_capsule)
+                or not checked(terminal["checks"], "preflight", pre_check, pre_capsule)
+                or not checked(terminal["checks"], "post-run", post_check, post_capsule)):
+            _error("Node closure requires exact executed native install capture and pre/post checks")
+    except (OSError, ValueError, RuntimeError, TypeError) as exc:
+        _error("Node execution provenance is unavailable or contradictory: " + str(exc))
+    return install_run, digest
 
 
 def _timestamp(value: Any) -> datetime:
