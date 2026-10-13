@@ -70,7 +70,7 @@ def _command_proof(root: Path, packet: Path, worktree: Path, command: str, head:
 
 def _fixture(tmp_path: Path, *, changed: bool = True, mode: str = "single_stage",
              historical_command: bool = True, multiple_commands: bool = False,
-             annotated: bool = False) -> dict:
+              annotated: bool = False, legacy: bool = False) -> dict:
     repo, old_head = _repository(tmp_path)
     if annotated:
         (repo / ".gitignore").write_text(".venv\n.pytest_cache/\n__pycache__/\n")
@@ -116,10 +116,21 @@ def _fixture(tmp_path: Path, *, changed: bool = True, mode: str = "single_stage"
                "command": "python -m pytest tests/ -q --cov=genomes_agentic_os --cov-branch --cov-fail-under=80" if historical_command else command,
                "classification": "environment_unavailable",
                "reason": "predecessor disposable environment was unavailable"}}
+    if legacy:
+        # This is the genuinely recorded old QA shape: candidate revision and
+        # local checks, with no nested ticket/repository/policy identity.
+        old = {"subject_revision": old_head, "typescript": "passed",
+               "unit_suite": "passed", "targeted_discovery": "passed",
+               "unavailable_check": old["unavailable_check"]}
+    local_receipt = _stage_receipt(packet, "local_validation",
+                                  status="deferred_to_ci", evidence=old)
+    if legacy:
+        local_payload = json.loads(Path(local_receipt).read_text())
+        local_payload["verified_at"] = _now()
+        _write(Path(local_receipt), local_payload)
     delivery.run_development_stage(task.path, stage="implementation",
         receipts={"implementing": _stage_receipt(packet, "implementing"),
-                  "local_validation": _stage_receipt(packet, "local_validation",
-                        status="deferred_to_ci", evidence=old)},
+                  "local_validation": local_receipt},
         idempotency_prefix="implementation")
     _record_standalone_stage(task, "document", revision=old_head)
     current = task.read()
