@@ -30,7 +30,7 @@ secret_policy = "no inline secrets; env var names only"
 
 # Agentic OS managed additions
 [mcp_servers.genomes_brain]
-url = "http://127.0.0.1:3155/mcp"
+url = "http://127.0.0.1:3166/mcp"
 secret_policy = "no inline secrets; env var names only"
 
 # Agentic OS managed additions
