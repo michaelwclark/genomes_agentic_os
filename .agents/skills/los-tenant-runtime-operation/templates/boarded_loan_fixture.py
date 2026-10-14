@@ -126,11 +126,14 @@ def boarded_runtime_gates(account):
 
 def boarded_preflight(reference):
     from django.contrib.auth import get_user_model
+    from django_tenants.utils import get_tenant_model
     from los.backoffice.models import TaskExecution, TaskMap
     from los.requests.models import Loan
     from los.servicing.models import LoanValidation
 
     boarded_require(SOURCE_LOAN_ID and ACTOR_USERNAME, "source_loan_id_and_actor_required")
+    organization = get_tenant_model().objects.using("default").get(schema_name=schema_name)
+    boarded_require(bool(organization.org_id), "existing_organization_id_required")
     boarded_require(normalized_task(ENVIRONMENT_LABEL) in {
         "QA", "QA_MULTI", "BETA", "BETA_MULTI", "PREPROD", "DEV", "DEVELOPMENT", "LOCAL", "TEST",
     }, "explicit_lower_environment_required")
@@ -259,16 +262,38 @@ def verify_boarded_side_effects(loan, account, user):
     return {"bank_monitoring_enrollment_count": 0, "workflow_queue_entry_count": 0}
 
 
+def read_boarded_loan(loan):
+    from los.requests.models import Loan
+
+    # Model-save allocates application_number as a string; the integer field is
+    # normalized only on database readback. Also read the direct boarding-date
+    # update and model-managed schedule instead of trusting the stale instance.
+    return Loan.objects.using("default").select_related(
+        "current_task__task_map", "request_status", "primary_user",
+    ).get(pk=loan.pk)
+
+
 def verify_boarded_fixture(loan):
     from los.backoffice.models import TaskExecution, TaskMap
     from los.servicing.models import LoanValidation
 
+    loan = read_boarded_loan(loan)
     boarded_require(loan.loan_validation_id is not None, "servicing_account_missing")
     account = LoanValidation.objects.using("default").get(pk=loan.loan_validation_id)
     boarded_require(account.loan_number == boarded_loan_number() == loan.loan_number,
                     "servicing_account_number_mismatch")
-    boarded_require(account.application_number == loan.application_number and loan.boarded_date is not None,
-                    "boarded_application_link_mismatch")
+    link_matches = account.application_number == loan.application_number and loan.boarded_date is not None
+    if not link_matches:
+        print_json("test_loan_factory boarded_link_diagnostics", {
+            "loan_id": str(loan.pk), "loan_validation_id": str(account.pk),
+            "loan_application_number": str(loan.application_number),
+            "account_application_number": str(account.application_number),
+            "loan_application_number_type": type(loan.application_number).__name__,
+            "account_application_number_type": type(account.application_number).__name__,
+            "boarded_date_present": loan.boarded_date is not None,
+            "mutation_executed": False,
+        })
+    boarded_require(link_matches, "boarded_application_link_mismatch")
     boarded_require(loan.maturity_date is not None and account.maturity_date == loan.maturity_date
                     and account.loan_payment_amount is not None and account.loan_payment_amount > 0
                     and account.initial_disbursement_date is not None

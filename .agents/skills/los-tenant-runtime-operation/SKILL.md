@@ -359,6 +359,15 @@ enrollment or workflow queue rows for the six synthetic objects. Declare
 model-created preferences, groups, optional CRM Customer, secure TIN, and local
 audit/events in the write set.
 
+Loan.save also creates its fresh Project automatically. Preserve the exact
+new Project, optional CRM Customer, preference/group links, secure TIN, and
+audit/event identities with the fixture receipt for any later authorized
+cleanup; shared products, configuration, source loans/users, and tenant rows
+are outside cleanup scope. Require an existing organization ID before seeding.
+Application allocation may leave sequence gaps after rollback. Read the new
+Loan back from the primary database before comparing application numbers:
+allocation returns a string, while the persisted integer field reads as int.
+
 ## Output Budget
 
 Treat Argo output as a scarce debugging channel.

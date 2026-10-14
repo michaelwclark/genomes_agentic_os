@@ -4079,7 +4079,7 @@ with schema_context(schema_name), (boarded_notification_boundary() if FIXTURE_ST
             "reference_task_id": boarded["reference_task_id"],
             "request_status_code": boarded["request_status_code"],
             "qualification": boarded["qualification"],
-            "additional_write_set": "LoanValidation + disabled User/default preferences/groups + optional model-derived Customer + primary applicant/account user links + secure synthetic TIN + local audit/events",
+            "additional_write_set": "LoanValidation + model-derived fresh Project + disabled User/default preferences/groups + optional model-derived Customer + primary applicant/account user links + secure synthetic TIN + local audit/events; sequence allocation may leave gaps after rollback",
         } if boarded else None),
         "operation": (
             "direct create: Loan + synthetic borrower/representative + TaskExecution + "

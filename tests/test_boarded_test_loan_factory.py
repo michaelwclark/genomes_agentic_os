@@ -208,6 +208,25 @@ class QualificationTests(unittest.TestCase):
 
 
 class AutomationBoundaryTests(unittest.TestCase):
+    def test_primary_database_readback_normalizes_allocated_number_and_direct_date(self):
+        namespace = helper_namespace()
+        stale = types.SimpleNamespace(pk="new-loan", application_number="12345678901", boarded_date=None)
+        persisted = types.SimpleNamespace(pk="new-loan", application_number=12345678901,
+                                          boarded_date="persisted-boarded-timestamp")
+        manager = Mock()
+        manager.using.return_value = manager
+        manager.select_related.return_value = manager
+        manager.get.return_value = persisted
+        with patch.dict(sys.modules, module_tree({"los.requests.models": {
+                "Loan": types.SimpleNamespace(objects=manager)}})):
+            actual = namespace["read_boarded_loan"](stale)
+        self.assertIs(actual, persisted)
+        self.assertEqual(actual.application_number, 12345678901)
+        self.assertIsNotNone(actual.boarded_date)
+        self.assertNotEqual(stale.application_number, actual.application_number)
+        manager.using.assert_called_once_with("default")
+        manager.get.assert_called_once_with(pk="new-loan")
+
     def test_creation_and_commit_callbacks_cannot_dispatch_triggers(self):
         namespace = helper_namespace()
         queue = []
