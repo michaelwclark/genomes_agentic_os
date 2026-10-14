@@ -399,4 +399,3 @@ def test_ci_deferral_cannot_promote_failed_or_unexecuted_validation(tmp_path: Pa
         _refresh(fixture)
 
     assert fixture["task"].path.read_bytes() == before
-
