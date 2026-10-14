@@ -9,6 +9,17 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.11.1] - 2026-10-14
+
+### Fixed
+
+- Build owned MinIO server and client images from the existing, signed upstream
+  releases when their public container repositories cannot supply the configured
+  images. Pin the runtime base and bind the published index, platform images and
+  provenance to verified build inputs.
+- Require real amd64 and arm64 storage, health, secret-file, persistence and
+  cleanup checks before publishing the complete Execution Fabric and SDK release.
+
 ## [0.11.0] - 2026-10-14
 
 ### Added
