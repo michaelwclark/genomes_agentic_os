@@ -3833,13 +3833,16 @@ def test_loan_factory_body(args: argparse.Namespace) -> str:
 
     aliases = load_aliases()
     health = fetch_health(args.health_url)
-    required_confirmation = f"CREATE_{args.environment_label}_{args.tenant}_TEST_LOAN"
+    fixture_state = getattr(args, "fixture_state", "workflow")
+    suffix = "BOARDED_TEST_LOAN" if fixture_state == "boarded" else "TEST_LOAN"
+    required_confirmation = f"CREATE_{args.environment_label}_{args.tenant}_{suffix}"
     required_confirmation = "".join(
         character if character.isalnum() else "_" for character in required_confirmation.upper()
     )
     required_confirmation = "_".join(part for part in required_confirmation.split("_") if part)
     template = r'''
 import hashlib
+from contextlib import nullcontext
 from datetime import date
 from decimal import Decimal
 from uuid import uuid4
@@ -3851,6 +3854,11 @@ TENANT_QUERY = __TENANT_QUERY__
 TARGET_TASK = __TARGET_TASK__
 SOURCE_APPLICATION = __SOURCE_APPLICATION__
 IDEMPOTENCY_KEY = __IDEMPOTENCY_KEY__
+BORROWER_ENTITY_TYPE = __BORROWER_ENTITY_TYPE__
+FIXTURE_STATE = __FIXTURE_STATE__
+SOURCE_LOAN_ID = __SOURCE_LOAN_ID__
+ACTOR_USERNAME = __ACTOR_USERNAME__
+LOAN_NUMBER = __LOAN_NUMBER__
 MAX_CANDIDATES = __MAX_CANDIDATES__
 ENABLE_CREATE = __ENABLE_CREATE__
 CONFIRMATION = __CONFIRMATION__
@@ -3903,7 +3911,7 @@ def require_safe_environment():
 def select_configuration_reference():
     from los.requests.models import Loan
 
-    queryset = Loan.objects.select_related(
+    queryset = Loan.objects.using("default").select_related(
         "current_task__task_map",
         "product",
         "request_status",
@@ -3911,7 +3919,9 @@ def select_configuration_reference():
 
     if SOURCE_APPLICATION:
         queryset = queryset.filter(application_number=str(SOURCE_APPLICATION))
-    if TARGET_TASK:
+    if SOURCE_LOAN_ID:
+        queryset = queryset.filter(pk=SOURCE_LOAN_ID)
+    if TARGET_TASK and FIXTURE_STATE != "boarded":
         queryset = queryset.filter(current_task__task_map__name__iexact=normalized_task(TARGET_TASK))
 
     candidates = list(queryset.order_by("-created", "-pk")[:MAX_CANDIDATES])
@@ -3928,12 +3938,12 @@ def select_configuration_reference():
         )
         raise SystemExit(4)
 
-    if not SOURCE_APPLICATION and len(candidates) > 1:
+    if len(candidates) > 1:
         print_json(
             "test_loan_factory configuration_reference_selection_required",
             {
                 "reason": "multiple_candidates",
-                "next": "rerun with --source-application from the candidate list; it is used only for product/task configuration",
+                "next": "rerun with exact --source-application and --source-loan-id; these select product/task configuration only",
                 "mutation_executed": False,
             },
         )
@@ -3946,11 +3956,14 @@ def find_existing():
     from los.requests.models import Loan
 
     return (
-        Loan.objects.select_related("current_task__task_map", "request_status")
+        Loan.objects.using("default").select_related("current_task__task_map", "request_status")
         .filter(details__test_loan_factory__idempotency_key=IDEMPOTENCY_KEY)
         .order_by("-created", "-pk")
         .first()
     )
+
+
+__BOARDED_HELPERS__
 
 
 print_json("runtime_health", thin_health())
@@ -3963,12 +3976,24 @@ if not SOURCE_APPLICATION and not TARGET_TASK:
 tenant = resolve_tenant(TENANT_QUERY)
 schema_name = tenant["schema_name"]
 
-with schema_context(schema_name):
+with schema_context(schema_name), (boarded_notification_boundary() if FIXTURE_STATE == "boarded" else nullcontext()), (transaction.atomic(using="default") if FIXTURE_STATE == "boarded" else nullcontext()):
     existing = find_existing()
     if existing:
         metadata = (existing.details or {}).get("test_loan_factory", {})
         requested_task = normalized_task(TARGET_TASK)
         conflicts = {}
+        if metadata.get("fixture_state", "workflow") != FIXTURE_STATE:
+            conflicts["fixture_state"] = {
+                "requested": FIXTURE_STATE, "existing": metadata.get("fixture_state", "workflow"),
+            }
+        if SOURCE_LOAN_ID and str(metadata.get("configuration_reference_loan_id")) != SOURCE_LOAN_ID:
+            conflicts["configuration_reference_loan_id"] = {
+                "requested": SOURCE_LOAN_ID, "existing": metadata.get("configuration_reference_loan_id"),
+            }
+        if FIXTURE_STATE == "boarded" and metadata.get("actor_username") != ACTOR_USERNAME:
+            conflicts["actor_username"] = {
+                "requested": ACTOR_USERNAME, "existing": metadata.get("actor_username"),
+            }
         if metadata.get("environment") != ENVIRONMENT_LABEL:
             conflicts["environment"] = {
                 "requested": ENVIRONMENT_LABEL,
@@ -3989,6 +4014,10 @@ with schema_context(schema_name):
                 "requested": requested_task,
                 "existing": metadata.get("requested_task"),
             }
+        if metadata.get("borrower_entity_type", "llc") != BORROWER_ENTITY_TYPE:
+            conflicts["borrower_entity_type"] = {
+                "requested": BORROWER_ENTITY_TYPE, "existing": metadata.get("borrower_entity_type", "llc"),
+            }
         existing_task = normalized_task(compact_task(existing).get("name"))
         if requested_task and existing_task != requested_task:
             conflicts["current_task"] = {
@@ -4006,6 +4035,7 @@ with schema_context(schema_name):
                 },
             )
             raise SystemExit(8)
+        qualification = verify_boarded_fixture(existing) if FIXTURE_STATE == "boarded" else None
         print_json(
             "test_loan_factory idempotent_existing",
             {
@@ -4013,13 +4043,16 @@ with schema_context(schema_name):
                 "tenant_schema": schema_name,
                 "idempotency_key": IDEMPOTENCY_KEY,
                 "loan": compact_loan(existing),
+                "qualification": qualification,
                 "mutation_executed": False,
             },
         )
         raise SystemExit(0)
 
     reference = select_configuration_reference()
-    reference_task = normalized_task(compact_task(reference).get("name"))
+    boarded = boarded_preflight(reference) if FIXTURE_STATE == "boarded" else None
+    task_template = boarded["task_template"] if boarded else reference.current_task
+    reference_task = normalized_task(getattr(task_template.task_map, "name", None))
     requested_task = normalized_task(TARGET_TASK)
     if requested_task and reference_task != requested_task:
         print_json(
@@ -4037,8 +4070,17 @@ with schema_context(schema_name):
         "environment": ENVIRONMENT_LABEL,
         "tenant_schema": schema_name,
         "idempotency_key": IDEMPOTENCY_KEY,
+        "fixture_state": FIXTURE_STATE,
         "configuration_reference": compact_loan(reference),
         "requested_task": requested_task or reference_task,
+        "borrower_entity_type": BORROWER_ENTITY_TYPE,
+        "boarded_plan": ({
+            "loan_number": boarded["loan_number"],
+            "reference_task_id": boarded["reference_task_id"],
+            "request_status_code": boarded["request_status_code"],
+            "qualification": boarded["qualification"],
+            "additional_write_set": "LoanValidation + disabled User/default preferences/groups + optional model-derived Customer + primary applicant/account user links + secure synthetic TIN + local audit/events",
+        } if boarded else None),
         "operation": (
             "direct create: Loan + synthetic borrower/representative + TaskExecution + "
             "LoanTaskAggregator; no Loan.make_clone and no source relation reuse"
@@ -4069,16 +4111,28 @@ with schema_context(schema_name):
     digest = hashlib.sha256(IDEMPOTENCY_KEY.encode()).hexdigest()
     entity_tin = f"66666{int(digest[:8], 16) % 10000:04d}"
     representative_tin = f"66666{int(digest[8:16], 16) % 10000:04d}"
-    task_template = reference.current_task
-    source_aggregator = reference.task_aggregators.filter(task_id=reference.current_task_id).first()
+    source_aggregator = reference.task_aggregators.filter(task_id=task_template.pk).first()
 
     with transaction.atomic(using="default"), BypassAutomations():
+        if boarded:
+            from django.db import connection
+
+            lock_key = int(hashlib.sha256(f"{schema_name}:{IDEMPOTENCY_KEY}".encode()).hexdigest()[:16], 16) - (1 << 63)
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT pg_advisory_xact_lock(%s)", [lock_key])
+            boarded_require(find_existing() is None, "idempotency_key_created_concurrently_rerun")
+            # Recheck identities under the lock before writing any synthetic row.
+            boarded = boarded_preflight(reference)
         metadata = {
             "idempotency_key": IDEMPOTENCY_KEY,
             "environment": ENVIRONMENT_LABEL,
             "tenant_schema": schema_name,
             "configuration_reference_application": str(reference.application_number),
+            "configuration_reference_loan_id": str(reference.pk),
+            "fixture_state": FIXTURE_STATE,
+            "actor_username": ACTOR_USERNAME if boarded else None,
             "requested_task": requested_task or reference_task,
+            "borrower_entity_type": BORROWER_ENTITY_TYPE,
             "creation_mode": "direct_synthetic",
         }
 
@@ -4090,7 +4144,7 @@ with schema_context(schema_name):
             rate_type=reference.rate_type or "Fixed",
             rate=reference.rate or Decimal("8.00"),
             loan_purpose=reference.loan_purpose,
-            borrower_name=f"QA Test Loan {digest[:8]}",
+            borrower_name=f"QA Test Loan {digest[:8]} {BORROWER_ENTITY_TYPE.title()}",
             call_code="",
             group_code="",
             group_code_description="",
@@ -4103,8 +4157,8 @@ with schema_context(schema_name):
 
         borrower = Relation.objects.create(
             party_type=Relation.ENTITY,
-            entity_type="llc",
-            business_name=f"QA Test Loan {digest[:8]} LLC",
+            entity_type=BORROWER_ENTITY_TYPE,
+            business_name=f"QA Test Loan {digest[:8]} {BORROWER_ENTITY_TYPE.title()}",
             tin=entity_tin,
             tin_type="ein",
             email=f"test-loan-{digest[:12]}@example.com",
@@ -4146,7 +4200,7 @@ with schema_context(schema_name):
             entity=new_loan,
             task_map=task_template.task_map,
             task_type=task_template.task_type,
-            status=TaskExecution.IN_PROGRESS,
+            status=TaskExecution.COMPLETE if boarded else TaskExecution.IN_PROGRESS,
             is_latest=True,
             is_valid=True,
             is_manual=task_template.is_manual,
@@ -4164,6 +4218,11 @@ with schema_context(schema_name):
         new_loan.current_task = task
         new_loan.request_status = reference.request_status
         new_loan.save(update_fields=["current_task", "request_status"])
+        if boarded:
+            create_boarded_account(new_loan, borrower, representative)
+            # Acceptance inside the atomic write prevents committing a partial
+            # account that displays a loan-mod action but cannot start a request.
+            qualification = verify_boarded_fixture(new_loan)
 
     new_loan.refresh_from_db()
     created_task = normalized_task(compact_task(new_loan).get("name"))
@@ -4179,6 +4238,9 @@ with schema_context(schema_name):
             "tenant_schema": schema_name,
             "idempotency_key": IDEMPOTENCY_KEY,
             "configuration_reference_application": str(reference.application_number),
+            "fixture_state": FIXTURE_STATE,
+            "borrower_entity_type": borrower.entity_type,
+            "qualification": verify_boarded_fixture(new_loan) if boarded else None,
             "loan": compact_loan(new_loan),
             "mutation_executed": True,
         },
@@ -4191,6 +4253,12 @@ with schema_context(schema_name):
         .replace("__TARGET_TASK__", dump_python(args.target_task or ""))
         .replace("__SOURCE_APPLICATION__", dump_python(args.source_application or ""))
         .replace("__IDEMPOTENCY_KEY__", dump_python(args.idempotency_key))
+        .replace("__BORROWER_ENTITY_TYPE__", dump_python(getattr(args, "borrower_entity_type", "llc")))
+        .replace("__FIXTURE_STATE__", dump_python(fixture_state))
+        .replace("__SOURCE_LOAN_ID__", dump_python(getattr(args, "source_loan_id", "") or ""))
+        .replace("__ACTOR_USERNAME__", dump_python(getattr(args, "actor_username", "") or ""))
+        .replace("__LOAN_NUMBER__", dump_python(getattr(args, "loan_number", "") or ""))
+        .replace("__BOARDED_HELPERS__", (Path(__file__).resolve().parent.parent / "templates" / "boarded_loan_fixture.py").read_text())
         .replace("__MAX_CANDIDATES__", str(int(args.max_candidates)))
         .replace("__ENABLE_CREATE__", str(bool(args.enable_create)))
         .replace("__CONFIRMATION__", dump_python(args.confirmation or ""))
@@ -4679,7 +4747,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     test_loan_factory = subparsers.add_parser(
         "test-loan-factory",
-        help="Generate a guarded lower-environment script that clones a source loan at a requested workflow task.",
+        help="Generate a guarded synthetic lower-environment loan or boarded servicing account.",
     )
     test_loan_factory.add_argument("--environment-label", required=True)
     test_loan_factory.add_argument("--tenant", required=True, help="Tenant name/schema/domain to resolve.")
@@ -4689,9 +4757,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     test_loan_factory.add_argument(
         "--source-application",
-        help="Exact source application to clone. Required when task discovery returns multiple candidates.",
+        help="Exact configuration-reference application; source borrower data is never copied.",
     )
     test_loan_factory.add_argument("--idempotency-key", required=True)
+    test_loan_factory.add_argument("--fixture-state", choices=("workflow", "boarded"), default="workflow")
+    test_loan_factory.add_argument("--boarded", action="store_const", const="boarded", dest="fixture_state")
+    test_loan_factory.add_argument("--source-loan-id", help="Exact reference UUID when application numbers repeat.")
+    test_loan_factory.add_argument("--actor-username", help="Existing lender actor for boarded loan-modification qualification.")
+    test_loan_factory.add_argument("--loan-number", help="Unique synthetic boarded account number; defaults to a deterministic QA number.")
+    test_loan_factory.add_argument("--borrower-entity-type", choices=("llc", "trust"), default="llc")
     test_loan_factory.add_argument("--max-candidates", type=int, default=5)
     test_loan_factory.add_argument("--enable-create", action="store_true")
     test_loan_factory.add_argument(

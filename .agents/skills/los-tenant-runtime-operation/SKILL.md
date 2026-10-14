@@ -303,8 +303,8 @@ python3 .agents/skills/los-tenant-runtime-operation/scripts/build_tenant_runtime
 The default script is dry-run-only. To generate an execution-enabled script, include `--enable-purge --confirmation PURGE_QA_CELERY_QUEUE` after the exact queue name has been confirmed. Do not use this for production without a fresh approval and environment-specific confirmation token.
 
 Use the test loan factory template when a QA, beta, preprod, or other
-non-production tenant needs a repeatable clone of a loan already at a requested
-workflow task:
+non-production tenant needs a repeatable synthetic loan using an exact
+product/task configuration reference:
 
 ```bash
 python3 .agents/skills/los-tenant-runtime-operation/scripts/build_tenant_runtime_operation.py test-loan-factory \
@@ -318,10 +318,46 @@ python3 .agents/skills/los-tenant-runtime-operation/scripts/build_tenant_runtime
 The default script is read-only and prints bounded source candidates. If more
 than one source matches, regenerate with `--source-application`. Generate an
 apply-enabled script only after approving the exact environment, tenant/schema,
-source application, and clone write set; add `--enable-create --confirmation
+reference application, and direct-create write set; add `--enable-create --confirmation
 CREATE_QA_MULTI_QA_TESTBANK_TEST_LOAN`. Production is refused. The template
-reuses `Loan.make_clone()` and validates task state instead of forcing workflow
-transitions.
+creates fresh synthetic rows and does not call `Loan.make_clone()` or reuse
+source borrower data.
+
+For an Accounts loan that can be modified by a lender, add `--boarded`, an
+exact `--source-loan-id`, and `--actor-username`. A reference application number
+may match several requests; the UUID must select the intended originated row.
+Choose its valid completed BOARDING/BOARDING_UPDATE history explicitly because
+its current task may have no map. The boarded profile creates a fresh
+LoanValidation and disabled synthetic borrower User, links the primary
+applicant/loan/account/representative, and populates maturity, disbursement,
+payment, rate, balance, and term fields.
+
+Qualify three independent gates: originated-request boarding/conversion proof
+without withdrawn/declined state, no active loan modification already in
+flight, and Funded servicing state. Another tester's active modification hides
+the action for everyone. Also verify Active servicing, the exact backoffice
+actor and authorized groups, ENABLE_LOAN_MODS, the LOAN_MODIFICATION workflow,
+the native Accounts action, available types, and both renewal and extension
+serializers/pure manager validators. Support Ventures local status inspection
+only until another provider is explicitly qualified; never call a vendor or
+initiate a modification while creating this fixture.
+
+Boarded confirmation ends in `BOARDED_TEST_LOAN`. Apply one key atomically with
+automation bypass and a transaction lock; verify the persisted graph before
+commit and read back afterward. On key reuse, reject changed identity, partial
+graph, or lost qualification. Source previews and local mock tests are not a
+substitute for exact-version runtime readback. Capture all receipts outside
+source, and preserve all existing reference and actor rows.
+
+The ordinary automation bypass is insufficient for synthetic creation:
+Terminator's application-started trigger can enqueue logs and notifications,
+and a model-save boarding-date transition can create monitoring enrollments.
+The boarded-only guard must span the outer transaction and commit callbacks;
+persist the fresh row's boarding date without that lifecycle transition.
+Preserve the first-payment override across model-save. Verify no monitoring
+enrollment or workflow queue rows for the six synthetic objects. Declare
+model-created preferences, groups, optional CRM Customer, secure TIN, and local
+audit/events in the write set.
 
 ## Output Budget
 
