@@ -1,6 +1,6 @@
 # 45 · Auto-Dev Review Coordination
 
-Last updated: 2026-08-14
+Last updated: 2026-10-14
 
 > **Snapshot:** Auto-Dev pays for one review of one exact subject, reuses that
 > result everywhere it remains valid, and blocks before another model or
@@ -49,6 +49,35 @@ parent is the prior terminal receipt. A delta carries the normalized finding
 ledger forward: stable finding id, first-seen head, latest-seen head, status,
 severity, evidence, and resolution reference. Resolved findings stay in the
 ledger as resolved; they are not rediscovered and rewritten as new prose.
+
+### Explicit delta resolutions
+
+The opposing-model runner reads the canonical parent receipt, verifies its byte
+digest and head, and includes its ledger and stable finding IDs in the delta
+prompt. The reviewer returns the ordinary findings array and a separate JSON
+object with this contract:
+
+```json
+{
+  "schema": "auto-dev-review-parent-resolutions/v1",
+  "parent_key": "<exact parent review key>",
+  "parent_receipt_sha256": "<exact parent receipt byte digest>",
+  "resolution_refs": ["<independently verified open parent finding ID>"]
+}
+```
+
+`resolution_refs` contains unique, exact open parent IDs. It does not contain
+patch paths or claimed test artifacts. The runner verifies the parent key,
+digest and ID membership, then passes the explicit IDs to the native
+coordinator. This proves which findings the independent reviewer declared
+resolved; it does not automatically prove repair correctness by inspecting
+patch or test contents. Current validation and provider gates remain separate.
+
+Missing declarations resolve nothing. Unknown IDs, mismatched hashes, duplicate
+declarations and malformed references fail closed. Invalid closure evidence in
+an otherwise completed model response remains paid `findings` evidence, rather
+than becoming a free unavailable retry. New nonblocking advice, including advice
+that reuses a parent ID, cannot implicitly close the original defect.
 
 ## Where does it live, and where is its output?
 
@@ -119,6 +148,17 @@ for every open finding ID. The resulting receipt records
 reviewer approval, and remains subject to exact-head Finalize validation.
 Emergency budget overrides remain narrow, expiring policy changes, not
 command-line force flags.
+
+`--recover-advisory-from` can derive an immutable same-head child from an older
+findings receipt whose matching raw response contains only explicit nonblocking
+advice. It invokes no reviewer and refunds no budget. Recovery requires the
+unchanged canonical source receipt and matching response, carries the actual
+delta parent ledger forward, and consumes only parent resolutions explicitly
+declared in that immutable response with the matching parent key and digest.
+Unresolved inherited findings block a clean child. Copies of old receipts,
+changed source bytes and changed raw responses cannot supply replacement
+authority. The original findings receipt remains unchanged, and receipt loading
+also rejects recovery children that omit their inherited findings.
 
 Scrub-failing clean output remains retryable. Scrub-failing findings remain
 canonical and budget-counted, but the coordinator redacts scrub hits and the raw
