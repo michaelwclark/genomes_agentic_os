@@ -63,7 +63,7 @@ def verify_identity(image: str, role: str, arch: str, lock: dict, temporary: Pat
         image_id = json.loads(docker(["inspect", "--format", "{{json .Image}}", container]))
         return {"binary_sha256": actual_hash, "release": payload["version"], "source_commit": payload["source_commit"], "curl_sha256": lock["base"]["platforms"][arch]["curl_sha256"], "image_id": image_id}
     finally:
-        docker(["rm", "--force", container])
+        docker(["rm", "--force", "--volumes", container])
 
 
 def exercise(minio_image: str, client_image: str, arch: str, namespace: str, temporary: Path, credential_mode: str, uid: int) -> dict:
@@ -130,7 +130,7 @@ def exercise(minio_image: str, client_image: str, arch: str, namespace: str, tem
         failures = []
         if container is not None:
             try:
-                docker(["rm", "--force", container])
+                docker(["rm", "--force", "--volumes", container])
             except (OSError, ValueError, subprocess.TimeoutExpired) as error:
                 failures.append(str(error))
         cleanup = [["network", "rm", network_id]]

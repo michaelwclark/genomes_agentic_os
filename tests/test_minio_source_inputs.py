@@ -168,6 +168,26 @@ def test_published_smoke_rejects_swapped_owned_roles_before_docker(tmp_path: Pat
     assert not (tmp_path / "smoke.json").exists()
 
 
+def test_rejected_image_cleans_its_owned_anonymous_volume(monkeypatch, tmp_path: Path) -> None:
+    """A failed identity probe must remove the Dockerfile's anonymous /data."""
+    api = runpy.run_path(str(ROOT / "scripts/release/smoke-minio-source-images.py"))
+    commands = []
+    container = "1" * 64
+
+    def docker_failure(arguments, **kwargs):
+        commands.append(arguments)
+        if arguments[0] == "create":
+            return container.encode()
+        if arguments[0] == "cp":
+            raise ValueError("identity probe rejected before runtime acceptance")
+        return b""
+
+    monkeypatch.setitem(api["verify_identity"].__globals__, "docker", docker_failure)
+    with pytest.raises(ValueError, match="identity probe rejected"):
+        api["verify_identity"]("unit-fixture", "minio", "amd64", {}, tmp_path)
+    assert commands[-1] == ["rm", "--force", "--volumes", container]
+
+
 def test_real_pr_smokes_gate_existing_required_check_and_tag_assets() -> None:
     workflow = yaml.safe_load((ROOT / ".github/workflows/test.yml").read_text())
     assert workflow["jobs"]["deployment-contracts"]["needs"] == "minio-source-images"
