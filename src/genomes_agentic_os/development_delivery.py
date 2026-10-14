@@ -9564,6 +9564,167 @@ def _normalize_exact_legacy_family_identity(
     return normalized, provenance
 
 
+def _normalize_exact_catalog_alias_github_identity(
+    previous: Mapping[str, Any],
+    current: Mapping[str, Any],
+    task: Mapping[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """Compare one historical GitHub PR through proven current catalog authority."""
+
+    repository = task.get("repository") if isinstance(task.get("repository"), Mapping) else {}
+    alias = str(repository.get("id") or "")
+    prior_pr = str(previous.get("pull_request") or "")
+    match = re.fullmatch(
+        r"github:([A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?)/"
+        r"([A-Za-z0-9_.-]{1,100})#([1-9][0-9]*)", prior_pr,
+    )
+    if not re.fullmatch(r"[a-z][a-z0-9_-]{0,127}", alias) or match is None:
+        return dict(previous), None
+
+    authority = current.get("repository_alias_authority")
+    authority_fields = {
+        "schema", "kind", "profile_source", "profile_sha256", "catalog_entry_sha256",
+        "repository_id", "root", "base_branch", "github_repository",
+        "canonical_origin", "worktree_path",
+    }
+    if not (
+        isinstance(authority, Mapping) and set(authority) == authority_fields
+        and authority.get("schema") == "development-repository-alias-authority/v1"
+        and authority.get("kind") == "current_catalog"
+        and task.get("state") == "local_validation"
+    ):
+        raise DevelopmentDeliveryError("release propagation refresh requires explicit current catalog alias authority")
+
+    slug = f"{match[1]}/{match[2]}"
+    qualified = f"{alias}#{match[3]}"
+    worktree = task.get("worktree") if isinstance(task.get("worktree"), Mapping) else {}
+    observed = current.get("provider_observed")
+    base = str(repository.get("base_branch") or "")
+    branch = str(worktree.get("branch") or "")
+    base_sha = str(worktree.get("base_sha") or "")
+    if not (
+        "--" not in match[1] and match[2] not in {".", ".."}
+        and previous.get("repository") == current.get("repository") == alias
+        and previous.get("github_repository") == current.get("github_repository") == slug
+        and previous.get("provider") == current.get("provider") == "github"
+        and previous.get("base_branch") == current.get("base_branch") == base
+        and previous.get("source_branch") == current.get("source_branch") == branch
+        and re.fullmatch(r"[a-f0-9]{40}", base_sha)
+        and re.fullmatch(r"[a-f0-9]{40}", str(previous.get("source_head_sha") or ""))
+        and re.fullmatch(r"[a-f0-9]{40}", str(current.get("source_head_sha") or ""))
+        and previous.get("base_sha") == current.get("base_sha") == base_sha
+        and current.get("pull_request") == qualified
+        and worktree.get("repository_id") == alias
+        and isinstance(observed, Mapping)
+        and observed.get("repository") == slug
+        and observed.get("pull_request") == prior_pr
+        and observed.get("base_branch") == base and observed.get("base_sha") == base_sha
+        and observed.get("source_branch") == branch
+        and observed.get("head_sha") == current.get("source_head_sha")
+        and observed.get("state") == "OPEN" and observed.get("is_draft") is False
+    ):
+        raise DevelopmentDeliveryError("release propagation refresh catalog alias PR identity is inconsistent")
+
+    profile_ref = str(task.get("profile_source") or "")
+    profile_path = Path(profile_ref).expanduser()
+    if not (
+        profile_ref and profile_path.is_file()
+        and authority.get("profile_source") == profile_ref
+        and authority.get("profile_sha256") == hashlib.sha256(profile_path.read_bytes()).hexdigest()
+    ):
+        raise DevelopmentDeliveryError("release propagation refresh catalog profile authority is missing or changed")
+    profile, source = load_development_profile(
+        str(task.get("os_root") or ""), str(task.get("domain") or ""), str(task.get("project") or ""),
+    )
+    if source.resolve() != profile_path.resolve() or validate_profile(profile):
+        raise DevelopmentDeliveryError("release propagation refresh catalog profile authority is invalid")
+    selected = select_development_repository(profile, alias)
+    selected_repository = selected["repository"]
+    raw_catalog = profile["repository"].get("catalog")
+    rows = (
+        [{"id": str(key), **dict(value)} for key, value in raw_catalog.items()]
+        if isinstance(raw_catalog, Mapping) else raw_catalog
+    )
+    row = next(item for item in rows if item["id"] == alias)
+    frozen = frozen_selected_task_profile(task)
+    if not (
+        frozen == _selected_profile_policy_authority(selected)
+        and selected_repository.get("root") == repository.get("root")
+        and selected_repository.get("base_branch") == base
+        and selected_repository.get("github") == slug
+        and authority.get("catalog_entry_sha256") == _json_sha256(row)
+        and authority.get("repository_id") == alias
+        and authority.get("root") == repository.get("root")
+        and authority.get("base_branch") == base
+        and authority.get("github_repository") == slug
+        and authority.get("canonical_origin") == f"git:github.com/{slug}"
+        and authority.get("worktree_path") == worktree.get("path")
+    ):
+        raise DevelopmentDeliveryError("release propagation refresh selected catalog alias authority is inconsistent")
+
+    registrations = [
+        row for row in worktree_entries_for_project(project_root(
+            str(task.get("os_root") or ""), str(task.get("domain") or ""), str(task.get("project") or ""),
+        ))
+        if row.get("id") == worktree.get("name") or row.get("path") == worktree.get("path")
+    ]
+    # Registration is projected to both config and index files. Equal copies
+    # agree; conflicting copies or duplicate entries within one source do not.
+    registered = {
+        _json_sha256({key: value for key, value in row.items() if key != "_source"}):
+        {key: value for key, value in row.items() if key != "_source"}
+        for row in registrations
+    }
+    entry = next(iter(registered.values()), {})
+    if not (
+        len(registered) == 1
+        and len({row["_source"] for row in registrations}) == len(registrations)
+        and entry.get("status") == "active" and entry.get("id") == worktree.get("name")
+        and entry.get("path") == worktree.get("path") and entry.get("branch") == branch
+    ):
+        raise DevelopmentDeliveryError("release propagation refresh catalog alias worktree registration is inconsistent")
+
+    # The historical catalog hash was never recorded. These proofs are explicitly
+    # current authority, fenced by the immutable prior repository/PR and task.
+    allowed_origins = {
+        f"{prefix}{slug}{suffix}"
+        for prefix in ("git@github.com:", "https://github.com/", "ssh://git@github.com/")
+        for suffix in ("", ".git")
+    }
+    for path in (str(repository.get("root") or ""), str(worktree.get("path") or "")):
+        origin = subprocess.run(
+            ["git", "-C", path, "config", "--get", "remote.origin.url"],
+            capture_output=True, text=True, check=False,
+        )
+        if origin.returncode or origin.stdout.strip() not in allowed_origins:
+            raise DevelopmentDeliveryError("release propagation refresh catalog alias canonical origin is unproven")
+    if _worktree_ready_recovery_registered_head(task) != current.get("source_head_sha"):
+        raise DevelopmentDeliveryError("release propagation refresh catalog alias worktree head is stale")
+    ancestor = subprocess.run(
+        ["git", "-C", str(worktree["path"]), "merge-base", "--is-ancestor",
+         str(previous.get("source_head_sha") or ""), str(current["source_head_sha"])],
+        capture_output=True, text=True, check=False,
+    )
+    if ancestor.returncode:
+        raise DevelopmentDeliveryError("release propagation refresh catalog alias source lineage is unproven")
+
+    normalized = {**dict(previous), "pull_request": qualified}
+    provenance = {
+        "identity_shape": "selected_catalog_alias_github", "field": "pull_request",
+        "source": "prior_evidence.evidence.pull_request", "from": prior_pr, "value": qualified,
+        "authority_kind": "current_catalog", "profile_source": profile_ref,
+        "profile_sha256": authority["profile_sha256"],
+        "catalog_entry_sha256": authority["catalog_entry_sha256"],
+        "selected_profile_sha256": frozen["sha256"],
+        "canonical_origin": authority["canonical_origin"],
+        "registered_worktree": worktree["path"],
+        "registered_worktree_entry_sha256": _json_sha256(entry),
+        "authority_sha256": _json_sha256(authority),
+        "verified_by": "frozen_task_catalog_origin_and_exact_provider_readback",
+    }
+    return normalized, provenance
+
+
 def frozen_selected_task_profile(task: Mapping[str, Any]) -> Mapping[str, Any]:
     """Read the integrity-checked selected repository policy pinned to this task."""
 
@@ -10654,6 +10815,13 @@ def run_development_stage(
                         raise DevelopmentDeliveryError(
                             "release propagation refresh requires provider-read new head and explicit prior-head supersession"
                         )
+                    previous_details, legacy_alias_identity_normalization = (
+                        _normalize_exact_catalog_alias_github_identity(
+                            previous_details, refreshed_details, task_value,
+                        )
+                    )
+                    if legacy_alias_identity_normalization is not None:
+                        expected_provider = "github"
                     # The original PR Create adapter also accepted a canonical
                     # GitHub URL in this field.  Qualify only a prior URL whose
                     # complete identity matches the registered task and the
@@ -10868,7 +11036,11 @@ def run_development_stage(
                             "source": "selected_task.worktree.branch",
                             "value": expected_source_branch,
                         }
-                    if legacy_family_identity_normalization is not None:
+                    if legacy_alias_identity_normalization is not None:
+                        payload["supersedes"]["legacy_identity_normalization"] = (
+                            legacy_alias_identity_normalization
+                        )
+                    elif legacy_family_identity_normalization is not None:
                         payload["supersedes"]["legacy_identity_normalization"] = (
                             legacy_family_identity_normalization
                         )

@@ -7038,6 +7038,326 @@ def test_release_propagation_refreshes_only_selected_prior_github_url(
     assert hashlib.sha256(old_wrapper.read_bytes()).hexdigest() == prior_binding["sha256"]
 
 
+def test_release_propagation_catalog_alias_refresh_is_append_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Qualify a real accepted predecessor without altering historical bytes."""
+
+    repo, old_head = _repository(tmp_path)
+    branch = "feature/cc-55"
+    _git("checkout", "-b", branch, cwd=repo)
+    _git("commit", "--allow-empty", "-m", "fix: verified source successor", cwd=repo)
+    new_head = _git("rev-parse", "HEAD", cwd=repo)
+    _git("remote", "set-url", "origin", "git@github.com:acme/app.git", cwd=repo)
+    root = tmp_path / "os"
+    project = _project(root, repo, repository_id="business_app")
+    profile_path = project / "config/development.yml"
+    profile = yaml.safe_load(profile_path.read_text())
+    row = {"id": "business_app", "root": str(repo), "github": "acme/app", "base_branch": "main"}
+    profile["repository"] = {"selection_required": True, "catalog": [row]}
+    profile_path.write_text(yaml.safe_dump(profile), encoding="utf-8")
+    delivery.register_project_worktree(root, "acme", "app", "cc-55", path=repo)
+    registered_name = delivery.worktree_entries_for_project(project)[0]["id"]
+    # Registration's code-settings projection is not the catalog authority.
+    profile_path.write_text(yaml.safe_dump(profile), encoding="utf-8")
+    monkeypatch.setattr(delivery, "create_isolated_worktree", lambda **kwargs: {
+        "name": registered_name, "path": str(repo), "branch": branch,
+        "base_sha": old_head, "repository_id": "business_app",
+    })
+    run = delivery.start_development_run(
+        root, "acme", "app", ["CC-55"], repository_id="business_app",
+        run_id="catalog-alias-refresh", auto_dev_mode="everything", apply=True,
+    )
+    task = TaskState(Path(run["tasks"][0]["state_ref"]))
+    _advance_auto_dev_task_to_ready(task, subject_revision=old_head, pull_request="business_app#55")
+    for stage_name in ("groom", "detective", "create_artifacts", "document"):
+        _record_standalone_stage(task, stage_name)
+    task_value = task.read()
+    task_value["state"] = "local_validation"
+    task.path.write_text(json.dumps(task_value), encoding="utf-8")
+    work_item = Path(task_value["work_item"])
+    previous = {
+        "repository": "business_app", "github_repository": "acme/app", "provider": "github",
+        "base_branch": "main", "base_sha": old_head, "source_branch": branch,
+        "source_head_sha": old_head, "pull_request": "github:acme/app#55",
+    }
+    current = {
+        **previous, "source_head_sha": new_head, "pull_request": "business_app#55",
+        "readback_verified": True,
+        "provider_observed": {
+            "repository": "acme/app", "pull_request": "github:acme/app#55",
+            "base_branch": "main", "base_sha": old_head, "source_branch": branch,
+            "head_sha": new_head, "state": "OPEN", "is_draft": False,
+        },
+        "supersession": {
+            "supersedes_source_head_sha": old_head, "reason": "Verified source successor.",
+        },
+        "repository_alias_authority": {
+            "schema": "development-repository-alias-authority/v1", "kind": "current_catalog",
+            "profile_source": str(profile_path),
+            "profile_sha256": hashlib.sha256(profile_path.read_bytes()).hexdigest(),
+            "catalog_entry_sha256": delivery._json_sha256(row),
+            "repository_id": "business_app", "root": str(repo), "base_branch": "main",
+            "github_repository": "acme/app", "canonical_origin": "git:github.com/acme/app",
+            "worktree_path": str(repo),
+        },
+    }
+
+    def receipt(name: str, evidence: dict) -> Path:
+        path = work_item / "artifacts" / "auto-dev-pr-create" / f"alias-{name}.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({
+            "schema": "development-stage-evidence/v1", "state": "release_propagation",
+            "status": "completed", "summary": "Provider-read selected catalog PR",
+            "verified_at": "2026-10-14T20:00:00Z", "evidence": evidence,
+        }), encoding="utf-8")
+        return path
+
+    predecessor = receipt("prior", previous)
+    initial = run_development_stage(
+        task.path, stage="release_propagation", receipts={"release_propagation": str(predecessor)},
+        idempotency_prefix="cc-55:alias:prior",
+    )
+    old_wrapper = Path(task.read()["stage_receipts"]["release_propagation"]["ref"])
+    snapshot = work_item / initial["receipt"]
+    autodev_path = Path(task.read()["autodev_path"])
+    original_files = {
+        path: path.read_bytes() for path in (
+            predecessor, snapshot, old_wrapper, task.path, task.ledger, autodev_path,
+        )
+    }
+
+    # All rejected refreshes pass through the ordinary typed writer. No receipt,
+    # ledger, task, or projection may change on a missing or contradictory proof.
+    mutations = [
+        ("authority_missing", ("repository_alias_authority",), None),
+        ("authority_unknown", ("repository_alias_authority", "unrecorded_override"), True),
+        ("authority_schema", ("repository_alias_authority", "schema"), "unknown/v1"),
+        ("authority_historical", ("repository_alias_authority", "kind"), "historical_catalog"),
+        ("authority_profile", ("repository_alias_authority", "profile_source"), "/tmp/other.yml"),
+        ("authority_profile_hash", ("repository_alias_authority", "profile_sha256"), "0" * 64),
+        ("authority_row_hash", ("repository_alias_authority", "catalog_entry_sha256"), "0" * 64),
+        ("authority_alias", ("repository_alias_authority", "repository_id"), "other"),
+        ("authority_root", ("repository_alias_authority", "root"), "/tmp/other"),
+        ("authority_base", ("repository_alias_authority", "base_branch"), "release"),
+        ("authority_slug", ("repository_alias_authority", "github_repository"), "acme/other"),
+        ("authority_origin", ("repository_alias_authority", "canonical_origin"), "git:gitlab.com/acme/app"),
+        ("authority_worktree", ("repository_alias_authority", "worktree_path"), "/tmp/other"),
+        ("alias", ("repository",), "other"),
+        ("github", ("github_repository",), "acme/other"),
+        ("provider", ("provider",), "gitlab"),
+        ("base", ("base_branch",), "release"),
+        ("base_sha", ("base_sha",), "a" * 40),
+        ("branch", ("source_branch",), "feature/other"),
+        ("pull_request", ("pull_request",), "business_app#56"),
+        ("head_invalid", ("source_head_sha",), "f" * 7),
+        ("head_stale", ("source_head_sha",), "a" * 40),
+        ("observation_missing", ("provider_observed",), None),
+        ("observation_repo", ("provider_observed", "repository"), "acme/other"),
+        ("observation_pr", ("provider_observed", "pull_request"), "github:acme/app#56"),
+        ("observation_base", ("provider_observed", "base_branch"), "release"),
+        ("observation_base_sha", ("provider_observed", "base_sha"), "a" * 40),
+        ("observation_branch", ("provider_observed", "source_branch"), "feature/other"),
+        ("observation_head", ("provider_observed", "head_sha"), old_head),
+        ("observation_closed", ("provider_observed", "state"), "CLOSED"),
+        ("observation_draft", ("provider_observed", "is_draft"), True),
+        ("readback", ("readback_verified",), False),
+        ("supersession_missing", ("supersession",), None),
+        ("supersession_head", ("supersession", "supersedes_source_head_sha"), new_head),
+        ("supersession_reason", ("supersession", "reason"), ""),
+    ]
+    for name, keys, replacement in mutations:
+        changed = json.loads(json.dumps(current))
+        target = changed
+        for key in keys[:-1]:
+            target = target[key]
+        target[keys[-1]] = replacement
+        if name == "head_stale":
+            changed["provider_observed"]["head_sha"] = changed["source_head_sha"]
+        if name == "head_invalid":
+            changed["provider_observed"]["head_sha"] = changed["source_head_sha"]
+        refused = receipt(name, changed)
+        refused_bytes = refused.read_bytes()
+        with pytest.raises(DevelopmentDeliveryError):
+            run_development_stage(
+                task.path, stage="release_propagation",
+                receipts={"release_propagation": str(refused)},
+                idempotency_prefix=f"cc-55:alias:refused:{name}",
+            )
+        assert refused.read_bytes() == refused_bytes, name
+        for path, content in original_files.items():
+            assert path.read_bytes() == content, name
+
+    # An equivalent mapping catalog is supported without pretending its current
+    # raw bytes were captured by the historical receipt.
+    mapped_profile = json.loads(json.dumps(profile))
+    mapped_profile["repository"]["catalog"] = {"business_app": {k: v for k, v in row.items() if k != "id"}}
+    profile_bytes = profile_path.read_bytes()
+    profile_path.write_text(yaml.safe_dump(mapped_profile), encoding="utf-8")
+    mapped = json.loads(json.dumps(current))
+    mapped["repository_alias_authority"]["profile_sha256"] = hashlib.sha256(profile_path.read_bytes()).hexdigest()
+    normalized, provenance = delivery._normalize_exact_catalog_alias_github_identity(
+        previous, mapped, task.read(),
+    )
+    assert normalized == {**previous, "pull_request": "business_app#55"}
+    assert provenance["authority_kind"] == "current_catalog"
+    profile_path.write_bytes(profile_bytes)
+
+    copied_profile = project / "config/other-development.yml"
+    copied_profile.write_bytes(profile_bytes)
+    changed = json.loads(json.dumps(current))
+    changed["repository_alias_authority"]["profile_source"] = str(copied_profile)
+    with pytest.raises(DevelopmentDeliveryError, match="profile authority is invalid"):
+        delivery._normalize_exact_catalog_alias_github_identity(
+            previous, changed, {**task.read(), "profile_source": str(copied_profile)},
+        )
+    registry_path = project / "worktrees/index.yml"
+    registry_bytes = registry_path.read_bytes()
+    registry_projection = project / "config/worktrees.yml"
+    projection_bytes = registry_projection.read_bytes()
+    registry = yaml.safe_load(registry_bytes)
+    entry = registry["worktrees"][0]
+    for entries in (
+        [], [entry, entry], [{**entry, "status": "closed"}],
+        [{**entry, "id": "other"}], [{**entry, "branch": "feature/other"}],
+        [{**entry, "path": "/tmp/other"}],
+    ):
+        registry_path.write_text(yaml.safe_dump({**registry, "worktrees": entries}), encoding="utf-8")
+        registry_projection.write_text(yaml.safe_dump({**registry, "worktrees": entries}), encoding="utf-8")
+        with pytest.raises(DevelopmentDeliveryError, match="worktree registration"):
+            delivery._normalize_exact_catalog_alias_github_identity(previous, current, task.read())
+    registry_path.write_bytes(registry_bytes)
+    registry_projection.write_bytes(projection_bytes)
+
+    # Reject changed or ambiguous catalog selection even with a fresh hash of
+    # the mutated current profile; an operator hash alone is never sufficient.
+    profile_changes = [
+        {"repository": {"id": "business_app", "root": str(repo), "base_branch": "main"}},
+        {"repository": {"selection_required": True, "catalog": [row, row]}},
+        {"repository": {"selection_required": True, "catalog": [{**row, "id": "other"}]}},
+        {"repository": {"selection_required": True, "catalog": [{**row, "root": "/tmp/other"}]}},
+        {"repository": {"selection_required": True, "catalog": [{**row, "base_branch": "release"}]}},
+        {"repository": {"selection_required": True, "catalog": [{**row, "github": "acme/other"}]}},
+        {"validation": {**profile["validation"], "commands": ["true"]}},
+    ]
+    for changes in profile_changes:
+        candidate = {**profile, **changes}
+        profile_path.write_text(yaml.safe_dump(candidate), encoding="utf-8")
+        changed = json.loads(json.dumps(current))
+        changed["repository_alias_authority"]["profile_sha256"] = hashlib.sha256(profile_path.read_bytes()).hexdigest()
+        if "catalog" in candidate["repository"] and len(candidate["repository"]["catalog"]) == 1:
+            changed["repository_alias_authority"]["catalog_entry_sha256"] = delivery._json_sha256(
+                candidate["repository"]["catalog"][0],
+            )
+        with pytest.raises(DevelopmentDeliveryError):
+            delivery._normalize_exact_catalog_alias_github_identity(previous, changed, task.read())
+        for path, content in original_files.items():
+            assert path.read_bytes() == content
+    profile_path.write_bytes(profile_bytes)
+
+    # A real origin, clean registered checkout and source ancestry are required.
+    for origin in (
+        "git@github.com:other/app.git", "https://git.example/acme/app.git",
+        "http://github.com/acme/app", "https://token@github.com/acme/app",
+        "https://github.com:443/acme/app", "https://github.com/acme/app?proof=yes",
+        "https://github.com/acme/app#55",
+    ):
+        _git("remote", "set-url", "origin", origin, cwd=repo)
+        with pytest.raises(DevelopmentDeliveryError, match="canonical origin"):
+            delivery._normalize_exact_catalog_alias_github_identity(previous, current, task.read())
+    _git("remote", "remove", "origin", cwd=repo)
+    with pytest.raises(DevelopmentDeliveryError, match="canonical origin"):
+        delivery._normalize_exact_catalog_alias_github_identity(previous, current, task.read())
+    _git("remote", "add", "origin", "git@github.com:acme/app.git", cwd=repo)
+    untracked = repo / "untracked.txt"
+    untracked.write_text("dirty\n", encoding="utf-8")
+    with pytest.raises(DevelopmentDeliveryError, match="clean registered"):
+        delivery._normalize_exact_catalog_alias_github_identity(previous, current, task.read())
+    untracked.unlink()
+    _git("checkout", "main", cwd=repo)
+    with pytest.raises(DevelopmentDeliveryError, match="branch changed"):
+        delivery._normalize_exact_catalog_alias_github_identity(previous, current, task.read())
+    _git("checkout", branch, cwd=repo)
+    orphan = _git("commit-tree", "HEAD^{tree}", "-m", "unrelated history", cwd=repo)
+    with pytest.raises(DevelopmentDeliveryError, match="source lineage"):
+        delivery._normalize_exact_catalog_alias_github_identity(
+            {**previous, "source_head_sha": orphan}, current, task.read(),
+        )
+
+    for changed in (
+        {**previous, "github_repository": "acme/other"},
+        {**previous, "source_head_sha": "a" * 7},
+        {**previous, "base_sha": "a" * 40},
+        {**previous, "provider": "gitlab"},
+        {**previous, "pull_request": "github:ac--me/app#55"},
+        {**previous, "pull_request": "github:acme/..#55"},
+    ):
+        with pytest.raises(DevelopmentDeliveryError):
+            delivery._normalize_exact_catalog_alias_github_identity(changed, current, task.read())
+    for changes in (
+        {"state": "ready_for_merge"},
+        {"worktree": None},
+        {"worktree": {**task.read()["worktree"], "repository_id": "other"}},
+        {"policy_receipt": "/tmp/missing-policy.json"},
+        {"profile_source": "/tmp/missing-profile.yml"},
+    ):
+        with pytest.raises(DevelopmentDeliveryError):
+            delivery._normalize_exact_catalog_alias_github_identity(previous, current, {**task.read(), **changes})
+
+    successor = receipt("current", current)
+    result = run_development_stage(
+        task.path, stage="release_propagation", receipts={"release_propagation": str(successor)},
+        idempotency_prefix="cc-55:alias:current",
+    )
+    assert result["supersedes"]["source_head_sha"] == old_head
+    assert result["supersedes"]["wrapper_ref"] == str(old_wrapper)
+    assert result["supersedes"]["wrapper_sha256"] == hashlib.sha256(original_files[old_wrapper]).hexdigest()
+    assert result["supersedes"]["evidence_sha256"] == initial["evidence_sha256"]
+    assert result["supersedes"]["legacy_identity_normalization"] == {
+        "identity_shape": "selected_catalog_alias_github", "field": "pull_request",
+        "source": "prior_evidence.evidence.pull_request", "from": "github:acme/app#55",
+        "value": "business_app#55", "authority_kind": "current_catalog",
+        "profile_source": str(profile_path),
+        "profile_sha256": hashlib.sha256(profile_bytes).hexdigest(),
+        "catalog_entry_sha256": delivery._json_sha256(row),
+        "selected_profile_sha256": delivery.frozen_selected_task_profile(task.read())["sha256"],
+        "canonical_origin": "git:github.com/acme/app", "registered_worktree": str(repo),
+        "registered_worktree_entry_sha256": delivery._json_sha256(entry),
+        "authority_sha256": delivery._json_sha256(current["repository_alias_authority"]),
+        "verified_by": "frozen_task_catalog_origin_and_exact_provider_readback",
+    }
+    new_wrapper = Path(task.read()["stage_receipts"]["release_propagation"]["ref"])
+    assert new_wrapper != old_wrapper
+    assert json.loads(new_wrapper.read_bytes()) == result
+    assert run_development_stage(
+        task.path, stage="release_propagation", receipts={"release_propagation": str(successor)},
+        idempotency_prefix="cc-55:alias:current",
+    ) == result
+    for path in (predecessor, snapshot, old_wrapper):
+        assert path.read_bytes() == original_files[path]
+    assert previous["pull_request"] == "github:acme/app#55"
+
+
+@pytest.mark.parametrize(("repository", "pull_request"), [
+    ("git:github.com/acme/app", "github:acme/app#55"),
+    ("business_app", "business_app#55"),
+    ("business_app", "https://github.com/acme/app/pull/55"),
+    ("business_app", "github:acme/app#0"),
+    ("business_app", "github:acme/app#055"),
+    ("business_app", "github:acme/app#55?head=yes"),
+    ("business_app", "github:acme/app#55\n"),
+])
+def test_catalog_alias_normalization_does_not_expand_other_identity_shapes(
+    repository: str, pull_request: str,
+) -> None:
+    previous = {"pull_request": pull_request}
+    normalized, provenance = delivery._normalize_exact_catalog_alias_github_identity(
+        previous, {}, {"repository": {"id": repository}},
+    )
+    assert normalized == previous
+    assert normalized is not previous
+    assert provenance is None
+
 def test_release_propagation_normalizes_exact_legacy_family_identity(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
