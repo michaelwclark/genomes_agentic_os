@@ -48,8 +48,6 @@ jobs:
     outputs:
       postgres: ${{ steps.resolve.outputs.postgres }}
       valkey: ${{ steps.resolve.outputs.valkey }}
-      minio: ${{ steps.resolve.outputs.minio }}
-      minio_client: ${{ steps.resolve.outputs.minio_client }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -80,7 +78,7 @@ jobs:
 
           output_path = Path(os.environ["GITHUB_OUTPUT"])
           with output_path.open("a", encoding="utf-8") as output:
-              for name in expected_names:
+              for name in ("postgres", "valkey"):
                   entry = sources[name]
                   if not isinstance(entry, dict) or set(entry) != {"repository", "tag"}:
                       raise SystemExit(f"invalid dependency image source: {name}")
@@ -97,10 +95,12 @@ jobs:
                           "{{json .Manifest}}",
                           source,
                       ],
-                      check=True,
+                      check=False,
                       capture_output=True,
                       text=True,
                   )
+                  if result.returncode:
+                      raise SystemExit(f"{source} index lookup failed: {result.stderr.strip()[:1600]}")
                   descriptor = json.loads(result.stdout)
                   if descriptor.get("mediaType") not in {
                       "application/vnd.oci.image.index.v1+json",
@@ -135,6 +135,116 @@ jobs:
                   print(f"resolved {name} index {fingerprint[:12]}")
                   output.write(f"{name}={exact_reference}\n")
           PY
+
+  minio-images:
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    outputs:
+      minio: ghcr.io/michaelwclark/genomes-agentic-os-execution-fabric-minio@${{ steps.server.outputs.digest }}
+      minio_client: ghcr.io/michaelwclark/genomes-agentic-os-execution-fabric-minio-client@${{ steps.client.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - id: inputs
+        name: Verify same-release official source and signed payloads
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python scripts/release/prepare-minio-build-inputs.py --output-dir .minio-build-context
+          python - <<'PY'
+          import json, os
+          inputs = json.load(open('.minio-build-context/build-inputs.json'))
+          assert inputs['status'] == 'verified'
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('base_image=' + inputs['base_image'] + '\n')
+          PY
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: server
+        name: Publish verified same-release MinIO index
+        uses: docker/build-push-action@v6
+        with:
+          context: .minio-build-context
+          file: .minio-build-context/Dockerfile
+          target: minio
+          platforms: linux/amd64,linux/arm64
+          build-args: BASE_IMAGE=${{ steps.inputs.outputs.base_image }}
+          push: true
+          provenance: mode=max
+          sbom: true
+          tags: ghcr.io/michaelwclark/genomes-agentic-os-execution-fabric-minio:${{ github.sha }}
+      - id: client
+        name: Publish verified same-release MinIO client index
+        uses: docker/build-push-action@v6
+        with:
+          context: .minio-build-context
+          file: .minio-build-context/Dockerfile
+          target: minio-client
+          platforms: linux/amd64,linux/arm64
+          build-args: BASE_IMAGE=${{ steps.inputs.outputs.base_image }}
+          push: true
+          provenance: mode=max
+          sbom: true
+          tags: ghcr.io/michaelwclark/genomes-agentic-os-execution-fabric-minio-client:${{ github.sha }}
+      - name: Attest current server index
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-name: ghcr.io/michaelwclark/genomes-agentic-os-execution-fabric-minio
+          subject-digest: ${{ steps.server.outputs.digest }}
+          push-to-registry: true
+      - name: Attest current client index
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-name: ghcr.io/michaelwclark/genomes-agentic-os-execution-fabric-minio-client
+          subject-digest: ${{ steps.client.outputs.digest }}
+          push-to-registry: true
+      - name: Exercise actual published immutable images on both architectures
+        env:
+          SERVER_IMAGE: ghcr.io/michaelwclark/genomes-agentic-os-execution-fabric-minio@${{ steps.server.outputs.digest }}
+          CLIENT_IMAGE: ghcr.io/michaelwclark/genomes-agentic-os-execution-fabric-minio-client@${{ steps.client.outputs.digest }}
+        run: |
+          for arch in amd64 arm64; do
+            python scripts/release/smoke-minio-source-images.py \
+              --platform "linux/${arch}" --published \
+              --minio-image "${SERVER_IMAGE}" --client-image "${CLIENT_IMAGE}" \
+              --namespace "minio-source-${GITHUB_RUN_ID}-${arch}" \
+              --output "minio-published-smokes/${arch}.json"
+          done
+      - name: Verify actual indexes, children and current signed provenance
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SERVER_IMAGE: ghcr.io/michaelwclark/genomes-agentic-os-execution-fabric-minio@${{ steps.server.outputs.digest }}
+          CLIENT_IMAGE: ghcr.io/michaelwclark/genomes-agentic-os-execution-fabric-minio-client@${{ steps.client.outputs.digest }}
+        run: |
+          python scripts/release/verify-minio-image-publication.py \
+            --minio-image "${SERVER_IMAGE}" --client-image "${CLIENT_IMAGE}" \
+            --input-receipt .minio-build-context/build-inputs.json \
+            --smoke-dir minio-published-smokes \
+            --repository "${GITHUB_REPOSITORY}" --source-sha "${GITHUB_SHA}" \
+            --source-ref "${GITHUB_REF}" --output-dir minio-publication-proof
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: minio-source-publication-proof
+          include-hidden-files: true
+          path: |
+            .minio-build-context/build-inputs.json
+            minio-published-smokes/*.json
+            minio-publication-proof/*
+          if-no-files-found: warn
 
   control-plane-image:
     needs: validate
@@ -231,7 +341,7 @@ jobs:
           push-to-registry: true
 
   assets:
-    needs: [validate, dependency-images, control-plane-image, witness-image, worker-image]
+    needs: [validate, dependency-images, minio-images, control-plane-image, witness-image, worker-image]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -239,6 +349,10 @@ jobs:
         with:
           python-version: "3.14"
       - run: python -m pip install -e . build
+      - uses: actions/download-artifact@v7
+        with:
+          name: minio-source-publication-proof
+          path: minio-source-publication-proof
       - name: Build Python distributions and digest-locked portable assets
         run: |
           python -m build
@@ -250,8 +364,9 @@ jobs:
             --worker-image "ghcr.io/${owner}/genomes-agentic-os-execution-fabric-worker@${{ needs.worker-image.outputs.digest }}" \
             --postgres-image "${{ needs.dependency-images.outputs.postgres }}" \
             --valkey-image "${{ needs.dependency-images.outputs.valkey }}" \
-            --minio-image "${{ needs.dependency-images.outputs.minio }}" \
-            --minio-client-image "${{ needs.dependency-images.outputs.minio_client }}"
+            --minio-image "${{ needs.minio-images.outputs.minio }}" \
+            --minio-client-image "${{ needs.minio-images.outputs.minio_client }}" \
+            --minio-publication-receipt minio-source-publication-proof/minio-publication-proof/publication-custody.json
       - uses: anchore/sbom-action@v0
         with:
           path: .

@@ -10,6 +10,7 @@ import io
 import json
 from pathlib import Path
 import re
+import subprocess
 import tarfile
 import tomllib
 
@@ -21,6 +22,7 @@ STATIC_MANIFEST = ROOT / "release/execution-fabric-manifest.yml"
 DEPENDENCY_IMAGE_SOURCES = (
     ROOT / "deploy/execution-fabric/release-image-sources.json"
 )
+MINIO_SOURCE_LOCK = ROOT / "deploy/execution-fabric/minio/upstream-lock.json"
 DEPENDENCY_IMAGE_NAMES = ("postgres", "valkey", "minio", "minio_client")
 DIGEST_IMAGE = re.compile(
     r"^(?P<repository>[a-z0-9.-]+(?:/[a-z0-9._-]+)+)"
@@ -216,6 +218,74 @@ def write_json(path: Path, value: dict) -> None:
     )
 
 
+def validate_minio_publication(path: Path | None, images: dict, version: str) -> dict:
+    """Require current verified owned indexes and real both-architecture proof."""
+    if path is None:
+        raise ValueError("owned MinIO images require their current publication receipt")
+    proof = load_json(path)
+    source_sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
+    source_tree = subprocess.check_output(["git", "rev-parse", "HEAD^{tree}"], cwd=ROOT, text=True).strip()
+    lock = load_json(MINIO_SOURCE_LOCK)
+    inputs = proof.get("inputs", {})
+    if not isinstance(inputs, dict):
+        raise ValueError("MinIO publication has no structured input receipt")
+    if (
+        proof.get("schema_version") != "execution-fabric-minio-publication/v1"
+        or proof.get("status") != "verified"
+        or proof.get("repository") != "michaelwclark/genomes_agentic_os"
+        or proof.get("source_sha") != source_sha
+        or proof.get("source_ref") != "refs/tags/v" + version
+        or proof.get("source_lock_sha256") != digest(MINIO_SOURCE_LOCK)
+        or inputs.get("status") != "verified"
+        or inputs.get("source_sha") != source_sha
+        or inputs.get("source_tree") != source_tree
+        or inputs.get("signature_verifications") != 4
+        or inputs.get("lock_sha256") != digest(MINIO_SOURCE_LOCK)
+        or inputs.get("image_sources_sha256") != digest(DEPENDENCY_IMAGE_SOURCES)
+    ):
+        raise ValueError("MinIO publication/input proof is missing, stale or from another source")
+    expected_files = {
+        f"bin/{arch}/{role}" + {"binary": "", "sha256sum": ".sha256sum", "minisig": ".minisig"}[kind]: item["sha256"]
+        for role, payload in lock["payloads"].items()
+        for arch, downloads in payload["platforms"].items()
+        for kind, item in downloads.items()
+    }
+    expected_files.update({"contracts/" + name: item["sha256"] for name, item in lock["sources"].items()})
+    expected_files.update({"Dockerfile": digest(ROOT / "deploy/execution-fabric/minio/Dockerfile"), "upstream-lock.json": digest(MINIO_SOURCE_LOCK)})
+    if inputs.get("files") != expected_files:
+        raise ValueError("MinIO prepared source/binary/signature file inventory differs")
+    expected_images = {name: images[name] for name in ("minio", "minio_client")}
+    observed_images = proof.get("images")
+    smokes = proof.get("runtime_smokes")
+    if not isinstance(observed_images, dict) or set(observed_images) != set(expected_images) or not isinstance(smokes, dict) or set(smokes) != {"amd64", "arm64"}:
+        raise ValueError("MinIO publication role/platform closure is incomplete")
+    for role, image in expected_images.items():
+        observed = observed_images[role]
+        if not isinstance(observed, dict) or observed.get("image") != image or not isinstance(observed.get("children"), dict) or set(observed["children"]) != {"amd64", "arm64"} or not re.fullmatch(r"[0-9a-f]{64}", str(observed.get("verified_provenance_sha256", ""))):
+            raise ValueError("MinIO immutable indexes or signed provenance differ")
+        for child in observed["children"].values():
+            if not isinstance(child, dict) or not re.fullmatch(r"sha256:[0-9a-f]{64}", str(child.get("digest", ""))) or type(child.get("size")) is not int or child["size"] <= 0:
+                raise ValueError("MinIO child manifest digest/size is invalid")
+    for arch, item in smokes.items():
+        if not isinstance(item, dict):
+            raise ValueError("MinIO published-image smoke is not structured")
+        smoke = item.get("receipt", {})
+        if not isinstance(smoke, dict) or smoke.get("schema_version") != "execution-fabric-minio-runtime-smoke/v1" or smoke.get("status") != "passed" or smoke.get("platform") != "linux/" + arch or smoke.get("images") != expected_images or smoke.get("source_lock_sha256") != digest(MINIO_SOURCE_LOCK) or smoke.get("fixture_resources_removed") is not True:
+            raise ValueError("MinIO published-image smoke is missing or mismatched")
+        cases = smoke.get("cases", [])
+        if not isinstance(cases, list) or len(cases) != 3 or any(not isinstance(case, dict) for case in cases) or {(case.get("credentials"), case.get("effective_uid")) for case in cases} != {("file", 0), ("env", 0), ("file", 1000)} or any(case.get("ready") is not True or case.get("bucket_privacy_and_versioning") is not True or case.get("object_write_read_restart_read_delete") is not True for case in cases):
+            raise ValueError("MinIO actual credential/health/persistence cases are incomplete")
+        for role in ("minio", "mc"):
+            identities = smoke.get("identities")
+            if not isinstance(identities, dict) or set(identities) != {"minio", "mc"}:
+                raise ValueError("MinIO runtime identity closure is incomplete")
+            identity = identities[role]
+            payload = lock["payloads"][role]
+            if not isinstance(identity, dict) or identity.get("binary_sha256") != payload["platforms"][arch]["binary"]["sha256"] or identity.get("release") != payload["version"] or identity.get("source_commit") != payload["source_commit"] or identity.get("curl_sha256") != lock["base"]["platforms"][arch]["curl_sha256"]:
+                raise ValueError("MinIO rebuilt runtime does not match pinned upstream/base bytes")
+    return proof
+
+
 def build(
     output: Path,
     control_image: str,
@@ -225,6 +295,7 @@ def build(
     valkey_image: str,
     minio_image: str,
     minio_client_image: str,
+    minio_publication_receipt: Path | None = None,
 ) -> None:
     validated = validate_versions()
     static = validated["static"]
@@ -268,6 +339,7 @@ def build(
             expected_repository=dependency_sources["minio_client"]["repository"],
         ),
     }
+    minio_proof = validate_minio_publication(minio_publication_receipt, images, validated["versions"]["release"])
     output.mkdir(parents=True, exist_ok=True)
     config = ROOT / str(static["contracts"]["config"])
     schema = ROOT / str(static["contracts"]["schema"])
@@ -280,6 +352,7 @@ def build(
             "version": validated["versions"]["python"],
         },
         "images": images,
+        "minio_publication": minio_proof,
         "contracts": {
             "config": {
                 "path": str(config.relative_to(ROOT)),
@@ -292,6 +365,10 @@ def build(
             "dependency_image_sources": {
                 "path": str(DEPENDENCY_IMAGE_SOURCES.relative_to(ROOT)),
                 "sha256": digest(DEPENDENCY_IMAGE_SOURCES),
+            },
+            "minio_source_lock": {
+                "path": str(MINIO_SOURCE_LOCK.relative_to(ROOT)),
+                "sha256": digest(MINIO_SOURCE_LOCK),
             },
         },
     }
@@ -340,6 +417,7 @@ def main() -> int:
     parser.add_argument("--valkey-image")
     parser.add_argument("--minio-image")
     parser.add_argument("--minio-client-image")
+    parser.add_argument("--minio-publication-receipt", type=Path)
     args = parser.parse_args()
     validate_versions()
     if args.validate_only:
@@ -367,6 +445,7 @@ def main() -> int:
         args.valkey_image,
         args.minio_image,
         args.minio_client_image,
+        args.minio_publication_receipt,
     )
     return 0
 
