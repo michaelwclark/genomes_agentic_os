@@ -40,6 +40,10 @@ STRUCTURED_REVIEW_FINDING_FIELDS = {
     "suggested_fix",
     "blocking",
 }
+PARENT_RESOLUTIONS_SCHEMA = "auto-dev-review-parent-resolutions/v1"
+PARENT_RESOLUTIONS_PATTERN = re.compile(
+    r"```json\s*(\{.*?\})\s*```", re.IGNORECASE | re.DOTALL
+)
 
 
 class ReviewCoordinationError(RuntimeError):
@@ -212,6 +216,47 @@ def _immutable_structured_findings(response: str) -> list[dict[str, Any]]:
             )
         parsed.append(finding)
     return parsed
+
+
+def parse_parent_resolution_refs(
+    response: str,
+    *,
+    parent_key: str,
+    parent_receipt_sha256: str,
+    parent_ledger: list[Mapping[str, Any]],
+) -> list[str]:
+    """Validate reviewer-declared IDs against the exact immutable parent.
+
+    This verifies identity and an explicit reviewer declaration, not patch or
+    test contents. Repair correctness remains the independent reviewer's job.
+    Missing declarations resolve nothing; advice never implies parent closure.
+    """
+    declarations: list[dict[str, Any]] = []
+    for block in PARENT_RESOLUTIONS_PATTERN.findall(response):
+        try:
+            value = json.loads(block)
+        except json.JSONDecodeError as exc:
+            if PARENT_RESOLUTIONS_SCHEMA in block:
+                raise ReviewCoordinationError("parent resolution JSON is invalid") from exc
+            continue
+        if isinstance(value, dict) and value.get("schema") == PARENT_RESOLUTIONS_SCHEMA:
+            declarations.append(value)
+    if not declarations:
+        return []
+    if len(declarations) != 1:
+        raise ReviewCoordinationError("parent resolutions require one unambiguous declaration")
+    declaration = declarations[0]
+    if set(declaration) != {"schema", "parent_key", "parent_receipt_sha256", "resolution_refs"}:
+        raise ReviewCoordinationError("parent resolution fields must match the native ID contract")
+    if declaration["parent_key"] != parent_key or declaration["parent_receipt_sha256"] != parent_receipt_sha256:
+        raise ReviewCoordinationError("parent resolution receipt key or digest does not match")
+    refs = declaration["resolution_refs"]
+    if not isinstance(refs, list) or any(not isinstance(ref, str) or not ref or ref != ref.strip() for ref in refs):
+        raise ReviewCoordinationError("parent resolution_refs must be an array of exact finding IDs")
+    open_ids = {str(row["id"]) for row in parent_ledger if row.get("status") == "open"}
+    if len(set(refs)) != len(refs) or any(ref not in open_ids for ref in refs):
+        raise ReviewCoordinationError("parent resolution_refs must name unique open parent finding IDs")
+    return refs
 
 
 def review_chain_key(subject: ReviewSubject) -> str:
@@ -446,6 +491,7 @@ def normalize_findings_ledger(
     for parent in inherited:
         finding_id = str(parent.get("id") or "")
         if parent.get("status") != "open":
+            by_id.setdefault(finding_id, dict(parent))
             continue
         replacement = by_id.get(finding_id)
         replacement_refs = (
@@ -454,11 +500,18 @@ def normalize_findings_ledger(
             and isinstance(replacement.get("resolution"), Mapping)
             else []
         )
-        if finding_id in explicit_resolution_refs or replacement_refs:
+        # Advisory markers describe this response's new advice. Reusing an ID
+        # for advice cannot implicitly resolve the original blocking issue.
+        explicit_replacement_refs = [
+            ref for ref in replacement_refs
+            if not ref.startswith("reviewer-nonblocking-advisory:")
+        ]
+        replacement_open = isinstance(replacement, Mapping) and replacement.get("status") == "open"
+        if not replacement_open and (finding_id in explicit_resolution_refs or explicit_replacement_refs):
             resolved = dict(parent)
             resolved["status"] = "resolved"
             resolved["resolution"] = {
-                "refs": replacement_refs or [finding_id],
+                "refs": explicit_replacement_refs or [finding_id],
                 "summary": str(
                     (replacement.get("resolution") or {}).get("summary")
                     if isinstance(replacement, Mapping)
@@ -468,7 +521,7 @@ def normalize_findings_ledger(
             by_id[finding_id] = resolved
             continue
         inherited_open.append(dict(parent))
-        by_id.setdefault(finding_id, dict(parent))
+        by_id[finding_id] = dict(parent)
 
     ledger = list(by_id.values())
     if outcome == "clean" and inherited_open:
@@ -513,6 +566,82 @@ def normalize_findings_ledger(
     normalized_review["outcome"] = outcome
     normalized_review["findings_ledger"] = ledger
     return outcome, ledger, normalized_review
+
+
+def _advisory_recovery_review(
+    original: Mapping[str, Any],
+    source: Path,
+    response: str,
+    immutable_findings: list[dict[str, Any]],
+) -> tuple[str, list[dict[str, Any]], dict[str, Any]]:
+    """Reparse immutable advice while carrying the actual delta parent forward."""
+    inherited: list[Mapping[str, Any]] = []
+    resolution_refs: list[str] = []
+    if original.get("mode") == "delta":
+        parent_key = str(original["parent_key"])
+        parent_path = source.parent / f"{parent_key}.json"
+        if parent_path.resolve().parent != source.parent:
+            raise ReviewCoordinationError("advisory recovery requires a contained canonical delta parent")
+        parent_raw = parent_path.read_bytes() if parent_path.is_file() else b""
+        parent = load_review_receipt(parent_path)
+        if parent["key"] != parent_key or parent["outcome"] not in SUCCESSFUL_REVIEW_OUTCOMES:
+            raise ReviewCoordinationError("advisory recovery requires the canonical successful delta parent")
+        if parent["family_key"] != original["family_key"]:
+            raise ReviewCoordinationError("advisory recovery delta parent changes the review family")
+        parent_subject = ReviewSubject.from_mapping(parent["subject"])
+        source_subject = ReviewSubject.from_mapping(original["subject"])
+        if parent_subject.head_sha == source_subject.head_sha:
+            raise ReviewCoordinationError("advisory recovery delta parent requires a changed head")
+        if parent["chain_key"] != original["chain_key"]:
+            proof_value = (original.get("review") or {}).get("base_forward_evidence")
+            proof = proof_value if isinstance(proof_value, Mapping) else {}
+            before, after = asdict(parent_subject), asdict(source_subject)
+            required = {
+                "transition": "base_forward", "previous_base_sha": before["base_sha"],
+                "current_base_sha": after["base_sha"], "base_ancestor": True,
+                "parent_head_ancestor": True, "provider_verified": True,
+            }
+            same_identity = all(before[key] == after[key] for key in (
+                "repository", "pull_request", "base_branch", "policy_fingerprint"
+            ))
+            if not same_identity or any(proof.get(key) != value for key, value in required.items()):
+                raise ReviewCoordinationError("advisory recovery delta parent changes the review chain")
+        if parent_path.read_bytes() != parent_raw:
+            raise ReviewCoordinationError("advisory recovery parent changed while reading its evidence")
+        inherited = list(parent["findings_ledger"])
+        resolution_refs = parse_parent_resolution_refs(
+            response, parent_key=parent_key,
+            parent_receipt_sha256=hashlib.sha256(parent_raw).hexdigest(),
+            parent_ledger=inherited,
+        )
+    advisory_rows = [
+        {**row, "summary": row["title"],
+         "evidence": [f"{row['file']}:{row['line']} {row['detail']}"],
+         "status": "resolved", "resolution_refs": [f"reviewer-nonblocking-advisory:{row['id']}"],
+         "advisory": True}
+        for row in immutable_findings
+    ]
+    # Preserve known source blockers and resolved history beyond the actual
+    # parent. Older full runners could emit a generic medium placeholder when
+    # they did not ingest this response's typed advice; that placeholder is the
+    # recovery target, not an independently inherited finding.
+    _, own_advice, _ = normalize_findings_ledger({"outcome": "clean", "findings": advisory_rows})
+    own_ids = {row["id"] for row in own_advice}
+    inherited_ids = {row["id"] for row in inherited}
+    inherited.extend(
+        row for row in original["findings_ledger"]
+        if row["id"] not in own_ids | inherited_ids
+        and (row["severity"] in {"blocking", "high"} or row["status"] == "resolved")
+    )
+    outcome, ledger, review = normalize_findings_ledger(
+        {"outcome": "clean", "findings": advisory_rows, "resolution_refs": resolution_refs,
+         "response": response, "structured_findings": immutable_findings,
+         "summary": "Recovered all-nonblocking reviewer advice from immutable model evidence.",
+         "scrub_passed": True},
+        parent_ledger=inherited,
+    )
+    review["inherited_finding_ids"] = sorted({str(row["id"]) for row in inherited})
+    return outcome, ledger, review
 
 
 @contextmanager
@@ -580,6 +709,36 @@ def load_review_receipt(path: str | Path) -> dict[str, Any]:
             raise ReviewCoordinationError(
                 "advisory recovery receipt does not prove immutable all-advisory findings"
             )
+        source_ref = Path(str(recovery.get("source_receipt_ref") or "")).expanduser().resolve()
+        if source_ref.parent != ref.parent or source_ref.name != f"{payload.get('parent_key')}.json":
+            raise ReviewCoordinationError("advisory recovery requires its canonical source receipt")
+        if not source_ref.is_file():
+            raise ReviewCoordinationError("advisory recovery source receipt is unavailable")
+        source_raw = source_ref.read_bytes()
+        if hashlib.sha256(source_raw).hexdigest() != recovery.get("source_receipt_sha256"):
+            raise ReviewCoordinationError("advisory recovery source receipt digest does not match")
+        try:
+            source_payload = json.loads(source_raw)
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ReviewCoordinationError("advisory recovery source receipt is invalid") from exc
+        if not isinstance(source_payload, Mapping) or source_payload.get("mode") not in {"full", "delta"}:
+            raise ReviewCoordinationError("advisory recovery source must be a full or delta receipt")
+        original = load_review_receipt(source_ref)
+        response = str(raw_review.get("response") or "").strip()
+        original_response = str((original.get("review") or {}).get("response") or "").strip()
+        if (ReviewSubject.from_mapping(original["subject"]) != subject or original_response != response
+                or hashlib.sha256(response.encode()).hexdigest() != recovery.get("evidence_sha256")
+                or source_ref.read_bytes() != source_raw):
+            raise ReviewCoordinationError("advisory recovery does not match its immutable source response")
+        recovered_outcome, expected_ledger, recovered_review = _advisory_recovery_review(
+            original, source_ref, response, immutable_findings
+        )
+        recovered_ledger = payload.get("findings_ledger")
+        inherited_ids = set(recovered_review["inherited_finding_ids"])
+        inherited_rows = [row for row in expected_ledger if row["id"] in inherited_ids]
+        if (recovered_outcome != "clean" or not isinstance(recovered_ledger, list)
+                or any(row not in recovered_ledger for row in inherited_rows)):
+            raise ReviewCoordinationError("advisory recovery cannot discard unresolved inherited findings")
         advisory_key = advisory_recovery_key(
             str(payload.get("parent_key") or ""),
             str(recovery.get("evidence_sha256") or ""),
@@ -1683,39 +1842,24 @@ class ReviewCoordinator:
 
         subject = ReviewSubject.from_mapping(original["subject"])
         parent_key = str(original["key"])
+        if source != self._path(parent_key):
+            raise ReviewCoordinationError("advisory recovery requires the canonical source receipt")
         evidence_sha256 = hashlib.sha256(evidence_text.encode()).hexdigest()
         findings_sha256 = _canonical_hash(immutable_findings)
         key = advisory_recovery_key(parent_key, evidence_sha256, findings_sha256)
         family_key = review_family_key(subject)
         path = self._path(key)
-        advisory_rows: list[dict[str, Any]] = []
-        for row in immutable_findings:
-            finding_id = str(row.get("id") or "").strip()
-            if not finding_id:
-                raise ReviewCoordinationError("advisory recovery findings require IDs")
-            advisory_rows.append(
-                {
-                    **dict(row),
-                    "status": "resolved",
-                    "resolution_refs": [f"reviewer-nonblocking-advisory:{finding_id}"],
-                    "advisory": True,
-                }
-            )
-        outcome, ledger, normalized_review = normalize_findings_ledger(
-            {
-                "outcome": "clean",
-                "findings": advisory_rows,
-                "response": response.strip(),
-                "structured_findings": immutable_findings,
-                "summary": "Recovered all-nonblocking reviewer advice from immutable model evidence.",
-                "scrub_passed": True,
-            }
-        )
-        if outcome != "clean" or any(row.get("status") == "open" for row in ledger):
-            raise ReviewCoordinationError(
-                "advisory recovery cannot derive clean authority with unresolved findings"
-            )
         with _exclusive_lock(self.locks / f"{family_key}.lock"):
+            self._raise_if_quarantined(family_key=family_key)
+            if source.read_bytes() != source_raw or evidence.read_text(encoding="utf-8").strip() != evidence_text:
+                raise ReviewCoordinationError("advisory recovery source or response changed before admission")
+            outcome, ledger, normalized_review = _advisory_recovery_review(
+                original, source, response.strip(), immutable_findings
+            )
+            if outcome != "clean" or any(row.get("status") == "open" for row in ledger):
+                raise ReviewCoordinationError(
+                    "advisory recovery cannot derive clean authority with unresolved inherited findings"
+                )
             if path.is_file():
                 existing = load_review_receipt(path)
                 if (

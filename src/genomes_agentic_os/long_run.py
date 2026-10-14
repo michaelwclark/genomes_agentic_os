@@ -533,9 +533,45 @@ def _progress_from_file(path: str | None) -> dict[str, Any]:
     return {key: loaded[key] for key in allowed if key in loaded}
 
 
+def _wait_for_monitor_registration(run_dir: Path, command: dict[str, Any]) -> None:
+    """Wait for this actual child PID in both parent-published records; never adopt."""
+    deadline = time.monotonic() + 5
+    while True:
+        state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
+        owner = state.get("monitor_pid")
+        if owner is None and state.get("status") == "queued":
+            pass  # start_run may still be between Popen and PID/registry publication.
+        elif type(owner) is not int or owner != os.getpid():
+            raise LongRunError("native monitor is not the parent-registered run owner")
+        else:
+            rows = [row for row in read_registry(command["root"])["runs"]
+                    if row.get("id") == command["id"]
+                    and row.get("run_dir") == str(run_dir.resolve())]
+            if len(rows) == 1 and type(rows[0].get("monitor_pid")) is int and rows[0]["monitor_pid"] == owner:
+                return
+        if time.monotonic() >= deadline:
+            raise LongRunError("native monitor parent PID/registry registration is incomplete")
+        time.sleep(.01)
+
+
+def _assert_terminal_owner(state: dict[str, Any], *, status: str, reason: str) -> None:
+    owner = state.get("monitor_pid")
+    if type(owner) is int and owner == os.getpid():
+        return
+    # Only the explicit recovery API may terminate a genuinely orphaned legacy
+    # record. Missing/old PID metadata never grants execution or passed authority.
+    if (status == "stale" and reason == "orphan-recovery"
+            and not _process_alive(owner) and not _process_alive(state.get("pid"))):
+        return
+    raise LongRunError("terminal publisher is not the admitted native monitor owner")
+
+
 def monitor_run(run_dir_value: str | Path) -> int:
     run_dir = Path(run_dir_value).expanduser()
     command = json.loads((run_dir / "command.json").read_text(encoding="utf-8"))
+    # Before signal handlers, state/registry changes or preflight writes. An
+    # unadmitted duplicate reports only its own CLI error, never owner evidence.
+    _wait_for_monitor_registration(run_dir, command)
     root = Path(command["root"])
     budgets = command["budgets"]
     interrupted: list[int] = []
@@ -568,31 +604,8 @@ def monitor_run(run_dir_value: str | Path) -> int:
     pre_identity = git_identity()
     _write_state(root, run_dir, {"status": "preflight", "phase": "preflight", "started_at": utc_now(), "expected_git_identity": expected_git_identity, "git_identity_pre": pre_identity})
     assert_expected_git_identity(pre_identity)
-    preflight = _run_checks(command.get("preflight_checks") or [], work_dir=command["work_dir"], phase="preflight")
-    atomic_json(run_dir / "preflight.json", {"checks": preflight, "ok": all(row["ok"] for row in preflight)})
-    if interrupted:
-        signalled_state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
-        cancelled = signalled_state.get("status") == "cancelling"
-        result = _terminal(
-            root,
-            run_dir,
-            command,
-            status="cancelled" if cancelled else "interrupted",
-            exit_code=None,
-            reason=(
-                "operator-cancelled-during-preflight"
-                if cancelled
-                else f"monitor-received-{signal.Signals(interrupted[-1]).name}-during-preflight"
-            ),
-            checks=preflight,
-        )
-        restore_signal_handlers()
-        return result
-    if any(not row["ok"] for row in preflight):
-        result = _terminal(root, run_dir, command, status="failure", exit_code=None, reason="preflight-check-failed", checks=preflight)
-        restore_signal_handlers()
-        return result
-
+    # A declared lock protects the checks as well as the command. Otherwise an
+    # execution-time dependency guard runs before the lock that it must attest.
     lock: MutationLock | None = None
     if command.get("mutation_lock"):
         lock_path = Path(command["mutation_lock"]).expanduser()
@@ -602,24 +615,55 @@ def monitor_run(run_dir_value: str | Path) -> int:
         try:
             lock.acquire()
         except BaseException as exc:
-            result = _terminal(
-                root,
-                run_dir,
-                command,
-                status="error",
-                exit_code=None,
-                reason=f"mutation-lock-acquire-failed: {type(exc).__name__}: {exc}",
-                checks=preflight,
-            )
-            restore_signal_handlers()
-            return result
-    process: subprocess.Popen[bytes] | None = None
-    logger = _BoundedLog(
-        run_dir / "output.log",
-        max_bytes=int(float(budgets["max_log_mb"]) * 1024 * 1024),
-        rotations=int(budgets["log_rotations"]),
-    )
+            try:
+                return _terminal(root, run_dir, command, status="error", exit_code=None,
+                    reason=f"mutation-lock-acquire-failed: {type(exc).__name__}: {exc}", checks=[])
+            finally:
+                # Failed acquisition grants no ownership. A duplicate monitor
+                # can share the run ID while a different live PID owns the file.
+                restore_signal_handlers()
     try:
+        preflight = _run_checks(command.get("preflight_checks") or [], work_dir=command["work_dir"], phase="preflight")
+        atomic_json(run_dir / "preflight.json", {"checks": preflight, "ok": all(row["ok"] for row in preflight)})
+    except BaseException as exc:
+        try:
+            return _terminal(root, run_dir, command, status="error", exit_code=None,
+                reason=f"preflight-check-error: {type(exc).__name__}: {exc}", checks=[], owned_lock=lock)
+        finally:
+            try:
+                if lock is not None:
+                    lock.release()
+            finally:
+                restore_signal_handlers()
+    if interrupted:
+        try:
+            signalled_state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
+            cancelled = signalled_state.get("status") == "cancelling"
+            return _terminal(root, run_dir, command, status="cancelled" if cancelled else "interrupted",
+                exit_code=None, reason="operator-cancelled-during-preflight" if cancelled else
+                f"monitor-received-{signal.Signals(interrupted[-1]).name}-during-preflight", checks=preflight,
+                owned_lock=lock)
+        finally:
+            try:
+                if lock is not None:
+                    lock.release()
+            finally:
+                restore_signal_handlers()
+    if any(not row["ok"] for row in preflight):
+        try:
+            return _terminal(root, run_dir, command, status="failure", exit_code=None,
+                reason="preflight-check-failed", checks=preflight, owned_lock=lock)
+        finally:
+            try:
+                if lock is not None:
+                    lock.release()
+            finally:
+                restore_signal_handlers()
+    process: subprocess.Popen[bytes] | None = None
+    logger: _BoundedLog | None = None
+    try:
+        logger = _BoundedLog(run_dir / "output.log",
+            max_bytes=int(float(budgets["max_log_mb"]) * 1024 * 1024), rotations=int(budgets["log_rotations"]))
         process = subprocess.Popen(
             command["command_display"] if command.get("shell") else command["command"],
             cwd=command["work_dir"],
@@ -764,16 +808,23 @@ def monitor_run(run_dir_value: str | Path) -> int:
             reason=terminal_reason,
             checks=[*preflight, *post_checks],
             extra={"output_bytes": output_bytes, "log_rotations": logger.rotation_count},
+            owned_lock=lock,
         )
     except BaseException as exc:
         if process is not None:
             _terminate_group(process)
-        return _terminal(root, run_dir, command, status="error", exit_code=None, reason=f"{type(exc).__name__}: {exc}", checks=preflight)
+        return _terminal(root, run_dir, command, status="error", exit_code=None,
+            reason=f"{type(exc).__name__}: {exc}", checks=preflight, owned_lock=lock)
     finally:
-        logger.close()
-        if lock is not None:
-            lock.release()
-        restore_signal_handlers()
+        try:
+            if logger is not None:
+                logger.close()
+        finally:
+            try:
+                if lock is not None:
+                    lock.release()
+            finally:
+                restore_signal_handlers()
 
 
 def _terminal(
@@ -786,9 +837,16 @@ def _terminal(
     reason: str,
     checks: list[dict[str, Any]],
     extra: dict[str, Any] | None = None,
+    owned_lock: MutationLock | None = None,
 ) -> int:
     finished = utc_now()
     prior_state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
+    _assert_terminal_owner(prior_state, status=status, reason=reason)
+    # A terminal receipt is consumable immediately. Release only this admitted
+    # monitor's acquired capability before publishing it, rather than afterwards
+    # in the caller's finally block. The fallback finally release is idempotent.
+    if owned_lock is not None:
+        owned_lock.release()
     progress_fields = (
         "phase",
         "items_completed",

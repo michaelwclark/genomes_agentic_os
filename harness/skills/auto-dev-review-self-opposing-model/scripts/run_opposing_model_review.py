@@ -35,6 +35,7 @@ from genomes_agentic_os.review_coordination import (  # noqa: E402
     ReviewSubject,
     canonical_review_purpose,
     load_review_receipt,
+    parse_parent_resolution_refs,
     review_chain_key,
     shared_review_coordination_root,
     stable_review_key,
@@ -529,6 +530,28 @@ def base_forward_evidence(worktree: Path, parent: ReviewSubject, subject: Review
     return {"transition": "base_forward", "previous_base_sha": parent.base_sha, "current_base_sha": subject.base_sha, "base_ancestor": True, "parent_head_ancestor": True, "provider_verified": True}
 
 
+def verified_parent_review(request: dict[str, Any]) -> tuple[dict[str, Any], str]:
+    """Read the hash-bound canonical parent, never an inferred request ledger."""
+    descriptor = request.get("parent_receipt")
+    if not isinstance(descriptor, dict):
+        raise ReviewError("delta prompt requires a hash-bound parent receipt")
+    path = Path(str(descriptor.get("ref") or "")).expanduser().resolve()
+    if not path.is_file():
+        raise ReviewError("delta parent receipt is unavailable")
+    raw = path.read_bytes()
+    digest = hashlib.sha256(raw).hexdigest()
+    if digest != descriptor.get("sha256"):
+        raise ReviewError("delta parent receipt digest does not match")
+    parent = load_review_receipt(path)
+    if parent["key"] != request.get("parent_key") or path.name != f"{parent['key']}.json":
+        raise ReviewError("delta parent receipt key does not match")
+    if parent["outcome"] not in {"clean", "findings"} or parent["subject"]["head_sha"] != request.get("delta_base_sha"):
+        raise ReviewError("delta parent receipt does not match its successful head")
+    if path.read_bytes() != raw:
+        raise ReviewError("delta parent receipt changed while loading")
+    return parent, digest
+
+
 def render_prompt(request: dict[str, Any], provider: dict[str, Any]) -> str:
     values = {
         "WORK_ITEM_ID": str(request["work_item_id"]), "PROJECT": "Auto-Dev",
@@ -550,6 +573,26 @@ def render_prompt(request: dict[str, Any], provider: dict[str, Any]) -> str:
     prompt = TEMPLATE.read_text(encoding="utf-8")
     for key, value in values.items():
         prompt = prompt.replace("{{" + key + "}}", value)
+    if request.get("review_mode") == "delta":
+        parent, digest = verified_parent_review(request)
+        context = {"parent_key": parent["key"], "parent_receipt_sha256": digest,
+                   "parent_head_sha": parent["subject"]["head_sha"], "findings_ledger": parent["findings_ledger"]}
+        declaration = {"schema": "auto-dev-review-parent-resolutions/v1", "parent_key": parent["key"],
+                       "parent_receipt_sha256": digest, "resolution_refs": []}
+        prompt += (
+            "\n\nThis delta must also verify the unresolved findings in the immutable parent ledger below. "
+            "Keep the requested delta diff scope; use the parent evidence to verify each original defect at the current head. "
+            "Do not infer a resolution from unrelated new advice or reuse a parent ID for a different issue. "
+            "New findings must have distinct IDs.\n\nVerified parent ledger:\n```json\n"
+            + json.dumps(context, indent=2, sort_keys=True)
+            + "\n```\n\nReturn the ordinary findings JSON array, followed by exactly one JSON object in this format:\n```json\n"
+            + json.dumps(declaration, indent=2, sort_keys=True)
+            + "\n```\nPut an exact open parent finding ID in resolution_refs only after you independently verify "
+            "that its original defect is fixed at the current head. Leave every unverified or unresolved ID out. "
+            "These are finding IDs, not patch paths or invented proof references. Missing resolution_refs resolves nothing. "
+            "CLEAN requires explicit closure of every unresolved parent finding as well as no new blockers. "
+            "End with the original AGENTIC_OS_REVIEW_VERDICT line as the final non-empty line.\n"
+        )
     return prompt
 
 
@@ -708,10 +751,13 @@ def main() -> int:
         review_diff_base = base
         review_diff_hash: str | None = None
         continuation: dict[str, object] | None = None
+        parent_receipt: dict[str, str] | None = None
         if args.mode == "delta":
             if not args.parent_key:
                 raise ReviewError("delta review requires --parent-key")
-            parent = load_review_receipt(coordinator.receipts / f"{args.parent_key}.json")
+            parent_path = coordinator.receipts / f"{args.parent_key}.json"
+            parent = load_review_receipt(parent_path)
+            parent_receipt = {"ref": str(parent_path), "sha256": hashlib.sha256(parent_path.read_bytes()).hexdigest()}
             parent_subject = ReviewSubject.from_mapping(parent["subject"])
             if review_chain_key(parent_subject) != review_chain_key(subject):
                 continuation = base_forward_evidence(worktree, parent_subject, subject)
@@ -727,6 +773,7 @@ def main() -> int:
                 "review_key": review_key,
                 "review_mode": args.mode,
                 "parent_key": args.parent_key,
+                "parent_receipt": parent_receipt,
                 "delta_base_sha": review_diff_base,
                 "head_sha": head,
                 "base_sha": base,
@@ -768,6 +815,8 @@ def main() -> int:
             parsed_outcome = "findings"
             verdict_structured = False
             findings: list[dict[str, Any]] = []
+            resolution_refs: list[str] = []
+            resolution_warning: str | None = None
             if not claude:
                 failure = "cli_not_found"
                 plan["reviewer_status"] = "unavailable"
@@ -807,6 +856,18 @@ def main() -> int:
                             findings = parse_structured_findings(response)
                         except ReviewError:
                             failure = "cli_output_invalid"
+                        if args.mode == "delta" and failure is None:
+                            try:
+                                verified_parent, parent_digest = verified_parent_review(request)
+                                resolution_refs = parse_parent_resolution_refs(
+                                    response, parent_key=verified_parent["key"],
+                                    parent_receipt_sha256=parent_digest,
+                                    parent_ledger=verified_parent["findings_ledger"],
+                                )
+                            except (ReviewError, ReviewCoordinationError) as exc:
+                                # This is a completed review with invalid closure
+                                # evidence, not a free unavailable retry.
+                                resolution_warning = str(exc)
                         if not verdict_structured:
                             failure = "cli_output_invalid"
                         (run_dir / "reviewer-response.md").write_text(
@@ -850,6 +911,7 @@ def main() -> int:
                 decision["decision"].startswith("ready_")
                 and verdict_structured
                 and not any(finding["blocking"] for finding in findings)
+                and resolution_warning is None
             ):
                 outcome = "clean"
             else:
@@ -868,6 +930,9 @@ def main() -> int:
                 "parsed_outcome": parsed_outcome,
                 "verdict_structured": verdict_structured,
                 "findings": coordination_findings(findings),
+                "resolution_refs": resolution_refs,
+                "resolution_warning": resolution_warning,
+                "parent_receipt": parent_receipt,
                 "advisory_finding_count": sum(
                     not finding["blocking"] for finding in findings
                 ),

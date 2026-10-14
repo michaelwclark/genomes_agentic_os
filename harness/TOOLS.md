@@ -101,6 +101,7 @@ the source of truth by themselves.
 | `harness/rules/os-authoring-rules.md` | Compact authoring rule for OS surfaces and project worktrees. | Load for OS convention changes, not ordinary execution. |
 | `harness/bin/agentic-os-quiet-run` | Start long-running local commands with artifact-backed state. | Use for tests, setup, and watchers expected to exceed two minutes. |
 | `harness/bin/agentic-os-policy-context` | Resolve the effective development policy for a routed project and repository. | Omit `--repository` for singleton `repository.root` profiles; multi-entry `repository.catalog` profiles require a valid explicit id and fail closed before external action. |
+| `agentic-os develop refresh-validation` | Append exact-head passed validation and explicit repair lineage to a modern local-validation task. | Requires immutable packet-contained frozen-command proofs and a clean registered worktree; exact replay is idempotent and downstream evidence must match the successor. |
 | `harness/bin/agentic-os-status-report` | Write recent-work status report bundles with gap analysis and Notion projection receipts. | Use for `/status-report` report generation. |
 | `agentic-os config doctor` | Check Codex config contracts. | Does not store secrets. |
 | `harness/bin/agentic-os-claude-desktop-bridge` | Build/audit the uploadable Claude Desktop skill and instruction payloads. | Does not claim to modify Claude's cloud-hosted settings. |

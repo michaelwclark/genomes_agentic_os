@@ -149,6 +149,181 @@ the task is still in local validation; once PR review begins, a changed head
 requires a fresh delivery run so review, QA, and Finalize cannot stay attached
 to the old commit.
 
+For a modern task still at `local_validation`, bind successor validation with
+`agentic-os develop refresh-validation <task-state.json> --evidence
+<successor-evidence.json> --idempotency-key <stable-key>`. This appends a receipt
+and explicit predecessor/head repair lineage; it never relabels historical
+Develop evidence. The packet-contained `development-stage-evidence/v1` must
+report `passed` or an honestly configured `deferred_to_ci`, bind the task, selected repository, registered clean worktree,
+branch, current head and frozen policy bytes, and include `validation_runs` for
+every frozen command in order. Each run binds `command_receipt` and `terminal`
+files by path and SHA-256, with actual governed execution and unchanged Git
+identity before and after. Expected Git identity also binds the worktree path.
+For `passed`, every frozen command must succeed. A CI deferral requires the
+frozen fallback policy, at least one genuinely successful local command, and
+exactly one actually failed frozen command classified as environment or
+infrastructure unavailable. Its `unavailable_check.exit_code` must match the
+nonzero terminal result and `receipt_ref` must name that bound terminal receipt.
+It never substitutes scoped discovery or marks failed/unexecuted commands passed.
+
+Legacy nested predecessor identity may be omitted only when one original
+hash-bound task receipt attests it. Task/manifest/repository/frozen-policy
+identity, original recording timestamps and source ancestry must agree; a
+present contradictory or null identity still refuses. The appended lineage
+records `development-validation-predecessor-attestation/v1` while preserving
+the original bytes and reviewed subject.
+
+Source cleanliness remains required. The only permitted untracked exception
+is non-executable metadata inside the registered task's `.features/<TICKET>`
+namespace when `config/output-artifacts.yml` explicitly declares its legacy
+artifact template. Foreign item paths, executable/source files and symlinks
+are refused. Ignored executable/source artifacts, Python bytecode, venvs and
+local runtime/coverage configuration cannot be hidden by ordinary Git status.
+The same checks run again under the task lock. Native command receipts retain
+their actual raw `clean=false` when the approved item metadata is present;
+the registered tracked/source guard supplies cleanliness authority without
+deleting metadata or relabeling Git output.
+The executed argv keeps the frozen command prefix. Launcher path equivalence
+alone never establishes runtime or dependency provenance.
+An executed `env REVIEW_POLICY_FINGERPRINT=<pinned-fingerprint>` prefix binds
+the readiness producer to the policy. Declared prefix and runner environment
+overrides admit only that fingerprint, empty `PYTEST_ADDOPTS`, bytecode
+suppression, and coverage/npm/Playwright cache destinations contained in task artifacts.
+Code, plugin, launcher and coverage-configuration environment injection and
+`env -i` are refused. Coverage targets, branch mode, configuration and thresholds
+must remain in the frozen command; adding or replacing them is refused. Only report and
+contained basetemp annotations are allowed. Only one `-o cache_dir=<absolute
+packet-artifacts-private-path>` override is allowed; selectors, extra test
+paths and other overrides are refused.
+
+This bounded recovery API supports `npm ci`, `npx tsc --noEmit` and the unscoped
+`npx playwright test --list` through
+a genuinely passed frozen `npm ci` with tracked `package-lock.json` before
+dependent `npx`/Node commands. Git cleanliness does not attest ignored dependencies.
+Each ordered `validation_runs` entry must bind `preflight` and
+`node_install_closure` files by SHA. The install's native post-check captures
+the full installed closure into its exclusive `node-install-closure.json`;
+the capture's SHA must match the actual native terminal check output. Every
+dependent command executes the exact approved helper before and after the
+frozen argv, verifying all files, modes, directories and symlink text/contained
+targets against that capture. Added, deleted or changed dependencies, outside
+or dangling targets and unqualified local executables are refused. The same
+full comparison runs under the task lock at refresh admission.
+
+Generate these native checks with
+`validation_node_provenance.guard_checks(install_run, run, worktree, snapshot_sha)`
+from the qualified current OS package. Declare the same native mutation lock
+`<packet>/artifacts/node-validation.lock` on all three runs, using artifact
+directory `<packet>/artifacts/command-runs`. The native runner acquires it before
+preflight and holds it through the command and post-check. It never
+releases after failed acquisition, including another live
+monitor with the same run ID. Normal release requires this lock instance's
+successfully acquired file identity and actual owning PID. Existing standalone
+helpers continue to acquire/release their own instance; orphan recovery remains
+explicit in acquisition and release is not a force-unlock operation.
+The native monitor waits for its actual parent-published PID in both state and registry
+before changing records or signal handlers. A duplicate on the same run
+directory exits with its own CLI error and preserves the live owner's state,
+registry, preflight and terminal evidence. Terminal publication requires the
+admitted actual monitor PID. Missing, empty or dead legacy PID metadata cannot
+be adopted into execution; only explicit orphan recovery can publish `stale`
+after verifying both monitor and worker are dead. Normal separately admitted
+run IDs still record their own lock-conflict errors. The isolated
+stdlib helper checks actual lock ownership and executes with exact package
+file and qualified base-interpreter checksums before and after; request hashes
+cannot substitute its execution. A Playwright run additionally declares
+`PWTEST_CACHE_DIR=<run-dir>/playwright-cache`. Its pre-check creates that fresh
+run-owned cache exclusively, so prior generated JavaScript cannot masquerade as
+current source. Normal cache output remains outside the immutable dependency
+closure and cannot hide executable changes. Older runner receipts without
+these actual checks require fresh execution; no historical receipts are edited.
+Ordinary host tool trust remains governed by the
+project's environment-access policy; this is not a host-compromise attestation.
+
+Python worktree venv launchers and arbitrary dependency/module/script recovery
+remain unsupported without independently qualified dependency provenance. The bounded
+Python diagnostic exception requires an external, fully resolved base interpreter
+whose path and SHA were declared before the task in frozen
+`validation.isolated_python_interpreters[<exact-command>]`, with
+`authority: frozen_selected_profile` and
+`dependency_mode: isolated_stdlib_diagnostic`. It accepts only exact `-I -S -c`
+diagnostics with the restricted grammar (print, frozen os/sys environment reads
+and exit), preventing worktree paths, site packages, imports, code execution or
+flag additions from reloading dependencies. The real native runner must execute
+the exact declared interpreter checksum check before and after the command;
+the successor binds its preflight file by SHA and verifies both terminal check
+records. A caller-supplied hash, hash substring, `-B` or bytecode-write suppression
+does not establish trust or prevent loading old bytecode. This exception never
+pretends that a full pytest command ran.
+
+For a frozen worktree pytest command, the SDK's
+`validation_command_authority.python_runtime_install_plan(task_path,
+install_run, runtime, offline=False)` prepares a separate native qualification
+against tracked `pyproject.toml` and `uv.lock`. Execute that exact plan through
+`long-run` with its item lock and pre/post checks. It runs an actual locked,
+non-editable `uv sync` using the SDK's independently bound host interpreter and
+tool into a fresh packet-owned runtime. The native post-check captures every
+runtime entry, mode and byte, including installed/native code; only the known
+empty uv lock metadata is restricted to mode 0600 before capture. Existing or
+redirected runtimes, escaping symlinks, system site packages and mutable code
+are refused. This qualification does not modify the task's frozen command or
+policy and does not claim that tests passed.
+
+Execute the unchanged frozen pytest arguments with that runtime's `bin/python`
+and `python_runtime_guard_checks(install_run, validation_run, task_path,
+runtime, snapshot_sha)`. Bind `python_install_closure`, `python_install_command`,
+`python_install_terminal` and `python_install_preflight` in the validation run,
+plus its own `preflight`, `command_receipt` and `terminal`, by file/hash. Declare
+`PYTEST_ADDOPTS=""` and `PYTHONDONTWRITEBYTECODE=1`; execution-affecting inherited
+Python/plugin settings are refused. Admission verifies the actual successful
+install, exact native check commands and output, original task/head/policy,
+source lock inputs and unchanged dependency closure. A caller hash, arbitrary
+executable mapping or self-declared trusted runtime cannot replace that proof.
+`repair_lineage` binds the predecessor file/hash,
+`from_head_sha`, `to_head_sha` and reason. An identical replay reuses its receipt;
+changed or stale evidence fails before mutation. Document and PR Create must
+then supply fresh evidence for the successor. Readiness is emitted through its
+canonical producer when available and otherwise remains unknown.
+The canonical successor snapshot must stay inside its packet. Symlinked output
+targets or parent directories and conflicting immutable bytes are refused before
+recording validation authority.
+
+A modern groom-through-PR-Create task's policy-pinned `deferred_to_ci` Develop
+receipt can admit only same-head PR Create with complete current frozen-command terminal proofs, including a
+successful local command and the exact unavailable command's failure. A
+single-command profile may instead use its actually passed runtime qualification
+or exact interpreter pre/post checks as the local layer; the frozen command
+still records its real unavailable failure and CI remains pending. Historical
+`passed` labels and unavailable-command metadata alone preserve lineage only;
+missing terminal proof requires a freshly executed validation refresh supported
+by the frozen command's independently qualified runtime. Refresh is not a
+universal migration: dependency-consuming pytest/venv commands without that
+provenance remain unsupported, and the predecessor error reports the concrete
+reason rather than only saying Develop is missing.
+It provides pending CI authority and cannot independently satisfy Review, QA,
+Finalize or Merge. A changed head requires a fresh passed or honestly deferred
+successor through the explicit refresh; owning review/QA/finalization stages
+must separately verify current provider checks and their required evidence.
+
+An original deferred receipt on an explicitly recorded narrower workflow (for
+example, the pinned default Readiness-to-PR-Create window) retains its historical
+PR Create handoff through the existing `develop stage --stage
+release_propagation` recorder. It must still match the original task receipt
+hash, linked packet and frozen fallback policy. The PR family independently
+binds the current head and branch. The wrapper records
+`authority_scope: historical_pr_create_handoff`, `current_validation_authority:
+unproved` and `ci_authority: pending`; it never records a fresh validated head or
+PASS. Modern refresh/command/lineage markers cannot fall back to this path.
+Current CI, review, QA, Finalize and Merge evidence remain separate requirements.
+
+Archive Health may move a refreshed packet from this project's flat or
+`02-active` location to `99-archived` or legacy `03-complete`. History readers
+resolve only that bounded move and verify every original hash while retaining
+all recorded logical refs and immutable bytes. Archived history cannot produce
+current validation authority. Changed, foreign or ambiguous proofs fail closed;
+projection failures use the existing diagnostic event instead of escaping its
+error boundary.
+
 ### Documentation delivery
 
 For this source package, a completed Auto-Dev Document outcome includes the

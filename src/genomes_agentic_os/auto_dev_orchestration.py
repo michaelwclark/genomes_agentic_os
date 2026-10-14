@@ -483,6 +483,14 @@ def _relink_moved_work_item(task_path: Path, state_path: Path, current: Mapping[
         old_raw = task.get("work_item") or old_raw
         if not old_raw or Path(str(old_raw)).expanduser().name != work_item.name:
             raise AutoDevStateError("refusing to relink delivery state to a different work item")
+        old_packet = Path(str(old_raw)).expanduser().resolve()
+        work_items_root = work_item.parent.parent
+        allowed = {work_items_root / work_item.name,
+                   work_items_root / "02-active" / work_item.name,
+                   work_items_root / "03-complete" / work_item.name,
+                   work_item}
+        if old_packet not in allowed or old_packet != work_item and old_packet.exists():
+            raise AutoDevStateError("refusing ambiguous or cross-project archived packet relink")
         expected_domain = str(current.get("domain") or "")
         expected_project = str(current.get("project") or "")
         if expected_domain and str(task.get("domain") or "") != expected_domain:
@@ -592,6 +600,7 @@ def _load_stage_receipts(
     terminal_revision: str | None,
     invalidated_subject_revision: str | None = None,
     suppress_revision_sensitive_stages: bool = False,
+    validation_head_sha: str | None = None,
 ) -> None:
     stage_dir = work_item / "artifacts" / "auto-dev-orchestration" / "stages"
     if stage_dir.is_dir():
@@ -605,6 +614,10 @@ def _load_stage_receipts(
             if status not in TERMINAL_STAGE_STATUSES:
                 continue
             receipt_revision = payload.get("subject_revision")
+            if (validation_head_sha and status == "completed"
+                    and name in (REVISION_SENSITIVE_STAGES | {"document", "validate_production_release"})
+                    and receipt_revision != validation_head_sha):
+                continue
             if (
                 status == "completed"
                 and name in REVISION_SENSITIVE_STAGES
@@ -724,6 +737,7 @@ def _load_stage_receipts(
                     and evidence_payload.get("state") == "release_propagation"
                     and evidence_payload.get("status")
                     in {"verified", "passed", "completed", "not_required"}
+                    and (not validation_head_sha or evidence_payload.get("evidence", {}).get("source_head_sha") == validation_head_sha)
                 ):
                     stages["pr_create"].update(
                         {
@@ -1036,6 +1050,16 @@ def sync_delivery_projection(task_state_path: str | Path) -> dict[str, Any] | No
     work_item = Path(str(work_item_raw)).expanduser().resolve()
     if not work_item.is_dir():
         return None
+    # A deleted refresh marker must not restore stale downstream authority.
+    from .development_validation_refresh import _refresh_history
+    from .development_delivery import DevelopmentDeliveryError
+    try:
+        _refresh_history(task, work_item)
+    except DevelopmentDeliveryError as exc:
+        # Preserve the projection's existing failure-event contract. The
+        # canonical task was already committed; corrupt lineage cannot project
+        # stale authority and must not escape as an unrelated exception type.
+        raise AutoDevStateError(str(exc)) from exc
     state_path = Path(str(task.get("autodev_path") or work_item / "autodev.json")).expanduser().resolve()
     with _file_lock(state_path.with_suffix(state_path.suffix + ".lock")):
         existing = _read_json(state_path) if state_path.is_file() else {}
@@ -1093,6 +1117,10 @@ def sync_delivery_projection(task_state_path: str | Path) -> dict[str, Any] | No
             if pending_supersession is not None
             else str(task.get("subject_revision") or existing.get("subject_revision") or "") or None
         )
+        if task.get("validation_head_sha") and subject_revision != task["validation_head_sha"]:
+            # A validated successor is not itself a reviewed subject. Historical
+            # subject authority is restored only by fresh current-head evidence.
+            subject_revision = None
         terminal_revision = str(
             task.get("terminal_revision") or existing.get("terminal_revision") or ""
         ) or None
@@ -1107,6 +1135,7 @@ def sync_delivery_projection(task_state_path: str | Path) -> dict[str, Any] | No
                 else None
             ),
             suppress_revision_sensitive_stages=pending_supersession is not None,
+            validation_head_sha=task.get("validation_head_sha"),
         )
         for name, row in stages.items():
             policy = stage_policies.get(name, {"applicability": "required"})
@@ -1582,15 +1611,39 @@ def _validate_health_stage_source(
         validate_delivery_policy(evidence, "release_propagation")
         return payload
     expected_state = _DELIVERY_STAGE_RECEIPT_STATES.get(stage)
+    deferred_develop = (
+        stage == "develop"
+        and expected_state == "local_validation"
+        and payload.get("status") == "deferred_to_ci"
+    )
     if not (
         expected_state
         and payload.get("schema") == "development-stage-evidence/v1"
         and payload.get("state") == expected_state
-        and payload.get("status") in {"verified", "passed", "completed", "not_required"}
+        and (
+            payload.get("status") in {"verified", "passed", "completed", "not_required"}
+            or deferred_develop
+        )
         and str(payload.get("summary") or "").strip()
         and str(payload.get("verified_at") or "").strip()
     ):
         raise AutoDevStateError(f"{stage} delivery receipt is malformed or not terminal")
+    if deferred_develop:
+        from .development_delivery import (
+            DevelopmentDeliveryError,
+            validate_local_validation_ci_deferral,
+        )
+
+        current = read_auto_dev_state(work_item / "autodev.json")
+        _validate_delivery_stage_task_binding(current, work_item, stage, path)
+        task_ref = current.get("delivery", {}).get("task_state_ref")
+        try:
+            validate_local_validation_ci_deferral(
+                payload, _read_json(Path(task_ref).expanduser().resolve()),
+                require_frozen=True,
+            )
+        except DevelopmentDeliveryError as exc:
+            raise AutoDevStateError(str(exc)) from exc
     validate_delivery_policy(payload, "deploy" if stage == "deploy" else stage)
     return payload
 
@@ -1614,7 +1667,8 @@ def _validate_delivery_stage_task_binding(
 ) -> None:
     if stage not in DELIVERY_MANAGED_STAGES:
         return
-    task_ref = str(current.get("delivery", {}).get("task_state_ref") or "").strip()
+    linked = current.get("delivery") if isinstance(current.get("delivery"), Mapping) else {}
+    task_ref = str(linked.get("task_state_ref") or "").strip()
     if not task_ref:
         raise AutoDevStateError(f"{stage} lacks its linked delivery task")
     task_path = Path(task_ref).expanduser().resolve()
@@ -2377,6 +2431,7 @@ def require_auto_dev_predecessors(state_file: str | Path, stage: str) -> dict[st
     if work_item.is_file():
         work_item = work_item.parent
     missing: list[str] = []
+    reasons: list[str] = []
     stage_order = list(current.get("stage_order") or AUTO_DEV_STAGE_ORDER)
     active_order = auto_dev_workflow_window(
         stage_order,
@@ -2403,6 +2458,21 @@ def require_auto_dev_predecessors(state_file: str | Path, stage: str) -> dict[st
             missing.append(predecessor)
             continue
         try:
+            if predecessor == "develop" and name == "pr_create":
+                refs = row.get("receipt_refs") or []
+                deferred_path = _resolve_health_receipt(refs[0], work_item) if len(refs) == 1 else None
+                if deferred_path is not None and _read_json(deferred_path).get("status") == "deferred_to_ci":
+                    from .development_validation_refresh import validate_deferred_pr_create
+                    from .development_delivery import DevelopmentDeliveryError
+                    linked = current.get("delivery") if isinstance(current.get("delivery"), Mapping) else {}
+                    task_ref = str(linked.get("task_state_ref") or "").strip()
+                    if not task_ref:
+                        raise AutoDevStateError("develop lacks its linked delivery task")
+                    try:
+                        validate_deferred_pr_create(task_ref, deferred_path)
+                    except DevelopmentDeliveryError as exc:
+                        raise AutoDevStateError(str(exc)) from exc
+                    continue
             if predecessor == "develop" and name in {
                 "review_self",
                 "review_others",
@@ -2484,12 +2554,14 @@ def require_auto_dev_predecessors(state_file: str | Path, stage: str) -> dict[st
                 _validate_delivery_stage_task_binding(
                     current, work_item, predecessor, receipt_path
                 )
-        except AutoDevStateError:
+        except AutoDevStateError as exc:
             missing.append(predecessor)
+            reasons.append(f"{predecessor}: {exc}")
     if missing:
         raise AutoDevStateError(
             f"{name} cannot mutate external state until earlier Auto-Dev stages are "
             "terminal and receipt-backed: " + ", ".join(missing)
+            + (". " + "; ".join(reasons) if reasons else "")
         )
     return current
 

@@ -140,6 +140,15 @@ def handle_stage(args: argparse.Namespace) -> int:
     return 0
 
 
+def handle_validation_refresh(args: argparse.Namespace) -> int:
+    from ..development_validation_refresh import refresh_development_validation
+    result = refresh_development_validation(
+        args.state_file, evidence_file=args.evidence, idempotency_key=args.idempotency_key,
+    )
+    _print(result, json_output=args.json)
+    return 0
+
+
 def _common_output(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--json", action="store_true", help="Print deterministic JSON instead of YAML.")
 
@@ -262,3 +271,12 @@ def register(subparsers) -> None:
     stage.add_argument("--idempotency-prefix", required=True)
     _common_output(stage)
     stage.set_defaults(handler=handle_stage)
+
+    refresh = sub.add_parser(
+        "refresh-validation", help="Append fresh exact-head validation to a modern local_validation task.",
+    )
+    refresh.add_argument("state_file")
+    refresh.add_argument("--evidence", required=True, help="Packet-contained passed validation or configured CI deferral with repair lineage and actual frozen-command receipts.")
+    refresh.add_argument("--idempotency-key", required=True)
+    _common_output(refresh)
+    refresh.set_defaults(handler=handle_validation_refresh)

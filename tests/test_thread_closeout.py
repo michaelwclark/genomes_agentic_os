@@ -563,6 +563,11 @@ def test_infer_complete_apply_marks_finished_and_moves_packet(tmp_path: Path, ca
     capsys.readouterr()
     project_root = root / "harness" / "shared_factory" / "02-projects" / "genomes_agentic_os"
     item = named_work_item(project_root, "02-active", "001_ready_to_finish")
+    legacy_active = project_root / "work-items" / "02-active"
+    legacy_active.mkdir(exist_ok=True)
+    active_item = legacy_active / item.name
+    item.rename(active_item)
+    item = active_item
     metadata_path = item / "work.yml"
     metadata = yaml.safe_load(metadata_path.read_text(encoding="utf-8"))
     metadata["pull_request"] = {"state": "merged"}
@@ -595,8 +600,17 @@ def test_infer_complete_apply_marks_finished_and_moves_packet(tmp_path: Path, ca
     assert result["mode"] == "apply"
     assert result["decision_counts"]["finish-ready"] == 1
     assert result["applied"][0]["marked_status"] == "finished"
-    assert item.is_dir()
-    completed_metadata = yaml.safe_load((item / "work.yml").read_text(encoding="utf-8"))
+    finalized = result["finalize_lingering"]
+    assert finalized["candidate_count"] == 1
+    move = finalized["candidates"][0]
+    assert Path(move["from"]) == item
+    completed = Path(move["to"])
+    assert completed == project_root / "work-items" / "03-complete" / item.name
+    assert finalized["updated"] == [str(completed)]
+    assert finalized["skipped"] == []
+    assert not item.exists()
+    assert completed.is_dir()
+    completed_metadata = yaml.safe_load((completed / "work.yml").read_text(encoding="utf-8"))
     assert completed_metadata["status"] == "finished"
     assert completed_metadata["lane"] == "03-complete"
 
