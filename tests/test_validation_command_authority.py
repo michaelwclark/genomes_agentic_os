@@ -181,3 +181,17 @@ def test_isolated_diagnostic_cannot_reload_worktree_or_dependency_code(code):
 def test_isolated_diagnostic_keeps_bounded_environment_diagnostics():
     assert _isolated_diagnostic("import os,sys; missing=not os.environ.get('FIXTURE_ENDPOINT'); "
                                "print('missing' if missing else 'configured'); sys.exit(17 if missing else 0)")
+
+
+@pytest.mark.parametrize("location", ["worktree", "packet"])
+def test_a_declared_or_self_named_pytest_executable_without_native_qualification_stays_untrusted(tmp_path, location):
+    from genomes_agentic_os.validation_command_authority import runtime_provenance_check
+    task = _task(tmp_path)
+    root = Path(task["worktree"]["path"] if location == "worktree" else task["work_item"])
+    executable = root / "artifacts/python/bin/python"
+    selected = {"schema": "development-selected-profile/v2", "validation": {
+        "command_executables": {FROZEN: {"executable": str(executable), "authority": "selected_profile"}}}}
+    argv = [str(executable), "-m", "pytest", "tests/", "-q", "--cov=genomes_agentic_os", "--cov-branch"]
+    assert matches_command(FROZEN, argv, task, selected)
+    with pytest.raises(ValueError, match="independently declared dependency provenance"):
+        runtime_provenance_check(FROZEN, argv, task, selected)

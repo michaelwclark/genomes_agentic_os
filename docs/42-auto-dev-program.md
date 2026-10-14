@@ -240,8 +240,8 @@ these actual checks require fresh execution; no historical receipts are edited.
 Ordinary host tool trust remains governed by the
 project's environment-access policy; this is not a host-compromise attestation.
 
-Python dependency/module/script recovery and worktree venv launchers remain
-unsupported without independently qualified dependency provenance. The bounded
+Python worktree venv launchers and arbitrary dependency/module/script recovery
+remain unsupported without independently qualified dependency provenance. The bounded
 Python diagnostic exception requires an external, fully resolved base interpreter
 whose path and SHA were declared before the task in frozen
 `validation.isolated_python_interpreters[<exact-command>]`, with
@@ -255,6 +255,30 @@ the successor binds its preflight file by SHA and verifies both terminal check
 records. A caller-supplied hash, hash substring, `-B` or bytecode-write suppression
 does not establish trust or prevent loading old bytecode. This exception never
 pretends that a full pytest command ran.
+
+For a frozen worktree pytest command, the SDK's
+`validation_command_authority.python_runtime_install_plan(task_path,
+install_run, runtime, offline=False)` prepares a separate native qualification
+against tracked `pyproject.toml` and `uv.lock`. Execute that exact plan through
+`long-run` with its item lock and pre/post checks. It runs an actual locked,
+non-editable `uv sync` using the SDK's independently bound host interpreter and
+tool into a fresh packet-owned runtime. The native post-check captures every
+runtime entry, mode and byte, including installed/native code; only the known
+empty uv lock metadata is restricted to mode 0600 before capture. Existing or
+redirected runtimes, escaping symlinks, system site packages and mutable code
+are refused. This qualification does not modify the task's frozen command or
+policy and does not claim that tests passed.
+
+Execute the unchanged frozen pytest arguments with that runtime's `bin/python`
+and `python_runtime_guard_checks(install_run, validation_run, task_path,
+runtime, snapshot_sha)`. Bind `python_install_closure`, `python_install_command`,
+`python_install_terminal` and `python_install_preflight` in the validation run,
+plus its own `preflight`, `command_receipt` and `terminal`, by file/hash. Declare
+`PYTEST_ADDOPTS=""` and `PYTHONDONTWRITEBYTECODE=1`; execution-affecting inherited
+Python/plugin settings are refused. Admission verifies the actual successful
+install, exact native check commands and output, original task/head/policy,
+source lock inputs and unchanged dependency closure. A caller hash, arbitrary
+executable mapping or self-declared trusted runtime cannot replace that proof.
 `repair_lineage` binds the predecessor file/hash,
 `from_head_sha`, `to_head_sha` and reason. An identical replay reuses its receipt;
 changed or stale evidence fails before mutation. Document and PR Create must
@@ -266,7 +290,10 @@ recording validation authority.
 
 A modern groom-through-PR-Create task's policy-pinned `deferred_to_ci` Develop
 receipt can admit only same-head PR Create with complete current frozen-command terminal proofs, including a
-successful local command and the exact unavailable command's failure. Historical
+successful local command and the exact unavailable command's failure. A
+single-command profile may instead use its actually passed runtime qualification
+or exact interpreter pre/post checks as the local layer; the frozen command
+still records its real unavailable failure and CI remains pending. Historical
 `passed` labels and unavailable-command metadata alone preserve lineage only;
 missing terminal proof requires a freshly executed validation refresh supported
 by the frozen command's independently qualified runtime. Refresh is not a

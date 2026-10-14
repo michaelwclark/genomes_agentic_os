@@ -132,7 +132,8 @@ def _clean_worktree(current: Mapping[str, Any], project: Path, worktree: Path) -
         path = Path(item)
         # Node dependencies require the separately verified actual npm-ci
         # closure and native execution-time checks below; Git never attests them.
-        # No Python recovery may import them or any working-tree/venv modules.
+        # Ignored Python/venv bytes are never source authority. Qualified
+        # pytest uses tracked source and its separately captured packet runtime.
         if path.parts[0] != "node_modules" and (path.parts[0] == ".venv"
                 or path.name in {".npmrc", ".coveragerc", "pyvenv.cfg"}
                 or path.suffix.lower() in {".py", ".pyc", ".pyo", ".pth", ".pyd", ".so", ".dylib",
@@ -444,7 +445,7 @@ def validate_deferred_pr_create(state_file: str | Path, receipt: Path) -> None:
     """Admit same-head proof or a historical CI handoff, never review/merge authority."""
     if _historical_deferred_handoff(state_file, receipt) is not None:
         return
-    _, current, packet, worktree, profile = _context(state_file)
+    task, current, packet, worktree, profile = _context(state_file)
     path, payload, _ = _latest(current, packet)
     if path != receipt.resolve():
         _error("PR Create deferral is not the latest immutable task receipt")
@@ -456,10 +457,10 @@ def validate_deferred_pr_create(state_file: str | Path, receipt: Path) -> None:
             or _head(evidence) != _git(worktree, "rev-parse", "HEAD")):
         _error("changed-head CI deferral requires fresh successor validation")
     # Historical labels preserve lineage only. PR creation requires actual
-    # current frozen-command terminals, including both a passed layer and the
+    # current frozen-command terminals, including an actual passed layer and the
     # exact unavailable command's failure. Missing old proof needs a refresh.
     _commands({**evidence, "verified_at": payload.get("verified_at")}, current, packet,
-              worktree, profile, _head(evidence), evidence["unavailable_check"])
+              worktree, profile, _head(evidence), evidence["unavailable_check"], task_path=task.path)
 
 
 def pr_create_validation_authority(state_file: str | Path, family: Mapping[str, Any]) -> dict[str, Any] | None:
@@ -515,7 +516,7 @@ def pr_create_validation_authority(state_file: str | Path, family: Mapping[str, 
 
 def _commands(evidence: Mapping[str, Any], current: Mapping[str, Any], packet: Path,
               worktree: Path, profile: Mapping[str, Any], head: str,
-              unavailable: Mapping[str, Any] | None = None) -> None:
+              unavailable: Mapping[str, Any] | None = None, *, task_path: Path | None = None) -> None:
     from .validation_command_authority import execution_argv, matches_command, runtime_provenance_check
     from .development_delivery import project_root
     commands = profile.get("validation", {}).get("commands")
@@ -533,11 +534,18 @@ def _commands(evidence: Mapping[str, Any], current: Mapping[str, Any], packet: P
     verified = _timestamp(evidence.get("verified_at"))
     passed = 0
     deferred = 0
+    guarded_local_layer = False
     node_install = None
     for run in runs:
         terminal_path, terminal, _ = _bound(run.get("terminal"), packet)
         command_path, command, _ = _bound(run.get("command_receipt"), packet)
         actual_argv, environment = execution_argv(command, current)
+        qualified_python = None
+        if run.get("python_install_closure") is not None:
+            if task_path is None:
+                _error("Python runtime proof requires the actual linked task path")
+            qualified_python = _python_proof(run, command_path, command, terminal, packet, task_path, head)
+            guarded_local_layer = True
         is_unavailable = unavailable is not None and run["command"] == unavailable["command"]
         outcome_ok = terminal.get("status") == "success" and terminal.get("exit_code") == 0
         if is_unavailable:
@@ -549,7 +557,7 @@ def _commands(evidence: Mapping[str, Any], current: Mapping[str, Any], packet: P
                 or not outcome_ok or type(terminal.get("exit_code")) is not int
                 or terminal.get("post_run_invariants_ok") is not True
                 or command.get("schema") != "agentic-os-long-running-state/v1" or command.get("shell") is not False
-                or not matches_command(run["command"], actual_argv, current, profile)
+                or not matches_command(run["command"], actual_argv, current, profile, qualified_runtime=qualified_python)
                 or ("REVIEW_POLICY_FINGERPRINT" in environment
                     and environment["REVIEW_POLICY_FINGERPRINT"] != current["policy_fingerprint"])
                 or Path(str(command.get("work_dir") or "")).resolve() != worktree
@@ -574,7 +582,7 @@ def _commands(evidence: Mapping[str, Any], current: Mapping[str, Any], packet: P
             else:
                 _node_proof(run, command_path, command, terminal, packet, worktree, node_install)
         try:
-            check = runtime_provenance_check(run["command"], actual_argv, current, profile)
+            check = runtime_provenance_check(run["command"], actual_argv, current, profile, qualified_runtime=qualified_python)
         except ValueError as exc:
             _error(str(exc))
         if check is not None:
@@ -594,6 +602,7 @@ def _commands(evidence: Mapping[str, Any], current: Mapping[str, Any], packet: P
                     or not isinstance(terminal.get("checks"), list) or len(terminal["checks"]) != 2
                     or not checked(terminal["checks"], "preflight") or not checked(terminal["checks"], "post-run")):
                 _error("declared base interpreter requires exact executed pre/post checksum proof")
+            guarded_local_layer = True
         deferred += int(is_unavailable)
         passed += int(not is_unavailable)
         started = _timestamp(terminal.get("created_at"))
@@ -601,8 +610,82 @@ def _commands(evidence: Mapping[str, Any], current: Mapping[str, Any], packet: P
         commit_time = int(_git(worktree, "show", "-s", "--format=%ct", head))
         if not commit_time <= started.timestamp() <= finished.timestamp() <= verified.timestamp() <= datetime.now().astimezone().timestamp():
             _error("fresh validation command timestamps are stale or contradictory")
-    if unavailable is not None and (deferred != 1 or passed < 1):
-        _error("fresh CI deferral requires one actual unavailable command and a passed local layer")
+    if unavailable is not None and (deferred != 1 or passed < 1 and not (len(commands) == 1 and guarded_local_layer)):
+        _error("fresh CI deferral requires one actual unavailable command and an actual passed command or qualified runtime/checksum layer")
+
+
+def _python_proof(run: Mapping[str, Any], command_path: Path, command: Mapping[str, Any],
+                  terminal: Mapping[str, Any], packet: Path, task_path: Path, head: str):
+    """Read native install/closure proof before admitting an executable binding."""
+    from .validation_command_authority import (PYTHON_LOCK, PYTHON_SCHEMA, PYTHON_SNAPSHOT,
+        QualifiedPythonRuntime, _json, _python_install_command, execution_argv,
+        python_dependency_closure, python_runtime_binding, python_runtime_guard_checks)
+    try:
+        snapshot_path, _, digest = _bound(run.get("python_install_closure"), packet)
+        snapshot = _json(snapshot_path)
+        install_path, install, install_digest = _bound(run.get("python_install_command"), packet)
+        install_terminal_path, installed, _ = _bound(run.get("python_install_terminal"), packet)
+        install_preflight_path, install_preflight, _ = _bound(run.get("python_install_preflight"), packet)
+        validation_preflight_path, validation_preflight, _ = _bound(run.get("preflight"), packet)
+        install_run, validation_run = install_path.parent, command_path.parent
+        runtime = Path(snapshot.get("runtime") or "")
+        binding = python_runtime_binding(task_path, head)
+        if (snapshot_path != install_run / PYTHON_SNAPSHOT or install_terminal_path != install_run / "terminal-receipt.json"
+                or install_preflight_path != install_run / "preflight.json"
+                or validation_preflight_path != validation_run / "preflight.json"
+                or install_path.name != "command.json" or install_run == validation_run
+                or snapshot.get("schema") != PYTHON_SCHEMA or snapshot.get("run_id") != install_run.name
+                or snapshot.get("command_sha256") != install_digest or snapshot.get("binding") != binding
+                or snapshot.get("identity") != command.get("expected_git_identity")
+                or not runtime.is_absolute() or runtime != runtime.resolve() or not runtime.is_relative_to(packet / "artifacts")
+                or install.get("schema") != "agentic-os-long-running-state/v1"
+                or installed.get("schema") != "agentic-os-long-running-terminal/v1"
+                or installed.get("status") != "success" or type(installed.get("exit_code")) is not int
+                or installed["exit_code"] != 0 or installed.get("post_run_invariants_ok") is not True
+                or install.get("expected_git_identity") != command.get("expected_git_identity")
+                or install.get("id") != installed.get("id") or install.get("id") != install_run.name
+                or any(Path(str(row.get("run_dir") or "")).resolve() != install_run for row in (install, installed))
+                or Path(str(install.get("work_dir") or "")).resolve() != Path(binding["worktree"])
+                or install.get("shell") is not False
+                or install.get("command") != _python_install_command(task_path, install_run, runtime, offline="--offline" in install.get("command", []))
+                or install.get("environment_overrides")
+                or any(row.get("mutation_lock") != str(packet / "artifacts" / PYTHON_LOCK) for row in (install, command))
+                or snapshot.get("entries") != python_dependency_closure(runtime)):
+            _error("Python runtime must bind its actual successful locked install and current task/head/policy")
+        identity = {key: value for key, value in command["expected_git_identity"].items() if key != "worktree"}
+        if any(installed.get(key) != identity for key in ("git_identity_pre", "git_identity_post")):
+            _error("Python runtime install source guards differ")
+        if not _timestamp(installed["created_at"]) <= _timestamp(installed["finished_at"]) <= _timestamp(terminal["created_at"]):
+            _error("Python validation predates its actual qualified install")
+        for row, done, directory, preflight, capture in (
+                (install, installed, install_run, install_preflight, True),
+                (command, terminal, validation_run, validation_preflight, False)):
+            pre, post = python_runtime_guard_checks(install_run, directory, task_path, runtime, None if capture else digest)
+            expected_pre = {"operation": "prepare", "run_id": install_run.name} if capture else {
+                "operation": "verify", "run_id": directory.name, "install_run_id": install_run.name, "snapshot_sha256": digest}
+            expected_post = {"operation": "capture" if capture else "verify", "run_id": directory.name,
+                             "install_run_id": install_run.name, "snapshot_sha256": digest}
+            def checked(rows: Any, phase: str, check: str, capsule: dict) -> bool:
+                if not isinstance(rows, list):
+                    return False
+                matches = [r for r in rows if isinstance(r, Mapping) and r.get("phase") == phase]
+                return (len(matches) == 1 and matches[0].get("command") == check and matches[0].get("ok") is True
+                        and type(matches[0].get("exit_code")) is int and matches[0]["exit_code"] == 0
+                        and json.loads(matches[0].get("output_tail", "")) == capsule)
+            if (row.get("preflight_checks") != [pre] or row.get("post_run_checks") != [post]
+                    or preflight.get("ok") is not True or len(preflight.get("checks", [])) != 1
+                    or len(done.get("checks", [])) != 2
+                    or not checked(preflight.get("checks"), "preflight", pre, expected_pre)
+                    or not checked(done.get("checks"), "preflight", pre, expected_pre)
+                    or not checked(done.get("checks"), "post-run", post, expected_post)):
+                _error("Python closure requires exact actual locked-install capture and validation pre/post checks")
+        actual, environment = execution_argv(command, _read(task_path)[0])
+        if (not actual or actual[0] != str(runtime / "bin/python") or environment.get("PYTEST_ADDOPTS") != ""
+                or environment.get("PYTHONDONTWRITEBYTECODE") != "1"):
+            _error("Python validation requires its qualified executable and explicit selection/bytecode controls")
+        return QualifiedPythonRuntime(command=run["command"], executable=str(runtime / "bin/python"))
+    except (OSError, ValueError, RuntimeError, TypeError, KeyError, subprocess.SubprocessError) as exc:
+        _error("Python execution provenance is unavailable or contradictory: " + str(exc))
 
 
 def _node_proof(run: Mapping[str, Any], command_path: Path, command: Mapping[str, Any],
@@ -703,7 +786,7 @@ def refresh_development_validation(state_file: str | Path, *, evidence_file: str
             or head != _git(worktree, "rev-parse", "HEAD")):
         _error("successor validation task/repository/worktree/branch/head/policy mismatch")
     _commands({**evidence, "verified_at": payload["verified_at"]}, current, packet,
-              worktree, profile, head, unavailable)
+              worktree, profile, head, unavailable, task_path=task.path)
     lineage = evidence.get("repair_lineage") or {}
     if (not isinstance(lineage, dict) or not isinstance(lineage.get("reason"), str)
             or not lineage["reason"].strip()):
@@ -743,7 +826,7 @@ def refresh_development_validation(state_file: str | Path, *, evidence_file: str
             if _read(Path(current["policy_receipt"]))[1] != evidence["policy_sha256"]:
                 _error("validation frozen policy changed during refresh preflight")
             _commands({**evidence, "verified_at": payload["verified_at"]}, current, packet,
-                      worktree, profile, head, unavailable)
+                      worktree, profile, head, unavailable, task_path=task.path)
             snapshot = _snapshot_target(packet, request_digest)
             try:
                 if snapshot.exists() and snapshot.read_bytes() != request_path.read_bytes():

@@ -49,7 +49,8 @@ def _now() -> str:
 
 def _command_proof(root: Path, packet: Path, worktree: Path, command: str, head: str, policy: str,
                    annotated: bool = False, expected_status: str = "success", verify_interpreter: bool = True,
-                   node_install: Path | None = None, node_guards: bool = True) -> dict:
+                   node_install: Path | None = None, node_guards: bool = True,
+                   python_install: tuple[Path, Path, Path] | None = None) -> dict:
     identity = {"repository": _git("config", "--get", "remote.origin.url", cwd=worktree),
                 "branch": _git("branch", "--show-current", cwd=worktree),
                 "head": head, "clean": "false" if _git("status", "--porcelain", cwd=worktree) else "true",
@@ -61,7 +62,7 @@ def _command_proof(root: Path, packet: Path, worktree: Path, command: str, head:
             "-o", "cache_dir=" + str(packet / "artifacts/actor-cache"),
             "--cov-report=json:" + str(packet / "artifacts/actor-coverage.json")])
     check = None
-    if not annotated and verify_interpreter:
+    if not annotated and verify_interpreter and python_install is None:
         manifest = json.loads((packet / "autodev.json").read_text())
         current = delivery.TaskState(Path(manifest["delivery"]["task_state_ref"])).read()
         check = runtime_provenance_check(command, argv, current, delivery.frozen_selected_task_profile(current))
@@ -69,6 +70,14 @@ def _command_proof(root: Path, packet: Path, worktree: Path, command: str, head:
     run_path = packet / "artifacts/command-runs/async-runs" / identifier
     pre, post, lock = ([check] if check else []), ([check] if check else []), None
     environment = {"PYTEST_ADDOPTS": "", "COVERAGE_FILE": str(packet / "artifacts/actor-coverage-data")}
+    if python_install is not None:
+        from genomes_agentic_os.validation_command_authority import python_runtime_guard_checks, PYTHON_SNAPSHOT, PYTHON_LOCK
+        install, runtime, task_path = python_install
+        argv[0] = str(runtime / "bin/python")
+        pre_check, post_check = python_runtime_guard_checks(
+            install, run_path, task_path, runtime, _bound(install / PYTHON_SNAPSHOT)["sha256"])
+        pre, post, lock = [pre_check], [post_check], str(packet / "artifacts" / PYTHON_LOCK)
+        environment["PYTHONDONTWRITEBYTECODE"] = "1"
     is_node = shlex.split(command) in (["npm", "ci"], ["npx", "tsc", "--noEmit"], ["npx", "playwright", "test", "--list"])
     if is_node and node_guards:
         install = node_install or run_path
@@ -96,6 +105,11 @@ def _command_proof(root: Path, packet: Path, worktree: Path, command: str, head:
         proof["preflight"] = _bound(run / "preflight.json")
     if is_node and node_guards and ((node_install / SNAPSHOT) if node_install else run / SNAPSHOT).is_file():
         proof["node_install_closure"] = _bound((node_install / SNAPSHOT) if node_install else run / SNAPSHOT)
+    if python_install is not None:
+        proof["python_install_closure"] = _bound(install / PYTHON_SNAPSHOT)
+        proof["python_install_command"] = _bound(install / "command.json")
+        proof["python_install_terminal"] = _bound(install / "terminal-receipt.json")
+        proof["python_install_preflight"] = _bound(install / "preflight.json")
     return proof
 
 
@@ -126,8 +140,13 @@ def _fixture(tmp_path: Path, *, changed: bool = True, mode: str = "single_stage"
              historical_command: bool = True, multiple_commands: bool = False,
               annotated: bool = False, legacy: bool = False, deferred_successor: bool = False,
               fallback: bool = True, registered_metadata: bool = False, declare_interpreter: bool = True,
-              npm_without_ci: bool = False, node_commands: bool = False) -> dict:
+              npm_without_ci: bool = False, node_commands: bool = False,
+              repository_setup=None, python_runtime: bool = False,
+              single_command_deferred: bool = False) -> dict:
     repo, old_head = _repository(tmp_path)
+    if repository_setup is not None:
+        repository_setup(repo)
+        old_head = _git("rev-parse", "HEAD", cwd=repo)
     if node_commands:
         _node_repository(repo, deferred=deferred_successor)
         old_head = _git("rev-parse", "HEAD", cwd=repo)
@@ -147,21 +166,25 @@ def _fixture(tmp_path: Path, *, changed: bool = True, mode: str = "single_stage"
     diagnostic = [interpreter, "-I", "-S", "-c"]
     command = (".venv/bin/python -m pytest tests/ -q --cov=genomes_agentic_os --cov-branch" if annotated
                else shlex.join([*diagnostic, "print('validated')"]))
+    if python_runtime:
+        command = ".venv/bin/python -m pytest tests/ -q"
     if npm_without_ci:
         command = "npx --version"
     commands = [command]
     if multiple_commands:
         commands.append(shlex.join([*diagnostic, "print('validated second layer')"]))
-    if deferred_successor and not node_commands:
-        commands.append(shlex.join([*diagnostic,
+    if deferred_successor and not node_commands and not python_runtime:
+        unavailable_command = shlex.join([*diagnostic,
             "import os,sys; missing=not os.environ.get('VALIDATION_REFRESH_FIXTURE_ENDPOINT'); "
             "print('Required disposable fixture endpoint is absent' if missing else 'configured'); "
-            "sys.exit(17 if missing else 0)"]))
+            "sys.exit(17 if missing else 0)"])
+        commands = [unavailable_command] if single_command_deferred else [*commands, unavailable_command]
+        command = commands[0]
     if node_commands:
         commands = ["npm ci", "npx tsc --noEmit", "npx playwright test --list"]
         command = commands[0]
     profile["validation"]["commands"] = commands
-    if not annotated and declare_interpreter and not npm_without_ci and not node_commands:
+    if not annotated and declare_interpreter and not npm_without_ci and not node_commands and not python_runtime:
         profile["validation"]["isolated_python_interpreters"] = {
             configured: {"authority": "frozen_selected_profile", "dependency_mode": "isolated_stdlib_diagnostic",
                          "executable": interpreter, "sha256": hashlib.sha256(Path(interpreter).read_bytes()).hexdigest()}
@@ -226,12 +249,34 @@ def _fixture(tmp_path: Path, *, changed: bool = True, mode: str = "single_stage"
     head = _git("rev-parse", "HEAD", cwd=worktree)
     if registered_metadata:
         _write(worktree / ".features" / current["ticket"] / "checks/watch-state.json", {"status": "success"})
+    python_install = None
+    if python_runtime:
+        from genomes_agentic_os.validation_command_authority import python_runtime_install_plan
+        install_run = packet / "artifacts/python-install/async-runs" / ("python-install-" + uuid.uuid4().hex)
+        runtime = packet / "artifacts/qualified-python-runtime"
+        plan = python_runtime_install_plan(task.path, install_run, runtime, offline=True)
+        identity = {"repository": _git("config", "--get", "remote.origin.url", cwd=worktree),
+                    "branch": current["worktree"]["branch"], "head": head, "clean": "true", "worktree": str(worktree)}
+        installed = start_run(root, command=plan["command"], label="actual offline Python dependency qualification",
+            kind="install", artifact_dir=str(install_run.parents[1]), run_id=install_run.name,
+            work_dir=str(worktree), expected_git_identity=identity, mutation_lock=plan["mutation_lock"],
+            checkpoint_strategy="Fresh disposable locked Python runtime; failed attempts are retained.",
+            preflight_checks=plan["preflight_checks"], post_run_checks=plan["post_run_checks"],
+            budgets={"wall_clock_minutes": 0.5, "no_progress_minutes": 0.33})
+        assert Path(installed["run_dir"]) == install_run
+        deadline = time.monotonic() + 15
+        while not (install_run / "terminal-receipt.json").is_file() and time.monotonic() < deadline:
+            time.sleep(.05)
+        assert (install_run / "terminal-receipt.json").is_file()
+        assert json.loads((install_run / "terminal-receipt.json").read_text())["status"] == "success", (install_run / "output.log").read_text()
+        python_install = install_run, runtime, task.path
     proofs = []
     for i, c in enumerate(commands):
         proof = _command_proof(root, packet, worktree, c, head, current["policy_fingerprint"], annotated,
                            "failure" if deferred_successor and i == len(commands) - 1 else "success",
                            verify_interpreter=declare_interpreter and not npm_without_ci,
-                           node_install=Path(proofs[0]["command_receipt"]["path"]).parent if node_commands and proofs else None)
+                           node_install=Path(proofs[0]["command_receipt"]["path"]).parent if node_commands and proofs else None,
+                           python_install=python_install)
         proofs.append(proof)
     current = task.read()
     evidence = {"ticket": current["ticket"], "canonical_work_id": current["canonical_work_id"],
@@ -248,9 +293,9 @@ def _fixture(tmp_path: Path, *, changed: bool = True, mode: str = "single_stage"
         "status": "passed", "summary": "Full frozen command passed on current head",
         "verified_at": _now(), "evidence": evidence})
     if deferred_successor:
-        evidence["configured_local_checks"] = "passed"
+        evidence["runtime_provenance" if single_command_deferred else "configured_local_checks"] = "passed"
         evidence["unavailable_check"] = {"command": commands[-1], "classification": "environment_unavailable",
-            "reason": "Required disposable fixture endpoint is absent", "exit_code": 17,
+            "reason": "Required disposable fixture endpoint is absent", "exit_code": json.loads(Path(proofs[-1]["terminal"]["path"]).read_text())["exit_code"],
             "receipt_ref": proofs[-1]["terminal"]["path"]}
         _write(request, {"schema": "development-stage-evidence/v1", "state": "local_validation",
             "status": "deferred_to_ci", "summary": "One local layer passed; actual fixture absence defers full validation to CI",
