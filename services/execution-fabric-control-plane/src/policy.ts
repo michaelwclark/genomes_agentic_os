@@ -477,6 +477,26 @@ function parsePolicy(source: string): CanonicalPolicy {
       }
     }
   }
+  const coldRoute=routes.get("fabric.cold_canary"), coldQueue=queues.get("fabric_cold_recovery"), coldPool=pools.get("fabric_cold_recovery_workers");
+  if(coldRoute || coldQueue || coldPool) {
+    const closedPayload={additional_properties:false,required:["schema_version","recovery_id","cluster_id","epoch","generation"],properties:{
+      schema_version:{type:"string",enum:["execution-fabric-cold-canary/v1"]},
+      recovery_id:{type:"string",pattern:"^[a-f0-9-]{36}$"},cluster_id:{type:"string",pattern:"^.{1,128}$"},
+      epoch:{type:"integer",minimum:1,maximum:Number.MAX_SAFE_INTEGER},generation:{type:"integer",minimum:1,maximum:Number.MAX_SAFE_INTEGER},
+    }};
+    if(!coldRoute || !coldQueue || !coldPool || coldRoute.queue!==coldQueue.id || coldQueue.worker_pool!==coldPool.id
+       || coldRoute.execution.target!=="domain_worker" || coldRoute.execution.domain_worker!=="fabric_cold_canary_v1"
+       || coldRoute.execution.command_template!==null || coldRoute.execution.required_capability!=="fabric.cold_canary"
+       || !coldRoute.execution.remote_allowed || coldRoute.scheduling_class!=="background" || coldRoute.mutation_class!=="read_only"
+       || coldRoute.approval_class!=="policy_gated" || coldRoute.allowed_effect_types.length!==0
+       || canonicalJson({...coldRoute.payload,required:[...coldRoute.payload.required].sort()})!==canonicalJson({...closedPayload,required:[...closedPayload.required].sort()})
+       || coldQueue.enabled!==coldPool.enabled || coldQueue.accepted_task_types.length!==1 || coldQueue.accepted_task_types[0]!==coldRoute.task_type
+       || coldQueue.concurrency.max_running!==1 || coldQueue.concurrency.max_queued!==1 || coldPool.provider!=="local"
+       || coldPool.queues.length!==1 || coldPool.queues[0]!==coldQueue.id || coldPool.capabilities.length!==1 || coldPool.capabilities[0]!=="fabric.cold_canary"
+       || coldPool.capacity.min_workers!==0 || coldPool.capacity.max_workers!==1 || coldPool.capacity.max_tasks_per_worker!==1
+       || coldPool.retry.max_attempts!==1 || coldPool.retry.backoff_seconds!==0 || parsed.execution_fabric.admission.provider_limits.local!==1)
+      throw new Error("cold canary policy must retain its fixed inert handler, closed payload and sole local pool");
+  }
   const admission = parsed.execution_fabric.admission;
   if (admission.reserved_interactive_slots >= admission.global_max_running) {
     throw new Error("reserved_interactive_slots must be below global_max_running");
@@ -675,6 +695,7 @@ export class PolicyManager {
 
   normalizeAdmission(input: TaskAdmission): NormalizedTaskAdmission {
     this.assertOperational();
+    if(input.taskType==="fabric.cold_canary") throw new PolicyError("task_type_rejected","cold canary admission requires the signed offline recovery operation");
     const queue = this.queue(input.queue);
     if (!queue.accepted_task_types.includes(input.taskType)) {
       throw new PolicyError(

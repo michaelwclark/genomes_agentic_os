@@ -11,6 +11,7 @@
     "build": "tsc -p tsconfig.build.json",
     "dev": "tsx watch src/main.ts",
     "start": "node dist/src/main.js",
+    "cold-recovery": "node dist/src/cold-recovery-main.js",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
@@ -21,6 +22,7 @@
   },
   "devDependencies": {
     "@types/node": "22.20.1",
+    "@vitest/coverage-v8": "3.2.7",
     "tsx": "4.23.12",
     "typescript": "5.9.3",
     "vitest": "3.2.7"

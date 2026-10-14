@@ -72,6 +72,13 @@ function safeName(name: string): string {
 
 export class ArtifactStore {
   private readonly client: S3Client;
+  private async assertColdMutation(attemptId:string):Promise<void> {
+    const result=await this.pool.query<{blocked:boolean}>(`SELECT
+      EXISTS(SELECT 1 FROM fabric_state WHERE singleton=true AND cold_recovery_phase IS NOT NULL AND cold_recovery_phase<>'ACCEPTED')
+      OR EXISTS(SELECT 1 FROM fabric_attempts a JOIN fabric_cold_task_quarantine q ON q.task_id=a.task_id WHERE a.id=$1)
+      OR EXISTS(SELECT 1 FROM fabric_artifacts a JOIN fabric_cold_artifact_quarantine q ON q.artifact_id=a.id WHERE a.attempt_id=$1) AS blocked`,[attemptId]);
+    if(result.rows[0]?.blocked) throw new ConflictError("cold recovery holds artifact writes and restored artifact reconciliation");
+  }
 
   constructor(
     private readonly pool: pg.Pool,
@@ -117,6 +124,7 @@ export class ArtifactStore {
   }
 
   async initiate(input: ArtifactUpload): Promise<ArtifactUploadReceipt> {
+    await this.assertColdMutation(input.attemptId);
     if (input.sizeBytes > this.config.maxBytes) {
       throw new ConflictError(
         `artifact exceeds configured maximum of ${this.config.maxBytes} bytes`,
@@ -134,7 +142,8 @@ export class ArtifactStore {
            AND a.worker_id=$3 AND a.lease_token=$4
            AND a.fabric_epoch=$5 AND s.current_epoch=$5
            AND a.status='running' AND a.lease_expires_at > now()
-           AND s.singleton=true
+         AND (s.cold_recovery_phase IS NULL OR s.cold_recovery_phase='ACCEPTED')
+         AND s.singleton=true
          FOR SHARE`,
         [
           input.attemptId,
@@ -238,6 +247,7 @@ export class ArtifactStore {
   async initiateRecovery(
     input: ArtifactRecoveryUpload,
   ): Promise<ArtifactUploadReceipt> {
+    await this.assertColdMutation(input.attemptId);
     if (input.sizeBytes > this.config.maxBytes) {
       throw new ConflictError(
         `artifact exceeds configured maximum of ${this.config.maxBytes} bytes`,
@@ -259,6 +269,7 @@ export class ArtifactStore {
            AND w.lease_expires_at > now()
            AND ws.registration_token=$4 AND ws.fabric_epoch=$5
            AND ws.status='active' AND ws.lease_expires_at > now()
+           AND (s.cold_recovery_phase IS NULL OR s.cold_recovery_phase='ACCEPTED')
            AND s.singleton=true
          FOR SHARE OF a,w,ws`,
         [
@@ -379,6 +390,7 @@ export class ArtifactStore {
     artifactId: string,
     input: ArtifactFinalize,
   ): Promise<ArtifactRecord> {
+    await this.assertColdMutation(input.attemptId);
     const result = await this.pool.query(
       `SELECT fa.*
        FROM fabric_artifacts fa
@@ -388,6 +400,7 @@ export class ArtifactStore {
          AND a.worker_id=$4 AND a.lease_token=$5
          AND a.fabric_epoch=$6 AND s.current_epoch=$6
          AND a.status='running' AND a.lease_expires_at > now()
+         AND (s.cold_recovery_phase IS NULL OR s.cold_recovery_phase='ACCEPTED')
          AND s.singleton=true`,
       [
         artifactId,
@@ -462,6 +475,7 @@ export class ArtifactStore {
     artifactId: string,
     input: ArtifactRecoveryFinalize,
   ): Promise<ArtifactRecord> {
+    await this.assertColdMutation(input.attemptId);
     const authorized = await this.pool.query(
       `SELECT fa.*
        FROM fabric_artifacts fa
@@ -476,6 +490,7 @@ export class ArtifactStore {
          AND w.registered_epoch=s.current_epoch AND w.lease_expires_at > now()
          AND ws.registration_token=$5 AND ws.fabric_epoch=$6
          AND ws.status='active' AND ws.lease_expires_at > now()
+         AND (s.cold_recovery_phase IS NULL OR s.cold_recovery_phase='ACCEPTED')
          AND s.singleton=true`,
       [
         artifactId,

@@ -548,12 +548,23 @@ def test_execution_fabric_program_installs_inactive_filesystem_default(tmp_path:
         "los_environment",
         "los_fullsail",
         "non_llm",
+        "fabric_cold_recovery",
     }
+    cold_queue = next(queue for queue in instance_policy["queues"] if queue["id"] == "fabric_cold_recovery")
+    assert cold_queue["enabled"] is False
+    assert cold_queue["accepted_task_types"] == ["fabric.cold_canary"]
+    assert cold_queue["worker_pool"] == "fabric_cold_recovery_workers"
     assert {pool["provider"] for pool in instance_policy["worker_pools"]} == {
         "codex",
         "claude",
         "non_llm",
+        "local",
     }
+    cold_pool = next(pool for pool in instance_policy["worker_pools"] if pool["id"] == "fabric_cold_recovery_workers")
+    assert cold_pool["enabled"] is False
+    assert cold_pool["queues"] == ["fabric_cold_recovery"]
+    assert cold_pool["capabilities"] == ["fabric.cold_canary"]
+    assert cold_pool["capacity"]["max_tasks_per_worker"] == 1
     assert "execution-fabric" in {entry["id"] for entry in commands["commands"]}
     assert "execution-fabric" in {entry["id"] for entry in skills["skills"]}
     assert not validate_root(root).errors

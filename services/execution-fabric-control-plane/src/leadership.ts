@@ -185,6 +185,7 @@ export class LeadershipGuard {
   private lastVerifiedAt: string | null = null;
   private lastError: string | null = "leadership has not been verified";
   private recoveryHoldUntil: Date | null = null;
+  private coldRecoveryPhase: string | null = null;
   private durability: PostgresMutationDurabilitySnapshot | null = null;
   private timer: NodeJS.Timeout | null = null;
   private refreshing = false;
@@ -360,6 +361,7 @@ export class LeadershipGuard {
         configDigest: status.configDigest,
       });
       const databaseState = await this.ledger.systemSnapshot();
+      this.coldRecoveryPhase = databaseState.coldRecoveryPhase ?? null;
       const receipt = this.loadTransferReceipt();
       const transferBootstrap =
         status.fabricEpoch > databaseState.fabricEpoch;
@@ -439,6 +441,9 @@ export class LeadershipGuard {
     if (!this.proof) {
       throw new LeadershipFencedError(this.lastError ?? "leadership is unverified");
     }
+    if (this.coldRecoveryPhase && !["CANARY_ADMITTED", "ACCEPTED"].includes(this.coldRecoveryPhase)) {
+      throw new LeadershipFencedError("durable cold recovery hold requires explicit canary and acceptance");
+    }
     if (this.proof.leader !== this.config.hostId) {
       throw new LeadershipFencedError("this host is not the witnessed leader");
     }
@@ -512,6 +517,7 @@ export class LeadershipGuard {
     candidateDigest: string;
     operatorOverride?: PolicyReloadOperatorOverride;
   }): ConfigRotationPreparationProof {
+    if (this.coldRecoveryPhase && this.coldRecoveryPhase !== "ACCEPTED") throw new LeadershipFencedError("cold recovery holds configuration rotation");
     if (!this.proof) {
       throw new LeadershipFencedError("leadership is unverified");
     }
@@ -678,6 +684,7 @@ export class LeadershipGuard {
   }
 
   assertEffectMutation(effectTypes: string[]): void {
+    if (this.coldRecoveryPhase && this.coldRecoveryPhase !== "ACCEPTED") throw new LeadershipFencedError("cold recovery holds all provider effects");
     this.assertMutation();
     if (this.isStandaloneAuthority()) return;
     if (!this.durability?.mutationDurabilityReady) {
@@ -694,6 +701,7 @@ export class LeadershipGuard {
   }
 
   assertSchedulerMutation(): void {
+    if (this.coldRecoveryPhase && this.coldRecoveryPhase !== "ACCEPTED") throw new LeadershipFencedError("cold recovery admits only the declared canary");
     this.assertMutation();
     if (this.isStandaloneAuthority()) return;
     if (

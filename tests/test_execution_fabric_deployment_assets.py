@@ -2498,6 +2498,8 @@ def test_bundle_builder_and_validator_round_trip(tmp_path: Path) -> None:
         target = os_root / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text("schema_version: 1\n", encoding="utf-8")
+    cold_policy = os_root / "harness/config/execution-fabric-cold-recovery.json"
+    cold_policy.write_bytes((SOURCE_ROOT / "harness/config/execution-fabric-cold-recovery.json").read_bytes())
 
     digest = "1" * 64
     images = {
@@ -2565,6 +2567,19 @@ def test_bundle_builder_and_validator_round_trip(tmp_path: Path) -> None:
     ):
         assert f"{variable}=" in materialized
     assert "secrets_included=false" in (output / "RELEASE").read_text(encoding="utf-8")
+
+    for relative in ["schemas/execution-fabric-cold-recovery.schema.json","docs/development/execution-fabric-cold-recovery.md"]:
+        assert (output / "source" / relative).read_bytes() == (SOURCE_ROOT / relative).read_bytes()
+    runbook = output / "source" / "docs/development/execution-fabric-cold-recovery.md"
+    saved = runbook.read_bytes()
+    runbook.unlink()
+    missing = subprocess.run(
+        ["sh", str(INSTALLERS / "bin/validate-emergency-bundle.sh"), str(output)],
+        check=False, capture_output=True, text=True,
+    )
+    assert missing.returncode == 78
+    assert "required bundle file is missing" in missing.stderr
+    runbook.write_bytes(saved)
 
     (output / "images.lock.env").write_text(
         materialized.replace("FABRIC_WITNESS_IMAGE=", "FABRIC_WITNESS_IMAGE=mutable:"),

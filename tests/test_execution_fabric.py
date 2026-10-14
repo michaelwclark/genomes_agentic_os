@@ -171,7 +171,11 @@ def test_runtime_snapshot_is_backend_neutral_and_projects_safe_task_fields(tmp_p
         "los_environment",
         "los_fullsail",
         "non_llm",
+        "fabric_cold_recovery",
     }
+    cold_queue = next(queue for queue in snapshot["queues"] if queue["queue_name"] == "fabric_cold_recovery")
+    assert cold_queue["enabled"] is False
+    assert cold_queue["total"] == 0
     assert snapshot["filters"]["matching_tasks"] == 1
     assert snapshot["tasks"][0]["id"] == "snapshot-codex"
     assert snapshot["tasks"][0]["display_name"] == "self_improvement_action_watch"
@@ -424,8 +428,8 @@ def test_apply_imports_legacy_queue_reads_back_and_rolls_back(tmp_path: Path) ->
     assert applied["queue_mode"] == "execution_fabric"
     assert applied["mode_source"] == "explicit"
     assert applied["import_receipt"]["processed"] == 1
-    assert applied["metrics"]["queue_count"] == 6
-    assert applied["metrics"]["worker_pool_count"] == 6
+    assert applied["metrics"]["queue_count"] == 7
+    assert applied["metrics"]["worker_pool_count"] == 7
     assert applied["metrics"]["global_max_running"] == 6
     assert applied["metrics"]["reserved_interactive_slots"] == 1
     assert applied["metrics"]["max_interactive_running"] == 2
@@ -442,6 +446,7 @@ def test_apply_imports_legacy_queue_reads_back_and_rolls_back(tmp_path: Path) ->
             "los_environment",
             "los_fullsail",
             "non_llm",
+            "fabric_cold_recovery",
         }
         assert {row[0] for row in conn.execute("SELECT name FROM worker_pools")} == {
             "codex_workers",
@@ -450,7 +455,13 @@ def test_apply_imports_legacy_queue_reads_back_and_rolls_back(tmp_path: Path) ->
             "los_environment_workers",
             "los_fullsail_workers",
             "non_llm_workers",
+            "fabric_cold_recovery_workers",
         }
+        assert conn.execute("SELECT enabled FROM execution_queues WHERE name = 'fabric_cold_recovery'").fetchone()[0] == 0
+        assert tuple(conn.execute("SELECT enabled, provider, queue_name FROM worker_pools WHERE name = 'fabric_cold_recovery_workers'").fetchone()) == (0, "local", "fabric_cold_recovery")
+        with pytest.raises(fabric.ExecutionFabricError, match="disabled"):
+            fabric.enqueue_task(conn, queue_name="fabric_cold_recovery", worker_pool="fabric_cold_recovery_workers", kind="manual")
+        assert conn.execute("SELECT COUNT(*) FROM run_queue WHERE queue_name = 'fabric_cold_recovery'").fetchone()[0] == 0
         assert conn.execute("SELECT queue_name FROM run_queue WHERE id = 'legacy-1'").fetchone()[0] == "non_llm"
         assert conn.execute("SELECT max_concurrency FROM execution_limits WHERE scope = 'global' AND key = '*'").fetchone()[0] == 5
     finally:

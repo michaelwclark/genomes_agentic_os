@@ -311,6 +311,16 @@ function fixture() {
 }
 
 describe("HTTP contract", () => {
+  it("cold canary admission holds direct alarm, artifact and operator routes",async()=>{
+    const f=fixture();f.ledger.systemSnapshot.mockResolvedValue({coldRecoveryPhase:"CANARY_ADMITTED",fabricEpoch:7,effects:{},eventSequence:0} as Awaited<ReturnType<LedgerPort["systemSnapshot"]>>);
+    for(const path of ["/api/v1/alarms/claim","/api/v1/artifacts/uploads","/api/v1/admin/effects/"+randomUUID()+"/replay"]) {
+      const response=await f.server.inject({method:"POST",url:path,headers:{authorization:"Bearer "+config.adminToken},payload:{}});
+      expect([401,409]).toContain(response.statusCode);
+    }
+    expect(f.reliability.claimAlarms).not.toHaveBeenCalled();
+    expect(f.artifacts.initiate).not.toHaveBeenCalled();
+    await f.server.close();
+  });
   it("serves liveness and OpenAPI", async () => {
     const { server } = fixture();
     const health = await server.inject({ method: "GET", url: "/healthz" });

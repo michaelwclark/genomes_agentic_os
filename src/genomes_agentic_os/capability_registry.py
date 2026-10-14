@@ -576,6 +576,12 @@ def command_entries() -> list[dict[str, str]]:
             "source": "harness/commands/os-runtime-init.md",
         },
         {
+            "id": "runtime-cold-recovery",
+            "command": "agentic-os runtime cold-recovery",
+            "description": "Operate a manually fenced cold recovery with independent freshness proof.",
+            "source": "harness/commands/os-runtime-cold-recovery.md",
+        },
+        {
             "id": "run-queue",
             "command": "agentic-os run-queue",
             "description": "Prune stale runtime run-queue rows and old queue backup files.",

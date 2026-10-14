@@ -1,13 +1,40 @@
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { stringify } from "yaml";
+import { parse, stringify } from "yaml";
 import { PolicyError, PolicyManager } from "../src/policy.js";
 import { createTestPolicy, testPolicyValue } from "./policy-fixture.js";
 
 describe("canonical policy", () => {
-  it("loads the shipped policy and admits every remote route", () => {
+  const shippedColdPolicy=(mutate?: (value:Record<string, any>)=>void)=>createTestPolicy((value)=>{
+    const repository=resolve(dirname(fileURLToPath(import.meta.url)),"../../..");
+    Object.assign(value,parse(readFileSync(resolve(repository,"harness/config/execution-fabric.yml"),"utf8")));
+    mutate?.(value);
+  });
+  it.each(["provider","handler","pool","mixed_lane","payload","capacity"])("cold canary rejects unsafe policy seam %s",(seam)=>{
+    expect(()=>shippedColdPolicy((value)=>{
+      const fabric=value.execution_fabric;
+      const route=fabric.task_routes.find((row:any)=>row.task_type==="fabric.cold_canary");
+      const queue=fabric.queues.find((row:any)=>row.id==="fabric_cold_recovery");
+      const pool=fabric.worker_pools.find((row:any)=>row.id==="fabric_cold_recovery_workers");
+      if(seam==="provider")pool.provider="claude";
+      if(seam==="handler")route.execution.domain_worker="claude_task";
+      if(seam==="pool")queue.worker_pool="claude_workers";
+      if(seam==="mixed_lane")queue.accepted_task_types.push("llm.claude");
+      if(seam==="payload")route.payload.properties.command={type:"string"};
+      if(seam==="capacity")pool.capacity.max_tasks_per_worker=2;
+    })).toThrow(/cold canary|must reference each other/);
+  });
+  it("ordinary canary submission stays refused when the isolated worker lane is enabled",()=>{
+    const {policy}=shippedColdPolicy((value)=>{
+      value.execution_fabric.queues.find((row:any)=>row.id==="fabric_cold_recovery").enabled=true;
+      value.execution_fabric.worker_pools.find((row:any)=>row.id==="fabric_cold_recovery_workers").enabled=true;
+    });
+    expect(()=>policy.normalizeAdmission({namespace:"fabric_cold_recovery",queue:"fabric_cold_recovery",taskType:"fabric.cold_canary",idempotencyKey:"ordinary-cold",payload:{},requiredCapabilities:[]})).toThrow(/signed offline recovery/);
+    expect(()=>policy.validateWorker({bootstrapId:"isolated",workerId:"isolated",hostId:"bigmac",queues:["fabric_cold_recovery","claude"],capabilities:["fabric.cold_canary"],maxConcurrency:1,metadata:{}})).toThrow();
+  });
+  it("loads the shipped policy and admits every enabled ordinary remote route", () => {
     const here = dirname(fileURLToPath(import.meta.url));
     const repository = resolve(here, "../../..");
     const policy = new PolicyManager(
@@ -82,6 +109,12 @@ describe("canonical policy", () => {
 
     for (const route of policy.effective().execution_fabric.task_routes) {
       if (!route.execution.remote_allowed) continue;
+      if(route.task_type==="fabric.cold_canary") {
+        expect(policy.effective().execution_fabric.queues.find((row)=>row.id===route.queue)?.enabled).toBe(false);
+        expect(policy.effective().execution_fabric.worker_pools.find((row)=>row.id==="fabric_cold_recovery_workers")?.enabled).toBe(false);
+        expect(()=>policy.normalizeAdmission({namespace:"fabric_cold_recovery",queue:route.queue,taskType:route.task_type,idempotencyKey:"ordinary-cold",payload:{},requiredCapabilities:[]})).toThrow(/signed offline/);
+        continue;
+      }
       const admitted = policy.normalizeAdmission({
         namespace: "test",
         queue: route.queue,

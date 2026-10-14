@@ -220,6 +220,14 @@ export function buildServer(
     requestTimeout: Math.max(35000, config.longPollMs + 5000),
   });
   const metrics = createMetrics(config.metricsPrefix);
+  server.addHook("preHandler",async(request,reply)=>{
+    if(!["POST","PUT","PATCH","DELETE"].includes(request.method) || !request.url.startsWith("/api/v1/")) return;
+    const state=await fabric.ledger.systemSnapshot(), phase=state.coldRecoveryPhase;
+    if(!phase || phase==="ACCEPTED") return;
+    const path=request.url.split("?",1)[0] ?? "";
+    const workerRoute=path==="/api/v1/workers/register" || /^\/api\/v1\/workers\/[^/]+\/heartbeat$/.test(path) || path==="/api/v1/assignments/claim" || /^\/api\/v1\/attempts\/[^/]+\/(complete|fail)$/.test(path);
+    if(phase!=="CANARY_ADMITTED" || !workerRoute) return reply.status(409).send({error:"cold_recovery_held"});
+  });
 
   server.addHook("onRequest", async (request) => {
     (request as typeof request & { startedAt?: bigint }).startedAt =

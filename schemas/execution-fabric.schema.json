@@ -408,6 +408,19 @@
               "payload",
               "allowed_effect_types"
             ],
+            "allOf": [{
+              "if": {"properties": {"task_type": {"const": "fabric.cold_canary"}}, "required": ["task_type"]},
+              "then": {"properties": {
+                "queue": {"const": "fabric_cold_recovery"},
+                "scheduling_class": {"const": "background"}, "mutation_class": {"const": "read_only"},
+                "approval_class": {"const": "policy_gated"}, "allowed_effect_types": {"const": []},
+                "execution": {"properties": {
+                  "remote_allowed": {"const": true}, "target": {"const": "domain_worker"},
+                  "required_capability": {"const": "fabric.cold_canary"}, "command_template": {"const": null},
+                  "domain_worker": {"const": "fabric_cold_canary_v1"}
+                }}
+              }}
+            }],
             "properties": {
               "task_type": {
                 "type": "string",
@@ -528,6 +541,13 @@
               "priority",
               "concurrency"
             ],
+            "allOf": [{
+              "if": {"properties": {"id": {"const": "fabric_cold_recovery"}}, "required": ["id"]},
+              "then": {"properties": {
+                "worker_pool": {"const": "fabric_cold_recovery_workers"}, "accepted_task_types": {"const": ["fabric.cold_canary"]},
+                "concurrency": {"properties": {"max_running": {"const": 1}, "max_queued": {"const": 1}}}
+              }}
+            }],
             "properties": {
               "id": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
               "enabled": {"type": "boolean"},
@@ -558,6 +578,14 @@
             "type": "object",
             "additionalProperties": false,
             "required": ["id", "enabled", "provider", "queues", "capabilities", "capacity", "lease", "retry"],
+            "allOf": [{
+              "if": {"properties": {"id": {"const": "fabric_cold_recovery_workers"}}, "required": ["id"]},
+              "then": {"properties": {
+                "provider": {"const": "local"}, "queues": {"const": ["fabric_cold_recovery"]}, "capabilities": {"const": ["fabric.cold_canary"]},
+                "capacity": {"properties": {"min_workers": {"const": 0}, "max_workers": {"const": 1}, "max_tasks_per_worker": {"const": 1}}},
+                "retry": {"properties": {"max_attempts": {"const": 1}, "backoff_seconds": {"const": 0}}}
+              }}
+            }],
             "properties": {
               "id": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
               "enabled": {"type": "boolean"},

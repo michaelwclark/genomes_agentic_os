@@ -3,7 +3,9 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 
-from genomes_agentic_os.report_registry import collect_reports, report_summary
+import pytest
+
+from genomes_agentic_os.report_registry import _is_report_candidate, collect_reports, report_summary
 
 
 NOW = datetime(2026, 7, 13, 6, 0, tzinfo=timezone.utc)
@@ -155,3 +157,39 @@ def test_report_summary_returns_sorted_cockpit_counts() -> None:
         "by_domain": {"los": 2, "watchers": 1},
         "by_project": {"django": 2, "slack": 1},
     }
+
+
+@pytest.mark.parametrize("ancestor", ["source", "sources", "src", "worktrees", "cache", "build", "dist"])
+def test_selected_root_under_pruned_ancestor_discovers_reports_without_writes(tmp_path: Path, ancestor: str) -> None:
+    # The selected root may also have a pruned name; only its descendants
+    # belong to the discovery/pruning boundary.
+    root = tmp_path / ancestor / "worktrees"
+    included = _write(root / "watchers/demo/reports/report.md", "# Actual report\n\nRecovery evidence is present.\n")
+    for name in ["source", "sources", "src", "worktrees", "cache", "build", "dist"]:
+        _write(root / f"watchers/demo/reports/{name}/fake-report.md", "# Must stay excluded\n")
+    foreign = _write(tmp_path / "outside/reports/foreign.md", "# Foreign report\n")
+    (root / "watchers/demo/reports/linked-file.md").symlink_to(foreign)
+    (root / "watchers/demo/reports/linked-directory").symlink_to(foreign.parent, target_is_directory=True)
+    files = [path for path in root.rglob("*") if path.is_file() and not path.is_symlink()] + [foreign]
+    before = {path: (path.read_bytes(), path.stat().st_mtime_ns, path.stat().st_mode) for path in files}
+
+    first = collect_reports(root, now=NOW, max_files=1)
+    assert [row["source"] for row in first] == [included.relative_to(root).as_posix()]
+    assert collect_reports(root, now=NOW, max_files=1) == first
+    assert collect_reports(root, now=NOW, max_files=0) == []
+    assert {path: (path.read_bytes(), path.stat().st_mtime_ns, path.stat().st_mode) for path in files} == before
+    assert (root / "watchers/demo/reports/linked-file.md").is_symlink()
+    assert (root / "watchers/demo/reports/linked-directory").is_symlink()
+
+
+def test_report_candidate_is_bounded_by_selected_root(tmp_path: Path) -> None:
+    root = tmp_path / "reports" / "selected-root"
+    actual = root / "watchers/demo/reports/summary.md"
+    descendant = root / "watchers/demo/src/report.md"
+    outside = tmp_path / "reports/foreign-report.md"
+    assert _is_report_candidate(actual, root) is True
+    assert _is_report_candidate(descendant, root) is False
+    assert _is_report_candidate(outside, root) is False
+    # A report-like ancestor outside the root must not classify an arbitrary
+    # file within the root as a report either.
+    assert _is_report_candidate(root / "watchers/demo/unrelated.md", root) is False

@@ -26,6 +26,7 @@ from ..execution_fabric_remote import (
     validate_task_route,
 )
 from ..cli_help import AosHelpFormatter, env_epilog
+from . import runtime_cold_recovery
 from ..runtime_health import (
     build_runtime_health,
     notify_runtime_health,
@@ -984,6 +985,7 @@ def register(subparsers) -> None:
         formatter_class=AosHelpFormatter,
     )
     runtime_subparsers = runtime_parser.add_subparsers(dest="runtime_command", required=True)
+    runtime_cold_recovery.register(runtime_subparsers)
     runtime_init_parser = runtime_subparsers.add_parser("init", help="Create runtime registries and log folders.")
     runtime_init_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
     runtime_init_parser.set_defaults(handler=handle_runtime_init)

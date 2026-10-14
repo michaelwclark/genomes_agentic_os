@@ -76,6 +76,7 @@ command document explains routing, inputs, safety gates, and output receipts.
 | [`os-run-build-runner.md`](os-run-build-runner.md) | Execute a resumable, board-backed build queue. |
 | [`os-run-log.md`](os-run-log.md) | Create or close a durable run log. |
 | [`os-run-queue.md`](os-run-queue.md) | Inspect and operate the file-backed run queue. |
+| [`os-runtime-cold-recovery.md`](os-runtime-cold-recovery.md) | Plan or perform one signed, externally fenced offline standalone recovery with held restored work. |
 | [`os-runtime-init.md`](os-runtime-init.md) | Initialize runtime registries and local state. |
 | [`os-self-improvement.md`](os-self-improvement.md) | Review evidence and propose governed OS improvements. |
 | [`os-status-report.md`](os-status-report.md) | Generate a receipt-backed recent-work status report. |

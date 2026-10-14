@@ -1,4 +1,6 @@
 import { readFileSync } from "node:fs";
+import type pg from "pg";
+import { PostgresReliabilityStore } from "../src/reliability.js";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -253,4 +255,52 @@ describe("independently runnable roles", () => {
       else process.env.FABRIC_TEST_REPAIR_ACTIONS = original;
     }
   });
+});
+
+describe("cold recovery reliability hold",()=>{
+  it("blocks alarm claim and operator replay before any write",async()=>{
+    const query=vi.fn(async(sql:string)=>({rows:sql.includes("SELECT cold_recovery_phase")?[{cold_recovery_phase:"CANARY_ADMITTED"}]:[],rowCount:0}));
+    const pool={query,connect:async()=>({query,release:()=>{}})} as unknown as pg.Pool;
+    const store=new PostgresReliabilityStore(pool,"bigmac");
+    await expect(store.claimAlarms("isolated",1,60)).rejects.toThrow(/cold recovery holds/);
+    await expect(store.replayEffect("effect","operator","replay")).rejects.toThrow(/cold recovery holds/);
+    await expect(store.deliverAlarm("alarm","consumer","claim",7,{})).rejects.toThrow(/cold recovery holds/);
+    await expect(store.acknowledgeFinding("finding","operator")).rejects.toThrow(/cold recovery holds/);
+    expect(query.mock.calls.filter(([sql])=>/^(INSERT|UPDATE|DELETE)/.test(sql))).toHaveLength(0);
+  });
+
+  // This pool is an explicit consumer-boundary seam. The real PostgreSQL
+  // fixture separately proves that these holds survive accepted recovery.
+  it.each(["replayEffect", "cancelTask", "requeueTask", "drainQueue"] as const)(
+    "accepted recovery cannot use a cached %s receipt to bypass an item hold", async (action) => {
+      const target = action === "drainQueue" ? "codex" : "9b4bf200-4ac8-4a64-9969-07812e617d81";
+      const query = vi.fn(async (sql: string, values?: unknown[]) => {
+        if (sql.includes("SELECT current_epoch")) return { rows: [{ current_epoch: "7", leader_host_id: "bigmac", leader_lease_expires_at: new Date(Date.now() + 60_000) }], rowCount: 1 };
+        if (sql.includes("SELECT cold_recovery_phase")) {
+          expect(sql).toBe("SELECT cold_recovery_phase FROM fabric_state WHERE singleton=true AND cold_recovery_phase IS NOT NULL AND cold_recovery_phase<>'ACCEPTED'");
+          return { rows: [], rowCount: 0 };
+        }
+        if (sql.includes("fabric_cold_") && sql.includes("SELECT 1")) {
+          expect(values).toEqual([target]);
+          return { rows: [{ held: 1 }], rowCount: 1 };
+        }
+        if (sql.includes("fabric_operator_receipts")) return { rows: [{ status: "succeeded", idempotency_key: "old-success" }], rowCount: 1 };
+        return { rows: [], rowCount: 0 };
+      });
+      const release = vi.fn(), pool = { connect: async () => ({ query, release }) } as unknown as pg.Pool;
+      const store = new PostgresReliabilityStore(pool, "bigmac");
+      await expect(store[action](target, "named-operator", "old-success")).rejects.toThrow(action==="drainQueue"
+        ? "queue drain would mutate cold quarantine history" : "cold recovery holds restored delivery reconciliation");
+      const holdQuery=action==="drainQueue"
+        ? "SELECT 1 FROM fabric_tasks t JOIN fabric_cold_task_quarantine q ON q.task_id=t.id WHERE t.queue_name=$1 LIMIT 1"
+        : action==="replayEffect" ? "SELECT 1 FROM fabric_cold_effect_quarantine WHERE effect_id=$1"
+        : "SELECT 1 FROM fabric_cold_task_quarantine WHERE task_id=$1";
+      expect(query).toHaveBeenCalledWith(holdQuery,[target]);
+      expect(query.mock.calls.some(([sql]) => sql.includes("fabric_operator_receipts"))).toBe(false);
+      expect(query.mock.calls.filter(([sql]) => /^\s*(INSERT|UPDATE|DELETE)/.test(sql))).toHaveLength(0);
+      expect(query.mock.calls.map(([sql]) => sql)).toContain("ROLLBACK");
+      expect(query.mock.calls.map(([sql]) => sql)).not.toContain("COMMIT");
+      expect(release).toHaveBeenCalledOnce();
+    },
+  );
 });

@@ -53,11 +53,14 @@ export class LeaderResolver {
           `witness returned HTTP ${response.status}`,
         );
       }
-      const status = statusSchema.parse(await response.json());
-      const proof = verifyLeadershipToken(
-        status.leadershipToken,
-        this.config.witnessPublicKey,
-      );
+      let status: z.infer<typeof statusSchema>;
+      let proof: ReturnType<typeof verifyLeadershipToken>;
+      try {
+        status = statusSchema.parse(await response.json());
+        proof = verifyLeadershipToken(status.leadershipToken, this.config.witnessPublicKey);
+      } catch {
+        throw new LeadershipFencedError("witness returned an invalid authority response");
+      }
       if (
         status.clusterId !== this.config.clusterId ||
         proof.cluster !== this.config.clusterId ||
@@ -83,6 +86,11 @@ export class LeaderResolver {
       };
       return this.cached;
     } catch (error) {
+      if (error instanceof LeadershipFencedError || error instanceof z.ZodError) {
+        // A contradictory/signed-invalid authority response revokes the cache.
+        this.cached = undefined;
+        throw error;
+      }
       if (
         this.cached &&
         new Date(this.cached.expiresAt).getTime() > this.now().getTime()

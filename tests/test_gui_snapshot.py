@@ -378,7 +378,11 @@ def test_command_center_snapshot_exposes_named_queue_and_worker_health(tmp_path:
         "los_environment",
         "los_fullsail",
         "non_llm",
+        "fabric_cold_recovery",
     }
+    cold_queue = next(queue for queue in snapshot["runtime"]["queues"] if queue["queue_name"] == "fabric_cold_recovery")
+    assert cold_queue["enabled"] is False
+    assert cold_queue["total"] == 0
     assert snapshot["runtime"]["task_count"] == 1
     assert snapshot["runtime"]["tasks"][0]["id"] == "gui-codex"
     assert snapshot["runtime"]["tasks"][0]["queue_name"] == "codex"
