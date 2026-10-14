@@ -9,6 +9,33 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-10-14
+
+### Added
+
+- Add an off-box host sentinel for reboot and unreachable-host alerts, with
+  registered run evidence (#279).
+
+### Fixed
+
+- Bind validation and review evidence to the current source and policy, preserve
+  native monitor ownership, and run configured Python checks with the qualified
+  locked toolchain (#311; AGE-262).
+- Use tracker content to determine Auto-Dev readiness (#268).
+- Keep schedule dry-runs non-mutating, honor bounded execution timeouts, and
+  separate schedule readback credentials (#280).
+- Preserve worker sessions across fallback and retry fenced terminal delivery
+  and transient leadership renewal failures (#280).
+- Restart the primary Execution Fabric after reboot and allow backup recovery
+  (#281).
+- Repair LOS security task routes (#285), enforce private repository boundaries
+  (#283), and close sibling test-path boundary collisions (#276; AGE-216).
+- Replace unavailable MinIO dependency images in CI (#282).
+
+### Dependencies
+
+- Update `@vitejs/plugin-react` to 6.1.1 (#272).
+
 ## [0.10.1] - 2026-08-28
 
 ### Fixed
