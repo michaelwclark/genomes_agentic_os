@@ -9662,23 +9662,35 @@ def _normalize_exact_catalog_alias_github_identity(
     ):
         raise DevelopmentDeliveryError("release propagation refresh selected catalog alias authority is inconsistent")
 
-    registrations = [
-        row for row in worktree_entries_for_project(project_root(
-            str(task.get("os_root") or ""), str(task.get("domain") or ""), str(task.get("project") or ""),
-        ))
-        if row.get("id") == worktree.get("name") or row.get("path") == worktree.get("path")
-    ]
+    project_path = project_root(
+        str(task.get("os_root") or ""), str(task.get("domain") or ""), str(task.get("project") or ""),
+    )
+    registrations: list[tuple[str, dict[str, Any]]] = []
+    for registry_path in (project_path / "config/worktrees.yml", project_path / "worktrees/index.yml"):
+        payload = _read_mapping(registry_path) if registry_path.is_file() else {}
+        raw = payload.get("worktrees")
+        rows = (
+            raw.get("registered") or raw.get("worktrees") or []
+            if isinstance(raw, Mapping) else raw or payload.get("registered") or []
+        )
+        if not isinstance(rows, list):
+            raise DevelopmentDeliveryError("release propagation refresh catalog alias worktree registry is malformed")
+        for row in rows:
+            if not isinstance(row, Mapping):
+                raise DevelopmentDeliveryError("release propagation refresh catalog alias worktree registry is malformed")
+            if row.get("id") == worktree.get("name") or row.get("path") == worktree.get("path"):
+                if "_source" in row:
+                    raise DevelopmentDeliveryError("release propagation refresh catalog alias registry source metadata is untrusted")
+                registrations.append((str(registry_path), dict(row)))
     # Registration is projected to both config and index files. Equal copies
     # agree; conflicting copies or duplicate entries within one source do not.
     registered = {
-        _json_sha256({key: value for key, value in row.items() if key != "_source"}):
-        {key: value for key, value in row.items() if key != "_source"}
-        for row in registrations
+        _json_sha256(row): row for _, row in registrations
     }
     entry = next(iter(registered.values()), {})
     if not (
         len(registered) == 1
-        and len({row["_source"] for row in registrations}) == len(registrations)
+        and len({source for source, _ in registrations}) == len(registrations)
         and entry.get("status") == "active" and entry.get("id") == worktree.get("name")
         and entry.get("path") == worktree.get("path") and entry.get("branch") == branch
     ):

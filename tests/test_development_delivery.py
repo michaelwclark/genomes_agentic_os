@@ -7229,6 +7229,31 @@ def test_release_propagation_catalog_alias_refresh_is_append_only(
     registry_path.write_bytes(registry_bytes)
     registry_projection.write_bytes(projection_bytes)
 
+    # Persisted metadata cannot impersonate another actual registry file.
+    for entries in (
+        [{**entry, "_source": "copied-a"}, {**entry, "_source": "copied-b"}],
+        [{**entry, "_source": str(registry_projection)}, {**entry, "_source": str(registry_path)}],
+    ):
+        registry_projection.write_text(yaml.safe_dump({**registry, "worktrees": entries}), encoding="utf-8")
+        with pytest.raises(DevelopmentDeliveryError, match="source metadata is untrusted"):
+            delivery._normalize_exact_catalog_alias_github_identity(previous, current, task.read())
+    for payload in ({"worktrees": "malformed"}, {"worktrees": [None]}):
+        registry_projection.write_text(yaml.safe_dump(payload), encoding="utf-8")
+        with pytest.raises(DevelopmentDeliveryError, match="registry is malformed"):
+            delivery._normalize_exact_catalog_alias_github_identity(previous, current, task.read())
+    for payload in (
+        {"worktrees": {"registered": [entry]}}, {"worktrees": {"worktrees": [entry]}},
+        {"registered": [entry]}, {"worktrees": []}, {"worktrees": {}},
+        {"worktrees": [{**entry, "id": "unrelated", "path": "/tmp/unrelated"}]},
+    ):
+        registry_projection.write_text(yaml.safe_dump(payload), encoding="utf-8")
+        normalized, _ = delivery._normalize_exact_catalog_alias_github_identity(previous, current, task.read())
+        assert normalized["pull_request"] == "business_app#55"
+    registry_projection.unlink()
+    normalized, _ = delivery._normalize_exact_catalog_alias_github_identity(previous, current, task.read())
+    assert normalized["pull_request"] == "business_app#55"
+    registry_projection.write_bytes(projection_bytes)
+
     # Reject changed or ambiguous catalog selection even with a fresh hash of
     # the mutated current profile; an operator hash alone is never sufficient.
     profile_changes = [

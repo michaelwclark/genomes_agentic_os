@@ -2153,8 +2153,9 @@ Changed or ambiguous selection, noncanonical origins, a dirty or stale checkout,
 different PR/base/source, closed or draft PR, and missing supersession all fail
 before mutation. Active project registration must match the captured checkout
 name, path and branch; equal registry projections agree, but conflicting copies
-or duplicate entries within one registry source reject the refresh. The historical
-catalog hash was not recorded: this is explicitly
+or duplicate entries within one registry source reject the refresh. Each
+registry source comes from its actual file; persisted `_source` metadata is
+rejected. The historical catalog hash was not recorded: this is explicitly
 current catalog authority fenced by immutable task and predecessor identity.
 Only the comparison copy is qualified. The successor records normalization
 provenance and the original wrapper/evidence hashes; original files stay intact.
