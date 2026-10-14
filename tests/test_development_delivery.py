@@ -6828,6 +6828,216 @@ def test_release_propagation_derives_only_blank_canonical_github_source_branch(
         assert old_wrapper.read_bytes() == old_wrapper_bytes
         assert hashlib.sha256(old_wrapper.read_bytes()).hexdigest() == old_wrapper_hash
 
+@pytest.mark.parametrize(
+    "case",
+    [
+        "same_pr",
+        "prior_http",
+        "prior_other_host",
+        "prior_other_owner",
+        "prior_other_repository",
+        "prior_other_pr",
+        "prior_query",
+        "prior_fragment",
+        "prior_trailing_slash",
+        "prior_port",
+        "prior_userinfo",
+        "prior_encoded_path",
+        "prior_zero_pr",
+        "prior_non_numeric_pr",
+        "prior_missing_provider",
+        "prior_repository_mismatch",
+        "prior_base_mismatch",
+        "prior_source_branch_mismatch",
+        "prior_missing_source_branch",
+        "prior_invalid_head",
+        "new_url_identifier",
+        "new_other_pr",
+        "new_missing_provider",
+        "new_source_branch_mismatch",
+        "new_invalid_head",
+        "new_same_head",
+        "new_readback_unverified",
+        "new_missing_observation",
+        "new_observation_missing_pr",
+        "new_observation_other_pr",
+        "new_observation_wrong_head",
+        "new_missing_supersession",
+        "new_wrong_superseded_head",
+        "new_missing_supersession_reason",
+    ],
+)
+def test_release_propagation_refreshes_only_selected_prior_github_url(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str
+) -> None:
+    """Exercise actual initial acceptance and append-only native refresh."""
+
+    repo, old_head = _repository(tmp_path)
+    _git("commit", "--allow-empty", "-m", "fix: verified same PR successor", cwd=repo)
+    new_head = _git("rev-parse", "HEAD", cwd=repo)
+    root = tmp_path / "os"
+    repository = "git:github.com/acme/app"
+    source_branch = "feature/cc-55"
+    qualified_pr = "github:acme/app#55"
+    pr_url = "https://github.com/acme/app/pull/55"
+    _project(root, repo, repository_id=repository)
+    monkeypatch.setattr(
+        delivery,
+        "create_isolated_worktree",
+        lambda **kwargs: {
+            "name": "cc-55",
+            "path": "/tmp/cc-55",
+            "branch": source_branch,
+            "base_sha": old_head,
+        },
+    )
+    run = delivery.start_development_run(
+        root, "acme", "app", ["CC-55"],
+        run_id="release-propagation-pr-url", auto_dev_mode="everything", apply=True,
+    )
+    task = TaskState(Path(run["tasks"][0]["state_ref"]))
+    _advance_auto_dev_task_to_ready(
+        task, subject_revision=old_head, pull_request=qualified_pr,
+    )
+    for stage_name in ("groom", "detective", "create_artifacts", "document"):
+        _record_standalone_stage(task, stage_name)
+    task_value = task.read()
+    task_value["state"] = "local_validation"
+    task.path.write_text(json.dumps(task_value), encoding="utf-8")
+    work_item = Path(task_value["work_item"])
+    previous: dict[str, object] = {
+        "repository": repository, "base_branch": "main", "provider": "github",
+        "source_branch": source_branch, "source_head_sha": old_head,
+        "pull_request": pr_url,
+    }
+    current: dict[str, object] = {
+        **previous, "source_head_sha": new_head, "pull_request": qualified_pr,
+        "pull_request_url": pr_url, "readback_verified": True,
+        "provider_observed": {"head_sha": new_head, "pull_request": qualified_pr},
+        "supersession": {
+            "supersedes_source_head_sha": old_head,
+            "reason": "A verified successor was normally pushed to the same PR.",
+        },
+    }
+    previous.update({
+        "prior_http": {"pull_request": pr_url.replace("https:", "http:")},
+        "prior_other_host": {"pull_request": pr_url.replace("github.com", "git.example")},
+        "prior_other_owner": {"pull_request": pr_url.replace("/acme/", "/other/")},
+        "prior_other_repository": {"pull_request": pr_url.replace("/app/", "/other/")},
+        "prior_other_pr": {"pull_request": pr_url.replace("/55", "/56")},
+        "prior_query": {"pull_request": pr_url + "?head=verified"},
+        "prior_fragment": {"pull_request": pr_url + "#55"},
+        "prior_trailing_slash": {"pull_request": pr_url + "/"},
+        "prior_port": {"pull_request": pr_url.replace("github.com", "github.com:443")},
+        "prior_userinfo": {"pull_request": pr_url.replace("github.com", "acme@github.com")},
+        "prior_encoded_path": {"pull_request": pr_url.replace("/app/", "/%61pp/")},
+        "prior_zero_pr": {"pull_request": pr_url.replace("/55", "/0")},
+        "prior_non_numeric_pr": {"pull_request": pr_url.replace("/55", "/current")},
+        "prior_missing_provider": {"provider": None},
+        "prior_repository_mismatch": {"repository": "git:github.com/acme/other"},
+        "prior_base_mismatch": {"base_branch": "release"},
+        "prior_source_branch_mismatch": {"source_branch": "feature/other"},
+        "prior_missing_source_branch": {"source_branch": None},
+        "prior_invalid_head": {"source_head_sha": "g" * 40},
+    }.get(case, {}))
+    current.update({
+        "new_url_identifier": {"pull_request": pr_url},
+        "new_other_pr": {"pull_request": "github:acme/app#56"},
+        "new_missing_provider": {"provider": None},
+        "new_source_branch_mismatch": {"source_branch": "feature/other"},
+        "new_invalid_head": {"source_head_sha": "g" * 40},
+        "new_same_head": {
+            "source_head_sha": old_head,
+            "provider_observed": {"head_sha": old_head, "pull_request": qualified_pr},
+        },
+        "new_readback_unverified": {"readback_verified": False},
+        "new_missing_observation": {"provider_observed": None},
+        "new_observation_missing_pr": {"provider_observed": {"head_sha": new_head}},
+        "new_observation_other_pr": {
+            "provider_observed": {"head_sha": new_head, "pull_request": "github:acme/app#56"},
+        },
+        "new_observation_wrong_head": {
+            "provider_observed": {"head_sha": old_head, "pull_request": qualified_pr},
+        },
+        "new_missing_supersession": {"supersession": None},
+        "new_wrong_superseded_head": {
+            "supersession": {"supersedes_source_head_sha": new_head, "reason": "Wrong prior head"},
+        },
+        "new_missing_supersession_reason": {
+            "supersession": {"supersedes_source_head_sha": old_head},
+        },
+    }.get(case, {}))
+
+    def receipt(name: str, evidence: dict[str, object]) -> Path:
+        path = work_item / "artifacts" / "auto-dev-pr-create" / f"url-{name}.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({
+            "schema": "development-stage-evidence/v1", "state": "release_propagation",
+            "status": "completed", "summary": "Provider-read PR family identity",
+            "verified_at": "2026-08-12T08:00:00Z", "evidence": evidence,
+        }), encoding="utf-8")
+        return path
+
+    old_receipt = receipt("old", previous)
+    original = run_development_stage(
+        task.path, stage="release_propagation",
+        receipts={"release_propagation": str(old_receipt)},
+        idempotency_prefix="cc-55:pr-create:old",
+    )
+    assert original["stage"] == "release_propagation"
+    prior_snapshot = work_item / original["receipt"]
+    assert json.loads(prior_snapshot.read_bytes()) == json.loads(old_receipt.read_bytes())
+    prior_snapshot_bytes = prior_snapshot.read_bytes()
+    old_wrapper = Path(task.read()["stage_receipts"]["release_propagation"]["ref"])
+    old_bytes, wrapper_bytes = old_receipt.read_bytes(), old_wrapper.read_bytes()
+    prior_binding = dict(task.read()["stage_receipts"]["release_propagation"])
+    successor = receipt("new", current)
+    task_bytes, ledger_bytes = task.path.read_bytes(), task.ledger.read_bytes()
+    autodev_path = Path(task.read()["autodev_path"])
+    autodev_bytes = autodev_path.read_bytes()
+    if case == "same_pr":
+        output = run_development_stage(
+            task.path, stage="release_propagation",
+            receipts={"release_propagation": str(successor)},
+            idempotency_prefix="cc-55:pr-create:new",
+        )
+        assert output["supersedes"]["source_head_sha"] == old_head
+        assert output["supersedes"]["wrapper_ref"] == str(old_wrapper)
+        assert output["supersedes"]["wrapper_sha256"] == hashlib.sha256(wrapper_bytes).hexdigest()
+        assert output["supersedes"]["evidence_sha256"] == original["evidence_sha256"]
+        assert output["supersedes"]["legacy_identity_normalization"] == {
+            "identity_shape": "canonical_github_pull_request_url", "field": "pull_request",
+            "source": "prior_evidence.evidence.pull_request", "from": pr_url,
+            "value": qualified_pr, "verified_by": "provider_observed.pull_request",
+        }
+        new_wrapper = Path(task.read()["stage_receipts"]["release_propagation"]["ref"])
+        assert new_wrapper != old_wrapper
+        assert json.loads(new_wrapper.read_bytes()) == output
+        assert json.loads(successor.read_bytes())["evidence"]["pull_request"] == qualified_pr
+        assert json.loads(successor.read_bytes())["evidence"]["pull_request_url"] == pr_url
+        assert run_development_stage(
+            task.path, stage="release_propagation",
+            receipts={"release_propagation": str(successor)},
+            idempotency_prefix="cc-55:pr-create:new",
+        ) == output
+    else:
+        with pytest.raises(DevelopmentDeliveryError, match="release propagation refresh"):
+            run_development_stage(
+                task.path, stage="release_propagation",
+                receipts={"release_propagation": str(successor)},
+                idempotency_prefix="cc-55:pr-create:new",
+            )
+        assert task.path.read_bytes() == task_bytes
+        assert task.ledger.read_bytes() == ledger_bytes
+        assert autodev_path.read_bytes() == autodev_bytes
+        assert task.read()["stage_receipts"]["release_propagation"] == prior_binding
+        assert not (old_wrapper.parent / "release-propagation").exists()
+    assert old_receipt.read_bytes() == old_bytes
+    assert prior_snapshot.read_bytes() == prior_snapshot_bytes
+    assert old_wrapper.read_bytes() == wrapper_bytes
+    assert hashlib.sha256(old_wrapper.read_bytes()).hexdigest() == prior_binding["sha256"]
+
+
 def test_release_propagation_normalizes_exact_legacy_family_identity(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

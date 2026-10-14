@@ -10654,6 +10654,54 @@ def run_development_stage(
                         raise DevelopmentDeliveryError(
                             "release propagation refresh requires provider-read new head and explicit prior-head supersession"
                         )
+                    # The original PR Create adapter also accepted a canonical
+                    # GitHub URL in this field.  Qualify only a prior URL whose
+                    # complete identity matches the registered task and the
+                    # provider-read qualified successor.  Do not accept URLs
+                    # as successor identifiers or rewrite the prior evidence.
+                    legacy_url_identity_normalization: dict[str, Any] | None = None
+                    legacy_url = re.fullmatch(
+                        r"https://github\.com/"
+                        r"([A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?)/"
+                        r"([A-Za-z0-9_.-]{1,100})/pull/([1-9][0-9]*)",
+                        legacy_pull_request,
+                    )
+                    if legacy_url is not None:
+                        qualified_prior_pr = (
+                            f"github:{legacy_url[1]}/{legacy_url[2]}#{legacy_url[3]}"
+                        )
+                        if (
+                            expected_repository.startswith("git:github.com/")
+                            and expected_provider == "github"
+                            and "--" not in legacy_url[1]
+                            and legacy_url[2] not in {".", ".."}
+                            and qualified_prior_pr
+                            == pull_request_prefix + legacy_url[3]
+                            and str(previous_details.get("repository") or "").strip()
+                            == refreshed_identity["repository"] == expected_repository
+                            and str(previous_details.get("base_branch") or "").strip()
+                            == refreshed_identity["base_branch"] == expected_base_branch
+                            and str(previous_details.get("provider") or "").strip()
+                            == refreshed_identity["provider"] == "github"
+                            and str(previous_details.get("source_branch") or "").strip()
+                            == refreshed_identity["source_branch"] == expected_source_branch
+                            and expected_base_branch
+                            and expected_source_branch
+                            and refreshed_identity["pull_request"] == qualified_prior_pr
+                            and provider_observed.get("pull_request") == qualified_prior_pr
+                        ):
+                            previous_details = {
+                                **previous_details,
+                                "pull_request": qualified_prior_pr,
+                            }
+                            legacy_url_identity_normalization = {
+                                "identity_shape": "canonical_github_pull_request_url",
+                                "field": "pull_request",
+                                "source": "prior_evidence.evidence.pull_request",
+                                "from": legacy_pull_request,
+                                "value": qualified_prior_pr,
+                                "verified_by": "provider_observed.pull_request",
+                            }
                     # The same immediate legacy receipt shape can omit its
                     # source branch.  Derive that one comparison field only
                     # after the selected task, the legacy record, and the
@@ -10823,6 +10871,10 @@ def run_development_stage(
                     if legacy_family_identity_normalization is not None:
                         payload["supersedes"]["legacy_identity_normalization"] = (
                             legacy_family_identity_normalization
+                        )
+                    elif legacy_url_identity_normalization is not None:
+                        payload["supersedes"]["legacy_identity_normalization"] = (
+                            legacy_url_identity_normalization
                         )
                     elif legacy_source_branch_derived:
                         if legacy_canonical_github_identity:
