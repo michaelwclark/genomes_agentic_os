@@ -9737,6 +9737,68 @@ def _normalize_exact_catalog_alias_github_identity(
     return normalized, provenance
 
 
+def _assert_exact_catalog_alias_review_receipt(
+    path: Path,
+    *,
+    evidence: Mapping[str, Any],
+    task: Mapping[str, Any],
+    policy_fingerprint: str,
+) -> dict[str, Any]:
+    """Join an immutable canonical review to a proven selected catalog identity.
+
+    The generic review assertion stays strict. Only this readiness comparison
+    projects the original subject into the task's selected namespace; it never
+    creates, edits, or relabels a canonical review receipt.
+    """
+
+    raw = path.read_bytes()
+    digest = hashlib.sha256(raw).hexdigest()
+    if evidence.get("canonical_review_receipt_sha256") != digest:
+        raise DevelopmentDeliveryError("catalog alias review immutable receipt digest does not match")
+    review = assert_exact_head_review_receipt(
+        path, head_sha=str(evidence.get("subject_revision") or ""),
+        policy_fingerprint=policy_fingerprint,
+    )
+    subject = review["subject"]
+    slug = evidence.get("github_repository")
+    if not (
+        subject.get("repository") == slug
+        and subject.get("base_branch") == evidence.get("base_branch")
+        and subject.get("base_sha") == evidence.get("base_sha")
+        and subject.get("head_sha") == evidence.get("source_head_sha")
+        and subject.get("purpose") == "review_self"
+        and evidence.get("canonical_review_key") == review["key"]
+        and evidence.get("canonical_subject") == subject
+        and evidence.get("readback_verified") is True
+    ):
+        raise DevelopmentDeliveryError("catalog alias review canonical subject does not match readiness authority")
+    # These are comparison identities, not substituted review subjects. The
+    # existing proof validates the numeric PR, both origins, frozen selection,
+    # actual registries, exact provider base/head and clean registered checkout.
+    canonical_identity = {
+        "repository": evidence.get("repository"), "github_repository": slug,
+        "provider": "github", "pull_request": subject["pull_request"],
+        "base_branch": subject["base_branch"], "base_sha": subject["base_sha"],
+        "source_branch": evidence.get("source_branch"),
+        "source_head_sha": subject["head_sha"],
+    }
+    _, provenance = _normalize_exact_catalog_alias_github_identity(
+        canonical_identity, evidence, task,
+    )
+    if provenance is None:
+        raise DevelopmentDeliveryError("catalog alias review requires an exact selected GitHub catalog identity")
+    if path.read_bytes() != raw:
+        raise DevelopmentDeliveryError("catalog alias review immutable receipt changed during validation")
+    return {
+        **provenance, "source": "canonical_review.subject",
+        "canonical_review_key": review["key"], "canonical_review_receipt_sha256": digest,
+        "canonical_subject": dict(subject),
+        "selected_identity": {
+            "repository": evidence["repository"], "pull_request": evidence["pull_request"],
+        },
+    }
+
+
 def frozen_selected_task_profile(task: Mapping[str, Any]) -> Mapping[str, Any]:
     """Read the integrity-checked selected repository policy pinned to this task."""
 
@@ -10279,13 +10341,21 @@ def run_development_stage(
                         raise DevelopmentDeliveryError(
                             "ready_for_merge review_policy_fingerprint must be a lowercase SHA-256"
                         )
-                    assert_exact_head_review_receipt(
-                        coordination_path,
-                        head_sha=str(evidence["subject_revision"]),
-                        repository=ready_authority.get("repository"),
-                        pull_request=ready_authority.get("pull_request"),
-                        policy_fingerprint=review_policy_fingerprint or None,
-                    )
+                    if evidence.get("repository_alias_authority") is not None:
+                        provenance = _assert_exact_catalog_alias_review_receipt(
+                            coordination_path, evidence=evidence, task=task_value,
+                            policy_fingerprint=review_policy_fingerprint,
+                        )
+                        evidence = {**evidence, "review_identity_normalization": provenance}
+                        payload = {**payload, "evidence": evidence}
+                    else:
+                        assert_exact_head_review_receipt(
+                            coordination_path,
+                            head_sha=str(evidence["subject_revision"]),
+                            repository=ready_authority.get("repository"),
+                            pull_request=ready_authority.get("pull_request"),
+                            policy_fingerprint=review_policy_fingerprint or None,
+                        )
                 except ReviewCoordinationError as exc:
                     raise DevelopmentDeliveryError(str(exc)) from exc
             pending_supersession = pending_subject_supersession(state.read())

@@ -2162,6 +2162,29 @@ provenance and the original wrapper/evidence hashes; original files stay intact.
 Exact replay remains idempotent. This path neither changes review policy nor
 declares merge, release, installation, or deployment readiness.
 
+The ordinary `develop stage --stage review` writer also accepts an immutable
+provider-canonical review for a selected catalog alias when preflighting from
+`local_validation` to `ready_for_merge`.
+This separate comparison requires the same exact `repository_alias_authority`
+and full `provider_observed` fields above, with the reviewed head equal to the
+clean registered checkout. It additionally requires
+`canonical_review_receipt_sha256` (raw receipt bytes), `canonical_review_key`,
+`canonical_subject` (the original complete subject), and
+`review_policy_fingerprint`, alongside the existing
+`review_coordination_receipt`. The canonical subject must name the exact GitHub
+repository and `github:owner/repository#number`, captured base branch/SHA,
+reviewed head, selected review policy and `review_self` purpose. Missing proof
+does not fall back to an alias guess.
+
+The original canonical assertion still requires a clean terminal review under
+its existing semantics, including a genuine clean `operator_resolution`.
+Findings and unavailable review remain ineligible. Only the new typed readiness
+snapshot gains `review_identity_normalization` with both identities, the original
+subject/key/raw digest, and catalog/origin/registration provenance. The canonical
+review file, its stable key, and earlier delivery receipts remain unchanged.
+This joins the same PR at the same head; it does not authorize a sibling PR,
+change review outcomes or policy, or replace Finalize and Merge gates.
+
 Adopt one exact active packet created before `autodev.json` existed:
 
 ```bash
