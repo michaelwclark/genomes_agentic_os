@@ -209,3 +209,9 @@ Registry-confirmed active Composio routes: `notion`, `agent_mail`, `confluence`,
 | Capability | Needed For | Status |
 | --- | --- | --- |
 | `agentic-os doc-config` CLI route | Planned document-routing CLI flow before broad Notion/filesystem writes. | Registry/docs mention it, but the installed CLI currently rejects `doc-config`; use `doc-config-router` and `shared_factory/00-control-plane/doc-config.yml` meanwhile. |
+
+## Atlas user work registry
+
+`harness/bin/agentic-os-atlas-registry` preserves explicitly requested task definitions, exact prompt/history snapshots, and observed schedules. `channels --limit 100` derives a read-only identity/metadata inventory from those same records. `validate-components` checks pinned local source bytes without running components. These commands do not schedule or execute tasks.
+
+The default record home is `artifacts/atlas-work-registry`; the optional user-owned `harness/config/atlas-work-registry.json` can select a canonical project artifact home. The [source contract](../docs/46-atlas-work-registry.md) describes intake, privacy, incomplete historical coverage, and recovery. Existing cloud or runtime schedules retain execution authority.
