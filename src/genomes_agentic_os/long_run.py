@@ -533,9 +533,45 @@ def _progress_from_file(path: str | None) -> dict[str, Any]:
     return {key: loaded[key] for key in allowed if key in loaded}
 
 
+def _wait_for_monitor_registration(run_dir: Path, command: dict[str, Any]) -> None:
+    """Wait for this actual child PID in both parent-published records; never adopt."""
+    deadline = time.monotonic() + 5
+    while True:
+        state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
+        owner = state.get("monitor_pid")
+        if owner is None and state.get("status") == "queued":
+            pass  # start_run may still be between Popen and PID/registry publication.
+        elif type(owner) is not int or owner != os.getpid():
+            raise LongRunError("native monitor is not the parent-registered run owner")
+        else:
+            rows = [row for row in read_registry(command["root"])["runs"]
+                    if row.get("id") == command["id"]
+                    and row.get("run_dir") == str(run_dir.resolve())]
+            if len(rows) == 1 and type(rows[0].get("monitor_pid")) is int and rows[0]["monitor_pid"] == owner:
+                return
+        if time.monotonic() >= deadline:
+            raise LongRunError("native monitor parent PID/registry registration is incomplete")
+        time.sleep(.01)
+
+
+def _assert_terminal_owner(state: dict[str, Any], *, status: str, reason: str) -> None:
+    owner = state.get("monitor_pid")
+    if type(owner) is int and owner == os.getpid():
+        return
+    # Only the explicit recovery API may terminate a genuinely orphaned legacy
+    # record. Missing/old PID metadata never grants execution or passed authority.
+    if (status == "stale" and reason == "orphan-recovery"
+            and not _process_alive(owner) and not _process_alive(state.get("pid"))):
+        return
+    raise LongRunError("terminal publisher is not the admitted native monitor owner")
+
+
 def monitor_run(run_dir_value: str | Path) -> int:
     run_dir = Path(run_dir_value).expanduser()
     command = json.loads((run_dir / "command.json").read_text(encoding="utf-8"))
+    # Before signal handlers, state/registry changes or preflight writes. An
+    # unadmitted duplicate reports only its own CLI error, never owner evidence.
+    _wait_for_monitor_registration(run_dir, command)
     root = Path(command["root"])
     budgets = command["budgets"]
     interrupted: list[int] = []
@@ -801,6 +837,7 @@ def _terminal(
 ) -> int:
     finished = utc_now()
     prior_state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
+    _assert_terminal_owner(prior_state, status=status, reason=reason)
     progress_fields = (
         "phase",
         "items_completed",

@@ -220,7 +220,15 @@ releases after failed acquisition, including another live
 monitor with the same run ID. Normal release requires this lock instance's
 successfully acquired file identity and actual owning PID. Existing standalone
 helpers continue to acquire/release their own instance; orphan recovery remains
-explicit in acquisition and release is not a force-unlock operation. The isolated
+explicit in acquisition and release is not a force-unlock operation.
+The native monitor waits for its actual parent-published PID in both state and registry
+before changing records or signal handlers. A duplicate on the same run
+directory exits with its own CLI error and preserves the live owner's state,
+registry, preflight and terminal evidence. Terminal publication requires the
+admitted actual monitor PID. Missing, empty or dead legacy PID metadata cannot
+be adopted into execution; only explicit orphan recovery can publish `stale`
+after verifying both monitor and worker are dead. Normal separately admitted
+run IDs still record their own lock-conflict errors. The isolated
 stdlib helper checks actual lock ownership and executes with exact package
 file and qualified base-interpreter checksums before and after; request hashes
 cannot substitute its execution. A Playwright run additionally declares
