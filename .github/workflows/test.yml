@@ -169,7 +169,13 @@ jobs:
           FABRIC_TEST_ARTIFACT_SECRET_KEY: fabricminiosecret
         run: npm run test:integration
 
+  minio-source-images:
+    uses: ./.github/workflows/minio-source-images.yml
+    permissions:
+      contents: read
+
   deployment-contracts:
+    needs: minio-source-images
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:

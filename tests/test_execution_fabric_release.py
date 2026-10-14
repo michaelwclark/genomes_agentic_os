@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from importlib import resources
+from hashlib import sha256
 import json
 from pathlib import Path
 import runpy
@@ -33,10 +34,33 @@ def _image_arguments(digest: str) -> list[str]:
         "--valkey-image",
         f"docker.io/valkey/valkey@sha256:{digest}",
         "--minio-image",
-        f"docker.io/minio/minio@sha256:{digest}",
+        f"ghcr.io/michaelwclark/genomes-agentic-os-execution-fabric-minio@sha256:{digest}",
         "--minio-client-image",
-        f"docker.io/minio/mc@sha256:{digest}",
+        f"ghcr.io/michaelwclark/genomes-agentic-os-execution-fabric-minio-client@sha256:{digest}",
     ]
+
+
+def _minio_publication_fixture(path: Path, digest: str) -> Path:
+    """Model a closed CI producer receipt for consumer boundary unit tests."""
+    lock_path = ROOT / "deploy/execution-fabric/minio/upstream-lock.json"
+    lock = json.loads(lock_path.read_text())
+    lock_hash = sha256(lock_path.read_bytes()).hexdigest()
+    images = {name: json.loads(IMAGE_SOURCES.read_text())["images"][name]["repository"] + "@sha256:" + digest for name in ["minio", "minio_client"]}
+    files = {f"bin/{arch}/{role}" + {"binary": "", "sha256sum": ".sha256sum", "minisig": ".minisig"}[kind]: item["sha256"] for role, payload in lock["payloads"].items() for arch, downloads in payload["platforms"].items() for kind, item in downloads.items()}
+    files.update({"contracts/" + name: item["sha256"] for name, item in lock["sources"].items()})
+    files.update({"Dockerfile": sha256((ROOT / "deploy/execution-fabric/minio/Dockerfile").read_bytes()).hexdigest(), "upstream-lock.json": lock_hash})
+    source = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
+    tree = subprocess.check_output(["git", "rev-parse", "HEAD^{tree}"], cwd=ROOT, text=True).strip()
+    version = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["version"]
+    inputs = {"status": "verified", "source_sha": source, "source_tree": tree, "signature_verifications": 4, "lock_sha256": lock_hash, "image_sources_sha256": sha256(IMAGE_SOURCES.read_bytes()).hexdigest(), "files": files}
+    smokes = {}
+    for arch in ["amd64", "arm64"]:
+        identities = {role: {"binary_sha256": payload["platforms"][arch]["binary"]["sha256"], "release": payload["version"], "source_commit": payload["source_commit"], "curl_sha256": lock["base"]["platforms"][arch]["curl_sha256"]} for role, payload in lock["payloads"].items()}
+        cases = [{"credentials": mode, "effective_uid": uid, "ready": True, "bucket_privacy_and_versioning": True, "object_write_read_restart_read_delete": True} for mode, uid in [("file", 0), ("env", 0), ("file", 1000)]]
+        smokes[arch] = {"receipt": {"schema_version": "execution-fabric-minio-runtime-smoke/v1", "status": "passed", "platform": "linux/" + arch, "images": images, "source_lock_sha256": lock_hash, "fixture_resources_removed": True, "identities": identities, "cases": cases}}
+    value = {"schema_version": "execution-fabric-minio-publication/v1", "status": "verified", "repository": "michaelwclark/genomes_agentic_os", "source_sha": source, "source_ref": "refs/tags/v" + version, "source_lock_sha256": lock_hash, "inputs": inputs, "runtime_smokes": smokes, "images": {role: {"image": image, "children": {arch: {"digest": "sha256:" + digest, "size": 100} for arch in ["amd64", "arm64"]}, "verified_provenance_sha256": "b" * 64} for role, image in images.items()}}
+    path.write_text(json.dumps(value))
+    return path
 
 
 def test_published_distribution_validation_is_release_gated() -> None:
@@ -105,9 +129,11 @@ def test_release_workflow_resolves_dependency_multiarch_index_digests() -> None:
     assert "application/vnd.oci.image.index.v1+json" in workflow
     assert "application/vnd.docker.distribution.manifest.list.v2+json" in workflow
     assert '{"linux/amd64", "linux/arm64"}' in workflow
-    for name in ("postgres", "valkey", "minio", "minio_client"):
+    for name in ("postgres", "valkey"):
         assert f"{name}: ${{{{ steps.resolve.outputs.{name} }}}}" in workflow
         assert f"needs.dependency-images.outputs.{name}" in workflow
+    for name in ("minio", "minio_client"):
+        assert f"needs.minio-images.outputs.{name}" in workflow
 
 
 def test_dependency_image_sources_are_canonical_and_reviewed() -> None:
@@ -124,11 +150,11 @@ def test_dependency_image_sources_are_canonical_and_reviewed() -> None:
                 "tag": "8.1.9-alpine",
             },
             "minio": {
-                "repository": "docker.io/minio/minio",
+                "repository": "ghcr.io/michaelwclark/genomes-agentic-os-execution-fabric-minio",
                 "tag": "RELEASE.2025-09-07T16-13-09Z",
             },
             "minio_client": {
-                "repository": "docker.io/minio/mc",
+                "repository": "ghcr.io/michaelwclark/genomes-agentic-os-execution-fabric-minio-client",
                 "tag": "RELEASE.2025-08-13T08-35-41Z",
             },
         },
@@ -153,6 +179,8 @@ def test_ci_runs_the_real_witness_oci_smoke() -> None:
 
 def test_release_builder_emits_digest_locked_portable_assets(tmp_path: Path) -> None:
     digest = "a" * 64
+    fixture = _minio_publication_fixture(tmp_path / "producer-fixture.json", digest)
+    tmp_path = tmp_path / "assets"
     result = subprocess.run(
         [
             sys.executable,
@@ -160,6 +188,8 @@ def test_release_builder_emits_digest_locked_portable_assets(tmp_path: Path) -> 
             "--output-dir",
             str(tmp_path),
             *_image_arguments(digest),
+            "--minio-publication-receipt",
+            str(fixture),
         ],
         cwd=ROOT,
         text=True,
@@ -319,6 +349,8 @@ def test_portable_archives_are_reproducible(tmp_path: Path) -> None:
                 "--output-dir",
                 str(output),
                 *_image_arguments(digest),
+                "--minio-publication-receipt",
+                str(_minio_publication_fixture(tmp_path / "producer-fixture.json", digest)),
             ],
             cwd=ROOT,
             text=True,
@@ -331,3 +363,28 @@ def test_portable_archives_are_reproducible(tmp_path: Path) -> None:
         "execution-fabric-config-schema.tar.gz",
     ):
         assert (first / name).read_bytes() == (second / name).read_bytes()
+
+
+@pytest.mark.parametrize("missing", ["provenance", "platform", "signature", "source", "persistence", "binary", "child"])
+def test_release_assets_refuse_unqualified_owned_minio_inputs(tmp_path: Path, missing: str) -> None:
+    digest = "d" * 64
+    path = _minio_publication_fixture(tmp_path / "proof.json", digest)
+    proof = json.loads(path.read_text())
+    if missing == "provenance":
+        proof["images"]["minio"].pop("verified_provenance_sha256")
+    elif missing == "platform":
+        proof["runtime_smokes"].pop("arm64")
+    elif missing == "signature":
+        proof["inputs"]["signature_verifications"] = 3
+    elif missing == "source":
+        proof["source_sha"] = "0" * 40
+    elif missing == "persistence":
+        proof["runtime_smokes"]["amd64"]["receipt"]["cases"][0]["object_write_read_restart_read_delete"] = False
+    elif missing == "child":
+        proof["images"]["minio_client"]["children"]["amd64"]["digest"] = "mutable"
+    else:
+        proof["runtime_smokes"]["arm64"]["receipt"]["identities"]["mc"]["binary_sha256"] = "0" * 64
+    path.write_text(json.dumps(proof))
+    result = subprocess.run([sys.executable, str(SCRIPT), "--output-dir", str(tmp_path / "assets"), *_image_arguments(digest), "--minio-publication-receipt", str(path)], capture_output=True, text=True, check=False)
+    assert result.returncode != 0
+    assert not (tmp_path / "assets").exists()

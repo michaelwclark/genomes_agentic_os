@@ -1,0 +1,164 @@
+{
+  "schema_version": "execution-fabric-minio-source-lock/v1",
+  "signature_public_key": "RWTx5Zr1tiHQLwG9keckT0c45M3AGeHD6IvimQHpyRywVWGbP1aVSGav",
+  "base": {
+    "repository": "registry.access.redhat.com/ubi9/ubi-minimal",
+    "digest": "sha256:34880b64c07f28f64d95737f82f891516de9a3b43583f39970f7bf8e4cfa48b7",
+    "platforms": {
+      "amd64": {
+        "manifest_digest": "sha256:d1bad2a2790eac1651e57e78159a81b72ddfa7b836936b26cf51e09744bf1c2d",
+        "curl_sha256": "8abad4e8368686b17e1c958cdca5abbae779a13d002b143a412a58004fb6cc1a"
+      },
+      "arm64": {
+        "manifest_digest": "sha256:0ef315bdcbb0837a5315d209b0590e081c93012bf339eabc7ddb35f141443987",
+        "curl_sha256": "1cf1e09c228bcbe60f8d08757bfb442cd1e3948513f04f3d9a15e19c973c6247"
+      }
+    }
+  },
+  "verifier": {
+    "version": "0.12",
+    "linux": {
+      "url": "https://github.com/jedisct1/minisign/releases/download/0.12/minisign-0.12-linux.tar.gz",
+      "sha256": "9a599b48ba6eb7b1e80f12f36b94ceca7c00b7a5173c95c3efc88d9822957e73",
+      "size": 271043,
+      "members": {
+        "amd64": {
+          "path": "minisign-linux/x86_64/minisign",
+          "sha256": "2c74dffcc1c9a5ee55957c60971998ace2b89f22585631594ec2152c588af8db"
+        },
+        "arm64": {
+          "path": "minisign-linux/aarch64/minisign",
+          "sha256": "cec9f88be8c975af76854a53b4d49c3d257feae38d916edb0d16fb55aacd3000"
+        }
+      }
+    },
+    "darwin_executable_sha256": "d41cde458303d45c95b00473e2455a7f45f95b550931f1f0cc98ef1f61b2a8ff"
+  },
+  "payloads": {
+    "minio": {
+      "version": "RELEASE.2025-09-07T16-13-09Z",
+      "repository": "minio/minio",
+      "source_commit": "07c3a429bfed433e49018cb0f78a52145d4bedeb",
+      "annotated_tag": "01ce918d8279a20e4706b96a64396146894adee4",
+      "release_id": 245369527,
+      "platforms": {
+        "amd64": {
+          "binary": {
+            "url": "https://github.com/minio/minio/releases/download/RELEASE.2025-09-07T16-13-09Z/minio.linux-amd64.RELEASE.2025-09-07T16-13-09Z",
+            "asset_id": 404655976,
+            "sha256": "7c5bd8512c6e966455b1d198209358b2d191c77a83ab377c4073281065fb855f",
+            "size": 110989496
+          },
+          "sha256sum": {
+            "url": "https://github.com/minio/minio/releases/download/RELEASE.2025-09-07T16-13-09Z/minio.linux-amd64.RELEASE.2025-09-07T16-13-09Z.sha256sum",
+            "asset_id": 404655965,
+            "sha256": "5d1c490369312db2d29474723b427244c05b79fe6b3c9b6160b00779dc958d4a",
+            "size": 100
+          },
+          "minisig": {
+            "url": "https://github.com/minio/minio/releases/download/RELEASE.2025-09-07T16-13-09Z/minio.linux-amd64.RELEASE.2025-09-07T16-13-09Z.minisig",
+            "asset_id": 404655966,
+            "sha256": "d71cf680e1de21ae4a71d8d6ff2c80d6f8b07cbe8a9e00e157ef40be213fd47f",
+            "size": 326
+          }
+        },
+        "arm64": {
+          "binary": {
+            "url": "https://github.com/minio/minio/releases/download/RELEASE.2025-09-07T16-13-09Z/minio.linux-arm64.RELEASE.2025-09-07T16-13-09Z",
+            "asset_id": 404655924,
+            "sha256": "5c83cd2cf151717ba0243f73e1c7802ff36e272b67144bdd7f1f7d684fd6f03d",
+            "size": 105251000
+          },
+          "sha256sum": {
+            "url": "https://github.com/minio/minio/releases/download/RELEASE.2025-09-07T16-13-09Z/minio.linux-arm64.RELEASE.2025-09-07T16-13-09Z.sha256sum",
+            "asset_id": 404655912,
+            "sha256": "c173da809b97db5a9ca18307840ab68fbbb52515f608a0c7b40f6ab5d300132b",
+            "size": 100
+          },
+          "minisig": {
+            "url": "https://github.com/minio/minio/releases/download/RELEASE.2025-09-07T16-13-09Z/minio.linux-arm64.RELEASE.2025-09-07T16-13-09Z.minisig",
+            "asset_id": 404655917,
+            "sha256": "dd0ae28c16ac59ed1956fac6d0586a4466d43af5bcc3704e3f38807b0db79980",
+            "size": 326
+          }
+        }
+      }
+    },
+    "mc": {
+      "version": "RELEASE.2025-08-13T08-35-41Z",
+      "repository": "minio/mc",
+      "source_commit": "7394ce0dd2a80935aded936b09fa12cbb3cb8096",
+      "annotated_tag": "d6541ea280b73a834b64d4097e21f2be77676104",
+      "release_id": 245325909,
+      "platforms": {
+        "amd64": {
+          "binary": {
+            "url": "https://github.com/minio/mc/releases/download/RELEASE.2025-08-13T08-35-41Z/mc.linux-amd64.RELEASE.2025-08-13T08-35-41Z",
+            "asset_id": 401741332,
+            "sha256": "01f866e9c5f9b87c2b09116fa5d7c06695b106242d829a8bb32990c00312e891",
+            "size": 30535864
+          },
+          "sha256sum": {
+            "url": "https://github.com/minio/mc/releases/download/RELEASE.2025-08-13T08-35-41Z/mc.linux-amd64.RELEASE.2025-08-13T08-35-41Z.sha256sum",
+            "asset_id": 401741337,
+            "sha256": "721575d09254b86e9d10e04c936165b7df00384da18ca44399386352da964a4c",
+            "size": 97
+          },
+          "minisig": {
+            "url": "https://github.com/minio/mc/releases/download/RELEASE.2025-08-13T08-35-41Z/mc.linux-amd64.RELEASE.2025-08-13T08-35-41Z.minisig",
+            "asset_id": 401741336,
+            "sha256": "74fa8588655245d60a6d2ee441ff8a5905fc0369922465ebea9469fcd4f02d1f",
+            "size": 323
+          }
+        },
+        "arm64": {
+          "binary": {
+            "url": "https://github.com/minio/mc/releases/download/RELEASE.2025-08-13T08-35-41Z/mc.linux-arm64.RELEASE.2025-08-13T08-35-41Z",
+            "asset_id": 401741340,
+            "sha256": "14c8c9616cfce4636add161304353244e8de383b2e2752c0e9dad01d4c27c12c",
+            "size": 28704952
+          },
+          "sha256sum": {
+            "url": "https://github.com/minio/mc/releases/download/RELEASE.2025-08-13T08-35-41Z/mc.linux-arm64.RELEASE.2025-08-13T08-35-41Z.sha256sum",
+            "asset_id": 401741345,
+            "sha256": "16d1278acdbe3a7d06e08458792523b3380d086e15c4d83a05ab652ee0edcd3b",
+            "size": 97
+          },
+          "minisig": {
+            "url": "https://github.com/minio/mc/releases/download/RELEASE.2025-08-13T08-35-41Z/mc.linux-arm64.RELEASE.2025-08-13T08-35-41Z.minisig",
+            "asset_id": 401741346,
+            "sha256": "c99f2a102e2a2d73d13e324839b68bf3504eaaba1dc815c456fc2346896dabf1",
+            "size": 323
+          }
+        }
+      }
+    }
+  },
+  "sources": {
+    "minio_license": {
+      "url": "https://raw.githubusercontent.com/minio/minio/07c3a429bfed433e49018cb0f78a52145d4bedeb/LICENSE",
+      "sha256": "0d96a4ff68ad6d4b6f1f30f713b18d5184912ba8dd389f86aa7710db079abcb0",
+      "size": 34523
+    },
+    "minio_credits": {
+      "url": "https://raw.githubusercontent.com/minio/minio/07c3a429bfed433e49018cb0f78a52145d4bedeb/CREDITS",
+      "sha256": "113b8c63dfd987d3652950d7c2aecb1c0952b41781e79bcdac6a316418d48542",
+      "size": 1882228
+    },
+    "mc_license": {
+      "url": "https://raw.githubusercontent.com/minio/mc/7394ce0dd2a80935aded936b09fa12cbb3cb8096/LICENSE",
+      "sha256": "0d96a4ff68ad6d4b6f1f30f713b18d5184912ba8dd389f86aa7710db079abcb0",
+      "size": 34523
+    },
+    "mc_credits": {
+      "url": "https://raw.githubusercontent.com/minio/mc/7394ce0dd2a80935aded936b09fa12cbb3cb8096/CREDITS",
+      "sha256": "4ead58181c478e2f449d5778165684f4fceb1e7b8b3ee150051c8e7adfe4f337",
+      "size": 668850
+    },
+    "entrypoint": {
+      "url": "https://raw.githubusercontent.com/minio/minio/07c3a429bfed433e49018cb0f78a52145d4bedeb/dockerscripts/docker-entrypoint.sh",
+      "sha256": "c6a01decb5d104ef7327d0d642ce34bcc2396e600a1b7ba03568ac65b3d473be",
+      "size": 675
+    }
+  }
+}
