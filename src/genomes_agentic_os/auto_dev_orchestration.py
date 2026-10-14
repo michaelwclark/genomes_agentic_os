@@ -483,6 +483,14 @@ def _relink_moved_work_item(task_path: Path, state_path: Path, current: Mapping[
         old_raw = task.get("work_item") or old_raw
         if not old_raw or Path(str(old_raw)).expanduser().name != work_item.name:
             raise AutoDevStateError("refusing to relink delivery state to a different work item")
+        old_packet = Path(str(old_raw)).expanduser().resolve()
+        work_items_root = work_item.parent.parent
+        allowed = {work_items_root / work_item.name,
+                   work_items_root / "02-active" / work_item.name,
+                   work_items_root / "03-complete" / work_item.name,
+                   work_item}
+        if old_packet not in allowed or old_packet != work_item and old_packet.exists():
+            raise AutoDevStateError("refusing ambiguous or cross-project archived packet relink")
         expected_domain = str(current.get("domain") or "")
         expected_project = str(current.get("project") or "")
         if expected_domain and str(task.get("domain") or "") != expected_domain:
@@ -1044,7 +1052,14 @@ def sync_delivery_projection(task_state_path: str | Path) -> dict[str, Any] | No
         return None
     # A deleted refresh marker must not restore stale downstream authority.
     from .development_validation_refresh import _refresh_history
-    _refresh_history(task, work_item)
+    from .development_delivery import DevelopmentDeliveryError
+    try:
+        _refresh_history(task, work_item)
+    except DevelopmentDeliveryError as exc:
+        # Preserve the projection's existing failure-event contract. The
+        # canonical task was already committed; corrupt lineage cannot project
+        # stale authority and must not escape as an unrelated exception type.
+        raise AutoDevStateError(str(exc)) from exc
     state_path = Path(str(task.get("autodev_path") or work_item / "autodev.json")).expanduser().resolve()
     with _file_lock(state_path.with_suffix(state_path.suffix + ".lock")):
         existing = _read_json(state_path) if state_path.is_file() else {}
@@ -1652,7 +1667,8 @@ def _validate_delivery_stage_task_binding(
 ) -> None:
     if stage not in DELIVERY_MANAGED_STAGES:
         return
-    task_ref = str(current.get("delivery", {}).get("task_state_ref") or "").strip()
+    linked = current.get("delivery") if isinstance(current.get("delivery"), Mapping) else {}
+    task_ref = str(linked.get("task_state_ref") or "").strip()
     if not task_ref:
         raise AutoDevStateError(f"{stage} lacks its linked delivery task")
     task_path = Path(task_ref).expanduser().resolve()
@@ -2415,6 +2431,7 @@ def require_auto_dev_predecessors(state_file: str | Path, stage: str) -> dict[st
     if work_item.is_file():
         work_item = work_item.parent
     missing: list[str] = []
+    reasons: list[str] = []
     stage_order = list(current.get("stage_order") or AUTO_DEV_STAGE_ORDER)
     active_order = auto_dev_workflow_window(
         stage_order,
@@ -2447,8 +2464,12 @@ def require_auto_dev_predecessors(state_file: str | Path, stage: str) -> dict[st
                 if deferred_path is not None and _read_json(deferred_path).get("status") == "deferred_to_ci":
                     from .development_validation_refresh import validate_deferred_pr_create
                     from .development_delivery import DevelopmentDeliveryError
+                    linked = current.get("delivery") if isinstance(current.get("delivery"), Mapping) else {}
+                    task_ref = str(linked.get("task_state_ref") or "").strip()
+                    if not task_ref:
+                        raise AutoDevStateError("develop lacks its linked delivery task")
                     try:
-                        validate_deferred_pr_create(current["delivery"]["task_state_ref"], deferred_path)
+                        validate_deferred_pr_create(task_ref, deferred_path)
                     except DevelopmentDeliveryError as exc:
                         raise AutoDevStateError(str(exc)) from exc
                     continue
@@ -2533,12 +2554,14 @@ def require_auto_dev_predecessors(state_file: str | Path, stage: str) -> dict[st
                 _validate_delivery_stage_task_binding(
                     current, work_item, predecessor, receipt_path
                 )
-        except AutoDevStateError:
+        except AutoDevStateError as exc:
             missing.append(predecessor)
+            reasons.append(f"{predecessor}: {exc}")
     if missing:
         raise AutoDevStateError(
             f"{name} cannot mutate external state until earlier Auto-Dev stages are "
             "terminal and receipt-backed: " + ", ".join(missing)
+            + (". " + "; ".join(reasons) if reasons else "")
         )
     return current
 

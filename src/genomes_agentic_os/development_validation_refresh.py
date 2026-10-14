@@ -41,14 +41,33 @@ def _bound(ref: Mapping[str, Any], packet: Path) -> tuple[Path, dict[str, Any], 
             or not isinstance(ref.get("sha256"), str) or len(ref["sha256"]) != 64
             or any(c not in "0123456789abcdef" for c in ref["sha256"])):
         _error("validation proof requires a path and SHA-256 binding")
-    path = Path(str(ref["path"]))
-    path = (path if path.is_absolute() else packet / path).resolve()
-    if not path.is_relative_to(packet) or not path.is_file():
+    try:
+        path = Path(str(ref["path"]))
+        path = (path if path.is_absolute() else packet / path).resolve()
+        physical = path
+        if not path.is_relative_to(packet) and _archived_packet(packet):
+            # Archive Health moves the whole packet, not its immutable receipt
+            # identities. Only the same project's two former active locations
+            # may be read through the new root. Keep the recorded logical path
+            # so lineage never rewrites or manufactures prior evidence.
+            work_items = packet.parent.parent
+            for origin in (work_items / packet.name, work_items / "02-active" / packet.name):
+                if path.is_relative_to(origin) and not origin.exists():
+                    physical = packet / path.relative_to(origin)
+                    break
+        physical = physical.resolve()
+    except (OSError, RuntimeError) as exc:
+        _error(f"validation proof path is unreadable: {exc}")
+    if not physical.is_relative_to(packet) or not physical.is_file():
         _error("validation proof must be a contained packet file")
-    value, digest = _read(path)
+    value, digest = _read(physical)
     if digest != ref["sha256"]:
         _error("validation proof SHA-256 binding changed")
     return path, value, digest
+
+
+def _archived_packet(packet: Path) -> bool:
+    return packet.parent.name in {"99-archived", "03-complete"} and packet.parent.parent.name == "work-items"
 
 
 def _snapshot_target(packet: Path, digest: str) -> Path:
@@ -158,6 +177,8 @@ def _context(state_file: str | Path) -> tuple[Any, dict[str, Any], Path, Path, d
     if current.get("state") != "local_validation" or current.get("schema") != "development-task/v1":
         _error("validation refresh requires a modern local_validation task")
     packet = Path(str(current.get("work_item") or "")).resolve()
+    if _archived_packet(packet):
+        _error("validation refresh requires a live modern local_validation packet, not archived history")
     manifest = read_auto_dev_state(packet / "autodev.json")
     linked = manifest.get("delivery") or {}
     window = auto_dev_workflow_window(current.get("auto_dev_stage_order") or AUTO_DEV_STAGE_ORDER,
@@ -254,7 +275,8 @@ def _refresh_history(current: Mapping[str, Any], packet: Path) -> None:
                 or recorded.timestamp() > datetime.now().astimezone().timestamp()
                 or (previous is not None and previous != (predecessor_path, predecessor_digest))):
             _error("validation refresh lineage no longer matches immutable history")
-        attestation = _predecessor_identity(current, packet, predecessor_path, predecessor, predecessor_digest)
+        attestation = _predecessor_identity(current, packet, predecessor_path, predecessor, predecessor_digest,
+                                           verify_worktree=not _archived_packet(packet))
         recorded_attestation = row.get("predecessor_identity_attestation")
         if (recorded_attestation is not None and recorded_attestation != attestation
                 or attestation["kind"] == "task_bound_legacy_identity" and recorded_attestation != attestation):
@@ -287,7 +309,7 @@ def _latest(current: Mapping[str, Any], packet: Path) -> tuple[Path, dict[str, A
 
 
 def _predecessor_identity(current: Mapping[str, Any], packet: Path, path: Path,
-                          payload: Mapping[str, Any], digest: str) -> dict[str, Any]:
+                          payload: Mapping[str, Any], digest: str, *, verify_worktree: bool = True) -> dict[str, Any]:
     """Attest absent legacy identity from one original hash-bound task receipt."""
     evidence = payload.get("evidence")
     if (payload.get("schema") != "development-stage-evidence/v1" or payload.get("state") != "local_validation"
@@ -313,7 +335,8 @@ def _predecessor_identity(current: Mapping[str, Any], packet: Path, path: Path,
         recorded = int(_timestamp(rows[0].get("recorded_at")).timestamp())
         if not created <= verified <= recorded <= int(datetime.now().astimezone().timestamp()):
             _error("legacy predecessor timestamps do not attest original task authority")
-        _git(Path(current["worktree"]["path"]), "merge-base", "--is-ancestor", _head(evidence), "HEAD")
+        if verify_worktree:
+            _git(Path(current["worktree"]["path"]), "merge-base", "--is-ancestor", _head(evidence), "HEAD")
         kind = "task_bound_legacy_identity"
     return {"schema": "development-validation-predecessor-attestation/v1", "kind": kind,
             "canonical_work_id": current["canonical_work_id"], "ticket": current["ticket"],
@@ -337,8 +360,90 @@ def _deferred(payload: Mapping[str, Any], validation: Mapping[str, Any], *,
         _error("PR Create CI deferral requires exact pinned fallback policy and unavailable-command proof")
 
 
+def _historical_deferred_handoff(state_file: str | Path, receipt: Path) -> dict[str, Any] | None:
+    """Preserve an original narrower workflow's handoff, never current validation."""
+    from .development_delivery import (TaskState, frozen_selected_task_profile,
+                                       validate_local_validation_ci_deferral)
+    from .auto_dev_orchestration import AUTO_DEV_STAGE_ORDER, auto_dev_workflow_window, read_auto_dev_state
+    task_path = Path(state_file).resolve()
+    current = TaskState(task_path).read()
+    packet = Path(str(current.get("work_item") or "")).resolve()
+    _refresh_history(current, packet)
+    path, payload, digest = _latest(current, packet)
+    evidence = payload.get("evidence")
+    # Missing fields in a declared modern chain never downgrade its authority.
+    # A new command/lineage proof or refresh marker remains on the modern gate.
+    start = current.get("auto_dev_start_stage")
+    if (start is None or start == "groom" or current.get("validation_refreshes") or current.get("validation_head_sha")
+            or not isinstance(evidence, Mapping) or "validation_runs" in evidence or "repair_lineage" in evidence):
+        return None
+    profile = frozen_selected_task_profile(current)
+    mode = current.get("auto_dev_mode")
+    if not isinstance(start, str) or not isinstance(mode, str):
+        _error("historical CI handoff workflow boundary is malformed")
+    auto_dev = profile.get("auto_dev") if isinstance(profile.get("auto_dev"), Mapping) else {}
+    configured = auto_dev.get(mode) if isinstance(auto_dev.get(mode), Mapping) else {}
+    order = current.get("auto_dev_stage_order") or AUTO_DEV_STAGE_ORDER
+    if not isinstance(order, (list, tuple)) or not order or not all(isinstance(stage, str) for stage in order):
+        _error("historical CI handoff stage order is malformed")
+    expected_start = configured.get("start_stage") or ("readiness" if mode == "default" else order[0])
+    expected_end = configured.get("completion_stage") or ("pr_create" if mode == "default" else order[-1])
+    manifest = read_auto_dev_state(packet / "autodev.json")
+    linked = manifest.get("delivery") if isinstance(manifest.get("delivery"), Mapping) else {}
+    source = manifest.get("source") if isinstance(manifest.get("source"), Mapping) else {}
+    if (mode not in {"default", "everything"} or current.get("schema") != "development-task/v1"
+            or current.get("state") != "local_validation" or _archived_packet(packet)
+            or current.get("terminal_revision") or current.get("deployed_revision")
+            or start != expected_start or current.get("auto_dev_completion_stage") != expected_end
+            or list(order) != list(auto_dev.get("stage_order") or AUTO_DEV_STAGE_ORDER)
+            or manifest.get("stage_order") != list(order)
+            or manifest.get("start_stage") != start or manifest.get("completion_stage") != expected_end
+            or manifest.get("mode") != mode or manifest.get("domain") != current.get("domain")
+            or manifest.get("project") != current.get("project")
+            or source.get("key") != current.get("ticket")
+            or manifest.get("canonical_work_id") != current.get("canonical_work_id")
+            or current.get("autodev_path") != str(packet / "autodev.json")
+            or Path(str(linked.get("task_state_ref") or "")).resolve() != task_path
+            or linked.get("work_item") != str(packet) or linked.get("repository") != current.get("repository")
+            or linked.get("worktree") != current.get("worktree")
+            or linked.get("policy_fingerprint") != current.get("policy_fingerprint")
+            or path != receipt.resolve()):
+        _error("historical CI handoff requires its original linked task and pinned workflow boundary")
+    window = auto_dev_workflow_window(order, start, expected_end)
+    if "develop" not in window or "pr_create" not in window:
+        _error("historical CI handoff requires both Develop and PR Create in its recorded window")
+    rows = [row for row in current.get("receipts") or [] if isinstance(row, Mapping)
+            and row.get("state") == "local_validation" and row.get("kind") is None
+            and row.get("ref") == str(path) and row.get("sha256") == digest]
+    # Native receipt recording uses whole seconds; match the existing legacy
+    # attestation's resolution instead of rejecting earlier subsecond proof.
+    if (len(rows) != 1 or payload.get("schema") != "development-stage-evidence/v1"
+            or not isinstance(payload.get("summary"), str) or not payload["summary"].strip()
+            or not int(_timestamp(payload.get("verified_at")).timestamp())
+                   <= int(_timestamp(rows[0].get("recorded_at")).timestamp())
+                   <= int(datetime.now().astimezone().timestamp())
+            or int(_timestamp(current.get("created_at")).timestamp()) > int(_timestamp(rows[0].get("recorded_at")).timestamp())):
+        _error("historical CI handoff lacks one original immutable task receipt")
+    for key, matches in {
+        "ticket": evidence.get("ticket") == current.get("ticket"),
+        "repository": _repository_matches(evidence.get("repository"), current),
+        "policy_fingerprint": evidence.get("policy_fingerprint") == current.get("policy_fingerprint"),
+    }.items():
+        if key in evidence and not matches:
+            _error("historical CI handoff receipt identity/policy mismatch")
+    validate_local_validation_ci_deferral(payload, current, require_frozen=True)
+    recorded_head = _head(evidence) if any(evidence.get(key) for key in ("head_sha", "source_head_sha", "subject_revision")) else None
+    return {"status": "deferred_to_ci", "authority_scope": "historical_pr_create_handoff",
+            "current_validation_authority": "unproved", "ci_authority": "pending",
+            "path": str(path), "sha256": digest, "recorded_head_sha": recorded_head,
+            "policy_fingerprint": current["policy_fingerprint"],
+            "next_action": "Obtain required CI and review evidence on the PR's exact current head; historical local labels do not satisfy those gates."}
+
+
 def validate_deferred_pr_create(state_file: str | Path, receipt: Path) -> None:
-    """Admit only same-head PR creation, never review or merge authority."""
+    """Admit same-head proof or a historical CI handoff, never review/merge authority."""
+    if _historical_deferred_handoff(state_file, receipt) is not None:
+        return
     _, current, packet, worktree, profile = _context(state_file)
     path, payload, _ = _latest(current, packet)
     if path != receipt.resolve():
@@ -375,6 +480,23 @@ def pr_create_validation_authority(state_file: str | Path, family: Mapping[str, 
     deferred = payload.get("status") == "deferred_to_ci"
     if not deferred and not current.get("validation_refreshes"):
         return None
+    historical = _historical_deferred_handoff(state_file, path) if deferred else None
+    if historical is not None:
+        # The PR head is independently selected and read back. Do not label it
+        # as the head validated by old local checks, including after repair.
+        record = current.get("worktree") if isinstance(current.get("worktree"), Mapping) else {}
+        if not record.get("path") or not record.get("branch"):
+            _error("historical CI handoff PR family lacks its selected worktree/branch")
+        worktree = Path(str(record["path"])).resolve()
+        evidence = family.get("evidence")
+        if (not isinstance(evidence, Mapping) or _head(evidence) != _git(worktree, "rev-parse", "HEAD")
+                or evidence.get("ticket") != current.get("ticket")
+                or not _repository_matches(evidence.get("repository"), current)
+                or evidence.get("policy_fingerprint") != current.get("policy_fingerprint")
+                or evidence.get("source_branch") != record["branch"]
+                or _git(worktree, "branch", "--show-current") != record["branch"]):
+            _error("historical CI handoff PR family must independently match the current selected head/branch/policy")
+        return {**historical, "pr_head_sha": _head(evidence)}
     _, current, _, worktree, _ = _context(state_file)
     if deferred:
         validate_deferred_pr_create(state_file, path)

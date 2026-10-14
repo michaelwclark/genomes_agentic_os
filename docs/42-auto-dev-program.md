@@ -264,15 +264,38 @@ The canonical successor snapshot must stay inside its packet. Symlinked output
 targets or parent directories and conflicting immutable bytes are refused before
 recording validation authority.
 
-A policy-pinned `deferred_to_ci` Develop receipt can admit only same-head PR
-Create with complete current frozen-command terminal proofs, including a
+A modern groom-through-PR-Create task's policy-pinned `deferred_to_ci` Develop
+receipt can admit only same-head PR Create with complete current frozen-command terminal proofs, including a
 successful local command and the exact unavailable command's failure. Historical
 `passed` labels and unavailable-command metadata alone preserve lineage only;
-missing old terminal proof requires a freshly executed validation refresh.
+missing terminal proof requires a freshly executed validation refresh supported
+by the frozen command's independently qualified runtime. Refresh is not a
+universal migration: dependency-consuming pytest/venv commands without that
+provenance remain unsupported, and the predecessor error reports the concrete
+reason rather than only saying Develop is missing.
 It provides pending CI authority and cannot independently satisfy Review, QA,
 Finalize or Merge. A changed head requires a fresh passed or honestly deferred
 successor through the explicit refresh; owning review/QA/finalization stages
 must separately verify current provider checks and their required evidence.
+
+An original deferred receipt on an explicitly recorded narrower workflow (for
+example, the pinned default Readiness-to-PR-Create window) retains its historical
+PR Create handoff through the existing `develop stage --stage
+release_propagation` recorder. It must still match the original task receipt
+hash, linked packet and frozen fallback policy. The PR family independently
+binds the current head and branch. The wrapper records
+`authority_scope: historical_pr_create_handoff`, `current_validation_authority:
+unproved` and `ci_authority: pending`; it never records a fresh validated head or
+PASS. Modern refresh/command/lineage markers cannot fall back to this path.
+Current CI, review, QA, Finalize and Merge evidence remain separate requirements.
+
+Archive Health may move a refreshed packet from this project's flat or
+`02-active` location to `99-archived` or legacy `03-complete`. History readers
+resolve only that bounded move and verify every original hash while retaining
+all recorded logical refs and immutable bytes. Archived history cannot produce
+current validation authority. Changed, foreign or ambiguous proofs fail closed;
+projection failures use the existing diagnostic event instead of escaping its
+error boundary.
 
 ### Documentation delivery
 

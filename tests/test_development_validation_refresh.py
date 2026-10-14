@@ -590,7 +590,7 @@ def test_replay_cannot_restore_corrupted_current_authority(tmp_path, corruption)
         _refresh(f)
     assert f["task"].path.read_bytes() == before
     projection_before = Path(current["autodev_path"]).read_bytes()
-    with pytest.raises(delivery.DevelopmentDeliveryError):
+    with pytest.raises(AutoDevStateError):
         sync_delivery_projection(f["task"].path)
     with pytest.raises(delivery.DevelopmentDeliveryError):
         refresh.pr_create_validation_authority(f["task"].path, json.loads(Path(_family(f)).read_text()))
