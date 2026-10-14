@@ -563,6 +563,11 @@ def test_infer_complete_apply_marks_finished_and_moves_packet(tmp_path: Path, ca
     capsys.readouterr()
     project_root = root / "harness" / "shared_factory" / "02-projects" / "genomes_agentic_os"
     item = named_work_item(project_root, "02-active", "001_ready_to_finish")
+    legacy_active = project_root / "work-items" / "02-active"
+    legacy_active.mkdir(exist_ok=True)
+    active_item = legacy_active / item.name
+    item.rename(active_item)
+    item = active_item
     metadata_path = item / "work.yml"
     metadata = yaml.safe_load(metadata_path.read_text(encoding="utf-8"))
     metadata["pull_request"] = {"state": "merged"}
