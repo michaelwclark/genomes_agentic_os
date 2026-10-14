@@ -621,14 +621,17 @@ def _advisory_recovery_review(
          "advisory": True}
         for row in immutable_findings
     ]
-    # Preserve any known source blocker not represented by its immutable new
-    # advice, even if an old producer failed to carry it from the delta parent.
+    # Preserve known source blockers and resolved history beyond the actual
+    # parent. Older full runners could emit a generic medium placeholder when
+    # they did not ingest this response's typed advice; that placeholder is the
+    # recovery target, not an independently inherited finding.
     _, own_advice, _ = normalize_findings_ledger({"outcome": "clean", "findings": advisory_rows})
     own_ids = {row["id"] for row in own_advice}
     inherited_ids = {row["id"] for row in inherited}
     inherited.extend(
         row for row in original["findings_ledger"]
         if row["id"] not in own_ids | inherited_ids
+        and (row["severity"] in {"blocking", "high"} or row["status"] == "resolved")
     )
     outcome, ledger, review = normalize_findings_ledger(
         {"outcome": "clean", "findings": advisory_rows, "resolution_refs": resolution_refs,

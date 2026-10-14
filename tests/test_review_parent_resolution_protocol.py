@@ -261,6 +261,28 @@ def test_loading_valid_legacy_full_advice_keeps_its_original_ledger_shape(tmp_pa
     assert child.read_bytes() == before
 
 
+@pytest.mark.parametrize("known_blocker", [False, True])
+def test_legacy_full_placeholder_recovery_preserves_known_blockers(tmp_path: Path, known_blocker: bool) -> None:
+    coordinator = ReviewCoordinator(tmp_path / "coordination")
+    rows, text = advice(), response(advice())
+    review = {"outcome": "findings", "response": text}
+    if known_blocker:
+        review["findings"] = [{"id": PARENT_IDS[0], "severity": "high", "summary": "Known blocking issue",
+                               "evidence": ["src/authority.py:42"]}]
+    original = coordinator.execute(subject(), lambda: review)
+    before = original.receipt_path.read_bytes()
+    evidence = tmp_path / "reviewer-response.md"
+    evidence.write_text(text)
+    if known_blocker:
+        with pytest.raises(ReviewCoordinationError, match="unresolved"):
+            coordinator.derive_same_head_advisory_clean(original.receipt_path, evidence_path=evidence, findings=rows)
+    else:
+        recovered = coordinator.derive_same_head_advisory_clean(original.receipt_path, evidence_path=evidence, findings=rows)
+        assert load_review_receipt(recovered.receipt_path)["outcome"] == "clean"
+        assert recovered.receipt["budget"] == original.receipt["budget"]
+    assert original.receipt_path.read_bytes() == before
+
+
 def test_advisory_recovery_rejects_changed_raw_response(tmp_path: Path) -> None:
     coordinator = ReviewCoordinator(tmp_path / "coordination")
     parent = parent_review(coordinator)
