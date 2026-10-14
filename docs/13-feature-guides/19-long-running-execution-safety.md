@@ -34,6 +34,10 @@ post-run invariants, and a terminal receipt.
 - Non-cooperative tools still emit output-byte liveness and must explain safe
   restart or rollback.
 - Orphan recovery marks stale registry rows without deleting historical logs.
+- A terminal receipt is published only after the admitted monitor releases its
+  acquired mutation lock. Failed acquisition grants no release capability;
+  duplicate monitors cannot publish another owner's run records or release its
+  live PID and file identity lock.
 
 Runtime queue dispatch automatically enrolls general subprocess commands whose
 declared timeout exceeds the configured threshold. Existing callers therefore

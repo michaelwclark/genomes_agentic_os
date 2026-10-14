@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import signal
+import shlex
 import subprocess
 import sys
 import time
@@ -66,6 +67,63 @@ def test_actual_same_run_directory_duplicate_preserves_all_owner_records(tmp_pat
         assert not (run / "terminal-receipt.json").exists()
         assert lock.read_bytes() == original_lock and (run / "preflight.json").read_bytes() == original_preflight
         assert long_run.recover_run(run, mark_stale=True)["classification"] == "active"
+
+
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="native POSIX summary pipe fixture")
+@pytest.mark.parametrize("outcome, status, reason, exit_code", [
+    ("preflight-failure", "failure", "preflight-check-failed", None),
+    ("command-success", "success", "command-exited", 0),
+    ("command-failure", "failure", "command-exited", 9),
+    ("post-check-failure", "failure", "post-run-invariant-failed", 0),
+])
+def test_actual_terminal_is_consumable_only_after_own_lock_cleanup(tmp_path, outcome, status, reason, exit_code):
+    root, lock = tmp_path / "os", tmp_path / "owned.lock"
+    artifacts = tmp_path / "artifacts"
+    run = artifacts / "async-runs" / "publication-order"
+    summary, launched = run / "summary.md", tmp_path / "launched"
+    # A real preflight makes summary output wait on a pipe. This deterministically
+    # exposes the terminal publication boundary without replacing monitor code.
+    code = ("import json,os;from pathlib import Path;"
+        f"assert json.loads(Path({str(lock)!r}).read_text())['pid']=="
+        f"json.loads(Path({str(run / 'state.json')!r}).read_text())['monitor_pid'];"
+        f"os.mkfifo({str(summary)!r});raise SystemExit({1 if outcome == 'preflight-failure' else 0})")
+    state = long_run.start_run(root,
+        command=[sys.executable, "-c", f"from pathlib import Path;Path({str(launched)!r}).write_text('ran');"
+            f"raise SystemExit({9 if outcome == 'command-failure' else 0})"],
+        label="native terminal lock ordering", run_id="publication-order",
+        artifact_dir=str(artifacts), work_dir=str(tmp_path), mutation_lock=str(lock),
+        preflight_checks=[shlex.join([sys.executable, "-c", code])],
+        post_run_checks=[shlex.join([sys.executable, "-c", "raise SystemExit(1)"])]
+            if outcome == "post-check-failure" else [],
+        budgets={"wall_clock_minutes": 1, "no_progress_minutes": 1})
+    assert Path(state["run_dir"]) == run
+    reader = None
+    try:
+        deadline = time.monotonic() + 10
+        while not (run / "terminal-receipt.json").exists() and time.monotonic() < deadline:
+            time.sleep(.02)
+        receipt = json.loads((run / "terminal-receipt.json").read_text())
+        assert (receipt["status"], receipt["reason"], receipt["exit_code"]) == (status, reason, exit_code)
+        assert launched.exists() == (outcome != "preflight-failure")
+        assert not lock.exists(), "published terminal must not retain the monitor's acquired lock"
+    finally:
+        # Unblock only this fixture's summary writer, including on the red path.
+        # Keep the reader open until data arrives so a late writer cannot strand.
+        if summary.exists():
+            reader = os.open(summary, os.O_RDONLY | os.O_NONBLOCK)
+            deadline = time.monotonic() + 5
+            try:
+                while time.monotonic() < deadline:
+                    try:
+                        if os.read(reader, 65536): break
+                    except BlockingIOError:
+                        pass
+                    time.sleep(.02)
+            finally:
+                os.close(reader)
+        deadline = time.monotonic() + 5
+        while lock.exists() and time.monotonic() < deadline: time.sleep(.02)
+        assert not lock.exists()
 
 
 def test_nonowner_terminal_publication_refuses_live_owner_and_restores_signals(tmp_path):

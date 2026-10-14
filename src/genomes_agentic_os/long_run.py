@@ -628,7 +628,7 @@ def monitor_run(run_dir_value: str | Path) -> int:
     except BaseException as exc:
         try:
             return _terminal(root, run_dir, command, status="error", exit_code=None,
-                reason=f"preflight-check-error: {type(exc).__name__}: {exc}", checks=[])
+                reason=f"preflight-check-error: {type(exc).__name__}: {exc}", checks=[], owned_lock=lock)
         finally:
             try:
                 if lock is not None:
@@ -641,7 +641,8 @@ def monitor_run(run_dir_value: str | Path) -> int:
             cancelled = signalled_state.get("status") == "cancelling"
             return _terminal(root, run_dir, command, status="cancelled" if cancelled else "interrupted",
                 exit_code=None, reason="operator-cancelled-during-preflight" if cancelled else
-                f"monitor-received-{signal.Signals(interrupted[-1]).name}-during-preflight", checks=preflight)
+                f"monitor-received-{signal.Signals(interrupted[-1]).name}-during-preflight", checks=preflight,
+                owned_lock=lock)
         finally:
             try:
                 if lock is not None:
@@ -651,7 +652,7 @@ def monitor_run(run_dir_value: str | Path) -> int:
     if any(not row["ok"] for row in preflight):
         try:
             return _terminal(root, run_dir, command, status="failure", exit_code=None,
-                reason="preflight-check-failed", checks=preflight)
+                reason="preflight-check-failed", checks=preflight, owned_lock=lock)
         finally:
             try:
                 if lock is not None:
@@ -807,11 +808,13 @@ def monitor_run(run_dir_value: str | Path) -> int:
             reason=terminal_reason,
             checks=[*preflight, *post_checks],
             extra={"output_bytes": output_bytes, "log_rotations": logger.rotation_count},
+            owned_lock=lock,
         )
     except BaseException as exc:
         if process is not None:
             _terminate_group(process)
-        return _terminal(root, run_dir, command, status="error", exit_code=None, reason=f"{type(exc).__name__}: {exc}", checks=preflight)
+        return _terminal(root, run_dir, command, status="error", exit_code=None,
+            reason=f"{type(exc).__name__}: {exc}", checks=preflight, owned_lock=lock)
     finally:
         try:
             if logger is not None:
@@ -834,10 +837,16 @@ def _terminal(
     reason: str,
     checks: list[dict[str, Any]],
     extra: dict[str, Any] | None = None,
+    owned_lock: MutationLock | None = None,
 ) -> int:
     finished = utc_now()
     prior_state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
     _assert_terminal_owner(prior_state, status=status, reason=reason)
+    # A terminal receipt is consumable immediately. Release only this admitted
+    # monitor's acquired capability before publishing it, rather than afterwards
+    # in the caller's finally block. The fallback finally release is idempotent.
+    if owned_lock is not None:
+        owned_lock.release()
     progress_fields = (
         "phase",
         "items_completed",
