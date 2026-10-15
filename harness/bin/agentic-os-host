@@ -1,0 +1,191 @@
+#!/usr/bin/env python3
+"""Bounded, stdlib-only SSH/sudo transport using an owner-only hosts.env.
+
+This executable is intentionally self-contained so the same reviewed bytes run
+on a bootstrap host before the Python package or either harness is installed.
+"""
+
+from __future__ import annotations
+
+import argparse
+import concurrent.futures
+import datetime
+import json
+import os
+from pathlib import Path
+import re
+import shlex
+import signal
+import stat
+import subprocess
+import sys
+
+HOSTS = ("GENOMESBOX", "BIGMAC", "WORKMAC")
+FIELDS = ("HOST_NAME", "USER", "PASS")
+
+
+class AccessError(Exception):
+    """An actionable error that contains no credential values."""
+
+
+def load_credentials(path: Path) -> dict[str, str]:
+    """Parse literal dotenv values; never execute or expand shell expressions."""
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(fd, "r", encoding="utf-8") as stream:
+            info = os.fstat(stream.fileno())
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid():
+                raise AccessError("hosts.env must be a regular file owned by the current user")
+            if stat.S_IMODE(info.st_mode) & 0o077:
+                raise AccessError("hosts.env must have mode 0600 or 0400")
+            text = stream.read(65537)
+    except (OSError, UnicodeError):
+        raise AccessError("cannot read owner-only hosts.env") from None
+    if len(text) > 65536:
+        raise AccessError("hosts.env exceeds 64 KiB")
+    required = {host + "_" + field for host in HOSTS for field in FIELDS}
+    values: dict[str, str] = {}
+    for number, line in enumerate(text.splitlines(), 1):
+        match = re.fullmatch(r"\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)", line)
+        if not match or match[1] not in required:
+            continue
+        key, raw = match.groups()
+        if key in values:
+            raise AccessError("duplicate variable " + key)
+        if raw.startswith("'"):
+            quoted = re.fullmatch(r"'((?:\\.|[^'\\])*)'\s*(?:#.*)?", raw)
+            if not quoted:
+                raise AccessError(f"invalid quoting for {key} on line {number}")
+            value = re.sub(r"\\(['\\])", r"\1", quoted[1])
+        elif raw.startswith('"'):
+            quoted = re.fullmatch(r'"((?:\\.|[^"\\])*)"\s*(?:#.*)?', raw)
+            if not quoted:
+                raise AccessError(f"invalid quoting for {key} on line {number}")
+            value = re.sub(r'\\([\\"$`])', r"\1", quoted[1])
+        else:
+            value = re.sub(r"\s+#.*$", "", raw).rstrip()
+        if not value or any(c in value for c in ("\x00", "\r", "\n")):
+            raise AccessError("empty or multiline variable " + key)
+        values[key] = value
+    missing = sorted(required - values.keys())
+    if missing:
+        raise AccessError("missing variables: " + ", ".join(missing))
+    for host in HOSTS:
+        if not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.:-]*", values[host + "_HOST_NAME"]):
+            raise AccessError("invalid host name for " + host)
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.-]*", values[host + "_USER"]):
+            raise AccessError("invalid user for " + host)
+    return values
+
+
+def redact(data: bytes, values: dict[str, str]) -> bytes:
+    for secret in sorted({values[h + "_PASS"].encode() for h in HOSTS}, key=len, reverse=True):
+        data = data.replace(secret, b"[REDACTED]")
+    return data
+
+
+def ssh_argv(host: str, values: dict[str, str], command: list[str], sudo: bool) -> list[str]:
+    if host not in HOSTS:
+        raise AccessError("unknown host label")
+    if not command or not command[0] or any("\x00" in arg for arg in command):
+        raise AccessError("a valid command is required after --")
+    if sudo:
+        # Always disconnect the elevated command's stdin. Even a NOPASSWD rule
+        # must not let that command consume an unused password from the pipe.
+        command = ["/usr/bin/sudo", "-k", "-S", "-p", "", "--", "/bin/sh", "-c",
+                   'exec </dev/null; exec "$@"', "agentic-os-host", *command]
+    return ["ssh", "-T", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes",
+            "-o", "IdentityAgent=none", "-o", "ControlMaster=no", "-o", "ControlPath=none",
+            "-o", "PasswordAuthentication=no", "-o", "KbdInteractiveAuthentication=no",
+            "-o", "PreferredAuthentications=publickey", "-o", "ConnectTimeout=10",
+            "-o", "ServerAliveInterval=10", "-o", "ServerAliveCountMax=2",
+            "-l", values[host + "_USER"], "--", values[host + "_HOST_NAME"], shlex.join(command)]
+
+
+def execute(host: str, values: dict[str, str], command: list[str], *, sudo: bool = False,
+            timeout: int = 60, input_data: bytes = b"", redact_output: bool = True) -> tuple[int, bytes, bytes]:
+    if not 1 <= timeout <= 120:
+        raise AccessError("timeout must be between 1 and 120 seconds; use the managed runner for longer work")
+    if sudo and input_data:
+        raise AccessError("sudo commands receive /dev/null stdin; pass a script as an argument or an authorized remote file")
+    payload = (values[host + "_PASS"] + "\n").encode() if sudo else input_data
+    process = subprocess.Popen(ssh_argv(host, values, command, sudo), stdin=subprocess.PIPE,
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
+    try:
+        output, error = process.communicate(payload, timeout=timeout)
+    except (subprocess.TimeoutExpired, KeyboardInterrupt):
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        try:
+            process.communicate(timeout=2)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            process.communicate()
+        # SSH session termination does not prove remote descendants terminated.
+        return 124, b"", b"SSH deadline exceeded; inspect remote state before retrying\n"
+    if redact_output:
+        output, error = redact(output, values), redact(error, values)
+    return process.returncode, output, error
+
+
+def check(host: str, values: dict[str, str], sudo: bool, timeout: int) -> dict:
+    # Compare private readback before redaction: a valid password may itself be
+    # the account name or "0". Only booleans/exit codes leave this function.
+    code, output, _ = execute(host, values, ["/usr/bin/id", "-un"], timeout=timeout, redact_output=False)
+    account = output.decode(errors="replace").strip()
+    result = {"host": host.lower(), "ssh_exit": code,
+              "account_matches": code == 0 and account == values[host + "_USER"],
+              "authentication": "publickey; agent disabled; strict host trust"}
+    if sudo and result["account_matches"]:
+        code, output, _ = execute(host, values, ["/usr/bin/id", "-u"], sudo=True, timeout=timeout, redact_output=False)
+        result.update(sudo_exit=code, sudo_uid_zero=code == 0 and output.strip() == b"0")
+    result["passed"] = result["account_matches"] and (not sudo or result.get("sudo_uid_zero", False))
+    return result
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--root", type=Path, default=Path(os.environ.get("AGENTIC_OS_ROOT", "~/agentic_os")).expanduser())
+    parser.add_argument("--timeout", type=int, default=60, help="per-command deadline, 1–120 seconds")
+    sub = parser.add_subparsers(dest="action", required=True)
+    for action in ("run", "sudo"):
+        p = sub.add_parser(action)
+        p.add_argument("host", type=str.upper, choices=HOSTS)
+        p.add_argument("command", nargs=argparse.REMAINDER)
+    p = sub.add_parser("check")
+    p.add_argument("host", nargs="?", type=str.upper, choices=HOSTS)
+    p.add_argument("--sudo", action="store_true")
+    args = parser.parse_args(argv)
+    try:
+        values = load_credentials(args.root.expanduser() / "hosts.env")
+        if not 1 <= args.timeout <= 120:
+            raise AccessError("timeout must be between 1 and 120 seconds")
+        if args.action == "check":
+            selected = [args.host] if args.host else list(HOSTS)
+            with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
+                results = list(pool.map(lambda h: check(h, values, args.sudo, args.timeout), selected))
+            print(json.dumps({"schema": "host-access-check/v1", "observed_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                              "results": results, "passed": all(r["passed"] for r in results)}, indent=2))
+            return 0 if all(r["passed"] for r in results) else 1
+        command = args.command[1:] if args.command[:1] == ["--"] else args.command
+        # Deliberately avoid reading the caller's stdin for sudo.
+        data = sys.stdin.buffer.read() if args.action == "run" and not sys.stdin.isatty() else b""
+        code, output, error = execute(args.host, values, command, sudo=args.action == "sudo", timeout=args.timeout, input_data=data)
+        sys.stdout.buffer.write(output)
+        sys.stderr.buffer.write(error)
+        return code
+    except AccessError as error:
+        print("agentic-os-host: " + str(error), file=sys.stderr)
+        return 2
+    except OSError:
+        print("agentic-os-host: SSH executable or transport unavailable", file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
