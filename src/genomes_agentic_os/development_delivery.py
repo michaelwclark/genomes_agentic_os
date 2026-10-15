@@ -11278,6 +11278,17 @@ def run_development_stage(
     return persist_delivery_revision_metadata()
 
 
+def record_development_family_target_merge(
+    state_file: str | Path, *, evidence_file: str | Path, idempotency_key: str,
+) -> dict[str, Any]:
+    """Record a sibling's actual merge without transitioning the primary task."""
+    from .family_target_delivery import record_family_target_merge
+
+    return record_family_target_merge(
+        state_file, evidence_file=evidence_file, idempotency_key=idempotency_key,
+    )
+
+
 HISTORICAL_DELIVERY_RECONCILIATION_SCHEMA = "auto-dev-historical-delivery-reconciliation/v1"
 
 
