@@ -13,9 +13,11 @@
 
 | Surface | Role | Owns |
 | --- | --- | --- |
-| Agentic OS filesystem | Canonical work state | Specs, plans, worklogs, receipts, decisions, validation evidence. |
+| Control-plane `state.db` | Canonical lifecycle and attention | Work identity, lifecycle, attention, and resume references, mutated through `agentic-os work`. |
+| Work-item packets | Durable execution evidence | Plans, worklogs, source references, receipts, decisions, and validation evidence. |
+| Library source / installed manifests | Reusable definitions / selected installed revision | `object.yml` definitions and entrypoints; generated indexes are projections. |
 | Notion | Operator cockpit | Human-readable reports, dashboards, status summaries, review surfaces. |
-| Linear | Product tracker for Agentic OS work | Issue identity, project/initiative rollups, execution status when configured. |
+| Linear | Product specifications and tracker for Agentic OS work | Issue identity, problem/scope, acceptance criteria, dependencies, and project rollups. |
 | Jira | Domain tracker for Jira-owned projects | Jira issue workflow, customer/support work, LOS engineering tickets. |
 | GitHub | Code review and CI truth | Branches, PRs, checks, review comments, merge history. |
 
@@ -24,7 +26,7 @@ tracker/PR state. Do not infer success from stale memory or old reports.
 
 ---
 
-## Filesystem Is Canonical
+## Work State And Packet Evidence
 
 Each non-trivial unit of work should have a local packet:
 
@@ -37,9 +39,16 @@ The packet path stays stable while lifecycle state and attention change in
 lanes such as `01-intake/` and `02-active/` are compatibility inputs only;
 terminal retention may later move a packet to `work-items/99-archived/`.
 
-The packet owns:
+Change lifecycle and attention through `agentic-os work`. Read
+`harness/shared_factory/00-control-plane/active-now.json` for the generated active
+projection; do not edit it or infer state from packet folders, tracker status,
+branches, or worktrees.
 
-- `SPEC.md`, `PLAN.md`, `NEXT.md`, `WORKLOG.md`, and closeout notes.
+The packet retains:
+
+- A referenced copy of tracker scope in `SPEC.md`, plus `PLAN.md`, `NEXT.md`,
+  `WORKLOG.md`, and closeout notes. Keep new specifications and acceptance
+  criteria in the owning Jira or Linear item.
 - Generated artifacts under `artifacts/`.
 - Validation receipts and blocker-grade errors.
 - Decisions that future agents must honor.
@@ -67,10 +76,12 @@ workspace. External systems should not receive private Notion URLs.
 
 ---
 
-## Linear Is A Projection And Tracker
+## Linear Owns Product Specifications And Tracking
 
-For Agentic OS work, Linear gives the work a tracker id and visible product queue.
-It does not replace the filesystem packet.
+For Agentic OS work, Linear owns the product specification and visible product
+queue. The local packet retains implementation evidence, and `state.db` owns
+local lifecycle/attention. Provider status is advisory for content readiness;
+read the actual scope, acceptance behavior, and dependencies before delivery.
 
 Use Linear when:
 

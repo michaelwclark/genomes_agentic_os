@@ -24,9 +24,11 @@ a code-level multi-agent framework. You can replace framework orchestration with
 | Local scripts do the mechanical, non-AI work | The `agentic-os` Python CLI (scaffolding, validation, routing, registries) |
 | One agent reading the right files at the right moment | The routing loop: read `ROUTER.md` → route to the narrowest layer → re-read context after `cd` |
 
-**Design consequence that governs everything:** the *filesystem is the
-architecture*. The CLI's job is to create, validate, and navigate that structure
-deterministically — not to be a runtime that "owns" state in memory.
+The filesystem provides durable context and routing. Rubicon adds deterministic
+coordination for work identity, lifecycle, admission, attempts, approvals,
+effects, and receipts. Agents reason about the work; the canonical stores and
+commands record its state. A folder or a running conversation does not establish
+that work has started or completed.
 
 ---
 
@@ -35,21 +37,36 @@ deterministically — not to be a runtime that "owns" state in memory.
 Genome's Agentic OS deliberately separates concerns across five planes. Confusing
 these layers is the most common way to make a mess.
 
-![Five-layer runtime model: source package → installed OS → harnesses → Notion control plane → future runtime state, with integrations](diagrams/atlas-five-layer.png)
-
-<!-- Diagram source: docs/architecture/diagrams/atlas-five-layer.mmd (gitignored). Regenerate: bash docs/architecture/tools/render-diagrams.sh -->
-
 | Layer | Source of truth | Owns |
 | --- | --- | --- |
 | ① Source package (this repo) | git | Reusable specs, templates, schemas, CLI scaffold logic, docs |
-| ② Installed OS (`~/agentic_os`) | filesystem | Live domains, routers, workflow/automation specs, context packs, run logs, runtime registries |
+| ② Installed OS | Routed context and installed object manifests | Domains, routers, context packs, stable work packets, and receipt-backed installed definitions |
 | ③ Harnesses (Claude, Codex) | their own config | Reading OS specs and executing workflows |
-| ④ Control plane (Notion) | Notion (mirror) | Human cockpit: intake, approvals, dashboards, status. **Files remain authoritative.** |
-| ⑤ Runtime state (future) | DB/queue | High-volume mutable state, locks, dedupe, replay, matching |
+| ④ Operator projections | Verified source/provider readback | Notion reports, dashboards, and generated local indexes |
+| ⑤ Control-plane and execution state | Canonical database and selected runtime backend | Work lifecycle and attention, admissions, attempts, approval/effect records, leases, and execution receipts |
 
-**Rule:** the filesystem (②) is always the operational source of truth. Notion (④)
-is a *projection*. The database (⑤) is a *future* plane for when file-based state
-stops scaling — it is not required for V1.
+Authority is specific to the surface:
+
+- `harness/shared_factory/00-control-plane/state.db` owns installed work lifecycle
+  and attention. Use `agentic-os work` for changes. Read its generated
+  `active-now.json` projection before routing active work; moving a packet folder
+  does not change lifecycle state.
+- The configured library source owns reusable definitions. Installed
+  `lib/*/object.yml` manifests describe the selected revision;
+  `lib/registry/objects.json` is a generated discovery index. Author the durable
+  change upstream and use `agentic-os library` for install and reconciliation.
+- Jira or Linear owns project specifications and acceptance criteria. Work
+  packets retain the execution plan, source references, decisions, and evidence.
+- GitHub owns PR heads, checks, review threads, and merge results. The selected
+  Execution Fabric backend owns runtime admission and execution evidence;
+  local fallback is an explicit mode with separate receipts.
+- Notion and generated filesystem views project those owners. A projection,
+  queue admission, source checkout, or green test alone does not prove delivery.
+
+See [Source Of Truth Rules](../25-source-of-truth.md),
+[Versioned Object Library](../29-versioned-object-library.md), and
+[Execution Fabric](../13-feature-guides/18-execution-fabric.md) for the mutation,
+upgrade, and recovery boundaries.
 
 ---
 
@@ -73,7 +90,7 @@ operate any domain.
 
 ## 4. Python package architecture
 
-The CLI is a single Python package (`src/genomes_agentic_os/`, ~10k LOC). It is
+The CLI is a Python package (`src/genomes_agentic_os/`). It is
 **not** the TS/hexagonal reference architecture used in Ledgerline/Losmon — it is a
 **layered functional CLI**. The philosophy is the same (explicit naming, strict
 separation, dependencies passed in, no hidden globals); the mechanism is Pythonic
@@ -119,7 +136,8 @@ weakening the stricter canonical policy or overwriting user-authored content.
 | --- | --- | --- |
 | `scaffold.py` | 2105 | **Filesystem scaffolding.** Domain/lane/file constants (`DEFAULT_DOMAINS`, `STANDARD_LANES`, `WORKFLOW_FILES`, `AUTOMATION_FILES`), `.agentic_root` marker, template rendering, `init`/domain/project creation. The backbone. |
 | `runtime_ops.py` | 1186 | **Runtime registries.** Heartbeats, schedules, integrations, the run-queue, and `run-next` dispatch. File-backed; dry-run by default. |
-| `cli.py` | 1176 | **Composition root.** `build_parser()` declares every command; `handle_*` functions adapt args → ops calls; `main()` dispatches. The one place wiring lives. |
+| `cli/` | — | **Composition root.** The command subpackage declares parsers and thin handlers; `main()` dispatches to the owning operation modules. |
+| `state/db.py` and `state/control_plane.py` | — | **Canonical state.** Database connection/schema primitives and control-plane storage contracts. |
 | `source_watch.py` | 665 | **Connected sources.** `connected-system` + `watch-source` registries, cursors, polling. |
 | `activity_ingestion.py` | — | **Operator analytics ingestion.** Opt-in provider adapters, metadata-only event envelopes, durable cursors, dedupe, metric bindings, and source health. |
 | `config_ops.py` | 720 | **Codex `config.toml`.** Per-layer install/doctor plus routed tree install with conflict-aware merge. |
@@ -163,7 +181,7 @@ There is **no DI framework and no module-level mutable global**. The pattern is
 - The **`config.toml`** (Codex) and **profile YAML** are *data dependencies*
   resolved once at the edge (a CLI handler) and passed down — never re-read deep
   in the call tree.
-- Handlers in `cli.py` are the composition root: they parse args, resolve the
+- Handlers in `cli/` are the composition root: they parse args, resolve the
   root, and call ops functions with explicit arguments. Ops functions are pure
   with respect to their inputs + the filesystem.
 
@@ -175,15 +193,17 @@ an import-time side effect.
 
 ## 6. Event emission & reaction model
 
-This is the closest thing to an "event bus," but it is **file-backed and
-deterministic**, consistent with MWP (state lives in files, not memory).
+`event_graph.py` supplies the compatibility event ledger and deterministic chain
+matching. Execution Fabric and the control-plane store supply runtime admission,
+leases, attempts, effects, and receipts. Check the configured backend before
+treating a legacy queue file as live execution state.
 
 ![Event flow: sources append to the event ledger, chain rules match against it, matches with valid idempotency keys queue runs, dispatched via runtime run-next; depth-limit and already-seen events are marked skipped, while malformed enabled rules route to dead-letter](diagrams/atlas-event-flow.png)
 
 <!-- Diagram source: docs/architecture/diagrams/atlas-event-flow.mmd (gitignored). Regenerate: bash docs/architecture/tools/render-diagrams.sh -->
 
-Key files (all under `shared_factory/00-control-plane/` and
-`shared_factory/06-runs-and-logs/events/`): `event-graph.yml`, `chain-rules.yml`,
+Compatibility files (under `harness/shared_factory/00-control-plane/` and
+`harness/shared_factory/06-runs-and-logs/events/`): `event-graph.yml`, `chain-rules.yml`,
 `event-cursors.yml`, `run-queue.yml`, `event-ledger-index.md`, plus `dead-letter/`
 and `processing-results/`.
 
@@ -235,7 +255,7 @@ moment," computed deterministically.
 ## 9. How to extend without making a mess
 
 Adding a **new command**:
-1. Add the subparser + flags in `cli.py:build_parser()` (match sibling command style).
+1. Add the subparser + flags in the owning `cli/` command module (match sibling command style).
 2. Add a `handle_<command>(args)` function (thin adapter: resolve root, call ops, print result).
 3. Put the real logic in the matching `*_ops.py` module (or a new `<concern>_ops.py` if it's a genuinely new concern). Functions take `root` and data explicitly.
 4. If it creates files, add the template under `templates/` and a schema under `schemas/` if structured.
