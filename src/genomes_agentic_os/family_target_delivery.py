@@ -265,9 +265,9 @@ def _ci_skip(root: Path, skip: Mapping[str, Any], target: Mapping[str, str], wor
     return str(skip["name"])
 
 
-def _ci_inventory(worktree: Path, target: Mapping[str, str]) -> Counter[str]:
+def _ci_workflows(worktree: Path, target: Mapping[str, str]) -> dict[str, Counter[str]]:
     """Derive the required static PR jobs from the exact source, not current results."""
-    expected: Counter[str] = Counter()
+    expected: dict[str, Counter[str]] = {}
     paths = _git(worktree, "ls-tree", "-r", "--name-only", target["subject_revision"], ".github/workflows/").decode().splitlines()
     for path in paths:
         if not path.endswith((".yml", ".yaml")):
@@ -300,13 +300,74 @@ def _ci_inventory(worktree: Path, target: Mapping[str, str]) -> Counter[str]:
         jobs = workflow.get("jobs")
         if not isinstance(jobs, Mapping) or not jobs:
             raise AutoDevStateError("applicable PR workflow has no verifiable CI jobs")
+        names: Counter[str] = Counter()
         for key, job in jobs.items():
             if not isinstance(job, Mapping) or job.get("strategy") or "${{" in str(job.get("name") or ""):
                 raise AutoDevStateError("dynamic PR jobs require a dedicated CI inventory adapter")
-            expected[str(job.get("name") or key)] += 1
+            names[str(job.get("name") or key)] += 1
+        expected[path] = names
     if not expected:
         raise AutoDevStateError("family target has no source-bound required PR check inventory")
     return expected
+
+
+def _ci_inventory(worktree: Path, target: Mapping[str, str]) -> Counter[str]:
+    return sum(_ci_workflows(worktree, target).values(), Counter())
+
+
+def _ci_events(payload: Mapping[str, Any], worktree: Path, target: Mapping[str, str], checks: list[Any], github_repository: str) -> None:
+    """Bind each required job to the latest actual PR-event run, not a push namesake."""
+    response = payload.get("workflow_runs")
+    if not isinstance(response, Mapping) or response.get("complete") is not True:
+        raise AutoDevStateError("family target requires complete provider PR workflow-run inventory")
+    runs = response.get("workflow_runs")
+    if not isinstance(runs, list) or not runs or response.get("total_count") != len(runs):
+        raise AutoDevStateError("provider PR workflow-run inventory is incomplete")
+    jobs_by_run = payload.get("workflow_jobs")
+    if not isinstance(jobs_by_run, Mapping):
+        raise AutoDevStateError("family target requires actual provider jobs for each PR workflow run")
+    for path, required in _ci_workflows(worktree, target).items():
+        applicable = []
+        for run in runs:
+            if not isinstance(run, Mapping) or run.get("path") != path or run.get("event") != "pull_request":
+                continue
+            if run.get("head_sha") != target["subject_revision"] or run.get("head_branch") != target["source_branch"]:
+                continue
+            prs = run.get("pull_requests")
+            if not isinstance(prs, list) or not any(isinstance(pr, Mapping) and str(pr.get("number")) == target["pull_request"].rsplit("#", 1)[-1]
+                and pr.get("head", {}).get("sha") == target["subject_revision"]
+                and pr.get("base", {}).get("sha") == target["base_sha"]
+                and pr.get("base", {}).get("ref") == target["base_branch"] for pr in prs):
+                continue
+            applicable.append(run)
+        if not applicable:
+            raise AutoDevStateError("required source CI has no exact PR-event run; push checks cannot substitute")
+        if any(not run.get("created_at") or not str(run.get("id") or "").isdecimal() for run in applicable):
+            raise AutoDevStateError("PR-event workflow run lacks provider identity and creation time")
+        latest = max(applicable, key=lambda run: (str(run["created_at"]), int(run["id"])))
+        if latest.get("head_repository", {}).get("full_name") != github_repository or latest.get("html_url") != f"https://github.com/{github_repository}/actions/runs/{latest['id']}":
+            raise AutoDevStateError("required PR-event run is not owned by the selected source repository")
+        if latest.get("status") != "completed" or latest.get("conclusion") != "success":
+            raise AutoDevStateError("latest exact PR-event CI run is pending or failed")
+        result = jobs_by_run.get(str(latest["id"]))
+        jobs = result.get("jobs") if isinstance(result, Mapping) else None
+        if not isinstance(jobs, list) or not jobs or result.get("total_count") != len(jobs):
+            raise AutoDevStateError("required PR-event jobs response is incomplete")
+        if any(not isinstance(job, Mapping) or not str(job.get("id") or "").isdecimal() for job in jobs) or len({str(job["id"]) for job in jobs}) != len(jobs):
+            raise AutoDevStateError("required PR-event jobs lack unique provider job identities")
+        observed: Counter[str] = Counter()
+        for job in jobs:
+            if not isinstance(job, Mapping) or str(job.get("run_id")) != str(latest["id"]) or job.get("head_sha") != target["subject_revision"] or job.get("status") != "completed":
+                raise AutoDevStateError("provider CI job differs from the exact completed PR-event run")
+            if job.get("html_url") != f"https://github.com/{github_repository}/actions/runs/{latest['id']}/job/{job['id']}":
+                raise AutoDevStateError("provider CI job URL differs from its exact PR-event workflow identity")
+            matches = [check for check in checks if isinstance(check, Mapping) and check.get("name") == job.get("name")
+                       and check.get("detailsUrl") == job.get("html_url") and job.get("html_url")]
+            if not matches or any(str(check.get("conclusion") or "").lower() != job.get("conclusion") for check in matches):
+                raise AutoDevStateError("current PR checks do not bind the actual PR-event job identity/result")
+            observed[str(job.get("name") or "")] += 1
+        if observed != required:
+            raise AutoDevStateError("actual PR-event run omits required source workflow jobs")
 
 
 def _provider(root: Path, descriptor: Any, target: Mapping[str, str], *, github_repository: str,
@@ -351,6 +412,7 @@ def _provider(root: Path, descriptor: Any, target: Mapping[str, str], *, github_
     names = Counter(str(check.get("name") or check.get("context") or "") for check in checks if isinstance(check, Mapping))
     if any(count > names[name] for name, count in _ci_inventory(worktree, target).items()):
         raise AutoDevStateError("family target provider readback omits required source CI jobs")
+    _ci_events(payload, worktree, target, checks, github_repository)
     for check in checks:
         if not isinstance(check, Mapping):
             raise AutoDevStateError("family target provider check is malformed")

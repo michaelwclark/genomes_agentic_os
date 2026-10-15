@@ -67,7 +67,14 @@ or outdated. Unknown mergeability, pending/failed checks and unqualified skips
 refuse readiness. Provider observations expire after ten minutes.
 Every applicable static PR workflow job is derived from the exact source and
 must appear in the provider results. A single green check cannot hide an omitted
-required job. Dynamic jobs, path filters, wildcard branch filters and
+required job. Readback also includes the complete actual Actions `workflow_runs`
+response (`complete: true`, `total_count`, `workflow_runs`) and `workflow_jobs`,
+keyed by run ID with each complete `total_count`/`jobs` response. Each required
+workflow must have a successful latest `pull_request` run for the exact source
+repository, PR number, source head and reviewed base. Each required completed
+job must bind its actual run ID, head SHA and job URL to the current PR check's
+`detailsUrl` and result. Green push jobs with the same names cannot substitute
+for missing or pending PR jobs. Dynamic jobs, path filters, wildcard branch filters and
 `pull_request_target` workflows require an explicit future inventory adapter;
 they fail closed in this bounded GitHub implementation.
 

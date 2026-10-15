@@ -40,6 +40,23 @@ def canonical_sha(value: object) -> str:
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
+def attach_pr_runs(provider: dict, target: dict) -> None:
+    jobs = []
+    for index, check in enumerate(provider["pr"]["statusCheckRollup"], start=101):
+        url = f"https://github.com/acme/app/actions/runs/91/job/{index}"
+        check["detailsUrl"] = url
+        jobs.append({"id": index, "run_id": 91, "name": check["name"], "head_sha": target["subject_revision"],
+                     "status": check["status"].lower(), "conclusion": check["conclusion"].lower(), "html_url": url})
+    provider["workflow_runs"] = {"total_count": 1, "complete": True, "workflow_runs": [{
+        "id": 91, "path": ".github/workflows/ci.yml", "event": "pull_request", "head_sha": target["subject_revision"],
+        "head_branch": target["source_branch"], "head_repository": {"full_name": "acme/app"},
+        "html_url": "https://github.com/acme/app/actions/runs/91", "created_at": datetime.now(timezone.utc).isoformat(),
+        "status": "completed", "conclusion": "success", "pull_requests": [{"number": 2,
+            "head": {"sha": target["subject_revision"]}, "base": {"sha": target["base_sha"], "ref": target["base_branch"]}}],
+    }]}
+    provider["workflow_jobs"] = {"91": {"total_count": len(jobs), "jobs": jobs}}
+
+
 @pytest.fixture
 def family(tmp_path: Path) -> dict:
     repo, initial = _repository(tmp_path)
@@ -70,7 +87,7 @@ def family(tmp_path: Path) -> dict:
     (sibling / "sibling.txt").write_text("sibling source\n")
     ci = sibling / ".github/workflows/ci.yml"
     ci.parent.mkdir(parents=True)
-    ci.write_text("name: CI\non: [pull_request]\njobs:\n  tests:\n    name: tests\n    runs-on: ubuntu-latest\n    steps: [{run: 'true'}]\n  security:\n    name: security\n    runs-on: ubuntu-latest\n    steps: [{run: 'true'}]\n")
+    ci.write_text("name: CI\non: [push, pull_request]\njobs:\n  tests:\n    name: tests\n    runs-on: ubuntu-latest\n    steps: [{run: 'true'}]\n  security:\n    name: security\n    runs-on: ubuntu-latest\n    steps: [{run: 'true'}]\n")
     _git("add", ".", cwd=sibling)
     _git("commit", "-m", "feat: sibling", cwd=sibling)
     head = _git("rev-parse", "HEAD", cwd=sibling)
@@ -109,6 +126,7 @@ def family(tmp_path: Path) -> dict:
                        "author": {"login": "michaelwclark"}, "mergeable": "MERGEABLE",
                        "statusCheckRollup": [{"__typename": "CheckRun", "name": name, "status": "COMPLETED", "conclusion": "SUCCESS"} for name in ("tests", "security")]},
                 "review_threads": {"pageInfo": {"hasNextPage": False}, "nodes": []}}
+    attach_pr_runs(provider, target)
     provider_path = write(packet / "artifacts/provider.json", provider)
     policy = task.read()["policy_fingerprint"]
     subject = ReviewSubject(repository="acme/app", pull_request="acme/app#2", base_branch="release", base_sha=base,
@@ -433,6 +451,8 @@ def test_provider_skip_requires_the_real_main_event_and_frozen_condition(family:
     provider = json.loads(family["provider"].read_text())
     provider["pr"].update(baseRefName="main", headRefOid=head)
     provider["pr"]["statusCheckRollup"][0].update(name="Conventional Commits", conclusion="SKIPPED")
+    provider["pr"]["statusCheckRollup"] = provider["pr"]["statusCheckRollup"][:1]
+    attach_pr_runs(provider, target)
     proof = write(family["packet"] / "artifacts/skip-proof.json", {
         "schema": "auto-dev-ci-applicability/v1", "event_name": "pull_request", "base_branch": "main",
         "subject_revision": head, "status": "not_applicable", "workflow_path": ".github/workflows/ci.yml",
@@ -448,6 +468,56 @@ def test_provider_skip_requires_the_real_main_event_and_frozen_condition(family:
     write(path, provider)
     with pytest.raises(AutoDevStateError, match="exact PR event"):
         _provider(family["packet"], bound(path), target, github_repository="acme/app", author_identity="github:michaelwclark", fresh=True, worktree=family["sibling"])
+
+
+@pytest.mark.parametrize("change", ["push_only", "latest_pr_pending", "push_green_pr_pending", "wrong_pr", "wrong_base", "wrong_head", "missing_job", "wrong_run", "wrong_job_url", "push_rollup"])
+def test_green_push_namesakes_cannot_replace_exact_pr_event_jobs(family: dict, change: str) -> None:
+    provider = json.loads(family["provider"].read_text())
+    run = provider["workflow_runs"]["workflow_runs"][0]
+    jobs = provider["workflow_jobs"]["91"]["jobs"]
+    if change == "push_only":
+        run["event"] = "push"
+    elif change in {"latest_pr_pending", "push_green_pr_pending"}:
+        latest = deepcopy(run)
+        latest.update(id=92, created_at=(datetime.now(timezone.utc) + timedelta(seconds=1)).isoformat(),
+                      html_url="https://github.com/acme/app/actions/runs/92", status="queued", conclusion=None)
+        if change == "push_green_pr_pending":
+            run["event"] = "push"
+        provider["workflow_runs"]["workflow_runs"].append(latest)
+        provider["workflow_runs"]["total_count"] = 2
+    elif change == "wrong_pr":
+        run["pull_requests"][0]["number"] = 3
+    elif change == "wrong_base":
+        run["pull_requests"][0]["base"]["sha"] = "a" * 40
+    elif change == "wrong_head":
+        run["head_sha"] = family["primary_head"]
+    elif change == "missing_job":
+        jobs.pop()
+    elif change == "wrong_run":
+        jobs[0]["run_id"] = 92
+    elif change == "wrong_job_url":
+        jobs[0]["html_url"] = "https://github.com/acme/app/actions/runs/92/job/101"
+    elif change == "push_rollup":
+        # Same green names, different run/job IDs: the actual PR job is absent.
+        for check in provider["pr"]["statusCheckRollup"]:
+            check["detailsUrl"] = check["detailsUrl"].replace("/runs/91/", "/runs/92/")
+    path = write(family["packet"] / "artifacts/provider-event-negative.json", provider)
+    with pytest.raises(AutoDevStateError):
+        _provider(family["packet"], bound(path), family["target"], github_repository="acme/app",
+                  author_identity="github:michaelwclark", fresh=True, worktree=family["sibling"])
+
+
+def test_actual_green_pr_run_is_accepted_with_separate_green_push_namesakes(family: dict) -> None:
+    provider = json.loads(family["provider"].read_text())
+    pushed = deepcopy(provider["workflow_runs"]["workflow_runs"][0])
+    pushed.update(id=92, event="push", pull_requests=[], html_url="https://github.com/acme/app/actions/runs/92")
+    provider["workflow_runs"]["workflow_runs"].append(pushed)
+    provider["workflow_runs"]["total_count"] = 2
+    for check in list(provider["pr"]["statusCheckRollup"]):
+        provider["pr"]["statusCheckRollup"].append({**check, "detailsUrl": check["detailsUrl"].replace("/runs/91/", "/runs/92/")})
+    path = write(family["packet"] / "artifacts/provider-two-events.json", provider)
+    _provider(family["packet"], bound(path), family["target"], github_repository="acme/app",
+              author_identity="github:michaelwclark", fresh=True, worktree=family["sibling"])
 
 
 def test_merge_records_provider_result_separately_and_exact_retry_is_safe(family: dict) -> None:
@@ -476,6 +546,48 @@ def test_merge_records_provider_result_separately_and_exact_retry_is_safe(family
     write(evidence, payload)
     with pytest.raises(AutoDevStateError):
         record_development_family_target_merge(family["state"], evidence_file=evidence, idempotency_key="actual-sibling-merge")
+
+
+def test_real_sibling_first_merge_then_native_primary_merge_retains_both_records(family: dict) -> None:
+    authority = finalize(family)
+    stable = family["repo"].parent / "stable-first"
+    _git("worktree", "add", str(stable), "release", cwd=family["repo"])
+    _git("merge", "--no-ff", "feature/sibling", "-m", "merge: sibling first", cwd=stable)
+    sibling_merge = _git("rev-parse", "HEAD", cwd=stable)
+    provider = json.loads(family["provider"].read_text())
+    provider["pr"].update(state="MERGED", mergeCommit={"oid": sibling_merge},
+                          mergedAt=datetime.now(timezone.utc).isoformat(), baseRefOid=sibling_merge)
+    readback = write(family["packet"] / "artifacts/sibling-first-provider.json", provider)
+    evidence = write(family["packet"] / "artifacts/sibling-first-merged.json", {
+        "schema": "development-stage-evidence/v1", "state": "merged", "status": "completed",
+        "summary": "Actual sibling merge before primary", "verified_at": datetime.now(timezone.utc).isoformat(),
+        "evidence": {**family["target"], "source_head_sha": family["target"]["subject_revision"],
+                     "merge_sha": sibling_merge, "readback_verified": True, "readiness_authority": authority,
+                     "provider_readback": bound(readback)},
+    })
+    sibling_record = record_development_family_target_merge(family["state"], evidence_file=evidence,
+                                                           idempotency_key="sibling-first-real-merge")
+    validate_auto_dev_readiness_authority(family["state"], family["primary_authority"],
+        expected_subject=family["primary_head"], expected_pull_request=family["primary_authority"])
+    primary_branch = family["task"].read()["worktree"]["branch"]
+    _git("merge", "--no-ff", primary_branch, "-m", "merge: primary second", cwd=family["repo"])
+    primary_merge = _git("rev-parse", "HEAD", cwd=family["repo"])
+    primary_payload = {k: v for k, v in family["primary_authority"].items()
+                       if k not in {"owner", "ref", "sha256", "subject_revision"}}
+    primary_payload.update(source_head_sha=family["primary_head"], merge_sha=primary_merge,
+                           readback_verified=True, readiness_authority=family["primary_authority"])
+    receipt = _stage_receipt(family["packet"] / "artifacts/primary-second-merge", "merged",
+                             evidence=primary_payload, status="completed")
+    run_development_stage(family["task"].path, stage="merge", receipts={"merged": receipt},
+                          idempotency_prefix="primary-second-real-merge")
+    after = family["task"].read()
+    assert after["state"] == "merged"
+    assert after["terminal_revision"] == primary_merge
+    assert after["subject_revision"] == family["primary_head"]
+    assert after["family_merges"][authority["target_key"]] == sibling_record
+    projected = json.loads(family["state"].read_text())
+    assert projected["family_targets"][authority["target_key"]]["finalize"] == authority
+    assert validate(family, authority) == authority
 
 
 def test_native_cli_uses_exact_target_recorder_and_read_only_validator(family: dict, capsys) -> None:
