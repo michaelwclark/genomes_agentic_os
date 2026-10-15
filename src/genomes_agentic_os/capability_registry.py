@@ -576,6 +576,12 @@ def command_entries() -> list[dict[str, str]]:
             "source": "harness/commands/os-runtime-init.md",
         },
         {
+            "id": "runtime-recovery-set",
+            "command": "agentic-os runtime recovery-set",
+            "description": "Capture, encrypt, verify and restore complete Fabric recovery sets.",
+            "source": "harness/commands/os-runtime-recovery-set.md",
+        },
+        {
             "id": "run-queue",
             "command": "agentic-os run-queue",
             "description": "Prune stale runtime run-queue rows and old queue backup files.",

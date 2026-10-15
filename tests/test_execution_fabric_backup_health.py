@@ -44,10 +44,36 @@ def test_shipped_timer_path_generates_and_validates_the_same_run_receipt() -> No
     generator = GENERATOR.read_text(encoding="utf-8")
     service = BACKUP_SERVICE.read_text(encoding="utf-8")
     assert GENERATOR.stat().st_mode & 0o111
-    assert "backup-health.sh" in service
+    assert "recovery-backup.sh" in service
+    assert "backup-health.sh" in (SOURCE_ROOT / "installers/execution-fabric/bin/recovery-backup.sh").read_text()
     assert "--profile backup run --rm" in generator
     assert "validate-backup-health-receipt.sh" in generator
     assert "backup receipt does not belong to this backup run" in generator
+
+
+def test_recovery_wrapper_preserves_pg_backup_and_collector_is_dormant(tmp_path: Path) -> None:
+    """Run only copied fixture scripts; never touches Docker or the host runtime."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    for name in ("_lib.sh", "recovery-backup.sh", "recovery-collect.sh"):
+        shutil.copyfile(SOURCE_ROOT / "installers/execution-fabric/bin" / name, bin_dir / name)
+        (bin_dir / name).chmod(0o700)
+    marker = tmp_path / "pg-backup-ran"
+    (bin_dir / "backup-health.sh").write_text('#!/bin/sh\nset -eu\nprintf qualified > "$FIXTURE_PG_MARKER"\n')
+    (bin_dir / "backup-health.sh").chmod(0o700)
+    runtime = tmp_path / "runtime.env"
+    runtime.write_text(f"FABRIC_OS_ROOT='{tmp_path}'\nFABRIC_RUNTIME_STATE_DIR='{tmp_path / 'state'}'\nFABRIC_RECOVERY_SETS_ENABLED=0\n")
+    env = {**os.environ, "FABRIC_RUNTIME_ENV_FILE": str(runtime), "FIXTURE_PG_MARKER": str(marker)}
+    backup = subprocess.run([str(bin_dir / "recovery-backup.sh")], env=env, capture_output=True, text=True)
+    assert backup.returncode == 0 and marker.read_text() == "qualified"
+    collector = subprocess.run([str(bin_dir / "recovery-collect.sh")], env=env, capture_output=True, text=True)
+    assert collector.returncode == 0
+    assert json.loads(collector.stdout)["status"] == "disabled"
+    assert not (tmp_path / "repository").exists()
+    runtime.write_text(runtime.read_text().replace("ENABLED=0", "ENABLED=1"))
+    failed = subprocess.run([str(bin_dir / "recovery-backup.sh")], env=env, capture_output=True, text=True)
+    assert failed.returncode != 0 and "daily recovery plan" in failed.stderr
+    assert marker.read_text() == "qualified"
 
 
 def _receipt_fixture(tmp_path: Path) -> tuple[Path, Path]:
@@ -130,3 +156,29 @@ def test_validator_accepts_hash_bound_restore_manifest_and_rejects_tampering(
     failed = subprocess.run([str(VALIDATOR)], env=env, text=True, capture_output=True)
     assert failed.returncode == 75
     assert "hash does not match" in failed.stderr
+
+
+@pytest.mark.skipif(shutil.which("jq") is None, reason="jq is required")
+def test_complete_set_validator_requires_matching_native_source_and_preserves_legacy_mode(tmp_path):
+    receipt, runtime = _receipt_fixture(tmp_path)
+    env = {**os.environ, "FABRIC_RUNTIME_ENV_FILE": str(runtime), "FABRIC_RECOVERY_REQUIRE_PG_PROVENANCE": "1"}
+    failed = subprocess.run([str(VALIDATOR)], env=env, text=True, capture_output=True)
+    assert failed.returncode == 75 and "source PostgreSQL" in failed.stderr
+    identity = {"schemaVersion": "execution-fabric-postgres-source/v1", "systemId": "7432345656789123456",
+                "database": "execution_fabric", "databaseOid": "16384", "majorVersion": 17, "serverVersionNum": 170006}
+    manifest = receipt.parent / "backup-health.restore-manifest.json"
+    sidecar = json.loads(manifest.read_text())
+    sidecar.update(sourceIdentityVerified=True, sourceIdentityBefore=identity, sourceIdentityAfter=identity)
+    manifest.write_text(json.dumps(sidecar))
+    health = json.loads(receipt.read_text())
+    health.update(sourceIdentityVerified=True, sourceIdentity=identity)
+    health["restoreManifest"]["sha256"] = hashlib.sha256(manifest.read_bytes()).hexdigest()
+    receipt.write_text(json.dumps(health))
+    passed = subprocess.run([str(VALIDATOR)], env=env, text=True, capture_output=True)
+    assert passed.returncode == 0, passed.stderr
+    sidecar["sourceIdentityAfter"] = {**identity, "databaseOid": "99999"}
+    manifest.write_text(json.dumps(sidecar))
+    health["restoreManifest"]["sha256"] = hashlib.sha256(manifest.read_bytes()).hexdigest()
+    receipt.write_text(json.dumps(health))
+    rejected = subprocess.run([str(VALIDATOR)], env=env, text=True, capture_output=True)
+    assert rejected.returncode == 75 and "source PostgreSQL" in rejected.stderr

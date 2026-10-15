@@ -3,6 +3,50 @@
   "$id": "https://agentic-os.local/schemas/execution-fabric-v1.json",
   "title": "Agentic OS Execution Fabric instance configuration",
   "$defs": {
+    "recoverySets": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "primary_host_id", "custodian_host_id", "capture_plan_file", "maintenance_receipt_file", "staging_dir", "repository", "password_file", "max_age_seconds", "retention", "offsite"],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "primary_host_id": {"type": "string", "pattern": "^[a-zA-Z0-9._:-]{1,128}$"},
+        "custodian_host_id": {"type": "string", "pattern": "^[a-zA-Z0-9._:-]{1,128}$"},
+        "remote_staging_root": {"type": ["string", "null"], "minLength": 1},
+        "local_staging_root": {"type": ["string", "null"], "minLength": 1},
+        "daily_plan_file": {"type": ["string", "null"], "minLength": 1},
+        "capture_plan_file": {"type": ["string", "null"], "minLength": 1},
+        "maintenance_receipt_file": {"type": ["string", "null"], "minLength": 1},
+        "staging_dir": {"type": ["string", "null"], "minLength": 1},
+        "repository": {"type": ["string", "null"], "minLength": 1},
+        "password_file": {"type": ["string", "null"], "minLength": 1},
+        "max_age_seconds": {"type": "integer", "minimum": 60, "maximum": 604800},
+        "retention": {
+          "type": "object", "additionalProperties": false,
+          "required": ["daily", "weekly", "monthly"],
+          "properties": {
+            "daily": {"type": "integer", "minimum": 1, "maximum": 365},
+            "weekly": {"type": "integer", "minimum": 0, "maximum": 104},
+            "monthly": {"type": "integer", "minimum": 0, "maximum": 120}
+          }
+        },
+        "offsite": {
+          "type": "object", "additionalProperties": false,
+          "required": ["enabled", "repository", "password_file"],
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "repository": {"type": ["string", "null"], "minLength": 1},
+            "password_file": {"type": ["string", "null"], "minLength": 1}
+          },
+          "if": {"properties": {"enabled": {"const": true}}},
+          "then": {"properties": {"repository": {"type": "string"}, "password_file": {"type": "string"}}}
+        }
+      },
+      "if": {"properties": {"enabled": {"const": true}}},
+      "then": {"properties": {
+        "capture_plan_file": {"type": "string"}, "maintenance_receipt_file": {"type": "string"},
+        "staging_dir": {"type": "string"}, "repository": {"type": "string"}, "password_file": {"type": "string"}
+      }}
+    },
     "hostOverride": {
       "type": "object",
       "additionalProperties": false,
@@ -212,6 +256,7 @@
       "additionalProperties": false,
       "required": ["standalone_primary", "degraded_primary", "admission", "scheduling", "task_routes", "queues", "worker_pools"],
       "properties": {
+        "recovery_sets": {"$ref": "#/$defs/recoverySets"},
         "standalone_primary": {
           "type": "object",
           "additionalProperties": false,

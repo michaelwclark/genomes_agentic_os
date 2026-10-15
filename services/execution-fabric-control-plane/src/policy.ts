@@ -100,11 +100,73 @@ const poolSchema = z
   })
   .strict();
 
+const recoveryReference = z.string().min(1).nullable();
+const recoverySetsSchema = z
+  .object({
+    enabled: z.boolean(),
+    primary_host_id: scopeId,
+    custodian_host_id: scopeId,
+    remote_staging_root: recoveryReference.optional(),
+    local_staging_root: recoveryReference.optional(),
+    daily_plan_file: recoveryReference.optional(),
+    capture_plan_file: recoveryReference,
+    maintenance_receipt_file: recoveryReference,
+    staging_dir: recoveryReference,
+    repository: recoveryReference,
+    password_file: recoveryReference,
+    max_age_seconds: z.number().int().min(60).max(604800),
+    retention: z
+      .object({
+        daily: z.number().int().min(1).max(365),
+        weekly: z.number().int().min(0).max(104),
+        monthly: z.number().int().min(0).max(120),
+      })
+      .strict(),
+    offsite: z
+      .object({
+        enabled: z.boolean(),
+        repository: recoveryReference,
+        password_file: recoveryReference,
+      })
+      .strict(),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    const requireReference = (field: string, reference: string | null) => {
+      if (reference === null) {
+        context.addIssue({
+          code: "custom",
+          path: [field],
+          message: "enabled recovery sets require a non-null reference",
+        });
+      }
+    };
+    if (value.enabled) {
+      requireReference("capture_plan_file", value.capture_plan_file);
+      requireReference("maintenance_receipt_file", value.maintenance_receipt_file);
+      requireReference("staging_dir", value.staging_dir);
+      requireReference("repository", value.repository);
+      requireReference("password_file", value.password_file);
+    }
+    if (value.offsite.enabled) {
+      for (const field of ["repository", "password_file"] as const) {
+        if (value.offsite[field] === null) {
+          context.addIssue({
+            code: "custom",
+            path: ["offsite", field],
+            message: "enabled offsite recovery requires a non-null reference",
+          });
+        }
+      }
+    }
+  });
+
 const canonicalPolicySchema = z
   .object({
     schema_version: z.literal(1),
     execution_fabric: z
       .object({
+        recovery_sets: recoverySetsSchema.optional(),
         standalone_primary: z
           .object({
             enabled: z.boolean(),
@@ -183,6 +245,7 @@ const canonicalPolicySchema = z
   .strict();
 
 export type QueuePolicy = z.infer<typeof queueSchema>;
+export type RecoverySetsPolicy = z.infer<typeof recoverySetsSchema>;
 export type WorkerPoolPolicy = z.infer<typeof poolSchema>;
 export type TaskRoutePolicy = z.infer<typeof taskRouteSchema>;
 export type CanonicalPolicy = z.infer<typeof canonicalPolicySchema>;
@@ -391,6 +454,9 @@ function parsePolicy(source: string): CanonicalPolicy {
     scopeId.parse(hostAlias);
     if (override === null || typeof override !== "object" || Array.isArray(override)) {
       throw new Error(`host override ${hostAlias} must be a mapping`);
+    }
+    if (Object.prototype.hasOwnProperty.call(override, "recovery_sets")) {
+      throw new Error(`host override ${hostAlias} cannot override recovery_sets`);
     }
     const candidate = canonicalPolicySchema.parse(
       mergeConfig(base, { execution_fabric: override }),

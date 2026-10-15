@@ -22,6 +22,29 @@ expected_receipt="${FABRIC_RUNTIME_STATE_DIR%/}/backup-health.json"
   exit 77
 }
 
+require_source=${FABRIC_RECOVERY_SETS_ENABLED:-0}
+expected_source_sha=
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --require-source-provenance) require_source=1; shift ;;
+    --source-script-sha256)
+      [ "$#" -ge 2 ] || exit 78
+      expected_source_sha=$2; shift 2 ;;
+    *) echo "unsupported backup qualification argument" >&2; exit 78 ;;
+  esac
+done
+set --
+if [ "$require_source" = 1 ]; then
+  case "$expected_source_sha" in ''|*[!a-f0-9]*) echo "qualified source backup actor digest is required" >&2; exit 78 ;; esac
+  [ "${#expected_source_sha}" -eq 64 ] || exit 78
+  source_script="$FABRIC_DEPLOYMENT_DIR/scripts/postgres-backup.sh"
+  [ -f "$source_script" ] && [ ! -L "$source_script" ] &&
+    [ "$(fabric_sha256 "$source_script")" = "$expected_source_sha" ] || {
+    echo "native source backup actor differs from qualification" >&2; exit 75
+  }
+  set -- -e FABRIC_RECOVERY_REQUIRE_PG_PROVENANCE=1
+fi
+
 if [ -n "${FABRIC_SECRETS_DIR:-}" ]; then
   pgpass_file="$FABRIC_SECRETS_DIR/postgres-pgpass"
   if [ -e "$pgpass_file" ] && [ -n "$(find "$pgpass_file" -perm /077 2>/dev/null)" ]; then
@@ -36,9 +59,11 @@ docker compose \
   -f "$FABRIC_DEPLOYMENT_DIR/compose.genomesbox.yml" \
   --profile primary --profile backup run --rm \
   -e "FABRIC_BACKUP_RUN_ID=$run_id" \
+  "$@" \
   postgres-backup
 
-"$script_dir/validate-backup-health-receipt.sh" "$FABRIC_BACKUP_HEALTH_RECEIPT_FILE"
+FABRIC_RECOVERY_REQUIRE_PG_PROVENANCE="$require_source" \
+  "$script_dir/validate-backup-health-receipt.sh" "$FABRIC_BACKUP_HEALTH_RECEIPT_FILE"
 [ "$(jq -r '.runId' "$FABRIC_BACKUP_HEALTH_RECEIPT_FILE")" = "$run_id" ] || {
   echo "backup receipt does not belong to this backup run" >&2
   exit 75

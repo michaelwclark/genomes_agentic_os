@@ -16,6 +16,9 @@ required_assets:
   - deploy/execution-fabric/helm/los-agents
   - deploy/execution-fabric/witness
   - installers/execution-fabric
+  - schemas/execution-fabric-recovery-set.schema.json
+  - schemas/execution-fabric-recovery-daily.schema.json
+  - docs/operations/execution-fabric-backup-recovery.md
 image_lock:
   file: execution-fabric-image-lock.json
   format: json

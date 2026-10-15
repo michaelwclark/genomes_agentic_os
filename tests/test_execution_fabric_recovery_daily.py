@@ -1,0 +1,729 @@
+from __future__ import annotations
+
+from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
+import json
+from pathlib import Path
+import subprocess
+
+import pytest
+from genomes_agentic_os import execution_fabric_recovery as r
+from genomes_agentic_os import execution_fabric_recovery_daily as daily
+from test_execution_fabric_recovery_sets import PG_SOURCE, capture, write
+
+
+def _daily_independent_qualification_fixture(plan, root, monkeypatch):
+    """Closed file protocol seam; never a released writer/actor qualification."""
+    write(root / ".agentic_root", b"isolated fixture root")
+    node = write(root / "node-fixture", b"inert node actor")
+    plan["node"] = str(node)
+    release = Path(plan["releaseRoot"])
+    actor_paths = {
+        "exportMainSha256": release / "services/execution-fabric-control-plane/dist/src/recovery-export-main.js",
+        "exportModuleSha256": release / "services/execution-fabric-control-plane/dist/src/recovery-export.js",
+        "backupHealthSha256": release / "bin/backup-health.sh",
+        "backupLibSha256": release / "bin/_lib.sh",
+        "backupReceiptValidatorSha256": release / "bin/validate-backup-health-receipt.sh",
+        "postgresBackupScriptSha256": Path(plan["backupSourceScript"]),
+        "nodeSha256": node,
+    }
+    now = datetime.now(timezone.utc)
+    lifetime = {"qualifiedAt": (now - timedelta(minutes=1)).isoformat(),
+                "validUntil": (now + timedelta(hours=1)).isoformat()}
+    participants = []
+    for role in sorted(daily.ROLES):
+        receipt = write(root / (role + "-qualified.json"), {
+            "schemaVersion": "execution-fabric-recovery-participant-qualification/v1", "status": "qualified",
+            "role": role, "root": str(root), "reviewRoots": [], "sourceRelease": plan["sourceRelease"],
+            "protocol": "producer-admission/v1", "allWriterEntryPointsParticipate": True,
+            "admissionModuleSha256": "a" * 64, **lifetime})
+        participants.append({"role": role, "root": str(root), "reviewRoots": [],
+                             "qualificationReceipt": str(receipt), "qualificationSha256": r.sha256(receipt)})
+    hashes = {}
+    for name, path in actor_paths.items():
+        if not path.is_file():
+            write(path, b"inert qualified actor fixture")
+        hashes[name] = r.sha256(path)
+    qualified = {"schemaVersion": "execution-fabric-recovery-daily-qualification/v1", "status": "qualified",
+        **{name: plan[name] for name in ("sourceHost", "sourceRelease", "imageLockSha256", "policySha256")},
+        "allWritersParticipate": True, "participants": participants,
+        "admissionModuleSha256": "a" * 64, **lifetime, **hashes}
+    write(Path(plan["qualificationFile"]), qualified)
+    monkeypatch.setattr(daily, "_installed_admission", lambda _: object())
+    return qualified, participants
+
+
+@pytest.mark.parametrize("failure", ["changed-receipt", "symlink-receipt", "future-participant", "invalid-lifetime"])
+def test_daily_changed_independent_evidence_refuses_before_any_hold(daily_plan, tmp_path, monkeypatch, failure):
+    path, plan = daily_plan
+    qualified, participants = _daily_independent_qualification_fixture(plan, tmp_path, monkeypatch)
+    receipt = Path(participants[0]["qualificationReceipt"])
+    evidence = json.loads(receipt.read_text())
+    if failure == "changed-receipt":
+        evidence["status"] = "changed fixture"
+        write(receipt, evidence)
+    elif failure == "symlink-receipt":
+        actual = receipt.with_name("actual-participant.json")
+        receipt.rename(actual)
+        receipt.symlink_to(actual)
+    else:
+        evidence["qualifiedAt" if failure == "future-participant" else "validUntil"] = (
+            (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()
+            if failure == "future-participant" else "invalid fixture time")
+        write(receipt, evidence)
+        participants[0]["qualificationSha256"] = r.sha256(receipt)
+        write(Path(plan["qualificationFile"]), qualified)
+    write(path, plan)
+    calls = []
+    with pytest.raises(r.RecoverySetError, match="bytes differ|lifetime"):
+        daily.run_daily_recovery(path, apply=True, runner=lambda argv: calls.append(argv))
+    assert not calls and not Path(plan["stagingRoot"]).exists()
+    assert not (tmp_path / "hold.json").exists()
+
+
+@pytest.mark.parametrize("failure", ["schema", "relative-path", "relative-node", "template-policy"])
+def test_daily_plan_binding_refuses_before_loading_admission(daily_plan, monkeypatch, failure):
+    path, plan = daily_plan
+    if failure == "schema":
+        plan["schemaVersion"] = "unsupported-fixture/v1"
+    elif failure == "relative-path":
+        plan["stagingRoot"] = "relative-staging"
+    elif failure == "relative-node":
+        plan["node"] = "relative-node"
+    else:
+        plan["policySha256"] = "e" * 64
+    write(path, plan)
+    monkeypatch.setattr(daily, "_qualification", lambda _: pytest.fail("invalid plan cannot load admission"))
+    with pytest.raises(r.RecoverySetError):
+        daily.run_daily_recovery(path, apply=True, runner=lambda _: pytest.fail("no actor"))
+
+
+def _export_receipt_fixture(plan, *, watermark_only=False):
+    return {"schemaVersion": "execution-fabric-recovery-export/v1",
+            "status": "watermark_verified" if watermark_only else "exported_bytes_verified",
+            "sourceHost": plan["sourceHost"], "postgresWalLsn": "0/ABCD",
+            "postgresSource": dict(PG_SOURCE), "postgresSourceVerified": True,
+            "versionInventorySha256": "b" * 64, "ledgerReferenceSha256": "c" * 64}
+
+
+@pytest.mark.parametrize("watermark_only", [False, True])
+@pytest.mark.parametrize("failure", [None, "status", "host", "unverified-source", "invalid-source", "missing-receipt", "invalid-json"])
+def test_real_python_export_validator_binds_protocol_with_zero_external_actors(
+        daily_plan, tmp_path, watermark_only, failure):
+    _, plan = daily_plan
+    working = tmp_path / "isolated-export"
+    working.mkdir(mode=0o700)
+    calls = []
+    def protocol_only(argv):
+        calls.append(argv)
+        assert argv[:2] == [plan["node"], str(Path(plan["releaseRoot"]) /
+            "services/execution-fabric-control-plane/dist/src/recovery-export-main.js")]
+        assert ("--watermark-only" in argv) is watermark_only
+        assert ("--output" in argv) is (not watermark_only)
+        path = Path(argv[argv.index("--receipt") + 1])
+        value = _export_receipt_fixture(plan, watermark_only=watermark_only)
+        if failure == "status":
+            value["status"] = "unverified fixture output"
+        elif failure == "host":
+            value["sourceHost"] = "foreign-fixture-host"
+        elif failure == "unverified-source":
+            value["postgresSourceVerified"] = False
+        elif failure == "invalid-source":
+            value["postgresSource"]["majorVersion"] = True
+        if failure != "missing-receipt":
+            write(path, b"invalid fixture JSON" if failure == "invalid-json" else value)
+        return subprocess.CompletedProcess(argv, 0, b"INERT_FIXTURE_OUTPUT")
+    if failure:
+        with pytest.raises(r.RecoverySetError):
+            daily._export(plan, working, "after" if watermark_only else "before", protocol_only,
+                          watermark_only=watermark_only)
+    else:
+        result = daily._export(plan, working, "after" if watermark_only else "before", protocol_only,
+                               watermark_only=watermark_only)
+        assert result == _export_receipt_fixture(plan, watermark_only=watermark_only)
+    assert len(calls) == 1 and not (working / "artifact-export").exists()
+
+
+@pytest.mark.parametrize("failure", ["barrier-protocol", "barrier-drain", "barrier-lock", "health-status", "health-future", "health-source", "sidecar-path"])
+def test_daily_invalid_barrier_or_health_restores_once_and_preserves_last_good(
+        daily_plan, tmp_path, monkeypatch, failure):
+    path, plan = daily_plan
+    fixture = AdmissionFixture(tmp_path)
+    monkeypatch.setattr(daily, "_qualification", lambda _: (fixture, fixture_participants(tmp_path)))
+    if failure.startswith("barrier-"):
+        @contextmanager
+        def invalid_barrier(root, **kwargs):
+            fixture.events.append("guard-enter")
+            evidence = {"protocol": "producer-admission/v1", "drained": True, "admission_lock_retained": True}
+            evidence[{"barrier-protocol": "protocol", "barrier-drain": "drained", "barrier-lock": "admission_lock_retained"}[failure]] = False
+            try:
+                yield evidence
+            finally:
+                fixture.events.append("guard-exit")
+        fixture.migration_admission_guard = invalid_barrier
+    write(Path(plan["releaseRoot"]) / "bin/backup-health.sh", b"inert backup actor")
+    health_path = Path(plan["backupHealthReceipt"])
+    health = json.loads(health_path.read_text())
+    health.update(verifiedAt=datetime.now(timezone.utc).isoformat(), backupFile="ledger.dump")
+    if failure == "health-status":
+        health["status"] = "failed fixture proof"
+    elif failure == "health-future":
+        health["verifiedAt"] = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+    elif failure == "health-source":
+        health["sourceIdentityVerified"] = False
+    elif failure == "sidecar-path":
+        health["restoreManifest"]["file"] = "../foreign.json"
+    write(health_path, health)
+    staging = Path(plan["stagingRoot"])
+    previous = write(staging / "current-success.json", {"recoverySetId": "previous-good"})
+    previous_bytes = previous.read_bytes()
+    foreign = write(tmp_path / "foreign-hold.json", {"owner": "foreign-original-owner", "status": "holding"})
+    foreign_bytes = foreign.read_bytes()
+    calls = []
+    monkeypatch.setattr(daily, "_export", lambda *a, **kw: pytest.fail("refused barrier/health cannot export"))
+    with pytest.raises(r.RecoverySetError):
+        daily.run_daily_recovery(path, apply=True,
+            runner=lambda argv: (calls.append(argv) or subprocess.CompletedProcess(argv, 0, b"")))
+    assert fixture.events.count("pause") == fixture.events.count("resume") == 1
+    assert len(calls) == (0 if failure.startswith("barrier-") else 1)
+    assert previous.read_bytes() == previous_bytes and foreign.read_bytes() == foreign_bytes
+    assert not (staging / "sets").exists()
+    attempt = next((staging / ".attempts").iterdir())
+    failed = json.loads((attempt / "failure.json").read_text())
+    assert failed["status"] == "held" and failed["lastGoodPreserved"] is True
+    assert failed["restoredRoots"] == [str(tmp_path)] and failed["unresolvedRoots"] == []
+    assert failed["authorityTransferAuthorized"] is False and not (attempt / "daily.receipt.json").exists()
+
+
+def test_daily_after_watermark_change_preserves_history_and_restores_fixture_hold_once(
+        daily_plan, capture, tmp_path, monkeypatch):
+    path, plan = daily_plan
+    fixture = AdmissionFixture(tmp_path)
+    monkeypatch.setattr(daily, "_qualification", lambda _: (fixture, fixture_participants(tmp_path)))
+    backup = write(Path(plan["releaseRoot"]) / "bin/backup-health.sh", b"inert backup actor")
+    health_path = Path(plan["backupHealthReceipt"])
+    health = json.loads(health_path.read_text())
+    dump = capture[2] / "postgres/ledger.dump"
+    sidecar_path = capture[2] / "postgres/restore.json"
+    sidecar = json.loads(sidecar_path.read_text())
+    health.update(verifiedAt=datetime.now(timezone.utc).isoformat(), backupFile="ledger.dump",
+        restoreManifest={"file": "restore.json", "sha256": r.sha256(sidecar_path)})
+    assert r.sha256(dump) == health["backupSha256"] == sidecar["backupSha256"]
+    assert dump.stat().st_size == sidecar["backupBytes"]
+    assert (health_path.parent / health["restoreManifest"]["file"]) == sidecar_path
+    assert sidecar["sourceIdentityBefore"] == sidecar["sourceIdentityAfter"] == health["sourceIdentity"] == PG_SOURCE
+    write(health_path, health)
+    staging = Path(plan["stagingRoot"])
+    previous = write(staging / "current-success.json", {"recoverySetId": "previous-good"})
+    previous_bytes = previous.read_bytes()
+    calls = []
+    captures = []
+    prepare = r.prepare_recovery_set
+    def actual_capture(*args, **kwargs):
+        result = prepare(*args, **kwargs)
+        captures.append(result)
+        return result
+    monkeypatch.setattr(r, "prepare_recovery_set", actual_capture)
+    def protocol_only(argv):
+        calls.append(argv)
+        if argv[0] == str(backup):
+            return subprocess.CompletedProcess(argv, 0, b"")
+        assert argv[0] == plan["node"]
+        after = "--watermark-only" in argv
+        value = _export_receipt_fixture(plan, watermark_only=after)
+        assert value["postgresSource"] == PG_SOURCE
+        if after:
+            assert len(captures) == 1 and captures[0]["status"] == "local_capture_complete"
+            value["versionInventorySha256"] = "e" * 64
+        else:
+            output = Path(argv[argv.index("--output") + 1])
+            payload = write(output / "object-version", b"inert original object payload")
+            write(output / "inventory.json", {"schemaVersion": "execution-fabric-recovery-artifacts/v1",
+                "references": [{"relativePath": "artifactStore/object-version", "sha256": r.sha256(payload),
+                    "bytes": payload.stat().st_size, "ownerBinding": "original-fixture-owner",
+                    "artifactId": "fixture-artifact", "objectKey": "fixture/object", "versionId": "fixture-version"}]})
+        write(Path(argv[argv.index("--receipt") + 1]), value)
+        return subprocess.CompletedProcess(argv, 0, b"")
+    with pytest.raises(r.RecoverySetError, match="watermarks changed"):
+        daily.run_daily_recovery(path, apply=True, runner=protocol_only)
+    assert len(calls) == 3 and fixture.events.count("resume") == 1
+    assert calls[0][0] == str(backup)
+    assert calls[1][0] == plan["node"] and "--watermark-only" not in calls[1]
+    assert calls[2][0] == plan["node"] and "--watermark-only" in calls[2]
+    assert len(captures) == 1 and captures[0]["status"] == "local_capture_complete"
+    assert previous.read_bytes() == previous_bytes and not (staging / "sets").exists()
+    attempt = next((staging / ".attempts").iterdir())
+    assert (attempt / "capture/manifest.json").is_file()
+    assert not (attempt / "daily.receipt.json").exists()
+    failed = json.loads((attempt / "failure.json").read_text())
+    assert failed["restoredRoots"] == [str(tmp_path)] and failed["unresolvedRoots"] == []
+    assert failed["lastGoodPreserved"] is True and failed["authorityTransferAuthorized"] is False
+
+
+@pytest.fixture
+def daily_plan(capture, tmp_path):
+    plan = json.loads(capture[0].read_text())
+    source = capture[2]
+    data = {"schemaVersion": daily.PLAN, "sourceHost": plan["sourceHost"],
+            "sourceRelease": plan["sourceRelease"], "imageLockSha256": plan["imageLockSha256"],
+            "policySha256": plan["policySha256"], "qualificationFile": str(tmp_path / "qualification.json"),
+            "captureTemplate": str(capture[0]), "exportPlan": str(tmp_path / "export-plan.json"),
+            "stagingRoot": str(tmp_path / "daily-staging"), "releaseRoot": str(tmp_path / "release"),
+            "backupHealthReceipt": str(source / "postgres/health.json"),
+            "backupDirectory": str(source / "postgres"), "backupSourceScript": str(tmp_path / "source-backup.sh"), "node": "/fixture/node"}
+    script = write(Path(data["backupSourceScript"]), b"isolated-source-script-fixture")
+    write(Path(data["qualificationFile"]), {"schemaVersion": "isolated-test-fixture-only",
+                                          "postgresBackupScriptSha256": r.sha256(script)})
+    write(Path(data["exportPlan"]), {"schemaVersion": "isolated-test-fixture-only"})
+    return write(tmp_path / "daily-plan.json", data), data
+
+
+def fixture_participants(root):
+    receipt = write(root / "participant-fixture.json", {"status": "isolated-fixture-only"})
+    return [{"role": role, "root": str(root), "reviewRoots": [],
+             "qualificationReceipt": str(receipt), "qualificationSha256": r.sha256(receipt)}
+            for role in sorted(daily.ROLES)]
+
+
+class AdmissionFixture:
+    """Isolated supported-protocol seam double; never a runtime qualification."""
+    def __init__(self, root, *, stale_restore=False, refuse_guard=False):
+        self.root = root
+        self.events = []
+        self.stale_restore = stale_restore
+        self.refuse_guard = refuse_guard
+        self.holds = {}
+    def producer_inventory(self, root):
+        return {"producers": [{"kind": "schedule", "id": "original-producer", "owner": "original-owner",
+                              "definition_hash": "a" * 64, "enabled": True}]}
+    def pause_producers(self, root, **kwargs):
+        self.events.append("pause")
+        hold = {"status": "holding", "readback_verified": True, "receipt": str(Path(root) / "hold.json")}
+        r._write(Path(hold["receipt"]), {"status": "holding", "root": root, **kwargs})
+        self.holds[root] = hold
+        return hold
+    def admission_receipt_binding(self, root, **kwargs):
+        self.events.append("binding")
+        return {"root": root, "hold_id": kwargs["hold_id"], "owner": kwargs["owner"]}
+    def verify_admission_binding(self, binding):
+        self.events.append("verify")
+    @contextmanager
+    def migration_admission_guard(self, root, **kwargs):
+        self.events.append("guard-enter")
+        if self.refuse_guard:
+            raise r.RecoverySetError("fixture active original producer did not drain")
+        try:
+            yield {"protocol": "producer-admission/v1", "drained": True, "admission_lock_retained": True}
+        finally:
+            self.events.append("guard-exit")
+    def resume_producers(self, root, **kwargs):
+        self.events.append("resume")
+        if self.stale_restore:
+            raise r.RecoverySetError("fixture changed original definition, hold preserved")
+        r._write(Path(self.holds[root]["receipt"]), {"status": "restored", "readback_verified": True})
+        return {"status": "restored", "readback_verified": True}
+
+
+def test_daily_refuses_unqualified_all_writers_before_any_hold_or_output(daily_plan):
+    path, plan = daily_plan
+    write(Path(plan["qualificationFile"]), {"schemaVersion": "execution-fabric-recovery-daily-qualification/v1",
+                                           "status": "qualified", "allWritersParticipate": False})
+    calls = []
+    with pytest.raises(r.RecoverySetError, match="before holds"):
+        daily.run_daily_recovery(path, apply=True, runner=lambda *a: calls.append(a))
+    assert calls == [] and not Path(plan["stagingRoot"]).exists()
+
+
+def test_missing_released_admission_protocol_cannot_be_loaded_from_age224_source():
+    with pytest.raises(r.RecoverySetError, match="unavailable|differs"):
+        daily._installed_admission("f" * 64)
+
+
+def test_daily_dry_run_never_loads_admission_or_creates_output(daily_plan, monkeypatch):
+    monkeypatch.setattr(daily, "_qualification", lambda _: pytest.fail("dry-run loaded admission"))
+    result = daily.run_daily_recovery(daily_plan[0])
+    assert result["status"] == "planned" and result["lastGoodPreserved"]
+    assert not Path(daily_plan[1]["stagingRoot"]).exists()
+
+
+@pytest.mark.parametrize("change", ["node", "backup", "scope", "duplicate", "expired", "root", "additional-root"])
+def test_daily_qualification_refuses_changed_actor_or_participant_scope_before_holds(daily_plan, tmp_path, monkeypatch, change):
+    path, plan = daily_plan
+    root = tmp_path / "qualified-fixture-root"
+    write(root / ".agentic_root", b"fixture-only")
+    actor = write(Path(plan["releaseRoot"]) / "bin/backup-health.sh", b"qualified-fixture-pg-actor")
+    export = write(Path(plan["releaseRoot"]) / "services/execution-fabric-control-plane/dist/src/recovery-export-main.js",
+                   b"qualified-fixture-export-actor")
+    export_module = write(export.with_name("recovery-export.js"), b"qualified-fixture-export-module")
+    backup_lib = write(actor.with_name("_lib.sh"), b"qualified-fixture-backup-lib")
+    validator = write(actor.with_name("validate-backup-health-receipt.sh"), b"qualified-fixture-validator")
+    node = write(tmp_path / "qualified-fixture-node", b"qualified-fixture-native-actor")
+    plan["node"] = str(node)
+    write(path, plan)
+    now = datetime.now(timezone.utc)
+    participants = []
+    for role in sorted(daily.ROLES):
+        receipt = write(tmp_path / (role + "-qualification.json"), {
+            "schemaVersion": "execution-fabric-recovery-participant-qualification/v1", "status": "qualified",
+            "role": role, "root": str(root), "reviewRoots": [], "sourceRelease": plan["sourceRelease"],
+            "protocol": "producer-admission/v1", "allWriterEntryPointsParticipate": True,
+            "admissionModuleSha256": "a" * 64, "qualifiedAt": (now - timedelta(days=2)).isoformat(),
+            "validUntil": (now + timedelta(days=1)).isoformat()})
+        participants.append({"role": role, "root": str(root), "reviewRoots": [],
+                             "qualificationReceipt": str(receipt), "qualificationSha256": r.sha256(receipt)})
+    qualified = {"schemaVersion": "execution-fabric-recovery-daily-qualification/v1", "status": "qualified",
+        **{field: plan[field] for field in ("sourceHost", "sourceRelease", "imageLockSha256", "policySha256")},
+        "allWritersParticipate": True, "participants": participants,
+        "qualifiedAt": (now - timedelta(days=2)).isoformat(), "validUntil": (now + timedelta(days=1)).isoformat(),
+        "admissionModuleSha256": "a" * 64, "nodeSha256": r.sha256(node),
+        "backupHealthSha256": r.sha256(actor), "backupLibSha256": r.sha256(backup_lib),
+        "backupReceiptValidatorSha256": r.sha256(validator), "exportMainSha256": r.sha256(export),
+        "exportModuleSha256": r.sha256(export_module), "postgresBackupScriptSha256": r.sha256(Path(plan["backupSourceScript"]))}
+    if change == "node":
+        write(node, b"changed-native-binary")
+    elif change == "backup":
+        write(actor, b"changed-backup-actor")
+    elif change == "scope":
+        participants[0]["reviewRoots"] = [str(tmp_path)]
+    elif change == "duplicate":
+        participants.append(dict(participants[0]))
+    elif change == "expired":
+        qualified["validUntil"] = (now - timedelta(days=1)).isoformat()
+    elif change == "additional-root":
+        second_root = tmp_path / "second-qualified-worker-root"
+        write(second_root / ".agentic_root", b"fixture-only")
+        original = next(p for p in participants if p["role"] == "workers")
+        evidence = json.loads(Path(original["qualificationReceipt"]).read_text())
+        evidence["root"] = str(second_root)
+        receipt = write(tmp_path / "second-worker-qualification.json", evidence)
+        participants.append({**original, "root": str(second_root),
+                             "qualificationReceipt": str(receipt), "qualificationSha256": r.sha256(receipt)})
+    else:
+        (root / ".agentic_root").unlink()
+    write(Path(plan["qualificationFile"]), qualified)
+    monkeypatch.setattr(daily, "_installed_admission", lambda _: object())
+    calls = []
+    if change == "additional-root":
+        _, admitted = daily._qualification(plan)
+        assert len(admitted) == 7
+        assert {p["root"] for p in admitted if p["role"] == "workers"} == {str(root), str(second_root)}
+        assert not Path(plan["stagingRoot"]).exists()
+        return
+    with pytest.raises(r.RecoverySetError, match="unqualified|unavailable|invalid|expired"):
+        daily.run_daily_recovery(path, apply=True, runner=lambda *args: calls.append(args))
+    assert not calls and not Path(plan["stagingRoot"]).exists()
+
+
+def test_failed_guard_restores_exact_owned_hold_without_native_actor(daily_plan, tmp_path, monkeypatch):
+    fixture = AdmissionFixture(tmp_path, refuse_guard=True)
+    participants = fixture_participants(tmp_path)
+    monkeypatch.setattr(daily, "_qualification", lambda plan: (fixture, participants))
+    def forbidden(*args):
+        pytest.fail("refused guard invoked backup/export actor")
+    with pytest.raises(r.RecoverySetError, match="did not drain"):
+        daily.run_daily_recovery(daily_plan[0], apply=True, runner=forbidden)
+    assert fixture.events == ["pause", "binding", "guard-enter", "verify", "resume"]
+    assert not (Path(daily_plan[1]["stagingRoot"]) / "current-success.json").exists()
+
+
+def test_daily_failure_preserves_last_good_pointer_and_reports_stale_hold(daily_plan, tmp_path, monkeypatch):
+    fixture = AdmissionFixture(tmp_path, stale_restore=True)
+    participants = fixture_participants(tmp_path)
+    monkeypatch.setattr(daily, "_qualification", lambda plan: (fixture, participants))
+    staging = Path(daily_plan[1]["stagingRoot"])
+    previous = write(staging / "current-success.json", {"recoverySetId": "previous-immutable-good"})
+    original = previous.read_bytes()
+    with pytest.raises(r.RecoverySetError, match="backup actor is unavailable"):
+        daily.run_daily_recovery(daily_plan[0], apply=True)
+    assert previous.read_bytes() == original
+    assert "resume" in fixture.events
+    attempt = next((staging / ".attempts").iterdir())
+    failed = json.loads((attempt / "failure.json").read_text())
+    assert failed["unresolvedRoots"] == [str(tmp_path)]
+    assert fixture.events.count("resume") == 1
+
+
+@pytest.mark.parametrize("worker_roots", [1, 2])
+def test_success_generates_distinct_sets_and_restores_before_pointer_publication(daily_plan, capture, tmp_path, monkeypatch, worker_roots):
+    fixture = AdmissionFixture(tmp_path)
+    participants = fixture_participants(tmp_path)
+    if worker_roots == 2:
+        second_root = tmp_path / "additional-worker-root"
+        receipt = write(second_root / "participant-fixture.json", {"role": "workers", "root": str(second_root)})
+        participants.append({"role": "workers", "root": str(second_root), "reviewRoots": [],
+                             "qualificationReceipt": str(receipt), "qualificationSha256": r.sha256(receipt)})
+    monkeypatch.setattr(daily, "_qualification", lambda plan: (fixture, participants))
+    template = json.loads(capture[0].read_text())
+    backup_actor = Path(daily_plan[1]["releaseRoot"]) / "bin/backup-health.sh"
+    write(backup_actor, b"fixture-actor-only")
+    health_path = Path(daily_plan[1]["backupHealthReceipt"])
+    health = json.loads(health_path.read_text())
+    health.update({"verifiedAt": datetime.now(timezone.utc).isoformat(),
+                   "backupFile": "ledger.dump", "restoreManifest": {"file": "restore.json",
+                    "sha256": r.sha256(capture[2] / "postgres/restore.json")}})
+    write(health_path, health)
+    def fixture_export(plan, working, label, runner, *, watermark_only=False):
+        receipt = {"schemaVersion": "execution-fabric-recovery-export/v1",
+                   "status": "watermark_verified" if watermark_only else "exported_bytes_verified",
+                   "sourceHost": "genomesbox", "postgresWalLsn": "0/ABCD",
+                   "postgresSource": PG_SOURCE, "postgresSourceVerified": True,
+                   "versionInventorySha256": "b" * 64, "ledgerReferenceSha256": "c" * 64}
+        write(working / (label + ".json"), receipt)
+        if not watermark_only:
+            artifact = working / "artifact-export"
+            artifact.mkdir(mode=0o700)
+            payload = write(artifact / "object-version-1", b"private-object-or-receipt-content")
+            write(artifact / "inventory.json", {"schemaVersion": "execution-fabric-recovery-artifacts/v1",
+                "references": [{"relativePath": "artifactStore/object-version-1", "sha256": r.sha256(payload),
+                "bytes": payload.stat().st_size, "ownerBinding": "original-owner",
+                "artifactId": "artifact-1", "objectKey": "objects/key", "versionId": "version-1"}]})
+        return receipt
+    monkeypatch.setattr(daily, "_export", fixture_export)
+    calls = []
+    def fixture_actor(argv):
+        calls.append(argv)
+        return subprocess.CompletedProcess(argv, 0, b"")
+    first = daily.run_daily_recovery(daily_plan[0], apply=True, runner=fixture_actor)
+    second = daily.run_daily_recovery(daily_plan[0], apply=True, runner=fixture_actor)
+    assert first["recoverySetId"] != second["recoverySetId"]
+    staging = Path(daily_plan[1]["stagingRoot"])
+    assert (staging / first["relativePath"] / "manifest.json").is_file()
+    assert (staging / second["relativePath"] / "manifest.json").is_file()
+    assert json.loads((staging / "current-success.json").read_text()) == second
+    assert fixture.events.index("resume") < fixture.events.index("guard-exit")
+    assert len(calls) == 2 and all(call == [str(backup_actor), "--require-source-provenance",
+        "--source-script-sha256", r.sha256(Path(daily_plan[1]["backupSourceScript"]))] for call in calls)
+    first_root = staging / first["relativePath"]
+    verified = r.verify_recovery_set(first_root)
+    assert verified["manifestSha256"] == first["manifestSha256"]
+    proofs = first_root / "immutableReceipts/recovery-daily"
+    assert json.loads((proofs / "holding-0.json").read_text())["status"] == "holding"
+    assert json.loads((tmp_path / "hold.json").read_text())["status"] == "restored"
+    assert json.loads((proofs / "restoration-0.json").read_text())["readback"]["readback_verified"]
+    assert json.loads((proofs / "final-watermarks.json").read_text())["status"] == "verified"
+    for proof in ("maintenance.json", "qualification.json", "original-capture-template.json",
+                  "daily-plan.json", "export-plan.json", "export-before.json", "export-after.json"):
+        assert (proofs / proof).is_file()
+    manifest = json.loads((first_root / "manifest.json").read_text())
+    assert manifest["captureWindow"]["maintenanceReceiptSha256"] == r.sha256(proofs / "maintenance.json")
+    maintenance = json.loads((proofs / "maintenance.json").read_text())
+    identities = maintenance["heldRoleIdentities"]
+    assert maintenance["schemaVersion"] == "execution-fabric-recovery-quiescence/v2"
+    assert manifest["captureWindow"]["heldRoleIdentities"] == identities
+    assert len(identities["workers"]) == worker_roots
+    assert {item["root"] for item in identities["workers"]} == {p["root"] for p in participants if p["role"] == "workers"}
+    assert fixture.events.count("resume") == worker_roots * 2
+    for role, bindings in identities.items():
+        for binding in bindings:
+            assert binding["maintenanceRunId"] == maintenance["maintenanceRunId"]
+            participant = next(p for p in participants if p["role"] == role and p["root"] == binding["root"])
+            assert binding["qualificationReceiptSha256"] == participant["qualificationSha256"]
+            index = sorted({p["root"] for p in participants}).index(binding["root"])
+            assert binding["admissionReceiptSha256"] == r.sha256(proofs / ("holding-" + str(index) + ".json"))
+            assert json.loads((Path(binding["root"]) / "hold.json").read_text())["status"] == "restored"
+
+
+@pytest.mark.parametrize("field", ["systemId", "database"])
+def test_daily_refuses_backup_export_native_source_mismatch_without_publication(daily_plan, capture, tmp_path, monkeypatch, field):
+    fixture = AdmissionFixture(tmp_path)
+    monkeypatch.setattr(daily, "_qualification", lambda _: (fixture, fixture_participants(tmp_path)))
+    write(Path(daily_plan[1]["releaseRoot"]) / "bin/backup-health.sh", b"fixture-only")
+    health_path = Path(daily_plan[1]["backupHealthReceipt"])
+    health = json.loads(health_path.read_text())
+    health.update(verifiedAt=datetime.now(timezone.utc).isoformat(), backupFile="ledger.dump",
+        restoreManifest={"file": "restore.json", "sha256": r.sha256(capture[2] / "postgres/restore.json")})
+    write(health_path, health)
+    foreign = dict(PG_SOURCE)
+    foreign[field] = "99999"
+    monkeypatch.setattr(daily, "_export", lambda *args, **kwargs: {"postgresSource": foreign})
+    with pytest.raises(r.RecoverySetError, match="sources differ"):
+        daily.run_daily_recovery(daily_plan[0], apply=True, runner=lambda _: None)
+    assert "resume" in fixture.events
+    staging = Path(daily_plan[1]["stagingRoot"])
+    assert not (staging / "current-success.json").exists() and not (staging / "sets").exists()
+
+
+
+@pytest.mark.parametrize("refused", ["last", "both", "readback", "foreign-binding"])
+def test_daily_failure_attempts_every_independent_owned_root_once(daily_plan, tmp_path, monkeypatch, refused):
+    first, second = tmp_path / "a-root", tmp_path / "z-root"
+    participants = fixture_participants(first) + fixture_participants(second)
+    fixture = AdmissionFixture(tmp_path)
+    resumed = []
+    original_resume = fixture.resume_producers
+    original_binding = fixture.admission_receipt_binding
+    def binding(root, **kwargs):
+        result = original_binding(root, **kwargs)
+        if refused == "foreign-binding" and root == str(second):
+            result["owner"] = "foreign-owner"
+        return result
+    def resume(root, **kwargs):
+        resumed.append(root)
+        assert kwargs["owner"].startswith("recovery:genomesbox:")
+        if root == str(second) or refused == "both":
+            if refused == "readback":
+                return {"status": "holding", "readback_verified": False}
+            raise r.RecoverySetError("fixture refusal; original exact owner stays held")
+        return original_resume(root, **kwargs)
+    fixture.admission_receipt_binding = binding
+    fixture.resume_producers = resume
+    monkeypatch.setattr(daily, "_qualification", lambda _: (fixture, participants))
+    write(Path(daily_plan[1]["releaseRoot"]) / "bin/backup-health.sh", b"fixture-actor")
+    staging = Path(daily_plan[1]["stagingRoot"])
+    previous = write(staging / "current-success.json", {"recoverySetId": "previous-good"})
+    previous_bytes = previous.read_bytes()
+    def failed_capture(argv):
+        raise r.RecoverySetError("fixture capture failed before health readback")
+    with pytest.raises(r.RecoverySetError, match="capture failed"):
+        daily.run_daily_recovery(daily_plan[0], apply=True, runner=failed_capture)
+    assert resumed.count(str(first)) == 1
+    assert resumed.count(str(second)) == (0 if refused == "foreign-binding" else 1)
+    attempt = next((staging / ".attempts").iterdir())
+    summary = json.loads((attempt / "evidence/restoration-summary.json").read_text())
+    failed = json.loads((attempt / "failure.json").read_text())
+    assert summary["status"] == "held" and summary["unresolvedRoots"] == failed["unresolvedRoots"]
+    expected_restored = [] if refused == "both" else [str(first)]
+    assert summary["restoredRoots"] == failed["restoredRoots"] == expected_restored
+    assert len(list((attempt / "evidence").glob("restoration-[0-9]*.json"))) == 2
+    if refused != "both":
+        assert json.loads((first / "hold.json").read_text())["status"] == "restored"
+    assert json.loads((second / "hold.json").read_text())["status"] == "holding"
+    assert previous.read_bytes() == previous_bytes and not (staging / "sets").exists()
+
+
+@pytest.mark.parametrize("bad_readback", [None, {"status": "restored", "readback_verified": False}])
+def test_successful_capture_with_one_refused_restoration_never_publishes_or_retries(
+        daily_plan, capture, tmp_path, monkeypatch, bad_readback):
+    original_resume = AdmissionFixture.resume_producers
+    calls = []
+    def selective_resume(self, root, **kwargs):
+        calls.append(root)
+        if root == str(tmp_path / "additional-worker-root"):
+            return bad_readback
+        return original_resume(self, root, **kwargs)
+    monkeypatch.setattr(AdmissionFixture, "resume_producers", selective_resume)
+    staging = Path(daily_plan[1]["stagingRoot"])
+    previous = write(staging / "current-success.json", {"recoverySetId": "previous-good"})
+    previous_bytes = previous.read_bytes()
+    with pytest.raises(r.RecoverySetError, match="unresolved original-state restorations"):
+        test_success_generates_distinct_sets_and_restores_before_pointer_publication(
+            daily_plan, capture, tmp_path, monkeypatch, 2)
+    assert calls == [str(tmp_path / "additional-worker-root"), str(tmp_path)]
+    assert previous.read_bytes() == previous_bytes
+    assert not (staging / "sets").exists()
+    attempt = next((staging / ".attempts").iterdir())
+    failure = json.loads((attempt / "failure.json").read_text())
+    assert failure["restoredRoots"] == [str(tmp_path)]
+    assert failure["unresolvedRoots"] == [str(tmp_path / "additional-worker-root")]
+    assert (attempt / "capture/manifest.json").exists()
+
+
+def test_restoration_can_verify_pause_without_copied_binding_but_cannot_repeat_decision(tmp_path):
+    fixture = AdmissionFixture(tmp_path)
+    hold = fixture.pause_producers(str(tmp_path), hold_id="isolated-hold", owner="isolated-owner",
+                                   selectors=[], allow_empty=True)
+    evidence = tmp_path / "proofs"
+    results = {}
+    daily._restore_daily_roots(fixture, [(str(tmp_path), hold)], [], "isolated-hold",
+                               "isolated-owner", evidence, results)
+    pins = {p.name: p.read_bytes() for p in evidence.glob("*.json")}
+    daily._restore_daily_roots(fixture, [(str(tmp_path), hold)], [], "isolated-hold",
+                               "isolated-owner", evidence, results)
+    assert fixture.events.count("resume") == 1
+    assert pins == {p.name: p.read_bytes() for p in evidence.glob("*.json")}
+
+
+def test_binding_refusal_does_not_skip_an_independent_root_or_call_unsafe_resume(tmp_path):
+    first, second = tmp_path / "a", tmp_path / "z"
+    first.mkdir(); second.mkdir()
+    fixture = AdmissionFixture(tmp_path)
+    paused = [(str(root), fixture.pause_producers(str(root), hold_id="isolated", owner="owned",
+              selectors=[], allow_empty=True)) for root in (first, second)]
+    original_verify = fixture.verify_admission_binding
+    def verify(binding):
+        if binding["root"] == str(second):
+            raise r.RecoverySetError("changed original scope")
+        original_verify(binding)
+    fixture.verify_admission_binding = verify
+    results = {}
+    daily._restore_daily_roots(fixture, paused, [], "isolated", "owned", tmp_path / "proofs", results)
+    assert results[str(first)]["status"] == "restored"
+    assert results[str(second)]["status"] == "held" and not results[str(second)]["bindingVerified"]
+    assert fixture.events.count("resume") == 1
+
+
+
+@pytest.mark.parametrize("readback", [
+    None, [], "unsupported opaque response", {"status": "holding", "readback_verified": False},
+    {"status": "restored", "readback_verified": 1}, {"readback_verified": True},
+    {"status": {"unsupported": "private fixture payload"}, "readback_verified": True},
+    {"status": "unsupported opaque response", "readback_verified": True},
+    {"status": "restored", "readback_verified": "private fixture payload"},
+])
+def test_refused_readback_preserves_bounded_observation_without_payload_leak(tmp_path, readback):
+    fixture = AdmissionFixture(tmp_path)
+    root = str(tmp_path)
+    hold = fixture.pause_producers(root, hold_id="isolated-hold", owner="isolated-owner",
+                                   selectors=[], allow_empty=True)
+    fixture.resume_producers = lambda *args, **kwargs: readback
+    results = {}
+    daily._restore_daily_roots(fixture, [(root, hold)], [], "isolated-hold", "isolated-owner",
+                               tmp_path / "proofs", results)
+    row = json.loads((tmp_path / "proofs/restoration-0.json").read_text())
+    assert row["status"] == "held" and row["bindingVerified"]
+    observation = row["readbackObservation"]
+    assert observation["received"]
+    assert not observation["status"]["recognized"] or observation["status"]["value"] != "restored"         or observation["verification"].get("value") is not True
+    serialized = json.dumps(row)
+    assert "private fixture payload" not in serialized and "unsupported opaque response" not in serialized
+    if isinstance(readback, dict) and type(readback.get("readback_verified")) is bool:
+        assert observation["verification"]["value"] is readback["readback_verified"]
+    else:
+        assert "value" not in observation["verification"]
+    assert "readback" not in row
+
+
+def test_verified_readback_retains_matching_bindings_and_discards_unknown_fields(tmp_path):
+    fixture = AdmissionFixture(tmp_path)
+    root = str(tmp_path)
+    hold = fixture.pause_producers(root, hold_id="isolated", owner="owned", selectors=[], allow_empty=True)
+    fixture.resume_producers = lambda *args, **kwargs: {
+        "status": "restored", "readback_verified": True, "root": root, "hold_id": "isolated",
+        "owner": "owned", "untrusted": "private fixture payload"}
+    results = {}
+    daily._restore_daily_roots(fixture, [(root, hold)], [], "isolated", "owned", tmp_path / "proofs", results)
+    row = results[root]
+    assert row["status"] == "restored"
+    assert row["readback"] == {"status": "restored", "readback_verified": True}
+    assert all(value["matchesAdmittedBinding"] for value in row["readbackObservation"]["bindings"].values())
+    assert "private fixture payload" not in json.dumps(row)
+
+
+@pytest.mark.parametrize("value", [object(), 1, 1.5, False])
+def test_unsupported_return_type_and_foreign_binding_values_are_classified_without_copy(value):
+    observation = daily._restoration_observation(value, "/admitted/root", "owned-hold", "owned")
+    assert observation["received"] and not observation["status"]["present"]
+    assert not observation["verification"]["present"]
+    assert all(not item["present"] for item in observation["bindings"].values())
+    row = daily._restoration_observation({"root": "/foreign/private", "hold_id": [], "owner": "foreign"},
+                                         "/admitted/root", "owned-hold", "owned")
+    assert all(not item["matchesAdmittedBinding"] and "value" not in item for item in row["bindings"].values())
+    assert "/foreign/private" not in json.dumps(row) and "foreign" not in json.dumps(row)
+
+
+
+@pytest.mark.parametrize("field", ["root", "hold_id", "owner"])
+def test_contradictory_returned_binding_cannot_claim_restoration(tmp_path, field):
+    fixture = AdmissionFixture(tmp_path)
+    root = str(tmp_path)
+    hold = fixture.pause_producers(root, hold_id="isolated", owner="owned", selectors=[], allow_empty=True)
+    fixture.resume_producers = lambda *args, **kwargs: {
+        "status": "restored", "readback_verified": True, field: "foreign private fixture value"}
+    results = {}
+    daily._restore_daily_roots(fixture, [(root, hold)], [], "isolated", "owned", tmp_path / "proofs", results)
+    assert results[root]["status"] == "held"
+    observation = results[root]["readbackObservation"]
+    assert observation["verification"]["value"] is True
+    assert observation["bindings"][field]["present"]
+    assert not observation["bindings"][field]["matchesAdmittedBinding"]
+    assert "foreign private fixture value" not in json.dumps(results)

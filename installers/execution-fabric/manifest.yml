@@ -46,3 +46,9 @@ runtime_contract:
   artifact_replication_mode: active_active_single_writer
   artifact_replication_receipt_required_for_promotion: true
   host_worker_executable: installers/execution-fabric/bin/python-worker.sh
+  recovery_set_capture: installers/execution-fabric/bin/recovery-backup.sh
+  recovery_set_collection: installers/execution-fabric/bin/recovery-collect.sh
+  recovery_set_capture_default_enabled: false
+  recovery_custody_host: separately_configured_custodian
+  recovery_custody_credentials_on_primary: false
+  recovery_custody_tool: restic

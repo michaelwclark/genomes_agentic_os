@@ -1,5 +1,8 @@
 # Genome's Agentic OS — Handbook
 
+Daily complete backup sets and isolated restore operations:
+[Execution Fabric backup and recovery](operations/execution-fabric-backup-recovery.md).
+
 The complete guide to installing, operating, and extending **Genome's Agentic OS** —
 a Python CLI (`agentic-os`) that scaffolds a domain-first filesystem "operating
 system" for AI-assisted work. It is a concrete implementation of the **Model
