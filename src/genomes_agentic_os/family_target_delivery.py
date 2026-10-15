@@ -211,8 +211,15 @@ def _source(context: Mapping[str, Any], target: Mapping[str, str], data: Mapping
         raise AutoDevStateError("family target checkout head drifted")
     if _git(path, "diff", "--name-only", "HEAD"):
         raise AutoDevStateError("family target tracked source must be clean")
-    if _git(path, "branch", "--show-current").decode().strip() != target["source_branch"]:
-        raise AutoDevStateError("family target source branch drifted")
+    branch = _git(path, "branch", "--show-current").decode().strip()
+    if branch != target["source_branch"]:
+        # A configured release ref may share the exact accepted primary source.
+        # Keep its provider ref identity separate from this registered checkout.
+        primary_worktree = context["task"].get("worktree", {})
+        if (path != Path(str(primary_worktree.get("path") or "")).expanduser().resolve()
+            or branch != primary_worktree.get("branch")
+            or target["subject_revision"] != context["primary"]["subject_revision"]):
+            raise AutoDevStateError("family target source branch drifted")
     if _git(path, "rev-parse", "HEAD^{tree}").decode().strip() != data.get("tree_sha"):
         raise AutoDevStateError("family target source tree drifted")
     if _git(path, "rev-parse", f"{target['base_sha']}^{{commit}}").decode().strip() != target["base_sha"]:

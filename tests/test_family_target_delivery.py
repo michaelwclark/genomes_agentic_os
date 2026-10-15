@@ -17,7 +17,7 @@ from genomes_agentic_os.development_delivery import (
     TaskState, record_development_family_target_merge, start_development_run, run_development_stage,
 )
 from genomes_agentic_os.review_coordination import ReviewCoordinator, ReviewSubject
-from genomes_agentic_os.family_target_delivery import _provider
+from genomes_agentic_os.family_target_delivery import _context, _provider, _source
 from test_development_delivery import (
     _advance_auto_dev_task_to_ready, _complete_pre_merge_auto_dev,
     _git, _project, _repository,
@@ -196,6 +196,39 @@ def test_primary_cannot_merge_while_required_sibling_has_no_own_decision(family:
     with pytest.raises(AutoDevStateError, match="required sibling"):
         validate_auto_dev_readiness_authority(family["state"], family["primary_authority"],
             expected_subject=family["primary_head"], expected_pull_request=family["primary_authority"])
+
+
+def test_release_ref_can_share_the_exact_accepted_primary_checkout_and_divergent_base(family: dict) -> None:
+    import subprocess
+
+    context = _context(family["state"])
+    source = Path(context["task"]["worktree"]["path"])
+    target = {**family["target"], "source_branch": "release/v2.2.0", "subject_revision": family["primary_head"]}
+    # The main/release baseline has an inherited change absent in primary.
+    assert subprocess.run(["git", "-C", str(source), "merge-base", "--is-ancestor",
+                           target["base_sha"], target["subject_revision"]], capture_output=True).returncode == 1
+    diff = subprocess.run(["git", "-C", str(source), "diff", "--binary", target["base_sha"],
+                           target["subject_revision"], "--"], capture_output=True, check=True).stdout
+    data = {"worktree": str(source), "tree_sha": _git("rev-parse", "HEAD^{tree}", cwd=source),
+            "full_diff_sha256": hashlib.sha256(diff).hexdigest()}
+    assert _source(context, target, data) == "acme/app"
+
+
+@pytest.mark.parametrize("detached", [False, True])
+def test_unaccepted_same_head_checkout_cannot_substitute_for_release_ref(family: dict, detached: bool) -> None:
+    import subprocess
+
+    context = _context(family["state"])
+    source = family["repo"].parent / "unaccepted-checkout"
+    args = ["worktree", "add", "--detach"] if detached else ["worktree", "add", "-b", "feature/unaccepted"]
+    _git(*args, str(source), family["primary_head"], cwd=family["repo"])
+    target = {**family["target"], "source_branch": "release/v1.2.0", "subject_revision": family["primary_head"]}
+    diff = subprocess.run(["git", "-C", str(source), "diff", "--binary", target["base_sha"],
+                           target["subject_revision"], "--"], capture_output=True, check=True).stdout
+    data = {"worktree": str(source), "tree_sha": _git("rev-parse", "HEAD^{tree}", cwd=source),
+            "full_diff_sha256": hashlib.sha256(diff).hexdigest()}
+    with pytest.raises(AutoDevStateError, match="source branch drifted"):
+        _source(context, target, data)
 
 
 @pytest.mark.parametrize("target_policy", ["task", "historical_primary"])

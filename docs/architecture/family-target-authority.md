@@ -65,6 +65,12 @@ complete `review_threads`. `pr` retains the actual GitHub JSON fields `number`,
 `nodes` and `pageInfo.hasNextPage: false`; every current thread must be resolved
 or outdated. Unknown mergeability, pending/failed checks and unqualified skips
 refuse readiness. Provider observations expire after ten minutes.
+The registered accepted primary checkout may prove a sibling release ref only
+when both refs have that exact accepted source head. Its path and checkout branch
+must still equal the accepted primary worktree; fresh provider readback separately
+proves the sibling's real release ref. Other same-head or detached checkouts do
+not substitute. The complete direct-base binary diff remains mandatory even when
+the reviewed main base is not an ancestor of the source head.
 Every applicable static PR workflow job is derived from the exact source and
 must appear in the provider results. A single green check cannot hide an omitted
 required job. Readback also includes the complete actual Actions `workflow_runs`
