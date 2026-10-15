@@ -94,7 +94,8 @@ def family(tmp_path: Path) -> dict:
     _git("remote", "set-url", "origin", "git@github.com:acme/app.git", cwd=repo)
     primary = {"provider": "github", "repository": "github:acme/app", "pull_request": primary_pr,
                "base_branch": "main", "base_sha": initial, "source_head": primary_head,
-               "source_branch": task.read()["worktree"]["branch"], "classification": "pr_required", "readback_verified": True}
+               "source_branch": task.read()["worktree"]["branch"], "source_worktree": str(primary_source),
+               "classification": "pr_required", "readback_verified": True}
     target = {"provider": "github", "repository": "github:acme/app", "pull_request": "github:acme/app#2",
               "base_branch": "release", "base_sha": base, "source_branch": "feature/sibling",
               "subject_revision": head, "author_identity": "github:michaelwclark", "author_kind": "ours"}
@@ -229,6 +230,33 @@ def test_unaccepted_same_head_checkout_cannot_substitute_for_release_ref(family:
             "full_diff_sha256": hashlib.sha256(diff).hexdigest()}
     with pytest.raises(AutoDevStateError, match="source branch drifted"):
         _source(context, target, data)
+
+
+def test_mutable_task_worktree_cannot_replace_immutable_primary_source_provenance(family: dict) -> None:
+    import subprocess
+
+    source = family["repo"].parent / "substituted-task-checkout"
+    _git("worktree", "add", "-b", "feature/substituted", str(source), family["primary_head"], cwd=family["repo"])
+    task = family["task"].read()
+    task["worktree"].update(path=str(source), branch="feature/substituted")
+    write(family["task"].path, task)
+    context = _context(family["state"])
+    target = {**family["target"], "source_branch": "release/v2.2.0", "subject_revision": family["primary_head"]}
+    diff = subprocess.run(["git", "-C", str(source), "diff", "--binary", target["base_sha"],
+                           target["subject_revision"], "--"], capture_output=True, check=True).stdout
+    data = {"worktree": str(source), "tree_sha": _git("rev-parse", "HEAD^{tree}", cwd=source),
+            "full_diff_sha256": hashlib.sha256(diff).hexdigest()}
+    with pytest.raises(AutoDevStateError, match="source branch drifted"):
+        _source(context, target, data)
+
+
+def test_shared_primary_checkout_requires_immutable_path_provenance(family: dict) -> None:
+    context = _context(family["state"])
+    context["primary_checkout"] = None
+    source = Path(context["task"]["worktree"]["path"])
+    target = {**family["target"], "source_branch": "release/v1.2.0", "subject_revision": family["primary_head"]}
+    with pytest.raises(AutoDevStateError, match="source branch drifted"):
+        _source(context, target, {"worktree": str(source)})
 
 
 @pytest.mark.parametrize("target_policy", ["task", "historical_primary"])

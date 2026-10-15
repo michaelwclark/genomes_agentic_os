@@ -67,7 +67,10 @@ or outdated. Unknown mergeability, pending/failed checks and unqualified skips
 refuse readiness. Provider observations expire after ten minutes.
 The registered accepted primary checkout may prove a sibling release ref only
 when both refs have that exact accepted source head. Its path and checkout branch
-must still equal the accepted primary worktree; fresh provider readback separately
+must equal immutable accepted provenance: the primary ready receipt's normalized
+`registered_worktree` (or an explicit `source_worktree` on a non-alias primary
+family row), and the hash-bound primary family row's `source_branch`. The mutable
+task worktree fields must agree with those facts. Fresh provider readback separately
 proves the sibling's real release ref. Other same-head or detached checkouts do
 not substitute. The complete direct-base binary diff remains mandatory even when
 the reviewed main base is not an ancestor of the source head.

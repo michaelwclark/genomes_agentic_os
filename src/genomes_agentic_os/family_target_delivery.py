@@ -142,6 +142,7 @@ def _context(state_file: str | Path) -> dict[str, Any]:
     if not isinstance(family, list) or len(family) < 2:
         raise AutoDevStateError("family target requires an existing multi-target typed family")
     required: dict[str, dict[str, Any]] = {}
+    original_members: dict[str, Mapping[str, Any]] = {}
     for row in family:
         if not isinstance(row, Mapping):
             raise AutoDevStateError("typed family members must be objects")
@@ -168,15 +169,25 @@ def _context(state_file: str | Path) -> dict[str, Any]:
         if key in required or any(r["pull_request"] == identity["pull_request"] for r in required.values()):
             raise AutoDevStateError("typed family has duplicate or ambiguous required targets")
         required[key] = identity
+        original_members[key] = row
     primaries = [r for r in required.values() if all(r[k] == primary[k] for k in ("provider", "repository", "pull_request", "base_branch", "subject_revision"))]
     if len(primaries) != 1 or len(required) < 2:
         raise AutoDevStateError("typed family must contain its exact primary and a required sibling")
+    primary_key = next(key for key, row in required.items() if row is primaries[0])
+    primary_branch = primaries[0]["source_branch"]
+    if ready_evidence.get("source_branch") and ready_evidence["source_branch"] != primary_branch:
+        raise AutoDevStateError("accepted primary ready source branch differs from its immutable family")
+    normalization = ready_evidence.get("review_identity_normalization")
+    primary_path = (normalization.get("registered_worktree") if isinstance(normalization, Mapping)
+                    else original_members[primary_key].get("source_worktree"))
+    primary_checkout = {"path": str(primary_path), "branch": primary_branch} if primary_path else None
     return {"state": state, "current": current, "root": root, "task_path": task_path,
             "task": task, "primary": primary, "family": required, "family_binding": family_binding,
             "review_policy_fingerprints": {
                 str(task.get("policy_fingerprint") or ""),
                 str(ready_evidence.get("review_policy_fingerprint") or task.get("policy_fingerprint") or ""),
             },
+            "primary_checkout": primary_checkout,
             "primary_ready_binding": {"ref": str(ready_path), "sha256": _digest(ready_path.read_bytes())},
             "canonical_origin": canonical_origin, "policy_binding": {"ref": str(policy_path.resolve()), "sha256": _digest(policy_path.read_bytes())}}
 
@@ -215,9 +226,12 @@ def _source(context: Mapping[str, Any], target: Mapping[str, str], data: Mapping
     if branch != target["source_branch"]:
         # A configured release ref may share the exact accepted primary source.
         # Keep its provider ref identity separate from this registered checkout.
-        primary_worktree = context["task"].get("worktree", {})
-        if (path != Path(str(primary_worktree.get("path") or "")).expanduser().resolve()
-            or branch != primary_worktree.get("branch")
+        primary_worktree = context.get("primary_checkout")
+        task_worktree = context["task"].get("worktree", {})
+        if (not isinstance(primary_worktree, Mapping)
+            or path != Path(primary_worktree["path"]).expanduser().resolve()
+            or path != Path(str(task_worktree.get("path") or "")).expanduser().resolve()
+            or branch != primary_worktree["branch"] or branch != task_worktree.get("branch")
             or target["subject_revision"] != context["primary"]["subject_revision"]):
             raise AutoDevStateError("family target source branch drifted")
     if _git(path, "rev-parse", "HEAD^{tree}").decode().strip() != data.get("tree_sha"):
