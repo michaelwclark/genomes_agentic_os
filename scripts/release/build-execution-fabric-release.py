@@ -272,6 +272,9 @@ def validate_minio_publication(path: Path | None, images: dict, version: str) ->
         smoke = item.get("receipt", {})
         if not isinstance(smoke, dict) or smoke.get("schema_version") != "execution-fabric-minio-runtime-smoke/v1" or smoke.get("status") != "passed" or smoke.get("platform") != "linux/" + arch or smoke.get("images") != expected_images or smoke.get("source_lock_sha256") != digest(MINIO_SOURCE_LOCK) or smoke.get("fixture_resources_removed") is not True:
             raise ValueError("MinIO published-image smoke is missing or mismatched")
+        runtime_images = {role: image.split("@")[0] + "@" + observed_images[role]["children"][arch]["digest"] for role, image in expected_images.items()}
+        if smoke.get("runtime_images") != runtime_images:
+            raise ValueError("MinIO runtime children differ from the verified parent/platform")
         cases = smoke.get("cases", [])
         if not isinstance(cases, list) or len(cases) != 3 or any(not isinstance(case, dict) for case in cases) or {(case.get("credentials"), case.get("effective_uid")) for case in cases} != {("file", 0), ("env", 0), ("file", 1000)} or any(case.get("ready") is not True or case.get("bucket_privacy_and_versioning") is not True or case.get("object_write_read_restart_read_delete") is not True for case in cases):
             raise ValueError("MinIO actual credential/health/persistence cases are incomplete")

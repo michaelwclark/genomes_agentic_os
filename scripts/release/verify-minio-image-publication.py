@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Callable
 from hashlib import sha256
 import json
 from pathlib import Path
@@ -49,12 +50,35 @@ def index_children(value: object) -> dict[str, dict]:
         architecture = platform.get("architecture")
         if architecture not in {"amd64", "arm64"} or architecture in children:
             raise ValueError("unexpected or duplicate runtime platform")
+        if item.get("mediaType") not in {"application/vnd.oci.image.manifest.v1+json", "application/vnd.docker.distribution.manifest.v2+json"}:
+            raise ValueError("runtime child is not an image manifest")
         if not isinstance(item.get("digest"), str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", item["digest"]) or type(item.get("size")) is not int or item["size"] <= 0:
             raise ValueError("runtime child has no exact digest/size")
         children[architecture] = item
     if set(children) != {"amd64", "arm64"}:
         raise ValueError("published index lacks a required architecture")
     return children
+
+
+def resolve_runtime_child(image: str, arch: str, read_manifest: Callable[[str], bytes]) -> str:
+    """Bind a runtime leaf to exact parent and child registry bytes."""
+    if arch not in {"amd64", "arm64"} or not re.fullmatch(r"[^@\s]+@sha256:[0-9a-f]{64}", image):
+        raise ValueError("runtime resolution requires an immutable index and architecture")
+    index = canonical_bytes(read_manifest(image), image.rsplit("sha256:", 1)[1])
+    child = index_children(json.loads(index))[arch]
+    reference = image.split("@")[0] + "@" + child["digest"]
+    raw = canonical_bytes(read_manifest(reference), child["digest"][7:], child["size"])
+    manifest = json.loads(raw)
+    if not isinstance(manifest, dict) or manifest.get("schemaVersion") != 2 or manifest.get("mediaType") != child["mediaType"]:
+        raise ValueError("runtime child manifest media type or schema differs")
+    return reference
+
+
+def verify_runtime_binding(smoke: dict, images: dict, children: dict, arch: str) -> None:
+    """Require executed runtime leaves to belong to the signed parent indexes."""
+    expected = {role: image.split("@")[0] + "@" + children[role][arch]["digest"] for role, image in images.items()}
+    if smoke.get("images") != images or smoke.get("platform") != "linux/" + arch or smoke.get("runtime_images") != expected:
+        raise ValueError("published runtime children differ from the verified parent/platform")
 
 
 def has_verified_subject(value: object, digest: str) -> bool:
@@ -137,6 +161,8 @@ def main() -> int:
         if not has_verified_subject(json.loads(provenance), digest):
             raise ValueError("verified provenance does not contain the current OCI index")
         custody[role] = {"image": image, "children": observed, "verified_provenance_sha256": sha256(provenance).hexdigest()}
+    for arch, smoke in smokes.items():
+        verify_runtime_binding(smoke["receipt"], images, {role: value["children"] for role, value in custody.items()}, arch)
     receipt = {"schema_version": "execution-fabric-minio-publication/v1", "status": "verified", "repository": args.repository, "source_sha": args.source_sha, "source_ref": args.source_ref, "source_lock_sha256": lock_hash, "inputs": inputs, "images": custody, "runtime_smokes": smokes}
     (args.output_dir / "publication-custody.json").write_text(json.dumps(receipt, sort_keys=True, indent=2) + "\n")
     print(json.dumps({"status": "verified", "receipt": str(args.output_dir / "publication-custody.json")}))

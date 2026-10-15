@@ -1,0 +1,49 @@
+{
+  "complete_release_or_SDK_qualification_claimed": false,
+  "image_sources_sha256": "f49e6566306cc946b69c660018f2958ff4ecede60c8152c0a087cd3a8e2db3b1",
+  "images": {
+    "minio": {
+      "children": {
+        "amd64": {
+          "digest": "sha256:3948b703c60dc3a8ce564717be28347387f55b95f4ec86a2922a4258d0f7884b",
+          "size": 2005
+        },
+        "arm64": {
+          "digest": "sha256:ecc34bb83f34b9b0435335e5391296b1d50da705e7f220bfe8eb49714906a74f",
+          "size": 2005
+        }
+      },
+      "image": "ghcr.io/michaelwclark/genomes-agentic-os-execution-fabric-minio@sha256:b775959240f227699f89537c92d74873307ea827690e58bbe1eb5af55c3a1550",
+      "verified_statement_sha256": [
+        "b57fc34c62fcecb5fb05e8ca2a8c2dfedc2e121fde37a129910780a2527fd61c"
+      ]
+    },
+    "minio_client": {
+      "children": {
+        "amd64": {
+          "digest": "sha256:a17c5a6122c06bce231208ed8e92f8cbdaaa8d627bbaeb5b46391020107367ba",
+          "size": 1055
+        },
+        "arm64": {
+          "digest": "sha256:590a1cda91a2c94dd7ee4169406e90507fb63d8c01eaf4ac7689f131bc28a5ac",
+          "size": 1055
+        }
+      },
+      "image": "ghcr.io/michaelwclark/genomes-agentic-os-execution-fabric-minio-client@sha256:6c14d308a25e0950c9694f5f002f4ee4df2877afaf9672844b6881a7f75bdec4",
+      "verified_statement_sha256": [
+        "067c5a191c809069d2697fdf67cf386940622875685b5f08ddbf96f00f0e4081"
+      ]
+    }
+  },
+  "release_workflow_attempt": 2,
+  "release_workflow_run_id": 38658509852,
+  "repository": "michaelwclark/genomes_agentic_os",
+  "schema_version": "execution-fabric-minio-published-transport-fixture/v1",
+  "scope": "transport_regression_only",
+  "source_lock_sha256": "52183d7bdb6f2ae75ab413fe2704faf4eebfa0d2b54fa2461a3381a6af527a2c",
+  "source_ref": "refs/tags/v0.11.1",
+  "source_sha": "4e4d549f8331c1bef65ce81aaa7641a675e7c5bb",
+  "source_tree": "7c14515883a4ff8ad27781a5af607de2f1b2bf58",
+  "tag_object_sha": "295e18a08fd1ca978da6eddd15de768b1eefd23b"
+}
+

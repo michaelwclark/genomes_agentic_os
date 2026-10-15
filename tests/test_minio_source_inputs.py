@@ -196,6 +196,10 @@ def test_real_pr_smokes_gate_existing_required_check_and_tag_assets() -> None:
     assert companion["jobs"]["runtime"]["strategy"]["matrix"]["arch"] == ["amd64", "arm64"]
     builds = [step["with"] for step in companion["jobs"]["runtime"]["steps"] if step.get("uses") == "docker/build-push-action@v6"]
     assert len(builds) == 2 and all(build["push"] is False and build["load"] is True for build in builds)
+    published = [step for step in companion["jobs"]["runtime"]["steps"] if "--published-fixture" in step.get("run", "")]
+    assert len(published) == 1 and published[0]["if"] == "matrix.arch == 'amd64'"
+    assert "tests/fixtures/minio_published_transport_v0_11_1.json" in published[0]["run"]
+    assert published[0].get("continue-on-error", False) is False
     release = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())
     assert "minio-images" in release["jobs"]["assets"]["needs"]
     assert len(release["jobs"]["github-release"]["with"]["asset_manifest"].splitlines()) == 8
@@ -208,7 +212,7 @@ def test_registry_presentation_and_runtime_platform_proof_fail_closed() -> None:
     assert api["canonical_bytes"](raw + b"\n", digest) == raw
     with pytest.raises(ValueError, match="manifest bytes"):
         api["canonical_bytes"](raw, "0" * 64)
-    index = {"mediaType": "application/vnd.oci.image.index.v1+json", "manifests": [{"platform": {"os": "linux", "architecture": arch}, "digest": "sha256:" + "a" * 64, "size": 1} for arch in ["amd64", "arm64"]]}
+    index = {"mediaType": "application/vnd.oci.image.index.v1+json", "manifests": [{"mediaType": "application/vnd.oci.image.manifest.v1+json", "platform": {"os": "linux", "architecture": arch}, "digest": "sha256:" + "a" * 64, "size": 1} for arch in ["amd64", "arm64"]]}
     assert set(api["index_children"](index)) == {"amd64", "arm64"}
     index["manifests"].pop()
     with pytest.raises(ValueError, match="lacks"):
@@ -219,3 +223,302 @@ def test_registry_presentation_and_runtime_platform_proof_fail_closed() -> None:
     assert api["has_verified_subject"](verified, digest) is True
     verified[0]["verificationResult"]["signature"]["certificate"] = "unstructured"
     assert api["has_verified_subject"](verified, digest) is False
+
+
+def _runtime_registry() -> tuple[dict, dict, dict]:
+    """Build content-addressed unit manifests with distinct role/arch leaves."""
+    images, manifests, children = {}, {}, {}
+    repositories = json.loads(SOURCES.read_text())["images"]
+    media = "application/vnd.oci.image.manifest.v1+json"
+    for role in ["minio", "minio_client"]:
+        descriptors = []
+        children[role] = {}
+        for arch in ["amd64", "arm64"]:
+            raw = json.dumps({"schemaVersion": 2, "mediaType": media,
+                              "config": {"digest": "sha256:" + "a" * 64, "size": 1},
+                              "layers": [], "annotations": {"unit-role": role, "unit-arch": arch}},
+                             sort_keys=True).encode()
+            child = {"digest": "sha256:" + sha256(raw).hexdigest(), "size": len(raw)}
+            children[role][arch] = child
+            manifests[repositories[role]["repository"] + "@" + child["digest"]] = raw
+            descriptors.append({**child, "mediaType": media, "platform": {"os": "linux", "architecture": arch}})
+        raw = json.dumps({"schemaVersion": 2, "mediaType": "application/vnd.oci.image.index.v1+json",
+                          "manifests": descriptors}, sort_keys=True).encode()
+        parent = repositories[role]["repository"] + "@sha256:" + sha256(raw).hexdigest()
+        images[role] = parent
+        manifests[parent] = raw
+    return images, manifests, children
+
+
+@pytest.mark.parametrize("role,arch", [("minio", "amd64"), ("minio", "arm64"), ("minio_client", "amd64"), ("minio_client", "arm64")])
+def test_runtime_resolver_verifies_parent_and_selected_leaf(role: str, arch: str) -> None:
+    api = runpy.run_path(str(VERIFY))
+    images, manifests, children = _runtime_registry()
+    reads = []
+
+    def read_manifest(reference: str) -> bytes:
+        reads.append(reference)
+        return manifests[reference] + b"\n"
+
+    selected = images[role].split("@")[0] + "@" + children[role][arch]["digest"]
+    assert api["resolve_runtime_child"](images[role], arch, read_manifest) == selected
+    assert reads == [images[role], selected]
+
+
+@pytest.mark.parametrize("corruption", [
+    "parent-bytes", "parent-media", "missing-arch", "duplicate-arch", "foreign-arch",
+    "descriptor-media", "descriptor-digest", "descriptor-size-bool", "child-bytes",
+    "child-size", "child-media", "child-schema",
+])
+def test_runtime_resolver_rejects_invalid_content_or_platform(corruption: str) -> None:
+    api = runpy.run_path(str(VERIFY))
+    images, manifests, _ = _runtime_registry()
+    parent = images["minio"]
+    index = json.loads(manifests[parent])
+    descriptor = index["manifests"][0]
+    child_reference = parent.split("@")[0] + "@" + descriptor["digest"]
+    if corruption == "parent-bytes":
+        manifests[parent] += b"invalid"
+    else:
+        if corruption == "parent-media":
+            index["mediaType"] = "application/vnd.oci.image.manifest.v1+json"
+        elif corruption == "missing-arch":
+            index["manifests"].pop()
+        elif corruption == "duplicate-arch":
+            index["manifests"].append(deepcopy(descriptor))
+        elif corruption == "foreign-arch":
+            descriptor["platform"]["architecture"] = "riscv64"
+        elif corruption == "descriptor-media":
+            descriptor["mediaType"] = "application/vnd.oci.image.index.v1+json"
+        elif corruption == "descriptor-digest":
+            descriptor["digest"] = "mutable"
+        elif corruption == "descriptor-size-bool":
+            descriptor["size"] = True
+        elif corruption == "child-bytes":
+            manifests[child_reference] += b"invalid"
+        elif corruption == "child-size":
+            descriptor["size"] += 1
+        else:
+            child = json.loads(manifests[child_reference])
+            child["mediaType" if corruption == "child-media" else "schemaVersion"] = "wrong"
+            raw = json.dumps(child, sort_keys=True).encode()
+            descriptor["digest"] = "sha256:" + sha256(raw).hexdigest()
+            descriptor["size"] = len(raw)
+            manifests[parent.split("@")[0] + "@" + descriptor["digest"]] = raw
+        raw = json.dumps(index, sort_keys=True).encode()
+        parent = parent.split("@")[0] + "@sha256:" + sha256(raw).hexdigest()
+        manifests[parent] = raw
+    with pytest.raises(ValueError):
+        api["resolve_runtime_child"](parent, "amd64", manifests.__getitem__)
+
+
+@pytest.mark.parametrize("corruption", ["wrong-arch", "parent", "foreign", "missing"])
+def test_published_runtime_receipt_must_bind_the_matching_owned_children(corruption: str) -> None:
+    api = runpy.run_path(str(VERIFY))
+    images, _, children = _runtime_registry()
+    runtime = {role: image.split("@")[0] + "@" + children[role]["arm64"]["digest"] for role, image in images.items()}
+    smoke = {"images": images, "platform": "linux/arm64", "runtime_images": runtime}
+    api["verify_runtime_binding"](smoke, images, children, "arm64")
+    if corruption == "wrong-arch":
+        runtime["minio"] = images["minio"].split("@")[0] + "@" + children["minio"]["amd64"]["digest"]
+    elif corruption == "parent":
+        runtime["minio"] = images["minio"]
+    elif corruption == "foreign":
+        runtime["minio"] = "registry.example.test/other@" + children["minio"]["arm64"]["digest"]
+    else:
+        smoke.pop("runtime_images")
+    with pytest.raises(ValueError, match="verified parent/platform"):
+        api["verify_runtime_binding"](smoke, images, children, "arm64")
+
+
+@pytest.mark.parametrize("published", [True, False])
+def test_all_smoke_consumers_receive_runtime_leaves_while_custody_retains_parents(monkeypatch, tmp_path: Path, published: bool) -> None:
+    api = runpy.run_path(str(ROOT / "scripts/release/smoke-minio-source-images.py"))
+    images, manifests, children = _runtime_registry()
+    if not published:
+        images = {"minio": "local-minio:unit", "minio_client": "local-mc:unit"}
+    reads, identities, cases = [], [], []
+
+    def docker(arguments: list[str], **kwargs) -> bytes:
+        assert arguments[:4] == ["buildx", "imagetools", "inspect", "--raw"]
+        reads.append(arguments[-1])
+        return manifests[arguments[-1]]
+
+    def identity(image: str, role: str, arch: str, lock: dict, temporary: Path) -> dict:
+        identities.append((image, role, arch))
+        return {"unit": True}
+
+    def exercise(minio: str, client: str, arch: str, namespace: str, temporary: Path, mode: str, uid: int) -> dict:
+        cases.append((minio, client, arch, mode, uid))
+        return {"credentials": mode, "effective_uid": uid}
+
+    namespace = api["run_smoke"].__globals__
+    for name, value in [("docker", docker), ("verify_identity", identity), ("exercise", exercise)]:
+        monkeypatch.setitem(namespace, name, value)
+    receipt = api["run_smoke"](images, "linux/arm64", "minio-source-unit", tmp_path / "smoke.json", published=published)
+    expected = {role: image.split("@")[0] + "@" + children[role]["arm64"]["digest"] for role, image in images.items()} if published else images
+    assert receipt["images"] == images
+    assert receipt["runtime_images"] == expected
+    assert identities == [(expected["minio"], "minio", "arm64"), (expected["minio_client"], "mc", "arm64")]
+    assert cases == [(expected["minio"], expected["minio_client"], "arm64", mode, uid) for mode, uid in [("file", 0), ("env", 0), ("file", 1000)]]
+    assert len(reads) == (4 if published else 0)
+    assert json.loads((tmp_path / "smoke.json").read_text()) == receipt
+
+
+def test_actual_identity_command_transport_uses_the_selected_child(monkeypatch, tmp_path: Path) -> None:
+    api = runpy.run_path(str(ROOT / "scripts/release/smoke-minio-source-images.py"))
+    image = "ghcr.io/michaelwclark/genomes-agentic-os-execution-fabric-minio@sha256:" + "a" * 64
+    container = "1" * 64
+    commands = []
+    binary, curl = b"unit-official-payload", b"unit-base-curl"
+    lock = {"payloads": {"minio": {"version": "release-unit", "source_commit": "source-unit",
+             "platforms": {"arm64": {"binary": {"sha256": sha256(binary).hexdigest()}}}}},
+            "base": {"platforms": {"arm64": {"curl_sha256": sha256(curl).hexdigest()}}}}
+
+    def docker(arguments: list[str], **kwargs) -> bytes:
+        commands.append(arguments)
+        if arguments[0] == "create":
+            assert arguments == ["create", "--platform", "linux/arm64", image]
+            return container.encode()
+        if arguments[0] == "cp":
+            Path(arguments[2]).write_bytes(curl if arguments[1].endswith("/curl") else binary)
+        if arguments[0] == "run":
+            assert arguments == ["run", "--rm", "--platform", "linux/arm64", "--entrypoint", "/usr/bin/minio", image, "--version"]
+            return b"release-unit source-unit"
+        if arguments[0] == "inspect":
+            return b'"sha256:unit-image-id"'
+        return b""
+
+    monkeypatch.setitem(api["verify_identity"].__globals__, "docker", docker)
+    result = api["verify_identity"](image, "minio", "arm64", lock, tmp_path)
+    assert result["binary_sha256"] == sha256(binary).hexdigest()
+    assert commands[-1] == ["rm", "--force", "--volumes", container]
+
+
+def test_actual_runtime_command_transport_uses_server_and_client_children(monkeypatch, tmp_path: Path) -> None:
+    api = runpy.run_path(str(ROOT / "scripts/release/smoke-minio-source-images.py"))
+    images, _, children = _runtime_registry()
+    server, client = [images[role].split("@")[0] + "@" + children[role]["arm64"]["digest"] for role in ["minio", "minio_client"]]
+    commands = []
+    namespace, network, container = "minio-source-unit", "1" * 64, "2" * 64
+
+    def docker(arguments: list[str], **kwargs) -> bytes:
+        commands.append(arguments)
+        if arguments[:2] in [["network", "inspect"], ["volume", "inspect"]]:
+            return b""
+        if arguments[:2] == ["network", "create"]:
+            return network.encode()
+        if arguments[:2] == ["volume", "create"]:
+            return (namespace + "-data").encode()
+        if arguments[0] == "run":
+            assert server in arguments or client in arguments
+            assert all(image not in arguments for image in images.values())
+            if "--detach" in arguments:
+                return container.encode()
+            if "cat" in arguments:
+                return b"same-release-persistence-arm64"
+        if arguments[0] == "exec":
+            return b"Uid:\t1000\t1000\t1000\t1000\n"
+        return b""
+
+    namespace_globals = api["exercise"].__globals__
+    monkeypatch.setitem(namespace_globals, "docker", docker)
+    monkeypatch.setitem(namespace_globals, "wait_ready", lambda container: None)
+    receipt = api["exercise"](server, client, "arm64", namespace, tmp_path, "file", 1000)
+    assert receipt["object_write_read_restart_read_delete"] is True
+    assert len([command for command in commands if command[0] == "run" and client in command]) == 8
+    assert ["restart", container] in commands
+    assert commands[-3:] == [["rm", "--force", "--volumes", container], ["volume", "rm", namespace + "-data"], ["network", "rm", network]]
+
+
+@pytest.mark.parametrize("mutation", [
+    lambda fixture: fixture.update(scope="release_qualification"),
+    lambda fixture: fixture.update(complete_release_or_SDK_qualification_claimed=True),
+    lambda fixture: fixture.update(repository="untrusted/repository"),
+    lambda fixture: fixture.update(source_sha="unknown"),
+    lambda fixture: fixture.update(source_ref="refs/heads/main"),
+    lambda fixture: fixture.update(release_workflow_attempt=True),
+    lambda fixture: fixture.update(source_lock_sha256="0" * 64),
+    lambda fixture: fixture.update(image_sources_sha256="0" * 64),
+    lambda fixture: fixture["images"].pop("minio_client"),
+    lambda fixture: fixture["images"]["minio"].update(image="minio:latest"),
+    lambda fixture: fixture["images"]["minio"]["children"].pop("arm64"),
+    lambda fixture: fixture["images"]["minio"]["children"]["arm64"].update(size=True),
+    lambda fixture: fixture["images"]["minio"].update(verified_statement_sha256=[]),
+])
+def test_historical_transport_fixture_cannot_replace_release_qualification(mutation) -> None:
+    api = runpy.run_path(str(ROOT / "scripts/release/smoke-minio-source-images.py"))
+    fixture = json.loads((ROOT / "tests/fixtures/minio_published_transport_v0_11_1.json").read_text())
+    assert set(api["validate_transport_fixture"](fixture)) == {"minio", "minio_client"}
+    mutation(fixture)
+    with pytest.raises(ValueError):
+        api["validate_transport_fixture"](fixture)
+
+
+@pytest.mark.parametrize("failure", [None, "verification", "certificate", "statement", "attempt", "store"])
+def test_single_store_regression_binds_verified_historical_inputs_and_both_architectures(monkeypatch, tmp_path: Path, failure: str | None) -> None:
+    api = runpy.run_path(str(ROOT / "scripts/release/smoke-minio-source-images.py"))
+    images, manifests, children = _runtime_registry()
+    fixture = json.loads((ROOT / "tests/fixtures/minio_published_transport_v0_11_1.json").read_text())
+    verifications = {}
+    for role, parent in images.items():
+        statement = {"subject": [{"digest": {"sha256": parent.rsplit("sha256:", 1)[1]}}],
+                     "predicate": {"runDetails": {"metadata": {"invocationId":
+                         "https://github.com/michaelwclark/genomes_agentic_os/actions/runs/38658509852/attempts/" + ("1" if failure == "attempt" else "2")}}}}
+        fixture["images"][role] = {"image": parent, "children": children[role],
+                                  "verified_statement_sha256": [sha256((json.dumps(statement, sort_keys=True, separators=(",", ":")) + "\n").encode()).hexdigest()]}
+        verifications[role] = [{"verificationResult": {"statement": statement, "signature": {"certificate": {"unit": True}}}}]
+    if failure == "certificate":
+        verifications["minio"][0]["verificationResult"]["signature"].pop("certificate")
+    if failure == "statement":
+        fixture["images"]["minio"]["verified_statement_sha256"] = ["0" * 64]
+    fixture_path = tmp_path / "fixture.json"
+    fixture_path.write_text(json.dumps(fixture))
+    infos, commands, cases = [], [], []
+
+    def docker(arguments: list[str], **kwargs) -> bytes:
+        if arguments[:4] == ["buildx", "imagetools", "inspect", "--raw"]:
+            return manifests[arguments[-1]]
+        assert arguments == ["info", "--format", "{{json .}}"]
+        infos.append(arguments)
+        return json.dumps({"ID": "different-store" if failure == "store" and len(infos) > 1 else "one-store",
+                           "ServerVersion": "unit-only", "Driver": "overlay2", "OSType": "linux", "Architecture": "x86_64"}).encode()
+
+    def verify(command: list[str], **kwargs) -> subprocess.CompletedProcess:
+        commands.append(command)
+        assert command[0:2] == ["gh", "attestation"]
+        assert "--deny-self-hosted-runners" in command
+        for flag, expected in [("--signer-digest", fixture["source_sha"]), ("--source-digest", fixture["source_sha"]),
+                               ("--source-ref", fixture["source_ref"]), ("--repo", fixture["repository"]),
+                               ("--signer-workflow", "github.com/michaelwclark/genomes_agentic_os/.github/workflows/release.yml")]:
+            assert command[command.index(flag) + 1] == expected
+        role = command[3].removesuffix("-index.json")
+        return subprocess.CompletedProcess(command, 1 if failure == "verification" else 0, json.dumps(verifications[role]).encode(), b"")
+
+    def exercise(server: str, client: str, arch: str, namespace: str, temporary: Path, mode: str, uid: int) -> dict:
+        expected = [images[role].split("@")[0] + "@" + children[role][arch]["digest"] for role in ["minio", "minio_client"]]
+        assert [server, client] == expected
+        cases.append((arch, mode, uid))
+        return {"credentials": mode, "effective_uid": uid}
+
+    globals_ = api["run_transport_regression"].__globals__
+    monkeypatch.setitem(globals_, "docker", docker)
+    monkeypatch.setitem(globals_, "verify_identity", lambda *args: {"unit": True})
+    monkeypatch.setitem(globals_, "exercise", exercise)
+    monkeypatch.setattr(subprocess, "run", verify)
+    output = tmp_path / "regression.json"
+    if failure:
+        with pytest.raises(ValueError):
+            api["run_transport_regression"](fixture_path, "minio-source-unit", output)
+        assert not output.exists()
+        assert len(cases) == (3 if failure == "store" else 0)
+    else:
+        result = api["run_transport_regression"](fixture_path, "minio-source-unit", output)
+        assert result["architecture_order"] == ["amd64", "arm64"]
+        assert result["engine"]["ID"] == "one-store"
+        assert len(infos) == 3
+        assert len(commands) == 2
+        assert cases == [(arch, mode, uid) for arch in ["amd64", "arm64"] for mode, uid in [("file", 0), ("env", 0), ("file", 1000)]]
+        assert result["scope"] == "transport_regression_only"
+        assert result["complete_release_or_SDK_qualification_claimed"] is False
+        assert json.loads(output.read_text()) == result
