@@ -66,6 +66,15 @@ jobs:
             --client-image minio-source-client:${{ github.sha }}-${{ matrix.arch }} \
             --namespace minio-source-${{ github.run_id }}-${{ matrix.arch }} \
             --output minio-smoke-${{ matrix.arch }}.json
+      - name: Exercise published amd64 then arm64 in one Docker store
+        if: matrix.arch == 'amd64'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python scripts/release/smoke-minio-source-images.py \
+            --published-fixture tests/fixtures/minio_published_transport_v0_11_1.json \
+            --namespace minio-source-published-${{ github.run_id }}-${{ github.run_attempt }} \
+            --output minio-published-transport/regression.json
       - uses: actions/upload-artifact@v6
         if: always()
         with:
@@ -74,4 +83,5 @@ jobs:
           path: |
             .minio-build-context/build-inputs.json
             minio-smoke-${{ matrix.arch }}.json
+            minio-published-transport/**
           if-no-files-found: warn

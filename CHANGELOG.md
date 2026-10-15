@@ -9,6 +9,16 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.11.2] - 2026-10-14
+
+### Fixed
+
+- Resolve published MinIO server and client indexes to verified architecture
+  children before Docker identity and storage checks. Retain signed parent
+  indexes and validate the executed child identity in publication receipts.
+- Gate publication on a Linux Docker store that executes amd64 and then arm64
+  checks against immutable published images.
+
 ## [0.11.1] - 2026-10-14
 
 ### Fixed
