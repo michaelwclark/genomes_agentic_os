@@ -61,6 +61,19 @@ copy_config harness/config/hosts.yml
 copy_config harness/registries/hosts-routing.yml
 copy_config harness/registries/alerts.yml
 
+copy_source() {
+  relative=$1
+  [ -s "$source_root/$relative" ] || {
+    echo "required source asset is missing or empty: $relative" >&2
+    exit 78
+  }
+  destination="$bundle/source/$relative"
+  mkdir -p "$(dirname "$destination")"
+  cp "$source_root/$relative" "$destination"
+}
+
+copy_source docs/development/fabric-held-restoration.md
+
 [ -f "$bundle/config/harness/config/execution-fabric.yml" ] || {
   echo "canonical execution-fabric config is missing" >&2
   exit 78

@@ -2566,6 +2566,30 @@ def test_bundle_builder_and_validator_round_trip(tmp_path: Path) -> None:
         assert f"{variable}=" in materialized
     assert "secrets_included=false" in (output / "RELEASE").read_text(encoding="utf-8")
 
+    for relative in (
+        "docs/development/fabric-held-restoration.md",
+        "installers/execution-fabric/bin/held-staging.py",
+        "installers/execution-fabric/bin/recovery-inventory.py",
+    ):
+        destination = (
+            output / "source/installers/bin" / Path(relative).name
+            if relative.startswith("installers/")
+            else output / "source" / relative
+        )
+        assert destination.read_bytes() == (SOURCE_ROOT / relative).read_bytes()
+    runbook = output / "source/docs/development/fabric-held-restoration.md"
+    runbook_bytes = runbook.read_bytes()
+    runbook.unlink()
+    missing_runbook = subprocess.run(
+        ["sh", str(INSTALLERS / "bin/validate-emergency-bundle.sh"), str(output)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert missing_runbook.returncode == 78
+    assert "fabric-held-restoration.md" in missing_runbook.stderr
+    runbook.write_bytes(runbook_bytes)
+
     (output / "images.lock.env").write_text(
         materialized.replace("FABRIC_WITNESS_IMAGE=", "FABRIC_WITNESS_IMAGE=mutable:"),
         encoding="utf-8",

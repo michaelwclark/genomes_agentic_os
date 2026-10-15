@@ -1,5 +1,10 @@
 # Execution Fabric deployment
 
+For reinstall recovery, use the
+[held restoration runbook](../../docs/development/fabric-held-restoration.md)
+to inventory preserved data and stage verified inert assets. Inventory and
+staging do not grant authority to bootstrap or activate a primary.
+
 This directory is the portable deployment surface for the Agentic OS Execution
 Fabric. It keeps deployment mechanics separate from the generic control-plane
 service and from the one editable instance policy at
@@ -178,6 +183,14 @@ Published ports are bound to the explicit `FABRIC_TAILSCALE_IP`. PostgreSQL and
 the control plane are not published on `0.0.0.0`. Internal container traffic
 uses the private Compose network. Host firewalls and Tailscale ACLs must still
 restrict the approved hosts.
+
+Before remote recovery, verify both usable Tailscale traffic and an authenticated
+SSH connection. A device may appear online while its expired node key blocks
+traffic. Follow the existing-account key renewal, alternate-access prerequisites,
+and daily backup/cold BigMac acceptance procedure in the
+[held restoration runbook](../../docs/development/fabric-held-restoration.md).
+Keep network recovery, datastore authority, installation and writer activation
+as separate verified steps.
 
 | Port | Purpose |
 | ---: | --- |
