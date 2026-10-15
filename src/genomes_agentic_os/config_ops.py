@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 import difflib
+import json
 import re
 import shutil
 from typing import Any
@@ -684,16 +685,148 @@ def template_keys_by_section(template: str) -> dict[str | None, list[tuple[str, 
     return sections
 
 
+MCP_HEADER_PATTERN = re.compile(r"^\s*\[(.+)]\s*(?:#.*)?$")
+
+
+def _mcp_server_name(section: str | None) -> str | None:
+    """Recognize direct server tables, including equivalent quoted names."""
+    match = re.fullmatch(r"mcp_servers\s*\.\s*(.+)", section or "")
+    if not match:
+        return None
+    name = match.group(1).strip()
+    if re.fullmatch(r"[A-Za-z0-9_-]+", name):
+        return name
+    if re.fullmatch(r"'[^']*'", name):
+        return name[1:-1]
+    if name.startswith('"') and name.endswith('"'):
+        try:
+            decoded = json.loads(name)
+        except ValueError:
+            raise ValueError("Unsupported quoted MCP server table name") from None
+        if isinstance(decoded, str):
+            return decoded
+    return None
+
+
+def _mcp_transport(keys: set[str]) -> str | None:
+    if "url" in keys and ("command" in keys or "args" in keys):
+        return "mixed"
+    if "url" in keys:
+        return "http"
+    if "command" in keys:
+        return "stdio"
+    if "args" in keys:
+        return "incomplete_stdio"
+    return None
+
+
+def _unsupported_mcp_layout(content: str) -> tuple[bool, set[str]]:
+    """Find MCP definitions the lexical additive merger cannot safely extend."""
+    section: str | None = None
+    unsupported_servers: set[str] = set()
+    unsupported_parent = False
+    base = r"(?:mcp_servers|\"mcp_servers\"|'mcp_servers')"
+    for line in content.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        match = MCP_HEADER_PATTERN.match(line)
+        if match:
+            section = match.group(1).strip()
+            if re.match(r"^\[?" + base + r"(?:\s*\.|\s*$)", section):
+                if not (section == "mcp_servers" or section.startswith("mcp_servers.")):
+                    unsupported_parent = True
+            continue
+        if section == "mcp_servers":
+            # Inline server assignments cannot be reopened as a direct table.
+            unsupported_parent = True
+        elif section is None and re.match(r"^" + base + r"\s*(?:\.|=)", stripped):
+            unsupported_parent = True
+        else:
+            name = _mcp_server_name(section)
+            key = KEY_PATTERN.match(line)
+            if name is not None and (not key or not re.fullmatch(r"[A-Za-z0-9_-]+", key.group(1))):
+                # Quoted/dotted keys and multiline values need a real TOML
+                # editor; preserve their table rather than infer transport.
+                unsupported_servers.add(name)
+    return unsupported_parent, unsupported_servers
+
+
 def merge_config(existing: str, template: str) -> tuple[str, list[str]]:
-    if not existing.strip():
-        return template.rstrip() + "\n", []
 
     existing_keys = parse_toml_keys(existing)
+    existing_sections = template_keys_by_section(existing)
     template_sections = template_keys_by_section(template)
     conflicts: list[str] = []
     additions: dict[str | None, list[str]] = {}
+    unsupported_template_parent, unsupported_template_servers = _unsupported_mcp_layout(template)
+    if unsupported_template_parent or unsupported_template_servers:
+        raise ValueError("Unsupported managed MCP definition layout")
+    unsupported_existing_parent, unsupported_existing_servers = _unsupported_mcp_layout(existing)
+
+    # A server's transport is one merge decision. Adding an otherwise missing
+    # url/command to an existing different transport creates an invalid table.
+    existing_servers: dict[str, list[str]] = {}
+    for line in existing.splitlines():
+        match = MCP_HEADER_PATTERN.match(line)
+        if match and (name := _mcp_server_name(match.group(1))) is not None:
+            # The existing lexical merger cannot safely insert into quoted or
+            # commented headers. Keep them intact rather than create an alias.
+            identity = match.group(1) if SECTION_PATTERN.match(line) else line.strip()
+            existing_servers.setdefault(name, []).append(identity)
+    template_servers: set[str] = set()
+    for line in template.splitlines():
+        match = MCP_HEADER_PATTERN.match(line)
+        if match and (name := _mcp_server_name(match.group(1))) is not None:
+            if name in template_servers:
+                raise ValueError("Duplicate managed MCP server table")
+            if not SECTION_PATTERN.match(line):
+                raise ValueError("Unsupported managed MCP server table spelling")
+            template_servers.add(name)
+    for section, pairs in template_sections.items():
+        if _mcp_server_name(section) is not None:
+            keys = {key for key, _value in pairs}
+            if len(keys) != len(pairs):
+                raise ValueError("Duplicate managed MCP server key")
+            if _mcp_transport(keys) in {"mixed", "incomplete_stdio"}:
+                raise ValueError("Managed MCP server must declare one coherent transport")
+    if not existing.strip():
+        return template.rstrip() + "\n", []
+
+    blocked_servers: set[str] = set()
+    for section, pairs in template_sections.items():
+        name = _mcp_server_name(section)
+        if name is not None:
+            if unsupported_existing_parent or name in unsupported_existing_servers:
+                conflicts.append(f"{section}: unsupported existing MCP definition layout; preserved")
+                blocked_servers.add(section)
+                continue
+            proposed = _mcp_transport({key for key, _value in pairs})
+            aliases = existing_servers.get(name, [])
+            if len(aliases) > 1 or (aliases and aliases[0] != section):
+                conflicts.append(
+                    f"{section}: existing MCP table identity is ambiguous or quoted differently; preserved"
+                )
+                blocked_servers.add(section)
+                continue
+            original_pairs = existing_sections.get(section, [])
+            if len({key for key, _value in original_pairs}) != len(original_pairs):
+                conflicts.append(f"{section}: duplicate existing MCP keys; table preserved")
+                blocked_servers.add(section)
+                continue
+            current = _mcp_transport({key for table, key in existing_keys if table == section})
+            if current in {"mixed", "incomplete_stdio"} or (
+                current and proposed and current != proposed
+            ):
+                conflicts.append(f"{section}: incompatible MCP transport; existing table preserved")
+                blocked_servers.add(section)
+                continue
 
     for section, pairs in template_sections.items():
+        if section is not None and any(
+            section == blocked or section.startswith(blocked + ".") for blocked in blocked_servers
+        ):
+            continue
         for key, value in pairs:
             existing_value = existing_keys.get((section, key))
             if existing_value is None:
