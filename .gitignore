@@ -36,3 +36,7 @@ MEMORY.md
 
 # Local receipts from docs/architecture/tools/validate-cli.sh
 .validation/
+
+# Private per-host authentication; never package or commit credentials.
+hosts.env
+**/hosts.env

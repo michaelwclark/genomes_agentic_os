@@ -43,6 +43,7 @@ class build_py(_build_py):
                         "*.pyo",
                         ".DS_Store",
                         ".git",
+                        "hosts.env",
                     ),
                 )
 
