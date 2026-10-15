@@ -8,6 +8,7 @@ the primary. A required sibling has its own immutable Finalize and merge entry.
 from __future__ import annotations
 
 from contextlib import contextmanager
+from collections import Counter
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -92,7 +93,7 @@ def _context(state_file: str | Path) -> dict[str, Any]:
         raise AutoDevStateError(str(exc)) from exc
     if not isinstance(selected_profile, Mapping) or selected_profile.get("repository_id") != task.get("repository", {}).get("id") or policy.get("fingerprint") != task.get("policy_fingerprint"):
         raise AutoDevStateError("family target frozen policy does not select the canonical repository")
-    _, ready = _health_task_receipt(task, "ready_for_merge", root, task_path=task_path)
+    ready_path, ready = _health_task_receipt(task, "ready_for_merge", root, task_path=task_path)
     ready_evidence = ready.get("evidence", {})
     primary = validate_pull_request_authority(task, ready_evidence, "family primary readiness")
     primary["subject_revision"] = str(ready_evidence.get("subject_revision") or "")
@@ -172,7 +173,11 @@ def _context(state_file: str | Path) -> dict[str, Any]:
         raise AutoDevStateError("typed family must contain its exact primary and a required sibling")
     return {"state": state, "current": current, "root": root, "task_path": task_path,
             "task": task, "primary": primary, "family": required, "family_binding": family_binding,
-            "review_policy_fingerprint": ready_evidence.get("review_policy_fingerprint") or task.get("policy_fingerprint"),
+            "review_policy_fingerprints": {
+                str(task.get("policy_fingerprint") or ""),
+                str(ready_evidence.get("review_policy_fingerprint") or task.get("policy_fingerprint") or ""),
+            },
+            "primary_ready_binding": {"ref": str(ready_path), "sha256": _digest(ready_path.read_bytes())},
             "canonical_origin": canonical_origin, "policy_binding": {"ref": str(policy_path.resolve()), "sha256": _digest(policy_path.read_bytes())}}
 
 
@@ -260,6 +265,50 @@ def _ci_skip(root: Path, skip: Mapping[str, Any], target: Mapping[str, str], wor
     return str(skip["name"])
 
 
+def _ci_inventory(worktree: Path, target: Mapping[str, str]) -> Counter[str]:
+    """Derive the required static PR jobs from the exact source, not current results."""
+    expected: Counter[str] = Counter()
+    paths = _git(worktree, "ls-tree", "-r", "--name-only", target["subject_revision"], ".github/workflows/").decode().splitlines()
+    for path in paths:
+        if not path.endswith((".yml", ".yaml")):
+            continue
+        workflow = yaml.safe_load(_git(worktree, "show", f"{target['subject_revision']}:{path}"))
+        if not isinstance(workflow, Mapping):
+            raise AutoDevStateError("target workflow cannot prove the required CI inventory")
+        triggers = workflow.get("on", workflow.get(True))
+        if isinstance(triggers, str):
+            triggers = {triggers: None}
+        if isinstance(triggers, list):
+            triggers = dict.fromkeys(triggers)
+        if not isinstance(triggers, Mapping):
+            continue
+        if "pull_request_target" in triggers:
+            raise AutoDevStateError("pull_request_target CI inventory requires a dedicated source adapter")
+        if "pull_request" not in triggers:
+            continue
+        event = triggers["pull_request"] or {}
+        if not isinstance(event, Mapping) or any(key in event for key in ("paths", "paths-ignore")):
+            raise AutoDevStateError("path-filtered PR CI inventory requires a dedicated source adapter")
+        for field in ("branches", "branches-ignore"):
+            values = event.get(field, [])
+            if not isinstance(values, list) or any(not isinstance(value, str) or re.search(r"[*?!\[${]", value) for value in values):
+                raise AutoDevStateError("dynamic PR branch filters require a dedicated CI inventory adapter")
+        if event.get("branches") and target["base_branch"] not in event["branches"]:
+            continue
+        if target["base_branch"] in event.get("branches-ignore", []):
+            continue
+        jobs = workflow.get("jobs")
+        if not isinstance(jobs, Mapping) or not jobs:
+            raise AutoDevStateError("applicable PR workflow has no verifiable CI jobs")
+        for key, job in jobs.items():
+            if not isinstance(job, Mapping) or job.get("strategy") or "${{" in str(job.get("name") or ""):
+                raise AutoDevStateError("dynamic PR jobs require a dedicated CI inventory adapter")
+            expected[str(job.get("name") or key)] += 1
+    if not expected:
+        raise AutoDevStateError("family target has no source-bound required PR check inventory")
+    return expected
+
+
 def _provider(root: Path, descriptor: Any, target: Mapping[str, str], *, github_repository: str,
               author_identity: str, fresh: bool, worktree: Path, merged: bool = False) -> tuple[dict[str, str], dict[str, Any]]:
     bound, path = _bound(root, descriptor, "target provider readback")
@@ -299,6 +348,9 @@ def _provider(root: Path, descriptor: Any, target: Mapping[str, str], *, github_
         allowed.add(_ci_skip(root, skip, target, worktree))
     if not isinstance(checks, list) or not checks:
         raise AutoDevStateError("family target requires nonempty current provider checks")
+    names = Counter(str(check.get("name") or check.get("context") or "") for check in checks if isinstance(check, Mapping))
+    if any(count > names[name] for name, count in _ci_inventory(worktree, target).items()):
+        raise AutoDevStateError("family target provider readback omits required source CI jobs")
     for check in checks:
         if not isinstance(check, Mapping):
             raise AutoDevStateError("family target provider check is malformed")
@@ -327,12 +379,40 @@ def _proof(root: Path, descriptor: Any, target: Mapping[str, str], label: str) -
     details = payload.get("evidence")
     if not isinstance(details, Mapping) or any(str(details.get(k) or "") != target[k] for k in ("repository", "pull_request", "base_branch", "base_sha")):
         raise AutoDevStateError(f"{label} lacks exact sibling repository/PR/base scope")
+    expected_stage = {"target acceptance": "document", "target qa": "qa", "target secondary_review": "review_self",
+                      "target release validation": "validate_production_release"}.get(label)
+    if expected_stage is None or payload.get("stage") != expected_stage:
+        raise AutoDevStateError(f"{label} has the wrong proof kind/stage")
     refs = details.get("receipt_refs")
     if not isinstance(refs, list) or not refs:
         raise AutoDevStateError(f"{label} requires hashed actual proof receipts")
     for ref in refs:
         _bound(root, ref, label + " proof")
     return bound
+
+
+def _release_proofs(root: Path, details: Mapping[str, Any], target: Mapping[str, str]) -> None:
+    known: dict[str, str] = {}
+    for field in ("receipt_refs", "qa_runs", "contract_test_runs", "runtime_readbacks", "provider_readbacks"):
+        refs = details.get(field)
+        if not isinstance(refs, list) or not refs:
+            raise AutoDevStateError(f"target release validation requires hashed {field}")
+        for ref in refs:
+            descriptor, _ = _bound(root, ref, "target release " + field)
+            known[descriptor["ref"]] = descriptor["sha256"]
+            if field == "qa_runs":
+                _proof(root, ref, target, "target qa")
+    for field in ("consumer_contract_matrix", "tenant_impact_matrix", "check_matrix"):
+        for row in details[field]:
+            if not isinstance(row, Mapping):
+                raise AutoDevStateError("target release matrix row must be structured evidence")
+            ref = row.get("evidence_ref")
+            if not ref:
+                raise AutoDevStateError("target release matrix row requires a hashed evidence_ref")
+            path = Path(str(ref)).expanduser()
+            path = (path if path.is_absolute() else root / path).resolve()
+            sha = row.get("evidence_sha256") or known.get(str(path))
+            _bound(root, {"ref": str(path), "sha256": sha}, "target release matrix proof")
 
 
 def _validate_finalize(context: Mapping[str, Any], payload: Mapping[str, Any], *, fresh: bool) -> tuple[str, dict[str, Any], list[dict[str, str]]]:
@@ -362,7 +442,7 @@ def _validate_finalize(context: Mapping[str, Any], payload: Mapping[str, Any], *
     proofs = [provider]
     review, path = _bound(context["root"], details.get("canonical_review"), "canonical target review")
     policy = str(details.get("review_policy_fingerprint") or "")
-    if not re.fullmatch(r"[0-9a-f]{64}", policy) or policy != context["review_policy_fingerprint"]:
+    if not re.fullmatch(r"[0-9a-f]{64}", policy) or policy not in context["review_policy_fingerprints"]:
         raise AutoDevStateError("target canonical review requires its explicit frozen policy fingerprint")
     try:
         receipt = assert_exact_head_review_receipt(path, head_sha=target["subject_revision"], repository=github_repository,
@@ -386,6 +466,7 @@ def _validate_finalize(context: Mapping[str, Any], payload: Mapping[str, Any], *
     if any(not isinstance(row, Mapping) or row.get("status") != "pass" for row in release_evidence["evidence"]["check_matrix"]):
         raise AutoDevStateError("target release validation has a failing or pending check")
     _proof(context["root"], details.get("release_validation"), target, "target release validation")
+    _release_proofs(context["root"], release_evidence["evidence"], target)
     proofs.append(release)
     return key, {**target, **authority}, proofs
 
@@ -417,7 +498,8 @@ def record_family_target_finalize(state_file: str | Path, *, evidence_file: str 
             raise AutoDevStateError("family target Finalize requires an idempotency key")
         wrapper = {"schema": "auto-dev-family-target-finalize/v1", "target_key": key,
                    "canonical_work_id": context["task"]["canonical_work_id"],
-                   "family_binding": context["family_binding"], "policy_binding": context["policy_binding"], "authority": authority,
+                   "family_binding": context["family_binding"], "policy_binding": context["policy_binding"],
+                   "primary_ready_binding": context["primary_ready_binding"], "authority": authority,
                    "evidence_snapshot": payload, "evidence_sha256": _digest(_canonical(payload)),
                    "proofs": proofs, "idempotency_key": idempotency_key}
         token = _digest(_canonical([idempotency_key, key]))[:24]
@@ -451,6 +533,7 @@ def _load_target(context: Mapping[str, Any], descriptor: Mapping[str, Any], *, f
         and wrapper.get("canonical_work_id") == context["task"]["canonical_work_id"]
         and wrapper.get("family_binding") == context["family_binding"]
         and wrapper.get("policy_binding") == context["policy_binding"]
+        and wrapper.get("primary_ready_binding") == context["primary_ready_binding"]
         and wrapper.get("evidence_sha256") == _digest(_canonical(payload))
     ):
         raise AutoDevStateError("family target immutable decision or active family binding drifted")
@@ -463,7 +546,7 @@ def _load_target(context: Mapping[str, Any], descriptor: Mapping[str, Any], *, f
     return wrapper
 
 
-def require_family_readiness(state_file: str | Path, *, selected: Mapping[str, Any] | None = None, fresh: bool = True) -> None:
+def require_family_readiness(state_file: str | Path, *, fresh: bool = True) -> None:
     """Require the primary decision and every required sibling before a merge."""
     context = _context(state_file)
     row = context["current"].get("stages", {}).get("finalize", {})
@@ -471,6 +554,7 @@ def require_family_readiness(state_file: str | Path, *, selected: Mapping[str, A
         raise AutoDevStateError("family merge requires the ordinary primary Finalize decision")
     candidates = [row.get("run_ref"), *(row.get("receipt_refs") or [])]
     primary_valid = False
+    primary_evidence: Mapping[str, Any] = {}
     for raw in candidates:
         path = Path(str(raw or ""))
         path = (path if path.is_absolute() else context["root"] / path).resolve()
@@ -480,16 +564,38 @@ def require_family_readiness(state_file: str | Path, *, selected: Mapping[str, A
         actual = _readiness_stage_authority("finalize", wrapper["evidence_snapshot"], str(wrapper.get("subject_revision") or ""))
         if actual == context["primary"]:
             primary_valid = True
+            primary_evidence = wrapper["evidence_snapshot"]
             break
     if not primary_valid:
         raise AutoDevStateError("ordinary primary Finalize no longer matches the typed family")
+    if context["task"].get("state") == "merged":
+        _, merged = _health_task_receipt(context["task"], "merged", context["root"], task_path=context["task_path"])
+        merged_evidence = merged.get("evidence", {})
+        if not isinstance(merged_evidence, Mapping) or merged.get("status") != "completed" or merged_evidence.get("readback_verified") is not True or merged_evidence.get("source_head_sha") != context["primary"]["subject_revision"] or not re.fullmatch(r"[0-9a-f]{40}", str(merged_evidence.get("merge_sha") or "")) or any(merged_evidence.get(key) != context["primary"][key] for key in ("provider", "repository", "pull_request", "base_branch", "author_identity", "author_kind")):
+            raise AutoDevStateError("merged primary counterpart lacks exact immutable provider merge evidence")
+    elif fresh:
+        _fresh(primary_evidence.get("verified_at"))
     for key, target in context["family"].items():
         if target["pull_request"] == context["primary"]["pull_request"]:
             continue
         descriptor = context["current"].get("family_targets", {}).get(key, {}).get("finalize")
         if not isinstance(descriptor, Mapping):
             raise AutoDevStateError("family merge lacks a required sibling's own Finalize decision")
-        _load_target(context, descriptor, fresh=fresh and descriptor == selected)
+        merged_binding = context["task"].get("family_merges", {}).get(key)
+        if merged_binding:
+            _, path = _bound(context["root"], merged_binding, "merged sibling counterpart")
+            merged = _read_json(path)
+            if merged.get("schema") != "auto-dev-family-target-merge/v1" or merged.get("target_key") != key or merged.get("canonical_work_id") != context["task"]["canonical_work_id"] or merged.get("family_binding") != context["family_binding"] or merged.get("readiness_authority") != descriptor or merged.get("source_head_sha") != target["subject_revision"]:
+                raise AutoDevStateError("merged sibling counterpart differs from its immutable selected authority")
+            wrapper = _load_target(context, descriptor, fresh=False)
+            source = wrapper["evidence_snapshot"]["evidence"]["source_scope"]
+            github_repository = _source(context, target, source)
+            _, readback = _provider(context["root"], merged.get("provider_readback"), target, github_repository=github_repository,
+                       author_identity=descriptor["author_identity"], fresh=False, worktree=Path(source["worktree"]), merged=True)
+            if merged.get("merge_sha") != readback["pr"]["mergeCommit"]["oid"]:
+                raise AutoDevStateError("merged sibling counterpart SHA differs from the actual provider result")
+        else:
+            _load_target(context, descriptor, fresh=fresh)
 
 
 def validate_family_target_readiness(state_file: str | Path, descriptor: Mapping[str, Any], *, expected_subject: str,
@@ -499,7 +605,7 @@ def validate_family_target_readiness(state_file: str | Path, descriptor: Mapping
     expected = {k: str(expected_subject if k == "subject_revision" else expected_pull_request.get(k) or "") for k in AUTHORITY_FIELDS}
     if any(wrapper["authority"][k] != expected[k] for k in AUTHORITY_FIELDS):
         raise AutoDevStateError("immutable sibling Finalize cannot authorize a different PR/base/head/author")
-    require_family_readiness(state_file, selected=descriptor, fresh=fresh)
+    require_family_readiness(state_file, fresh=fresh)
     return dict(descriptor)
 
 

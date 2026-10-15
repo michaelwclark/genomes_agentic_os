@@ -39,6 +39,10 @@ structured `evidence` contains:
   receipt, and its explicit `review_policy_fingerprint`. The loader validates
   clean outcome, full PR/base/head/purpose/policy scope and inherited review
   authority. It does not reinterpret an unavailable or findings outcome.
+  The explicit target policy must equal either the original frozen task policy
+  or the historical canonical policy already accepted in the immutable primary
+  readiness receipt. A sibling does not inherit the primary's policy by default.
+  Both source authorities and their raw hashes remain bound in the decision.
 - `provider_readback`, `acceptance`, `qa`, `secondary_review`, and
   `release_validation`: exact `{ref, sha256}` descriptors.
 
@@ -49,6 +53,10 @@ proof. Release validation is the sibling's own completed
 `validate_production_release` evidence, with the same exact authority and the
 existing required matrices and check IDs, all passing. Its proofs are also
 hashed. These source decisions do not assert distribution or live acceptance.
+Each proof has its exact stage: acceptance `document`, QA `qa`, secondary
+`review_self`, and release validation `validate_production_release`. All required
+QA/contract/runtime/provider references and each release matrix evidence reference
+are individually hash-checked; an unrelated immutable document cannot substitute.
 
 Provider readback contains `observed_at`, `readback_verified: true`, `pr` and
 complete `review_threads`. `pr` retains the actual GitHub JSON fields `number`,
@@ -57,6 +65,11 @@ complete `review_threads`. `pr` retains the actual GitHub JSON fields `number`,
 `nodes` and `pageInfo.hasNextPage: false`; every current thread must be resolved
 or outdated. Unknown mergeability, pending/failed checks and unqualified skips
 refuse readiness. Provider observations expire after ten minutes.
+Every applicable static PR workflow job is derived from the exact source and
+must appear in the provider results. A single green check cannot hide an omitted
+required job. Dynamic jobs, path filters, wildcard branch filters and
+`pull_request_target` workflows require an explicit future inventory adapter;
+they fail closed in this bounded GitHub implementation.
 
 The one supported intentional skip is the source-proven main exclusion
 `github.event_name == 'pull_request' && github.base_ref != 'main'`.
@@ -71,6 +84,10 @@ The returned descriptor points to an immutable
 family_target_finalize`, `target_key`, raw digest and exact authority. Save the
 descriptor without editing it. The ordinary primary merge validator also
 requires every required sibling decision when a typed multi-PR family exists.
+All unmerged members require current observations before either first merge.
+After a member has merged, its immutable native provider merge evidence proves
+that completed counterpart; it need not pretend to remain open. An actual
+primary `merged` transition preserves the sibling's original source authority.
 
 ## Record the actual sibling merge
 

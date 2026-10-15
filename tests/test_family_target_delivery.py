@@ -9,18 +9,20 @@ from pathlib import Path
 import pytest
 
 from genomes_agentic_os.auto_dev_orchestration import (
-    AutoDevStateError, record_auto_dev_family_target_finalize,
+    AutoDevStateError, record_auto_dev_family_target_finalize, record_auto_dev_stage,
     validate_auto_dev_readiness_authority,
 )
 from genomes_agentic_os.cli import main
 from genomes_agentic_os.development_delivery import (
-    TaskState, record_development_family_target_merge, start_development_run,
+    TaskState, record_development_family_target_merge, start_development_run, run_development_stage,
 )
 from genomes_agentic_os.review_coordination import ReviewCoordinator, ReviewSubject
 from genomes_agentic_os.family_target_delivery import _provider
 from test_development_delivery import (
     _advance_auto_dev_task_to_ready, _complete_pre_merge_auto_dev,
     _git, _project, _repository,
+    _stage_receipt,
+    _readiness_authority,
 )
 
 
@@ -66,6 +68,9 @@ def family(tmp_path: Path) -> dict:
     sibling = tmp_path / "sibling"
     _git("worktree", "add", "-b", "feature/sibling", str(sibling), "release", cwd=repo)
     (sibling / "sibling.txt").write_text("sibling source\n")
+    ci = sibling / ".github/workflows/ci.yml"
+    ci.parent.mkdir(parents=True)
+    ci.write_text("name: CI\non: [pull_request]\njobs:\n  tests:\n    name: tests\n    runs-on: ubuntu-latest\n    steps: [{run: 'true'}]\n  security:\n    name: security\n    runs-on: ubuntu-latest\n    steps: [{run: 'true'}]\n")
     _git("add", ".", cwd=sibling)
     _git("commit", "-m", "feat: sibling", cwd=sibling)
     head = _git("rev-parse", "HEAD", cwd=sibling)
@@ -90,12 +95,19 @@ def family(tmp_path: Path) -> dict:
     projected = json.loads(state.read_text())
     projected["stages"]["pr_create"] = {"status": "completed", "run_ref": str(wrapper), "receipt_refs": [str(wrapper)]}
     write(state, projected)
+    # Record a current native primary decision rather than relying on the
+    # historical fixture helper's fixed timestamp for a live freshness gate.
+    prior_finalize = json.loads((packet / primary_authority["ref"]).read_text())["evidence_snapshot"]
+    prior_finalize["verified_at"] = datetime.now(timezone.utc).isoformat()
+    current_primary = write(packet / "artifacts/current-primary-finalize.json", prior_finalize)
+    record_auto_dev_stage(state, stage="finalize", evidence_file=current_primary, idempotency_key="current-primary-finalize")
+    primary_authority = _readiness_authority(task, subject_revision=primary_head, pull_request=primary_pr)
 
     provider = {"observed_at": datetime.now(timezone.utc).isoformat(), "readback_verified": True,
                 "pr": {"number": 2, "url": "https://github.com/acme/app/pull/2", "baseRefName": "release", "baseRefOid": base,
                        "headRefName": "feature/sibling", "headRefOid": head, "state": "OPEN", "isDraft": False,
                        "author": {"login": "michaelwclark"}, "mergeable": "MERGEABLE",
-                       "statusCheckRollup": [{"__typename": "CheckRun", "name": "tests", "status": "COMPLETED", "conclusion": "SUCCESS"}]},
+                       "statusCheckRollup": [{"__typename": "CheckRun", "name": name, "status": "COMPLETED", "conclusion": "SUCCESS"} for name in ("tests", "security")]},
                 "review_threads": {"pageInfo": {"hasNextPage": False}, "nodes": []}}
     provider_path = write(packet / "artifacts/provider.json", provider)
     policy = task.read()["policy_fingerprint"]
@@ -112,11 +124,11 @@ def family(tmp_path: Path) -> dict:
     release = deepcopy(scoped)
     release["stage"] = "validate_production_release"
     release["evidence"].update(
-        check_matrix=[{"check_id": name, "status": "pass"} for name in ("jira_github_alignment", "exact_release_identity", "qa_per_jira", "whole_diff_policy", "risk_gates", "artifact_rollback_observability", "runtime_consumer_contracts")],
+        check_matrix=[{"check_id": name, "status": "pass", "evidence_ref": str(terminal)} for name in ("jira_github_alignment", "exact_release_identity", "qa_per_jira", "whole_diff_policy", "risk_gates", "artifact_rollback_observability", "runtime_consumer_contracts")],
         qa_runs=[bound(qa)], consumer_contract_matrix=[{"consumer_id": "source-cli", "status": "pass", "evidence_ref": str(terminal)}],
         tenant_impact_matrix=[{"tenant": "isolated", "status": "pass", "evidence_ref": str(terminal)}],
         compatibility_strategy="source qualification only; distribution and runtime gates remain separate",
-        contract_test_runs=[bound(terminal)], runtime_readbacks=[{"environment": "isolated fixture", "status": "pass"}],
+        contract_test_runs=[bound(terminal)], runtime_readbacks=[bound(terminal)],
         policy_fingerprint=policy, provider_readbacks=[bound(provider_path)],
     )
     release_path = write(packet / "artifacts/release-validation.json", release)
@@ -168,6 +180,78 @@ def test_primary_cannot_merge_while_required_sibling_has_no_own_decision(family:
             expected_subject=family["primary_head"], expected_pull_request=family["primary_authority"])
 
 
+@pytest.mark.parametrize("target_policy", ["task", "historical_primary"])
+def test_siblings_keep_their_actual_distinct_frozen_review_policy(family: dict, target_policy: str) -> None:
+    # Model the existing accepted historical primary review while the sibling
+    # legitimately uses the task's frozen policy, or that same historical policy.
+    historical = "d" * 64
+    task_value = family["task"].read()
+    ready_row = next(row for row in reversed(task_value["receipts"]) if row.get("state") == "ready_for_merge")
+    ready_path = Path(ready_row["ref"])
+    ready = json.loads(ready_path.read_text())
+    primary_review = ReviewCoordinator(family["packet"] / "artifacts/historical-primary-review").execute(
+        ReviewSubject(repository="acme/app", pull_request="github:acme/app#1", base_branch="main",
+                      base_sha=family["primary_head"], head_sha=family["primary_head"], policy_fingerprint=historical),
+        lambda: {"outcome": "clean"},
+    )
+    ready["evidence"].update(review_policy_fingerprint=historical,
+                             review_coordination_receipt=str(primary_review.receipt_path))
+    write(ready_path, ready)
+    ready_row["sha256"] = bound(ready_path)["sha256"]
+    write(family["task"].path, task_value)
+    if target_policy == "historical_primary":
+        target = family["target"]
+        review = ReviewCoordinator(family["packet"] / "artifacts/historical-sibling-review").execute(
+            ReviewSubject(repository="acme/app", pull_request="github:acme/app#2", base_branch=target["base_branch"],
+                          base_sha=target["base_sha"], head_sha=target["subject_revision"], policy_fingerprint=historical),
+            lambda: {"outcome": "clean"},
+        )
+        payload = deepcopy(family["payload"])
+        payload["evidence"].update(review_policy_fingerprint=historical, canonical_review=bound(Path(review.receipt_path)))
+        write(family["evidence"], payload)
+    authority = finalize(family)
+    assert validate(family, authority) == authority
+    wrapper = json.loads(Path(authority["ref"]).read_text())
+    assert wrapper["primary_ready_binding"] == bound(ready_path)
+    assert wrapper["policy_binding"]["sha256"] == bound(Path(task_value["policy_receipt"]))["sha256"]
+
+
+def test_real_primary_merge_transition_keeps_sibling_authority_and_records_second_merge(family: dict) -> None:
+    authority = finalize(family)
+    primary_branch = family["task"].read()["worktree"]["branch"]
+    _git("merge", "--no-ff", primary_branch, "-m", "merge: reviewed primary", cwd=family["repo"])
+    primary_merge = _git("rev-parse", "HEAD", cwd=family["repo"])
+    primary_payload = {k: v for k, v in family["primary_authority"].items() if k not in {"owner", "ref", "sha256", "subject_revision"}}
+    primary_payload.update(source_head_sha=family["primary_head"], merge_sha=primary_merge,
+                           readback_verified=True, readiness_authority=family["primary_authority"])
+    receipt = _stage_receipt(family["packet"] / "artifacts/actual-primary-merge", "merged", evidence=primary_payload, status="completed")
+    run_development_stage(family["task"].path, stage="merge", receipts={"merged": receipt}, idempotency_prefix="real-primary-merged")
+    primary_after = family["task"].read()
+    assert primary_after["state"] == "merged"
+    assert primary_after["terminal_revision"] == primary_merge
+    assert primary_after["subject_revision"] == family["primary_head"]
+    assert validate(family, authority) == authority
+    # The stable branch advances in real git. Readback must not pretend its
+    # post-merge baseRefOid is the old reviewed base SHA.
+    stable = family["repo"].parent / "stable-target"
+    _git("worktree", "add", str(stable), "release", cwd=family["repo"])
+    _git("merge", "--no-ff", "feature/sibling", "-m", "merge: reviewed sibling", cwd=stable)
+    merge_sha = _git("rev-parse", "HEAD", cwd=stable)
+    provider = json.loads(family["provider"].read_text())
+    provider["pr"].update(state="MERGED", mergeCommit={"oid": merge_sha}, mergedAt=datetime.now(timezone.utc).isoformat(), baseRefOid=merge_sha)
+    readback = write(family["packet"] / "artifacts/second-provider-merge.json", provider)
+    evidence = write(family["packet"] / "artifacts/second-merge.json", {
+        "schema": "development-stage-evidence/v1", "state": "merged", "status": "completed",
+        "summary": "Second provider merge after actual primary native transition", "verified_at": datetime.now(timezone.utc).isoformat(),
+        "evidence": {**family["target"], "source_head_sha": family["target"]["subject_revision"], "merge_sha": merge_sha,
+                     "readback_verified": True, "readiness_authority": authority, "provider_readback": bound(readback)},
+    })
+    record_development_family_target_merge(family["state"], evidence_file=evidence, idempotency_key="second-real-merge")
+    after = family["task"].read()
+    assert len(after.pop("family_merges")) == 1
+    assert after == primary_after
+
+
 @pytest.mark.parametrize("field,value", [
     ("pull_request", "github:acme/app#3"), ("repository", "github:other/app"), ("base_branch", "main"),
     ("base_sha", "b" * 40), ("source_branch", "feature/unrelated"), ("author_identity", "github:someoneelse"),
@@ -184,13 +268,14 @@ def test_finalize_refuses_target_or_policy_substitution_without_writes(family: d
     assert not (family["packet"] / "artifacts/auto-dev-orchestration/family-targets").exists()
 
 
-@pytest.mark.parametrize("change", ["pending", "failure", "skip", "threads", "pagination", "draft", "conflict", "head", "base", "stale"])
+@pytest.mark.parametrize("change", ["pending", "failure", "skip", "missing_required", "threads", "pagination", "draft", "conflict", "head", "base", "stale"])
 def test_finalize_refuses_current_provider_failures(family: dict, change: str) -> None:
     provider = json.loads(family["provider"].read_text())
     check = provider["pr"]["statusCheckRollup"][0]
     if change == "pending": check["status"] = "IN_PROGRESS"
     if change == "failure": check["conclusion"] = "FAILURE"
     if change == "skip": check["conclusion"] = "SKIPPED"
+    if change == "missing_required": provider["pr"]["statusCheckRollup"].pop()
     if change == "threads": provider["review_threads"]["nodes"] = [{"isResolved": False, "isOutdated": False}]
     if change == "pagination": provider["review_threads"]["pageInfo"]["hasNextPage"] = True
     if change == "draft": provider["pr"]["isDraft"] = True
@@ -201,6 +286,11 @@ def test_finalize_refuses_current_provider_failures(family: dict, change: str) -
     write(family["provider"], provider)
     payload = deepcopy(family["payload"])
     payload["evidence"]["provider_readback"] = bound(family["provider"])
+    release_path = Path(payload["evidence"]["release_validation"]["ref"])
+    release = json.loads(release_path.read_text())
+    release["evidence"]["provider_readbacks"] = [bound(family["provider"])]
+    write(release_path, release)
+    payload["evidence"]["release_validation"] = bound(release_path)
     write(family["evidence"], payload)
     with pytest.raises(AutoDevStateError): finalize(family)
 
@@ -275,11 +365,67 @@ def test_target_proof_status_scope_and_nested_bytes_are_checked(family: dict, ch
     with pytest.raises(AutoDevStateError): finalize(family)
 
 
+@pytest.mark.parametrize("label", ["qa", "secondary_review"])
+def test_acceptance_document_cannot_substitute_for_qa_or_secondary(family: dict, label: str) -> None:
+    payload = deepcopy(family["payload"])
+    payload["evidence"][label] = payload["evidence"]["acceptance"]
+    write(family["evidence"], payload)
+    with pytest.raises(AutoDevStateError, match="wrong proof kind"):
+        finalize(family)
+
+
+@pytest.mark.parametrize("field", ["qa_runs", "contract_test_runs", "runtime_readbacks", "provider_readbacks", "consumer_contract_matrix", "tenant_impact_matrix", "check_matrix"])
+def test_every_required_release_reference_is_hash_bound(family: dict, field: str) -> None:
+    payload = deepcopy(family["payload"])
+    path = Path(payload["evidence"]["release_validation"]["ref"])
+    release = json.loads(path.read_text())
+    if field.endswith("matrix"):
+        release["evidence"][field][0]["evidence_ref"] = str(family["packet"] / "missing-proof.json")
+    else:
+        release["evidence"][field][0] = {"ref": str(family["packet"] / "missing-proof.json"), "sha256": "a" * 64}
+    write(path, release)
+    payload["evidence"]["release_validation"] = bound(path)
+    write(family["evidence"], payload)
+    with pytest.raises(AutoDevStateError): finalize(family)
+
+
+@pytest.mark.parametrize("primary_first", [True, False])
+def test_all_unmerged_members_must_be_fresh_before_either_first_merge(family: dict, monkeypatch, primary_first: bool) -> None:
+    import genomes_agentic_os.family_target_delivery as target_delivery
+
+    provider = json.loads(family["provider"].read_text())
+    now = datetime.now(timezone.utc)
+    provider["observed_at"] = (now - timedelta(seconds=500)).isoformat()
+    write(family["provider"], provider)
+    payload = deepcopy(family["payload"])
+    payload["evidence"]["provider_readback"] = bound(family["provider"])
+    release_path = Path(payload["evidence"]["release_validation"]["ref"])
+    release = json.loads(release_path.read_text())
+    release["evidence"]["provider_readbacks"] = [bound(family["provider"])]
+    write(release_path, release)
+    payload["evidence"]["release_validation"] = bound(release_path)
+    write(family["evidence"], payload)
+    authority = finalize(family)
+
+    class Later(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return (now + timedelta(seconds=120)).astimezone(tz)
+
+    monkeypatch.setattr(target_delivery, "datetime", Later)
+    with pytest.raises(AutoDevStateError, match="stale"):
+        if primary_first:
+            validate_auto_dev_readiness_authority(family["state"], family["primary_authority"],
+                expected_subject=family["primary_head"], expected_pull_request=family["primary_authority"])
+        else:
+            validate(family, authority)
+
+
 def test_provider_skip_requires_the_real_main_event_and_frozen_condition(family: dict) -> None:
     workflow = family["sibling"] / ".github/workflows/ci.yml"
-    workflow.parent.mkdir(parents=True)
+    workflow.parent.mkdir(parents=True, exist_ok=True)
     condition = "github.event_name == 'pull_request' && github.base_ref != 'main'"
-    workflow.write_text("jobs:\n  convention:\n    name: Conventional Commits\n    if: \"" + condition + "\"\n")
+    workflow.write_text("on: [pull_request]\njobs:\n  convention:\n    name: Conventional Commits\n    if: \"" + condition + "\"\n")
     _git("add", ".", cwd=family["sibling"])
     _git("commit", "-m", "ci: conditional conventional check", cwd=family["sibling"])
     head = _git("rev-parse", "HEAD", cwd=family["sibling"])

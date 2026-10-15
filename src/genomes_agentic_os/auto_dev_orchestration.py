@@ -1222,6 +1222,11 @@ def sync_delivery_projection(task_state_path: str | Path) -> dict[str, Any] | No
             "created_at": existing.get("created_at") or _utc_now(),
             "updated_at": _utc_now(),
         }
+        # Target decisions are separate immutable authority, not a replacement
+        # for the primary lifecycle. Preserve their projection through ordinary
+        # Review/Finalize/Merge sync; each consumer revalidates the active family.
+        if "family_targets" in existing:
+            value["family_targets"] = existing["family_targets"]
         run_packet = _sync_auto_dev_program_run_packet(task, value, work_item)
         if run_packet is not None:
             value["run_packet"] = run_packet
