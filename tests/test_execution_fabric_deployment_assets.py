@@ -41,6 +41,49 @@ def _write_executable(path: Path, content: str) -> None:
     path.chmod(0o755)
 
 
+def _isolated_environment(tmp_path: Path) -> dict[str, str]:
+    """Keep host tools available without inheriting operator runtime settings."""
+    home = tmp_path / "home"
+    temporary = tmp_path / "tmp"
+    home.mkdir(parents=True, exist_ok=True)
+    temporary.mkdir(parents=True, exist_ok=True)
+    return {
+        "PATH": os.environ.get("PATH", os.defpath),
+        "HOME": str(home),
+        "TMPDIR": str(temporary),
+    }
+
+
+@pytest.fixture
+def inherited_live_runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Activation must leave an inherited runtime and backend sentinel untouched."""
+    live_root = tmp_path / "operator-runtime"
+    live_root.mkdir()
+    backend = live_root / "execution-fabric.yml"
+    backend.write_text("backend: remote\n", encoding="utf-8")
+    runtime = live_root / "runtime.env"
+    runtime.write_text(
+        f"printf 'backend: changed\\n' > '{backend}'\n"
+        "FABRIC_LOS_SECURITY_WORKER_ENABLED=true\n",
+        encoding="utf-8",
+    )
+    before = {path: path.read_bytes() for path in (backend, runtime)}
+    for name, value in {
+        "HOME": str(live_root),
+        "FABRIC_RUNTIME_ENV_FILE": str(runtime),
+        "FABRIC_OS_ROOT": str(live_root),
+        "FABRIC_RUNTIME_STATE_DIR": str(live_root / "state"),
+        "FABRIC_API_TOKEN_FILE": str(live_root / "token"),
+        "WITNESS_ENV_FILE": str(runtime),
+        "AGENTIC_OS_ROOT": str(live_root),
+        "AGENTIC_OS_EXECUTION_FABRIC_API_BASE": "https://operator.invalid",
+    }.items():
+        monkeypatch.setenv(name, value)
+    yield
+    assert {path: path.read_bytes() for path in before} == before
+    assert not (live_root / "state").exists()
+
+
 def test_deployment_assets_are_discoverable_from_one_focused_root() -> None:
     assert (DEPLOY / "README.md").is_file()
     assert (INSTALLERS / "README.md").is_file()
@@ -181,7 +224,7 @@ def test_datastore_credentials_are_file_mounted_and_urls_are_process_local(
         capture_output=True,
         text=True,
         env={
-            **os.environ,
+            **_isolated_environment(tmp_path),
             "FABRIC_DATABASE_PASSWORD_FILE": str(postgres_file),
             "FABRIC_VALKEY_PASSWORD_FILE": str(valkey_file),
         },
@@ -580,7 +623,7 @@ def test_witness_manual_mode_is_explicit_inert_and_fail_closed(
         check=False,
         capture_output=True,
         text=True,
-        env={**os.environ, "WITNESS_ENV_FILE": str(environment)},
+        env={**_isolated_environment(tmp_path), "WITNESS_ENV_FILE": str(environment)},
     )
     assert preflight.returncode == 0, preflight.stderr
     assert "no witness container will start" in preflight.stdout
@@ -595,7 +638,7 @@ def test_witness_manual_mode_is_explicit_inert_and_fail_closed(
         check=False,
         capture_output=True,
         text=True,
-        env={**os.environ, "WITNESS_ENV_FILE": str(environment)},
+        env={**_isolated_environment(tmp_path), "WITNESS_ENV_FILE": str(environment)},
     )
     assert blocked.returncode == 78
     assert "requires automatic failover and promotion disabled" in blocked.stderr
@@ -624,6 +667,7 @@ def test_witness_installer_is_inert_and_manual_activation_starts_nothing(
         check=True,
         capture_output=True,
         text=True,
+        env=_isolated_environment(tmp_path),
     )
     current = install_root / "current"
     assert current.is_symlink()
@@ -659,6 +703,7 @@ def test_witness_installer_is_inert_and_manual_activation_starts_nothing(
         check=False,
         capture_output=True,
         text=True,
+        env=_isolated_environment(tmp_path),
     )
     assert activated.returncode == 0, activated.stderr
     assert "no witness container will start" in activated.stdout
@@ -879,7 +924,7 @@ esac
         capture_output=True,
         text=True,
         env={
-            **os.environ,
+            **_isolated_environment(tmp_path),
             "PATH": f"{fake_bin}:{os.environ['PATH']}",
             "FABRIC_RUNTIME_ENV_FILE": str(runtime),
         },
@@ -996,7 +1041,7 @@ esac
         capture_output=True,
         text=True,
         env={
-            **os.environ,
+            **_isolated_environment(tmp_path),
             "PATH": f"{fake_bin}:{os.environ['PATH']}",
             "FABRIC_RUNTIME_ENV_FILE": str(runtime),
         },
@@ -1019,7 +1064,7 @@ esac
         capture_output=True,
         text=True,
         env={
-            **os.environ,
+            **_isolated_environment(tmp_path),
             "PATH": f"{fake_bin}:{os.environ['PATH']}",
             "FABRIC_RUNTIME_ENV_FILE": str(runtime),
         },
@@ -1076,7 +1121,7 @@ def test_policy_role_convergence_rejects_invalid_attempts_before_recreate(
         capture_output=True,
         text=True,
         env={
-            **os.environ,
+            **_isolated_environment(tmp_path),
             "PATH": f"{fake_bin}:{os.environ['PATH']}",
             "FABRIC_RUNTIME_ENV_FILE": str(runtime),
         },
@@ -1150,7 +1195,7 @@ fabric_policy_role_cohort_state "$3" promoted
             capture_output=True,
             text=True,
             env={
-                **os.environ,
+                **_isolated_environment(tmp_path),
                 "COHORT_MODE": mode,
                 "PATH": f"{fake_bin}:{os.environ['PATH']}",
             },
@@ -1249,7 +1294,7 @@ esac
         capture_output=True,
         text=True,
         env={
-            **os.environ,
+            **_isolated_environment(tmp_path),
             "PATH": f"{fake_bin}:{os.environ['PATH']}",
             "FABRIC_RUNTIME_ENV_FILE": str(runtime),
             "INITIAL_API_STATE": initial_api_state,
@@ -1346,7 +1391,7 @@ esac
         capture_output=True,
         text=True,
         env={
-            **os.environ,
+            **_isolated_environment(tmp_path),
             "PATH": f"{fake_bin}:{os.environ['PATH']}",
             "FABRIC_RUNTIME_ENV_FILE": str(runtime),
         },
@@ -1456,7 +1501,7 @@ esac
         capture_output=True,
         text=True,
         env={
-            **os.environ,
+            **_isolated_environment(tmp_path),
             "FABRIC_RUNTIME_ENV_FILE": str(runtime),
             "NOTIFY_RECEIPT": str(receipt),
         },
@@ -1518,7 +1563,7 @@ exec "$REAL_PYTHON" "$@"
             capture_output=True,
             text=True,
             env={
-                **os.environ,
+                **_isolated_environment(tmp_path),
                 "PATH": f"{fake_bin}:{os.environ['PATH']}",
                 "FABRIC_OS_ROOT": str(os_root),
                 "FABRIC_AGENTIC_OS_CLI": str(cli),
@@ -1616,7 +1661,7 @@ def test_backup_health_refuses_a_group_or_world_readable_pgpass(
         check=False,
         capture_output=True,
         text=True,
-        env={**os.environ, "FABRIC_SECRETS_DIR": str(secrets_dir)},
+        env={**_isolated_environment(tmp_path), "FABRIC_SECRETS_DIR": str(secrets_dir)},
     )
     assert result.returncode == 78
     assert "group/world accessible" in result.stderr
@@ -1627,7 +1672,7 @@ def test_backup_health_refuses_a_group_or_world_readable_pgpass(
         check=False,
         capture_output=True,
         text=True,
-        env={**os.environ, "FABRIC_SECRETS_DIR": str(secrets_dir)},
+        env={**_isolated_environment(tmp_path), "FABRIC_SECRETS_DIR": str(secrets_dir)},
     )
     assert passed.returncode == 0, passed.stderr
 
@@ -1699,7 +1744,7 @@ esac
 """,
     )
     env = {
-        **os.environ,
+        **_isolated_environment(tmp_path),
         "PATH": f"{fake_bin}:{os.environ['PATH']}",
         "DOCKER_LOG": str(docker_log),
         "FABRIC_RUNTIME_ENV_FILE": str(runtime_env),
@@ -1805,7 +1850,7 @@ def test_helm_worker_is_digest_pinned_api_only_and_network_restricted() -> None:
     )
 
 
-def test_shell_assets_are_syntax_valid() -> None:
+def test_shell_assets_are_syntax_valid(tmp_path: Path) -> None:
     scripts = sorted((INSTALLERS / "bin").glob("*.sh"))
     scripts.extend(sorted(DEPLOY.glob("scripts/*.sh")))
     scripts.extend(
@@ -1821,11 +1866,16 @@ def test_shell_assets_are_syntax_valid() -> None:
     scripts.extend(sorted((DEPLOY / "witness/bin").glob("*.sh")))
     assert scripts
     for script in scripts:
-        subprocess.run(["sh", "-n", str(script)], check=True)
+        subprocess.run(
+            ["sh", "-n", str(script)],
+            check=True,
+            env=_isolated_environment(tmp_path),
+        )
 
 
 def test_linux_activation_is_explicit_preflight_gated_and_repeatable(
     tmp_path: Path,
+    inherited_live_runtime,
 ) -> None:
     installer = tmp_path / "installer"
     installer.mkdir()
@@ -1866,7 +1916,7 @@ printf 'systemctl %s\n' "$*" >>"$ACTIVATION_LOG"
 """,
     )
     env = {
-        **os.environ,
+        **_isolated_environment(tmp_path),
         "ACTIVATION_LOG": str(activation_log),
         "FABRIC_RUNTIME_ENV_FILE": str(runtime_env),
         "PATH": f"{fake_bin}:{os.environ['PATH']}",
@@ -1940,6 +1990,7 @@ printf 'systemctl %s\n' "$*" >>"$ACTIVATION_LOG"
 
 def test_macos_activation_preflights_before_restarting_loaded_jobs(
     tmp_path: Path,
+    inherited_live_runtime,
 ) -> None:
     home = tmp_path / "home"
     installer = tmp_path / "installer"
@@ -2003,7 +2054,7 @@ esac
             / f"com.genomes.agentic-os.execution-fabric.{suffix}.plist"
         ).write_text("<plist/>", encoding="utf-8")
     env = {
-        **os.environ,
+        **_isolated_environment(tmp_path),
         "ACTIVATION_LOG": str(activation_log),
         "HOME": str(home),
         "LAUNCH_STATE": str(launch_state),
@@ -2044,6 +2095,7 @@ esac
 
 def test_macos_personal_activation_starts_only_client_plane_after_preflight(
     tmp_path: Path,
+    inherited_live_runtime,
 ) -> None:
     home = tmp_path / "home"
     installer = tmp_path / "installer"
@@ -2093,7 +2145,7 @@ esac
     launch_state = tmp_path / "launch-state"
     launch_state.mkdir()
     env = {
-        **os.environ,
+        **_isolated_environment(tmp_path),
         "ACTIVATION_LOG": str(activation_log),
         "HOME": str(home),
         "LAUNCH_STATE": str(launch_state),
@@ -2237,7 +2289,7 @@ esac
         capture_output=True,
         text=True,
         env={
-            **os.environ,
+            **_isolated_environment(tmp_path),
             "CONFIG_SHOW": str(config_show),
             "FABRIC_RUNTIME_ENV_FILE": str(runtime_env),
             "PATH": f"{fake_bin}:{os.environ['PATH']}",
@@ -2260,7 +2312,7 @@ esac
         capture_output=True,
         text=True,
         env={
-            **os.environ,
+            **_isolated_environment(tmp_path),
             "CONFIG_SHOW": str(config_show),
             "FABRIC_RUNTIME_ENV_FILE": str(runtime_env),
             "PATH": f"{fake_bin}:{os.environ['PATH']}",
@@ -2282,6 +2334,7 @@ def test_installers_can_activate_an_existing_current_release_without_recopy() ->
 
 def test_macos_installer_rerun_activates_existing_release_without_reinstall(
     tmp_path: Path,
+    inherited_live_runtime,
 ) -> None:
     home = tmp_path / "home"
     fake_bin = tmp_path / "bin"
@@ -2299,7 +2352,7 @@ esac
 """,
     )
     env = {
-        **os.environ,
+        **_isolated_environment(tmp_path),
         "ACTIVATION_LOG": str(activation_log),
         "HOME": str(home),
         "PATH": f"{fake_bin}:{os.environ['PATH']}",
@@ -2342,7 +2395,9 @@ printf 'preflight %s\n' "$1" >>"$ACTIVATION_LOG"
     ).read_text(encoding="utf-8")
 
 
-def test_packaged_python_worker_is_the_default_governed_host_entrypoint() -> None:
+def test_packaged_python_worker_is_the_default_governed_host_entrypoint(
+    tmp_path: Path,
+) -> None:
     launcher = INSTALLERS / "bin/python-worker.sh"
     result = subprocess.run(
         ["sh", str(launcher), "--preflight"],
@@ -2350,7 +2405,7 @@ def test_packaged_python_worker_is_the_default_governed_host_entrypoint() -> Non
         capture_output=True,
         text=True,
         env={
-            **os.environ,
+            **_isolated_environment(tmp_path),
             "FABRIC_WORKER_PYTHON": sys.executable,
             "PYTHONPATH": str(SOURCE_ROOT / "src"),
         },
@@ -2413,7 +2468,7 @@ fabric_compose "$3" --profile standby ps --status running
         capture_output=True,
         text=True,
         env={
-            **os.environ,
+            **_isolated_environment(tmp_path),
             "DOCKER_ARGUMENT_LOG": str(argument_log),
             "PATH": f"{fake_bin}:{os.environ['PATH']}",
         },
@@ -2542,12 +2597,14 @@ def test_bundle_builder_and_validator_round_trip(tmp_path: Path) -> None:
         check=True,
         capture_output=True,
         text=True,
+        env=_isolated_environment(tmp_path),
     )
     subprocess.run(
         ["sh", str(INSTALLERS / "bin" / "validate-emergency-bundle.sh"), str(output)],
         check=True,
         capture_output=True,
         text=True,
+        env=_isolated_environment(tmp_path),
     )
     assert (output / "CHECKSUMS.sha256").is_file()
     assert json.loads(
@@ -2575,6 +2632,7 @@ def test_bundle_builder_and_validator_round_trip(tmp_path: Path) -> None:
         check=False,
         capture_output=True,
         text=True,
+        env=_isolated_environment(tmp_path),
     )
     assert invalid.returncode == 78
     assert "does not match the canonical JSON lock" in invalid.stderr
@@ -2608,12 +2666,24 @@ def test_image_lock_materializer_rejects_missing_or_mutable_images(
     ]
     lock["images"].pop("leadership_witness")
     lock_path.write_text(json.dumps(lock), encoding="utf-8")
-    missing = subprocess.run(command, check=False, capture_output=True, text=True)
+    missing = subprocess.run(
+        command,
+        check=False,
+        capture_output=True,
+        text=True,
+        env=_isolated_environment(tmp_path),
+    )
     assert missing.returncode != 0
 
     lock["images"]["leadership_witness"] = "example.invalid/witness:latest"
     lock_path.write_text(json.dumps(lock), encoding="utf-8")
-    mutable = subprocess.run(command, check=False, capture_output=True, text=True)
+    mutable = subprocess.run(
+        command,
+        check=False,
+        capture_output=True,
+        text=True,
+        env=_isolated_environment(tmp_path),
+    )
     assert mutable.returncode != 0
 
 
