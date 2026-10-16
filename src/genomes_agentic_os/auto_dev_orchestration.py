@@ -1222,6 +1222,11 @@ def sync_delivery_projection(task_state_path: str | Path) -> dict[str, Any] | No
             "created_at": existing.get("created_at") or _utc_now(),
             "updated_at": _utc_now(),
         }
+        # Target decisions are separate immutable authority, not a replacement
+        # for the primary lifecycle. Preserve their projection through ordinary
+        # Review/Finalize/Merge sync; each consumer revalidates the active family.
+        if "family_targets" in existing:
+            value["family_targets"] = existing["family_targets"]
         run_packet = _sync_auto_dev_program_run_packet(task, value, work_item)
         if run_packet is not None:
             value["run_packet"] = run_packet
@@ -2575,6 +2580,14 @@ def validate_auto_dev_readiness_authority(
 ) -> dict[str, Any]:
     """Validate the immutable Finalize or Review Others authority used by Merge."""
 
+    if descriptor.get("owner") == "family_target_finalize":
+        from .family_target_delivery import validate_family_target_readiness
+
+        return validate_family_target_readiness(
+            state_file, descriptor, expected_subject=expected_subject,
+            expected_pull_request=expected_pull_request,
+        )
+
     state_path = Path(state_file).expanduser().resolve()
     if state_path.is_dir():
         state_path = state_path / "autodev.json"
@@ -2639,12 +2652,27 @@ def validate_auto_dev_readiness_authority(
         raise AutoDevStateError(
             "merge readiness_authority must bind the canonical reviewed pull request and subject revision"
         )
+    if owner == "finalize":
+        from .family_target_delivery import require_family_readiness_if_applicable
+
+        require_family_readiness_if_applicable(state_path)
     return {
         "owner": owner,
         "ref": normalized,
         "sha256": digest,
         **authority,
     }
+
+
+def record_auto_dev_family_target_finalize(
+    state_file: str | Path, *, evidence_file: str | Path, idempotency_key: str,
+) -> dict[str, Any]:
+    """Finalize one configured sibling without changing the canonical primary."""
+    from .family_target_delivery import record_family_target_finalize
+
+    return record_family_target_finalize(
+        state_file, evidence_file=evidence_file, idempotency_key=idempotency_key,
+    )
 
 
 def _health_runtime_registration(task: Mapping[str, Any]) -> dict[str, str]:

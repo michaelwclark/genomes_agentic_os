@@ -11,6 +11,8 @@ from ..auto_dev_orchestration import (
     prepare_auto_dev_health,
     read_auto_dev_state,
     record_auto_dev_stage,
+    record_auto_dev_family_target_finalize,
+    validate_auto_dev_readiness_authority,
     sync_delivery_projection,
 )
 from ..development_delivery import (
@@ -25,6 +27,7 @@ from ..development_delivery import (
     recover_active_blocked_single_stage_delivery,
     reconcile_historical_delivery,
     reopen_auto_dev_item,
+    record_development_family_target_merge,
     start_development_run,
 )
 from ._shared import DEFAULT_ROOT, yaml_dump
@@ -380,6 +383,25 @@ def handle_record(args: argparse.Namespace) -> int:
         evidence_file=args.evidence,
         idempotency_key=args.idempotency_key,
     )
+    _print(result, json_output=args.json)
+    return 0
+
+
+def handle_family_target(args: argparse.Namespace) -> int:
+    if args.operation == "validate":
+        descriptor = json.loads(Path(args.authority).read_text(encoding="utf-8"))
+        result = validate_auto_dev_readiness_authority(
+            args.state, descriptor, expected_subject=args.subject_revision,
+            expected_pull_request={key: getattr(args, key) for key in (
+                "provider", "pull_request", "repository", "base_branch", "author_identity", "author_kind",
+            )},
+        )
+    else:
+        recorder = (
+            record_auto_dev_family_target_finalize
+            if args.operation == "finalize" else record_development_family_target_merge
+        )
+        result = recorder(args.state, evidence_file=args.evidence, idempotency_key=args.idempotency_key)
     _print(result, json_output=args.json)
     return 0
 
@@ -797,3 +819,21 @@ def register(subparsers) -> None:
     record.add_argument("--idempotency-key", required=True)
     _common_output(record)
     record.set_defaults(handler=handle_record)
+
+    family = sub.add_parser(
+        "family-target",
+        help="Record or validate exact sibling authority in an existing typed PR family; never merges.",
+    )
+    operations = family.add_subparsers(dest="operation", required=True)
+    for operation in ("finalize", "merge-readback", "validate"):
+        target = operations.add_parser(operation)
+        target.add_argument("state", help="Canonical primary work-item directory or autodev.json.")
+        if operation == "validate":
+            target.add_argument("--authority", required=True, help="Immutable target authority descriptor JSON file.")
+            for field in ("provider", "pull_request", "repository", "base_branch", "subject_revision", "author_identity", "author_kind"):
+                target.add_argument("--" + field.replace("_", "-"), required=True)
+        else:
+            target.add_argument("--evidence", required=True)
+            target.add_argument("--idempotency-key", required=True)
+        _common_output(target)
+        target.set_defaults(handler=handle_family_target)
