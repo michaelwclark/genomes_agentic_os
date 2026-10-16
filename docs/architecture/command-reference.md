@@ -2228,6 +2228,14 @@ resolution declarations. This operation grants no clean review, provider post,
 readiness or merge authority. Unidentified and unproved quarantine records
 continue to fail closed.
 
+Advisory recovery alone opts into idempotent references to known, already
+resolved IDs in the exact delta parent. It retains their history and applies
+no new closure. Ordinary producer parsing stays strict. The recovery parser
+still requires the exact parent key/hash and unique known IDs, returns only
+open resolution IDs, and refuses unknown or duplicate IDs. Any surviving open
+inherited finding still prevents deriving clean authority. The original paid
+receipt, model verdict, response, resolution warning and budget remain intact.
+
 Adopt one exact active packet created before `autodev.json` existed:
 
 ```bash

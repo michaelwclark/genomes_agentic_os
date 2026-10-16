@@ -224,12 +224,15 @@ def parse_parent_resolution_refs(
     parent_key: str,
     parent_receipt_sha256: str,
     parent_ledger: list[Mapping[str, Any]],
+    allow_resolved_noop: bool = False,
 ) -> list[str]:
     """Validate reviewer-declared IDs against the exact immutable parent.
 
     This verifies identity and an explicit reviewer declaration, not patch or
     test contents. Repair correctness remains the independent reviewer's job.
     Missing declarations resolve nothing; advice never implies parent closure.
+    Recovery alone may opt into known resolved IDs as no-ops; returned IDs
+    always name open findings and therefore never grant a redundant closure.
     """
     declarations: list[dict[str, Any]] = []
     for block in PARENT_RESOLUTIONS_PATTERN.findall(response):
@@ -254,9 +257,12 @@ def parse_parent_resolution_refs(
     if not isinstance(refs, list) or any(not isinstance(ref, str) or not ref or ref != ref.strip() for ref in refs):
         raise ReviewCoordinationError("parent resolution_refs must be an array of exact finding IDs")
     open_ids = {str(row["id"]) for row in parent_ledger if row.get("status") == "open"}
-    if len(set(refs)) != len(refs) or any(ref not in open_ids for ref in refs):
+    allowed_ids = set(open_ids)
+    if allow_resolved_noop is True:
+        allowed_ids.update(str(row["id"]) for row in parent_ledger if row.get("status") == "resolved")
+    if len(set(refs)) != len(refs) or any(ref not in allowed_ids for ref in refs):
         raise ReviewCoordinationError("parent resolution_refs must name unique open parent finding IDs")
-    return refs
+    return [ref for ref in refs if ref in open_ids]
 
 
 def review_chain_key(subject: ReviewSubject) -> str:
@@ -613,6 +619,7 @@ def _advisory_recovery_review(
             response, parent_key=parent_key,
             parent_receipt_sha256=hashlib.sha256(parent_raw).hexdigest(),
             parent_ledger=inherited,
+            allow_resolved_noop=True,
         )
     advisory_rows = [
         {**row, "summary": row["title"],
