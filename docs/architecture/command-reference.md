@@ -2191,6 +2191,9 @@ superseding an unmerged ready state. The repository identifier stays unchanged;
 the provider is never inferred from the incoming readiness claim. Unknown
 selection, changed policy, or an ambiguous provider fails closed. Existing
 repository, author, source, policy and prior-readiness checks still apply.
+Both historical and already normalized aliases require active, consistent
+project registration, a clean checkout at the provider-read successor head,
+and the prior source head as its actual Git ancestor.
 
 For an older invalid zero-call advisory derivative, the Python coordination API
 provides an explicit quarantine operation:

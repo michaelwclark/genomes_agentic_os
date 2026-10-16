@@ -83,3 +83,37 @@ def test_trusted_provider_refuses_unknown_alias_and_changed_frozen_policy(tmp_pa
     profile.write_text(raw.replace("acme/app", "acme/other"))
     with pytest.raises(delivery.DevelopmentDeliveryError):
         delivery._trusted_catalog_provider(task.read())
+
+
+@pytest.mark.parametrize("defect", ["forged-head", "dirty", "non-descendant", "unregistered"])
+def test_normalized_ready_alias_preserves_actual_registered_clean_source_and_ancestry(
+    tmp_path, monkeypatch, defect,
+):
+    task, work_item, evidence = _ready_then_repair(tmp_path, monkeypatch)
+    repo = Path(task.read()["worktree"]["path"])
+    if defect == "forged-head":
+        evidence["source_head_sha"] = evidence["subject_revision"] = "e" * 40
+        evidence["provider_observed"]["head_sha"] = "e" * 40
+    elif defect == "dirty":
+        (repo / "unreviewed.txt").write_text("Unreviewed change\n")
+    elif defect == "non-descendant":
+        _git("reset", "--hard", evidence["base_sha"], cwd=repo)
+        (repo / "replacement.txt").write_text("Different lineage\n")
+        _git("add", "replacement.txt", cwd=repo)
+        _git("commit", "-m", "fix: replace unrelated source", cwd=repo)
+        head = _git("rev-parse", "HEAD", cwd=repo)
+        evidence["source_head_sha"] = evidence["subject_revision"] = head
+        evidence["provider_observed"]["head_sha"] = head
+    else:
+        value = task.read()
+        project = delivery.project_root(value["os_root"], value["domain"], value["project"])
+        for path in (project / "config/worktrees.yml", project / "worktrees/index.yml"):
+            path.unlink(missing_ok=True)
+    receipt = _stage_receipt(work_item / defect, "release_propagation", evidence=evidence)
+    before = {p: p.read_bytes() for p in (task.path, task.ledger, Path(task.read()["autodev_path"]))}
+    with pytest.raises(delivery.DevelopmentDeliveryError):
+        delivery.run_development_stage(
+            task.path, stage="release_propagation", receipts={"release_propagation": receipt},
+            idempotency_prefix="catalog:invalid-" + defect,
+        )
+    assert all(path.read_bytes() == raw for path, raw in before.items())

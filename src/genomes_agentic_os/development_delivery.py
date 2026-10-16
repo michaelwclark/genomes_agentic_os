@@ -9564,6 +9564,52 @@ def _normalize_exact_legacy_family_identity(
     return normalized, provenance
 
 
+def _catalog_alias_source_authority(
+    task: Mapping[str, Any], *, previous_head: str, current_head: str,
+) -> dict[str, Any]:
+    """Bind alias supersession to its active, clean descendant checkout."""
+
+    worktree = task.get("worktree") if isinstance(task.get("worktree"), Mapping) else {}
+    project_path = project_root(
+        str(task.get("os_root") or ""), str(task.get("domain") or ""), str(task.get("project") or ""),
+    )
+    registrations: list[tuple[str, dict[str, Any]]] = []
+    for registry_path in (project_path / "config/worktrees.yml", project_path / "worktrees/index.yml"):
+        payload = _read_mapping(registry_path) if registry_path.is_file() else {}
+        raw = payload.get("worktrees")
+        rows = (
+            raw.get("registered") or raw.get("worktrees") or []
+            if isinstance(raw, Mapping) else raw or payload.get("registered") or []
+        )
+        if not isinstance(rows, list):
+            raise DevelopmentDeliveryError("release propagation refresh catalog alias worktree registry is malformed")
+        for row in rows:
+            if not isinstance(row, Mapping):
+                raise DevelopmentDeliveryError("release propagation refresh catalog alias worktree registry is malformed")
+            if row.get("id") == worktree.get("name") or row.get("path") == worktree.get("path"):
+                if "_source" in row:
+                    raise DevelopmentDeliveryError("release propagation refresh catalog alias registry source metadata is untrusted")
+                registrations.append((str(registry_path), dict(row)))
+    registered = {_json_sha256(row): row for _, row in registrations}
+    entry = next(iter(registered.values()), {})
+    if not (
+        len(registered) == 1
+        and len({source for source, _ in registrations}) == len(registrations)
+        and entry.get("status") == "active" and entry.get("id") == worktree.get("name")
+        and entry.get("path") == worktree.get("path") and entry.get("branch") == worktree.get("branch")
+    ):
+        raise DevelopmentDeliveryError("release propagation refresh catalog alias worktree registration is inconsistent")
+    if _worktree_ready_recovery_registered_head(task) != current_head:
+        raise DevelopmentDeliveryError("release propagation refresh catalog alias worktree head is stale")
+    ancestor = subprocess.run(
+        ["git", "-C", str(worktree["path"]), "merge-base", "--is-ancestor", previous_head, current_head],
+        capture_output=True, text=True, check=False,
+    )
+    if ancestor.returncode:
+        raise DevelopmentDeliveryError("release propagation refresh catalog alias source lineage is unproven")
+    return entry
+
+
 def _trusted_catalog_provider(task: Mapping[str, Any]) -> str:
     """Resolve an alias provider from the selected frozen catalog authority."""
 
@@ -9697,40 +9743,6 @@ def _normalize_exact_catalog_alias_github_identity(
     ):
         raise DevelopmentDeliveryError("release propagation refresh selected catalog alias authority is inconsistent")
 
-    project_path = project_root(
-        str(task.get("os_root") or ""), str(task.get("domain") or ""), str(task.get("project") or ""),
-    )
-    registrations: list[tuple[str, dict[str, Any]]] = []
-    for registry_path in (project_path / "config/worktrees.yml", project_path / "worktrees/index.yml"):
-        payload = _read_mapping(registry_path) if registry_path.is_file() else {}
-        raw = payload.get("worktrees")
-        rows = (
-            raw.get("registered") or raw.get("worktrees") or []
-            if isinstance(raw, Mapping) else raw or payload.get("registered") or []
-        )
-        if not isinstance(rows, list):
-            raise DevelopmentDeliveryError("release propagation refresh catalog alias worktree registry is malformed")
-        for row in rows:
-            if not isinstance(row, Mapping):
-                raise DevelopmentDeliveryError("release propagation refresh catalog alias worktree registry is malformed")
-            if row.get("id") == worktree.get("name") or row.get("path") == worktree.get("path"):
-                if "_source" in row:
-                    raise DevelopmentDeliveryError("release propagation refresh catalog alias registry source metadata is untrusted")
-                registrations.append((str(registry_path), dict(row)))
-    # Registration is projected to both config and index files. Equal copies
-    # agree; conflicting copies or duplicate entries within one source do not.
-    registered = {
-        _json_sha256(row): row for _, row in registrations
-    }
-    entry = next(iter(registered.values()), {})
-    if not (
-        len(registered) == 1
-        and len({source for source, _ in registrations}) == len(registrations)
-        and entry.get("status") == "active" and entry.get("id") == worktree.get("name")
-        and entry.get("path") == worktree.get("path") and entry.get("branch") == branch
-    ):
-        raise DevelopmentDeliveryError("release propagation refresh catalog alias worktree registration is inconsistent")
-
     # The historical catalog hash was never recorded. These proofs are explicitly
     # current authority, fenced by the immutable prior repository/PR and task.
     allowed_origins = {
@@ -9745,15 +9757,10 @@ def _normalize_exact_catalog_alias_github_identity(
         )
         if origin.returncode or origin.stdout.strip() not in allowed_origins:
             raise DevelopmentDeliveryError("release propagation refresh catalog alias canonical origin is unproven")
-    if _worktree_ready_recovery_registered_head(task) != current.get("source_head_sha"):
-        raise DevelopmentDeliveryError("release propagation refresh catalog alias worktree head is stale")
-    ancestor = subprocess.run(
-        ["git", "-C", str(worktree["path"]), "merge-base", "--is-ancestor",
-         str(previous.get("source_head_sha") or ""), str(current["source_head_sha"])],
-        capture_output=True, text=True, check=False,
+    entry = _catalog_alias_source_authority(
+        task, previous_head=str(previous.get("source_head_sha") or ""),
+        current_head=str(current["source_head_sha"]),
     )
-    if ancestor.returncode:
-        raise DevelopmentDeliveryError("release propagation refresh catalog alias source lineage is unproven")
 
     normalized = {**dict(previous), "pull_request": qualified}
     provenance = {
@@ -10794,6 +10801,7 @@ def run_development_stage(
                     )
                     expected_source_branch = str(worktree.get("branch") or "").strip()
                     expected_provider = ""
+                    catalog_alias_provider = False
                     if expected_repository.startswith(("github:", "git:github.com/")):
                         expected_provider = "github"
                     elif expected_repository.startswith(("gitlab:", "git:gitlab.com/")):
@@ -10802,6 +10810,7 @@ def run_development_stage(
                         expected_provider = "bitbucket"
                     else:
                         expected_provider = _trusted_catalog_provider(task_value)
+                        catalog_alias_provider = True
                     pull_request_repository = expected_repository
                     if expected_repository.startswith("git:github.com/"):
                         pull_request_repository = "github:" + expected_repository.removeprefix(
@@ -10941,6 +10950,10 @@ def run_development_stage(
                     )
                     if legacy_alias_identity_normalization is not None:
                         expected_provider = "github"
+                    elif catalog_alias_provider:
+                        _catalog_alias_source_authority(
+                            task_value, previous_head=previous_head, current_head=refreshed_head,
+                        )
                     # The original PR Create adapter also accepted a canonical
                     # GitHub URL in this field.  Qualify only a prior URL whose
                     # complete identity matches the registered task and the
