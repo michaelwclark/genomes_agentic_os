@@ -9564,6 +9564,41 @@ def _normalize_exact_legacy_family_identity(
     return normalized, provenance
 
 
+def _trusted_catalog_provider(task: Mapping[str, Any]) -> str:
+    """Resolve an alias provider from the selected frozen catalog authority."""
+
+    repository = task.get("repository")
+    if not isinstance(repository, Mapping):
+        raise DevelopmentDeliveryError("selected catalog repository is missing")
+    profile, source = load_development_profile(
+        str(task.get("os_root") or ""), str(task.get("domain") or ""),
+        str(task.get("project") or ""),
+    )
+    if source.resolve() != Path(str(task.get("profile_source") or "")).expanduser().resolve() or validate_profile(profile):
+        raise DevelopmentDeliveryError("selected catalog profile authority is invalid")
+    selected = select_development_repository(profile, str(repository.get("id") or ""))
+    selected_repository = selected["repository"]
+    if (
+        frozen_selected_task_profile(task) != _selected_profile_policy_authority(selected)
+        or any(selected_repository.get(field) != repository.get(field) for field in ("id", "root", "base_branch"))
+    ):
+        raise DevelopmentDeliveryError("selected catalog repository authority changed")
+    providers = [
+        provider for provider in ("github", "gitlab", "bitbucket")
+        if selected_repository.get(provider)
+    ]
+    if len(providers) != 1:
+        raise DevelopmentDeliveryError("selected catalog repository requires one trusted provider")
+    provider = providers[0]
+    host = {"github": "github.com", "gitlab": "gitlab.com", "bitbucket": "bitbucket.org"}[provider]
+    canonical = f"git:{host}/{selected_repository[provider]}"
+    worktree = task.get("worktree") if isinstance(task.get("worktree"), Mapping) else {}
+    for root in (repository.get("root"), worktree.get("path")):
+        if not root or _normalized_repository_identity({"root": root}) != canonical:
+            raise DevelopmentDeliveryError("selected catalog repository canonical origin is unproven")
+    return provider
+
+
 def _normalize_exact_catalog_alias_github_identity(
     previous: Mapping[str, Any],
     current: Mapping[str, Any],
@@ -10765,6 +10800,8 @@ def run_development_stage(
                         expected_provider = "gitlab"
                     elif expected_repository.startswith(("bitbucket:", "git:bitbucket.org/")):
                         expected_provider = "bitbucket"
+                    else:
+                        expected_provider = _trusted_catalog_provider(task_value)
                     pull_request_repository = expected_repository
                     if expected_repository.startswith("git:github.com/"):
                         pull_request_repository = "github:" + expected_repository.removeprefix(
@@ -11006,6 +11043,11 @@ def run_development_stage(
                             )
                     for field in identity_fields:
                         if refreshed_identity[field] != previous_identity[field]:
+                            raise DevelopmentDeliveryError(
+                                "release propagation refresh must retain the same " + field
+                            )
+                    for field in ("base_sha", "author_identity", "author_kind"):
+                        if previous_details.get(field) and refreshed_details.get(field) != previous_details[field]:
                             raise DevelopmentDeliveryError(
                                 "release propagation refresh must retain the same " + field
                             )

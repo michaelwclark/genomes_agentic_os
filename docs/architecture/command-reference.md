@@ -2185,6 +2185,46 @@ review file, its stable key, and earlier delivery receipts remain unchanged.
 This joins the same PR at the same head; it does not authorize a sibling PR,
 change review outcomes or policy, or replace Finalize and Merge gates.
 
+An already normalized catalog alias also resolves its expected provider through
+the current selected catalog and the integrity-checked frozen policy when
+superseding an unmerged ready state. The repository identifier stays unchanged;
+the provider is never inferred from the incoming readiness claim. Unknown
+selection, changed policy, or an ambiguous provider fails closed. Existing
+repository, author, source, policy and prior-readiness checks still apply.
+
+For an older invalid zero-call advisory derivative, the Python coordination API
+provides an explicit quarantine operation:
+
+```python
+coordinator.quarantine_invalid_advisory_derivative(
+    key,
+    receipt_sha256=invalid_receipt_sha256,
+    source_key=paid_source_key,
+    source_receipt_sha256=paid_source_sha256,
+    approval_path=approval_path,
+    approval_sha256=approval_sha256,
+)
+```
+
+The approval JSON uses `auto-dev-zero-call-quarantine-approval/v1`, with
+`approved: true`, a nonempty `reason`, and the exact `key`,
+`receipt_sha256`, `family_key`, `source_key` and
+`source_receipt_sha256`. The operation verifies its raw digest, the native
+unpaid advisory index, unchanged valid full/delta findings source, original
+response and structured-findings digests, deterministic derivation key, and the
+actual inherited-finding defect. It refuses paid, unknown, valid, tampered or
+cross-family candidates before changing evidence.
+
+The original invalid bytes move through native quarantine; an already
+quarantined identical record can be classified under the same proof. The
+tombstone records immutable approval and source hashes with
+`mode: advisory_recovery` and `budget_consumed: false`. Exact concurrent
+retries are idempotent. The bad key stays unusable, original paid receipts and
+their counts stay unchanged, and later deltas still need genuine parent
+resolution declarations. This operation grants no clean review, provider post,
+readiness or merge authority. Unidentified and unproved quarantine records
+continue to fail closed.
+
 Adopt one exact active packet created before `autodev.json` existed:
 
 ```bash

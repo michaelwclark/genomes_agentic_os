@@ -1076,6 +1076,36 @@ class ReviewCoordinator:
         self._raise_if_quarantined(family_key=family_key)
         rows: list[dict[str, Any]] = []
         for metadata in self._quarantine_entries():
+            if metadata.get("family_key") == family_key:
+                terminal_identity = (
+                    metadata.get("mode") in {"full", "delta"}
+                    and re.fullmatch(r"[0-9a-f]{64}", str(metadata.get("chain_key") or ""))
+                )
+                counted_paid = (
+                    terminal_identity and metadata.get("budget_consumed") is True
+                    and metadata.get("outcome") in SUCCESSFUL_REVIEW_OUTCOMES
+                )
+                known_unavailable = (
+                    terminal_identity and metadata.get("budget_consumed") is False
+                    and metadata.get("outcome") == "unavailable"
+                )
+                proof = metadata.get("zero_call_proof")
+                proven_zero_call = (
+                    metadata.get("mode") == "advisory_recovery"
+                    and metadata.get("budget_consumed") is False
+                    and isinstance(proof, Mapping)
+                    and proof.get("schema") == "auto-dev-zero-call-quarantine-proof/v1"
+                    and proof.get("key") == metadata.get("key")
+                    and proof.get("family_key") == family_key
+                    and proof.get("receipt_sha256") == metadata.get("sha256")
+                    and proof.get("mode") == "advisory_recovery"
+                    and proof.get("budget_consumed") is False
+                )
+                if not (counted_paid or known_unavailable or proven_zero_call):
+                    raise ReviewCoordinationError(
+                        "same-family quarantine lacks enough terminal budget identity; "
+                        f"budget accounting failed closed at {metadata.get('quarantine_ref')}"
+                    )
             if (
                 metadata.get("family_key") == family_key
                 and metadata.get("budget_consumed") is True
@@ -1207,6 +1237,168 @@ class ReviewCoordinator:
         self._quarantine_cache = None
         self._quarantine_cache_token = None
         return metadata_path
+
+    def quarantine_invalid_advisory_derivative(
+        self,
+        key: str,
+        *,
+        receipt_sha256: str,
+        source_key: str,
+        source_receipt_sha256: str,
+        approval_path: str | Path,
+        approval_sha256: str,
+    ) -> Path:
+        """Quarantine a proven zero-call derivative without changing paid counts.
+
+        This operation does not repair or approve a review. It preserves an
+        older invalid advisory derivative and permanently blocks its exact key.
+        The native index, immutable paid source, deterministic derivation key
+        and explicitly approved byte hashes must all agree.
+        """
+
+        for label, value in (
+            ("key", key), ("receipt_sha256", receipt_sha256),
+            ("source_key", source_key),
+            ("source_receipt_sha256", source_receipt_sha256),
+            ("approval_sha256", approval_sha256),
+        ):
+            if not re.fullmatch(r"[0-9a-f]{64}", str(value)):
+                raise ReviewCoordinationError(f"zero-call quarantine requires canonical {label}")
+        source = self._path(source_key)
+        original = load_review_receipt(source)
+        subject = ReviewSubject.from_mapping(original["subject"])
+        family = review_family_key(subject)
+        chain = review_chain_key(subject)
+        approval = Path(approval_path).expanduser().resolve()
+        binding = {
+            "key": key, "receipt_sha256": receipt_sha256,
+            "family_key": family, "source_key": source_key,
+            "source_receipt_sha256": source_receipt_sha256,
+        }
+        with _exclusive_lock(self.locks / f"{family}.lock"):
+            try:
+                source_raw = source.read_bytes()
+                approval_raw = approval.read_bytes()
+                approved = json.loads(approval_raw)
+                index_path = self.index / f"{key}.json"
+                index_raw = index_path.read_bytes()
+                index = json.loads(index_raw)
+                matches = list(self.quarantine.glob(f"{key}-*.meta.json"))
+                if len(matches) > 1:
+                    raise ReviewCoordinationError("zero-call quarantine has conflicting tombstones")
+                metadata = json.loads(matches[0].read_bytes()) if matches else None
+                path = self._path(key)
+                archived = self.quarantine / f"{key}-{receipt_sha256}.json"
+                raw = (path if path.is_file() else archived).read_bytes()
+                candidate = json.loads(raw)
+            except (OSError, ValueError) as exc:
+                raise ReviewCoordinationError("zero-call quarantine proof is unavailable or invalid") from exc
+            if (
+                hashlib.sha256(source_raw).hexdigest() != source_receipt_sha256
+                or load_review_receipt(source) != original
+                or original.get("key") != source_key
+                or original.get("mode") not in {"full", "delta"}
+                or original.get("outcome") != "findings"
+                or hashlib.sha256(approval_raw).hexdigest() != approval_sha256
+                or not isinstance(approved, Mapping)
+                or approved.get("schema") != "auto-dev-zero-call-quarantine-approval/v1"
+                or approved.get("approved") is not True
+                or not str(approved.get("reason") or "").strip()
+                or any(approved.get(name) != value for name, value in binding.items())
+                or hashlib.sha256(raw).hexdigest() != receipt_sha256
+            ):
+                raise ReviewCoordinationError("zero-call quarantine approval or paid-source binding changed")
+            if not (
+                isinstance(candidate, Mapping) and isinstance(index, Mapping)
+                and candidate.get("schema") == REVIEW_RECEIPT_SCHEMA
+                and candidate.get("key") == index.get("key") == key
+                and candidate.get("family_key") == index.get("family_key") == family
+                and candidate.get("chain_key") == index.get("chain_key") == chain
+                and candidate.get("subject") == index.get("subject") == asdict(subject)
+                and candidate.get("mode") == index.get("mode") == "advisory_recovery"
+                and candidate.get("outcome") == index.get("outcome") == "clean"
+                and candidate.get("status") == "completed"
+                and index.get("schema") == "auto-dev-review-index/v1"
+                and index.get("budget_consumed") is False
+                and index.get("receipt_ref") == str(path)
+                and candidate.get("parent_key") == source_key
+                and candidate.get("budget") == original.get("budget")
+                and isinstance(candidate.get("provider_post"), Mapping)
+                and candidate["provider_post"].get("status") == "not_requested"
+            ):
+                raise ReviewCoordinationError("zero-call quarantine requires an indexed unpaid advisory derivative")
+            recovery = candidate.get("recovery")
+            review = candidate.get("review")
+            if not isinstance(recovery, Mapping) or not isinstance(review, Mapping):
+                raise ReviewCoordinationError("zero-call quarantine requires derivation provenance")
+            response = str((original.get("review") or {}).get("response") or "").strip()
+            findings = _immutable_structured_findings(response)
+            evidence_hash = hashlib.sha256(response.encode()).hexdigest()
+            findings_hash = _canonical_hash(findings)
+            if not (
+                recovery.get("source_receipt_ref") == str(source)
+                and recovery.get("source_receipt_sha256") == source_receipt_sha256
+                and recovery.get("evidence_sha256") == evidence_hash
+                and recovery.get("findings_sha256") == findings_hash
+                and review.get("structured_findings") == findings
+                and str(review.get("response") or "").strip() == response
+                and all(row["blocking"] is False for row in findings)
+                and key == advisory_recovery_key(source_key, evidence_hash, findings_hash)
+            ):
+                raise ReviewCoordinationError("zero-call quarantine derivation does not match its immutable source")
+            outcome, ledger, recovered = _advisory_recovery_review(
+                original, source, response, findings,
+            )
+            inherited = set(recovered["inherited_finding_ids"])
+            inherited_rows = [row for row in ledger if row["id"] in inherited]
+            child_ledger = candidate.get("findings_ledger")
+            if outcome == "clean" and isinstance(child_ledger, list) and all(
+                row in child_ledger for row in inherited_rows
+            ):
+                raise ReviewCoordinationError("zero-call quarantine requires an invalid inherited-finding derivation")
+            proof = {
+                "schema": "auto-dev-zero-call-quarantine-proof/v1", **binding,
+                "approval_ref": str(approval), "approval_sha256": approval_sha256,
+                "mode": "advisory_recovery", "budget_consumed": False,
+                "evidence_sha256": evidence_hash, "findings_sha256": findings_hash,
+            }
+            if metadata is not None:
+                if not (
+                    isinstance(metadata, Mapping) and matches[0].name == archived.stem + ".meta.json"
+                    and metadata.get("key") == key and metadata.get("family_key") == family
+                    and metadata.get("sha256") == receipt_sha256
+                    and metadata.get("quarantine_ref") == str(archived)
+                    and archived.is_file() and archived.read_bytes() == raw
+                ):
+                    raise ReviewCoordinationError("zero-call quarantine tombstone binding is inconsistent")
+                previous_proof = metadata.get("zero_call_proof")
+                if previous_proof is not None:
+                    if (
+                        previous_proof != proof or metadata.get("budget_consumed") is not False
+                        or path.is_file()
+                    ):
+                        raise ReviewCoordinationError("zero-call quarantine classification conflicts with prior proof")
+                    return matches[0]
+            if (
+                source.read_bytes() != source_raw or approval.read_bytes() != approval_raw
+                or index_path.read_bytes() != index_raw
+                or (path.is_file() and path.read_bytes() != raw)
+            ):
+                raise ReviewCoordinationError("zero-call quarantine proof changed before admission")
+            if path.is_file():
+                metadata = self._quarantine_receipt(
+                    path, ReviewCoordinationError("invalid inherited-finding advisory derivation"),
+                )
+            if not isinstance(metadata, Mapping):
+                raise ReviewCoordinationError("zero-call quarantine tombstone was not preserved")
+            metadata_path = self.quarantine / f"{key}-{receipt_sha256}.meta.json"
+            _atomic_json(metadata_path, {
+                **metadata, "mode": "advisory_recovery", "budget_consumed": False,
+                "zero_call_proof": proof, "classified_at": _utc_now(),
+            })
+            self._quarantine_cache = None
+            self._quarantine_cache_token = None
+            return metadata_path
 
     def _result(self, path: Path, receipt: dict[str, Any], *, reused: bool) -> ReviewRunResult:
         return ReviewRunResult(
