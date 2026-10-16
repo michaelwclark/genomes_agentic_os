@@ -92,6 +92,97 @@ def request(parent) -> dict:
             "delta_base_sha": "1" * 40, "spec_source": "Repair the inherited authority defects"}
 
 
+def resolved_parent(coordinator: ReviewCoordinator, refs=PARENT_IDS):
+    parent = parent_review(coordinator)
+    return coordinator.execute(subject("2" * 40), lambda: {
+        "outcome": "clean", "resolution_refs": list(refs),
+    }, mode="delta", parent_key=parent.key)
+
+
+@pytest.mark.parametrize("opt_in", [False, None, "true", 1])
+def test_ordinary_resolution_parser_refuses_already_resolved_ids(tmp_path: Path, opt_in) -> None:
+    parent = resolved_parent(ReviewCoordinator(tmp_path / "coordination"))
+    with pytest.raises(ReviewCoordinationError, match="unique open parent"):
+        coordination_core.parse_parent_resolution_refs(
+            response(advice(), resolution(parent)), parent_key=parent.key,
+            parent_receipt_sha256=parent_ref(parent)["sha256"],
+            parent_ledger=parent.receipt["findings_ledger"], allow_resolved_noop=opt_in,
+        )
+
+
+def test_recovery_resolution_parser_returns_only_open_ids(tmp_path: Path) -> None:
+    parent = resolved_parent(ReviewCoordinator(tmp_path / "coordination"), PARENT_IDS[:1])
+    before = parent.receipt_path.read_bytes()
+    refs = coordination_core.parse_parent_resolution_refs(
+        response(advice(), resolution(parent)), parent_key=parent.key,
+        parent_receipt_sha256=parent_ref(parent)["sha256"],
+        parent_ledger=parent.receipt["findings_ledger"], allow_resolved_noop=True,
+    )
+    assert refs == list(PARENT_IDS[1:])
+    assert parent.receipt_path.read_bytes() == before
+
+
+@pytest.mark.parametrize("changes", [
+    {"parent_key": "f" * 64}, {"parent_receipt_sha256": "f" * 64},
+    {"resolution_refs": ["finding-not-in-parent"]},
+    {"resolution_refs": [PARENT_IDS[0], PARENT_IDS[0]]},
+    {"resolution_refs": [" " + PARENT_IDS[0]]}, {"resolution_refs": PARENT_IDS[0]},
+])
+def test_recovery_noop_still_rejects_invalid_parent_declarations(tmp_path: Path, changes: dict) -> None:
+    parent = resolved_parent(ReviewCoordinator(tmp_path / "coordination"))
+    before = parent.receipt_path.read_bytes()
+    with pytest.raises(ReviewCoordinationError, match="resolution|parent"):
+        coordination_core.parse_parent_resolution_refs(
+            response(advice(), resolution(parent, **changes)), parent_key=parent.key,
+            parent_receipt_sha256=parent_ref(parent)["sha256"],
+            parent_ledger=parent.receipt["findings_ledger"], allow_resolved_noop=True,
+        )
+    assert parent.receipt_path.read_bytes() == before
+
+
+@pytest.mark.parametrize("open_survivor", [False, True])
+def test_advisory_recovery_treats_known_resolved_refs_as_noops(tmp_path: Path, open_survivor: bool) -> None:
+    coordinator = ReviewCoordinator(tmp_path / "coordination")
+    parent = resolved_parent(coordinator, PARENT_IDS[:1] if open_survivor else PARENT_IDS)
+    text = response(advice(), resolution(parent, resolution_refs=list(PARENT_IDS[:1])))
+    with pytest.raises(ReviewCoordinationError) as strict_error:
+        coordination_core.parse_parent_resolution_refs(
+            text, parent_key=parent.key, parent_receipt_sha256=parent_ref(parent)["sha256"],
+            parent_ledger=parent.receipt["findings_ledger"],
+        )
+    delta = coordinator.execute(subject("3" * 40), lambda: {
+        "outcome": "findings", "response": text,
+        "findings": runner_module().coordination_findings(advice()),
+        "resolution_refs": [], "resolution_warning": str(strict_error.value),
+    }, mode="delta", parent_key=parent.key)
+    evidence = tmp_path / "reviewer-response.md"
+    evidence.write_text(text)
+    originals = {p: p.read_bytes() for p in coordinator.receipts.glob("*.json")}
+    assert delta.receipt["review"]["resolution_refs"] == []
+    assert delta.receipt["review"]["resolution_warning"]
+    if open_survivor:
+        with pytest.raises(ReviewCoordinationError, match="unresolved inherited"):
+            coordinator.derive_same_head_advisory_clean(delta.receipt_path, evidence_path=evidence, findings=advice())
+        assert set(coordinator.receipts.glob("*.json")) == set(originals)
+    else:
+        child = coordinator.derive_same_head_advisory_clean(delta.receipt_path, evidence_path=evidence, findings=advice())
+        loaded = load_review_receipt(child.receipt_path)
+        assert loaded["outcome"] == "clean" and loaded["review"]["resolution_refs"] == []
+        ledger = {row["id"]: row for row in loaded["findings_ledger"]}
+        assert all(ledger[finding_id] == next(row for row in parent.receipt["findings_ledger"]
+                                             if row["id"] == finding_id) for finding_id in PARENT_IDS)
+        assert loaded["budget"] == delta.receipt["budget"]
+        assert loaded["budget"]["full_reviews_used"] == 1
+        assert loaded["budget"]["delta_reviews_used"] == 2
+        again = coordinator.derive_same_head_advisory_clean(delta.receipt_path, evidence_path=evidence, findings=advice())
+        assert again.reused and again.key == child.key
+        assert assert_exact_head_review_receipt(child.receipt_path, head_sha="3" * 40,
+            repository="acme/widgets", pull_request="github:acme/widgets#42",
+            policy_fingerprint=POLICY)["outcome"] == "clean"
+    assert all(p.read_bytes() == raw for p, raw in originals.items())
+    assert evidence.read_text() == text
+
+
 def test_delta_prompt_renders_verified_parent_ids_and_resolution_contract(tmp_path: Path) -> None:
     runner = runner_module()
     parent = parent_review(ReviewCoordinator(tmp_path / "coordination"))
