@@ -354,6 +354,12 @@ def command_entries() -> list[dict[str, str]]:
             "source": "harness/commands/os-quiet-run.md",
         },
         {
+            "id": "atlas-work-registry",
+            "command": "harness/bin/agentic-os-atlas-registry",
+            "description": "Preserve explicitly requested task definitions and inspect read-only channel/source bindings; never execute tasks or alter schedules.",
+            "source": "harness/bin/agentic-os-atlas-registry",
+        },
+        {
             "id": "automation-control",
             "command": "agentic-os automation-control",
             "description": "Gate expensive recurring automations behind cheap source-readiness probes.",

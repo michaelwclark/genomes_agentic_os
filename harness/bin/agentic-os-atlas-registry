@@ -1,0 +1,704 @@
+#!/usr/bin/env python3
+"""Manual local definition registry. Deliberately has no execution transport."""
+import argparse
+import copy
+import fcntl
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import sys
+import tempfile
+from datetime import datetime
+from urllib.parse import urlsplit
+
+VERSION = "atlas-work-registry/v1"
+RELATIVE_HOME = "artifacts/atlas-work-registry"
+ID = re.compile(r"^[a-zA-Z0-9_-]{1,100}$")
+SHA = re.compile(r"^[a-f0-9]{64}$")
+SECRET = re.compile(r"-----BEGIN .*PRIVATE KEY-----|\bsk-[a-zA-Z0-9]{20,}|\bxox[baprs]-[a-zA-Z0-9-]{12,}|\b(?:gh[pousr]_|github_pat_)[a-zA-Z0-9_]{20,}|\b(?:AKIA|ASIA)[A-Z0-9]{16}\b|(?i:authorization)\s*:\s*(?i:bearer)\s+\S{8,}|\b\d{3}-\d{2}-\d{4}\b|(?i:password|api_key|access_token|client_secret|secret_access_key)\s*[:=]\s*['\"]?\S{8,}|(?i:<system>|\[system\]|hidden assistant instructions|raw conversation transcript)")
+MAX_BYTES = 2_000_000
+MAX_REGISTRY_BYTES = 20_000_000
+CHANNEL_ID = re.compile(r"^[CG][A-Z0-9]{8,32}$")
+WORKSPACE_ID = re.compile(r"^T[A-Z0-9]{8,32}$")
+CHANNEL_PAIR = re.compile(r"(?<![A-Z0-9])(?P<workspace>T[A-Z0-9]{8,32})\s*/\s*(?P<channel>[CG][A-Z0-9]{8,32})(?![A-Z0-9])")
+COMPONENT_KINDS = {"workflow", "prompt", "skill", "schedule", "automation", "program", "command"}
+VERIFICATIONS = {"user_defined", "unverified", "provider_verified"}
+
+
+class Refusal(ValueError):
+    pass
+
+
+def encoded(value):
+    return (json.dumps(value, sort_keys=True, indent=2, ensure_ascii=False) + "\n").encode()
+
+
+def digest(value):
+    return hashlib.sha256(encoded(value)).hexdigest()
+
+
+def timestamp(value):
+    if not isinstance(value, str):
+        raise Refusal("timestamp must be a timezone-aware ISO value")
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            raise ValueError()
+        return parsed
+    except ValueError:
+        raise Refusal("timestamp must be a timezone-aware ISO value") from None
+
+
+def fields(value, required, optional=()):
+    if not isinstance(value, dict) or set(value) - set(required) - set(optional) or set(required) - set(value):
+        raise Refusal("missing or unexpected fields; import task definitions only")
+
+
+def string(value, limit=2000):
+    if not isinstance(value, str) or not value.strip() or len(value) > limit or "\x00" in value:
+        raise Refusal("invalid or oversized text field")
+
+
+def validate_ownership(value: dict) -> None:
+    """Require a logical owning layer; never infer a person's responsibility."""
+    fields(value, ["scope"], ["domain", "project"])
+    scope = value["scope"]
+    expected = {"root": {"scope"}, "domain": {"scope", "domain"}, "project": {"scope", "domain", "project"}}
+    if not isinstance(scope, str) or scope not in expected or set(value) != expected[scope]:
+        raise Refusal("ownership must name the exact root, domain or project layer")
+    for name in set(value) - {"scope"}:
+        if not isinstance(value[name], str) or not re.fullmatch(r"[a-z][a-z0-9_]{0,99}", value[name]):
+            raise Refusal("invalid ownership identity")
+
+
+def validate_repository(value: str) -> None:
+    """Accept a credential-free HTTPS source address, without querying it."""
+    string(value, 1000)
+    try:
+        parsed = urlsplit(value)
+    except ValueError:
+        raise Refusal("invalid component repository address") from None
+    if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
+        raise Refusal("component repository must be a credential-free HTTPS address")
+
+
+def validate_component_bindings(bindings: list) -> None:
+    """Validate typed source pins independently from legacy prose components."""
+    if not isinstance(bindings, list) or len(bindings) > 30:
+        raise Refusal("component bindings must be a bounded list")
+    seen = set()
+    for binding in bindings:
+        fields(binding, ["kind", "reference", "repository", "path", "revision", "sha256", "ownership", "verification"])
+        kind = binding["kind"]
+        if not isinstance(kind, str) or kind not in COMPONENT_KINDS:
+            raise Refusal("unsupported source component kind")
+        reference = binding["reference"]
+        if not isinstance(reference, str) or not re.fullmatch(re.escape(kind) + r":[a-zA-Z0-9:_-]{1,200}", reference):
+            raise Refusal("component kind and reference binding mismatch")
+        validate_repository(binding["repository"])
+        string(binding["path"], 1000)
+        path = Path(binding["path"])
+        if path.is_absolute() or any(part in {"", ".", "..", ".git"} for part in binding["path"].split("/")) or "\\" in binding["path"]:
+            raise Refusal("component path must be a safe relative source file")
+        validate_ownership(binding["ownership"])
+        if not isinstance(binding["verification"], str) or binding["verification"] not in {"unverified", "source_verified"}:
+            raise Refusal("invalid source component verification")
+        revision, checksum = binding["revision"], binding["sha256"]
+        if revision is not None and (not isinstance(revision, str) or not re.fullmatch(r"[a-f0-9]{40}|[a-f0-9]{64}", revision)):
+            raise Refusal("component revision must be an exact Git object ID")
+        if checksum is not None and (not isinstance(checksum, str) or not SHA.fullmatch(checksum)):
+            raise Refusal("component content pin must be a SHA-256 digest")
+        if binding["verification"] == "source_verified" and (revision is None or checksum is None):
+            raise Refusal("verified component needs revision and content pins")
+        identity = (kind, reference, binding["repository"])
+        if identity in seen:
+            raise Refusal("duplicate source component binding")
+        seen.add(identity)
+
+
+def validate_channel_bindings(bindings: list) -> None:
+    """Keep explicit Slack identity evidence distinct from audience approval."""
+    if not isinstance(bindings, list) or len(bindings) > 30:
+        raise Refusal("channel bindings must be a bounded list")
+    seen = set()
+    for binding in bindings:
+        fields(binding, ["workspace_id", "channel_id", "relation", "verification", "evidence_ref"])
+        if not isinstance(binding["workspace_id"], str) or not WORKSPACE_ID.fullmatch(binding["workspace_id"]):
+            raise Refusal("invalid Slack workspace identity")
+        if not isinstance(binding["channel_id"], str) or not CHANNEL_ID.fullmatch(binding["channel_id"]):
+            raise Refusal("invalid Slack channel identity")
+        if not isinstance(binding["relation"], str) or binding["relation"] not in {"origin", "destination"} or not isinstance(binding["verification"], str) or binding["verification"] not in VERIFICATIONS:
+            raise Refusal("invalid channel identity evidence")
+        string(binding["evidence_ref"])
+        identity = (binding["workspace_id"], binding["channel_id"], binding["relation"])
+        if identity in seen:
+            raise Refusal("duplicate channel identity binding")
+        seen.add(identity)
+
+
+def load_input(path):
+    path = Path(path)
+    if path.stat().st_size > MAX_BYTES:
+        raise Refusal("input exceeds bounded 2 MB import limit")
+    value = json.loads(path.read_text())
+    validate_input(value)
+    return value
+
+
+def validate_input(value):
+    fields(value, ["schema", "source", "explicit_user_request", "privacy", "tasks"])
+    if value["schema"] != "atlas-task-intake/v1":
+        raise Refusal("unsupported intake version")
+    fields(value["source"], ["system", "observed_at", "reference", "snapshot_scope"])
+    if value["source"]["system"] not in ["chatgpt_cloud_automations", "explicit_user_requests"]:
+        raise Refusal("unsupported execution authority")
+    timestamp(value["source"]["observed_at"])
+    string(value["source"]["reference"])
+    if value["source"]["snapshot_scope"] not in ["complete_user_created", "partial"]:
+        raise Refusal("declare snapshot scope")
+    fields(value["explicit_user_request"], ["reference", "requested_at"])
+    string(value["explicit_user_request"]["reference"])
+    timestamp(value["explicit_user_request"]["requested_at"])
+    fields(value["privacy"], ["attested_by", "task_definitions_only", "excluded_sensitive_content"])
+    string(value["privacy"]["attested_by"])
+    if value["privacy"]["task_definitions_only"] is not True or value["privacy"]["excluded_sensitive_content"] is not True:
+        raise Refusal("human task-definition privacy attestation required")
+    tasks = value["tasks"]
+    if not isinstance(tasks, list) or not 1 <= len(tasks) <= 100:
+        raise Refusal("import requires 1 to 100 tasks")
+    seen = set()
+    for task in tasks:
+        request = value["source"]["system"] == "explicit_user_requests"
+        common = ["id", "title", "prompt", "registration_status", "destinations", "workflow"]
+        extra = ["prompt_capture", "components", "dependencies"] if request else ["is_enabled", "default_timezone", "timing_mode", "schedule"]
+        fields(task, common + extra, ["ownership", "component_bindings", "channel_bindings"] + ([] if request else ["start", "trigger", "next_run_time"]))
+        if "ownership" in task:
+            validate_ownership(task["ownership"])
+        if "component_bindings" in task:
+            validate_component_bindings(task["component_bindings"])
+        if "channel_bindings" in task:
+            validate_channel_bindings(task["channel_bindings"])
+        if not isinstance(task["id"], str) or not ID.fullmatch(task["id"]) or task["id"] in seen:
+            raise Refusal("invalid or duplicate source task ID")
+        seen.add(task["id"])
+        for name in ["title"] + ([] if request else ["default_timezone", "schedule"]):
+            string(task[name])
+        string(task["prompt"], 50_000)
+        if not request and not isinstance(task["is_enabled"], bool):
+            raise Refusal("cloud enabled must be a boolean observation")
+        if task["registration_status"] not in ["registered", "pending_approval", "blocked", "canceled"]:
+            raise Refusal("invalid registration status")
+        if request:
+            if task["prompt_capture"] not in ["exact_user_prompt", "summary_only"]:
+                raise Refusal("declare exact versus summary prompt capture")
+            for name in ["components", "dependencies"]:
+                if not isinstance(task[name], list) or not 1 <= len(task[name]) <= 30:
+                    raise Refusal("new work needs bounded components and dependencies")
+                for item in task[name]:
+                    string(item)
+        elif task["timing_mode"] not in ["flexible_schedule", "exact_schedule", "condition_watch"]:
+            raise Refusal("invalid timing mode")
+        if not request and (not task["schedule"].startswith("BEGIN:VEVENT\n") or not task["schedule"].endswith("\nEND:VEVENT")):
+            raise Refusal("schedule must preserve source VEVENT text")
+        if "start" in task:
+            string(task["start"])
+        if task.get("next_run_time") is not None:
+            timestamp(task["next_run_time"])
+        if not isinstance(task["destinations"], list):
+            raise Refusal("destinations must be a list")
+        for destination in task["destinations"]:
+            fields(destination, ["kind", "reference", "verification"])
+            for name in destination:
+                string(destination[name])
+            if destination["verification"] not in ["user_defined", "unverified", "provider_verified"]:
+                raise Refusal("invalid destination verification")
+        fields(task["workflow"], ["inputs", "process", "outputs", "review", "handoff"])
+        for steps in task["workflow"].values():
+            if not isinstance(steps, list) or not 1 <= len(steps) <= 30:
+                raise Refusal("workflow needs bounded inputs/process/outputs/review/handoff")
+            for step in steps:
+                string(step)
+        if "trigger" in task:
+            fields(task["trigger"], ["kind", "verification", "known_user_scope", "parameters"])
+            for name in ["kind", "verification", "known_user_scope"]:
+                string(task["trigger"][name])
+            if task["trigger"]["verification"] != "unverified" or task["trigger"]["parameters"] is not None:
+                raise Refusal("v1 accepts only explicitly unverified event parameters")
+        if not request and "X-UNSCHEDULED:1" in task["schedule"] and "trigger" not in task:
+            raise Refusal("unscheduled tasks need explicit trigger provenance")
+    if SECRET.search(json.dumps(value, ensure_ascii=False)):
+        raise Refusal("privacy scan rejected potential secret or prohibited transcript material")
+
+
+def home(root):
+    root = Path(root).expanduser().resolve()
+    if not root.is_dir() or not (root / ".agentic_root").exists():
+        raise Refusal("OS root unavailable; use pending-sync staging")
+    locator = root / "harness/config/atlas-work-registry.json"
+    for parent in [locator, *locator.parents]:
+        if parent == root:
+            break
+        if parent.is_symlink():
+            raise Refusal("registry locator redirect refused")
+        if parent != locator and parent.exists() and not parent.is_dir():
+            raise Refusal("registry locator ancestor is not a directory")
+    relative = Path(RELATIVE_HOME)
+    if locator.exists():
+        if not locator.is_file() or locator.stat().st_size > 4096:
+            raise Refusal("invalid or oversized registry locator")
+        config = json.loads(locator.read_text())
+        fields(config, ["schema", "relative_home"])
+        if config["schema"] != "atlas-registry-location/v1":
+            raise Refusal("unsupported registry locator version")
+        string(config["relative_home"], 1000)
+        relative = Path(config["relative_home"])
+        parts = relative.parts
+        project_artifact = len(parts) == 6 and parts[0] == "domains" and parts[2] == "02-projects" and ID.fullmatch(parts[1]) and ID.fullmatch(parts[3]) and parts[-2:] == ("artifacts", "atlas-work-registry")
+        if relative.is_absolute() or ".." in parts or not (relative.as_posix() == RELATIVE_HOME or project_artifact):
+            raise Refusal("registry locator must select the default or a canonical project artifact home")
+    target = root / relative
+    # Refuse redirects outside this exact OS; do not follow record symlinks.
+    if not target.resolve().is_relative_to(root):
+        raise Refusal("registry path escapes OS root")
+    for parent in [target, *target.parents]:
+        if parent == root:
+            break
+        if parent.is_symlink():
+            raise Refusal("registry parent must not be a symlink")
+    return target
+
+
+def safe_store(store):
+    if (store / ".lock").is_symlink() or (store / "generations").is_symlink():
+        raise Refusal("registry lock or generations redirect refused")
+
+
+def read_generation(store, generation):
+    safe_store(store)
+    if not SHA.fullmatch(generation):
+        raise Refusal("invalid generation identity")
+    directory = store / "generations" / generation
+    if directory.is_symlink() or not directory.resolve().is_relative_to(store.resolve()):
+        raise Refusal("generation escaped registry")
+    if any(path.is_symlink() for path in directory.rglob("*")):
+        raise Refusal("generation record redirects refused")
+    path = directory / "registry.json"
+    if path.stat().st_size > MAX_REGISTRY_BYTES:
+        raise Refusal("registry exceeds bounded 20 MB limit")
+    value = json.loads(path.read_text())
+    if digest(value) != generation or value.get("schema") != VERSION:
+        raise Refusal("registry generation integrity mismatch")
+    fields(value, ["schema", "tasks"])
+    if not isinstance(value["tasks"], dict) or len(value["tasks"]) > 1000:
+        raise Refusal("invalid registry task map")
+    for key, record in value["tasks"].items():
+        fields(record, ["current", "revisions"])
+        fields(record["current"], ["definition", "source", "explicit_user_request", "privacy", "execution_authority", "registry_role"])
+        if not record["revisions"] or record["revisions"][-1] != record["current"]:
+            raise Refusal("revision/current integrity mismatch")
+        task = record["current"]["definition"]
+        namespace = "chatgpt-" if record["current"]["source"]["system"] == "chatgpt_cloud_automations" else "request-"
+        if not isinstance(task.get("id"), str) or not ID.fullmatch(task["id"]) or key != namespace + task["id"]:
+            raise Refusal("registry identity binding mismatch")
+        folder = directory / "tasks" / key
+        manifest = {**record["current"], "revision": len(record["revisions"]), "definition_sha256": digest(task), "prompt_sha256": hashlib.sha256(task["prompt"].encode()).hexdigest()}
+        if (folder / "manifest.json").read_bytes() != encoded(manifest) or (folder / "prompt.txt").read_bytes() != task["prompt"].encode():
+            raise Refusal("manifest or exact prompt readback mismatch")
+        for number, revision in enumerate(record["revisions"], 1):
+            if (folder / "revisions" / f"{number:04d}.json").read_bytes() != encoded(revision):
+                raise Refusal("revision readback mismatch")
+            prompt = revision["definition"]["prompt"]
+            if (folder / "prompts" / (hashlib.sha256(prompt.encode()).hexdigest() + ".txt")).read_bytes() != prompt.encode():
+                raise Refusal("prompt snapshot readback mismatch")
+            envelope = {"schema": "atlas-task-intake/v1", **{s:revision[s] for s in ["source", "explicit_user_request", "privacy"]}, "tasks": [revision["definition"]]}
+            validate_input(envelope)
+    return value
+
+
+def current(store):
+    safe_store(store)
+    pointer = store / "current"
+    if not pointer.is_symlink():
+        if pointer.exists():
+            raise Refusal("current projection must be a generation symlink")
+        return None, {"schema": VERSION, "tasks": {}}
+    target = os.readlink(pointer)
+    generation = Path(target).name
+    if target != "generations/" + generation or not SHA.fullmatch(generation):
+        raise Refusal("invalid generation pointer")
+    return generation, read_generation(store, generation)
+
+
+def merge(old, incoming):
+    result = copy.deepcopy(old)
+    actions = []
+    for task in incoming["tasks"]:
+        namespace = "chatgpt-" if incoming["source"]["system"] == "chatgpt_cloud_automations" else "request-"
+        key = namespace + task["id"]
+        prior = old["tasks"].get(key)
+        authority = "chatgpt_cloud_automations" if namespace == "chatgpt-" else "not_authorized; user request metadata only"
+        candidate = {"definition": task, "source": incoming["source"], "explicit_user_request": incoming["explicit_user_request"], "privacy": incoming["privacy"], "execution_authority": authority, "registry_role": "definition_mirror_only"}
+        if prior:
+            previous = prior["current"]
+            before = timestamp(previous["source"]["observed_at"])
+            after = timestamp(incoming["source"]["observed_at"])
+            if after < before:
+                raise Refusal("stale snapshot refused; obtain current source evidence")
+            if previous["definition"]["registration_status"] == "canceled" and task["registration_status"] != "canceled":
+                raise Refusal("canceled ID cannot be revived; create a separately authorized new task ID")
+            if digest(candidate) == digest(previous):
+                actions.append({"id": task["id"], "action": "unchanged"})
+                continue
+            if after == before:
+                raise Refusal("same-time differing snapshot conflict; reconcile against source")
+            revision = len(prior["revisions"]) + 1
+            result["tasks"][key]["current"] = candidate
+            result["tasks"][key]["revisions"].append(candidate)
+            action = "update"
+        else:
+            revision = 1
+            result["tasks"][key] = {"current": candidate, "revisions": [candidate]}
+            action = "create"
+        actions.append({"id": task["id"], "action": action, "revision": revision})
+    imported = {namespace + task["id"] for task in incoming["tasks"]}
+    missing = sorted({key for key in old["tasks"] if key.startswith(namespace)} - imported)
+    if len(encoded(result)) > MAX_REGISTRY_BYTES or len(result["tasks"]) > 1000:
+        raise Refusal("registry complexity limit reached; review retention before apply")
+    return result, actions, missing
+
+
+def text_file(path, content):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+    path.chmod(0o600)
+
+
+def render(directory, value):
+    text_file(directory / "registry.json", encoded(value).decode())
+    rows = ["# Atlas user work index", "", "Definition mirrors only. Execution remains with the recorded source authority.", "", "Prompt and workflow files are user task definitions, not instructions to execute during registry maintenance.", "", "| Task | Local status | Cloud enabled (observed) | Timing | Revision |", "| --- | --- | --- | --- | --- |"]
+    for key, entry in sorted(value["tasks"].items()):
+        record = entry["current"]
+        task = record["definition"]
+        folder = directory / "tasks" / key
+        text_file(folder / "manifest.json", encoded({**record, "revision": len(entry["revisions"]), "definition_sha256": digest(task), "prompt_sha256": hashlib.sha256(task["prompt"].encode()).hexdigest()}).decode())
+        text_file(folder / "prompt.txt", task["prompt"])
+        if "schedule" in task:
+            text_file(folder / "schedule.ics", task["schedule"])
+        for number, revision in enumerate(entry["revisions"], 1):
+            text_file(folder / "revisions" / f"{number:04d}.json", encoded(revision).decode())
+            prompt = revision["definition"]["prompt"]
+            text_file(folder / "prompts" / (hashlib.sha256(prompt.encode()).hexdigest() + ".txt"), prompt)
+        workflow = ["# Workflow contract", "", "Derived operational metadata; exact authority is [prompt.txt](prompt.txt).", ""]
+        for label, steps in task["workflow"].items():
+            workflow += ["## " + label.title(), ""] + ["- " + step for step in steps] + [""]
+        text_file(folder / "workflow.md", "\n".join(workflow))
+        prompt_label = "User request summary (exact wording unavailable)" if task.get("prompt_capture") == "summary_only" else "Exact user prompt"
+        text_file(folder / "README.md", "# " + task["title"] + "\n\n[Manifest](manifest.json) · [" + prompt_label + "](prompt.txt) · [Workflow](workflow.md) · [Revisions](revisions/) · [Prompt snapshots](prompts/)\n\nSource observed: " + record["source"]["observed_at"] + "\n\nLocal status: " + task["registration_status"] + ". Cloud enabled is an observation, not local permission.\n")
+        title = task["title"].replace("|", "\\|").replace("\n", " ")
+        timing = "new work; no schedule" if key.startswith("request-") else "event; parameters unverified" if "trigger" in task else ("daily about 08:00; " if "FREQ=DAILY;BYHOUR=8;BYMINUTE=0" in task["schedule"] else "") + task["timing_mode"] + "; " + task["default_timezone"]
+        rows.append(f"| [{title}](tasks/{key}/README.md) | {task['registration_status']} | {task.get('is_enabled', 'n/a')} | {timing} | {len(entry['revisions'])} |")
+    text_file(directory / "index.md", "\n".join(rows) + "\n")
+
+
+def publish_pointer(store, generation):
+    temp = store / (".pointer-" + str(os.getpid()))
+    try:
+        temp.symlink_to("generations/" + generation)
+        os.replace(temp, store / "current")
+    finally:
+        temp.unlink(missing_ok=True)
+
+
+def execute_import(root, incoming, apply=False, expected=None):
+    store = home(root)
+    if not apply:
+        previous, old = current(store)
+        result, actions, missing = merge(old, incoming)
+        return {"schema": VERSION, "status": "preview", "expected_generation": previous or "empty", "proposed_generation": digest(result), "actions": actions, "missing_from_snapshot": missing, "missing_disposition": "retain; reconciliation gap, never cancel", "execution_effects": 0}
+    if expected is None:
+        raise Refusal("apply requires expected generation from a fresh dry run")
+    store.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if (store / ".lock").is_symlink():
+        raise Refusal("unsafe registry lock")
+    with (store / ".lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        previous, old = current(store)
+        if expected != (previous or "empty"):
+            raise Refusal("generation conflict; rerun dry run before apply")
+        result, actions, missing = merge(old, incoming)
+        generation = digest(result)
+        if generation == previous:
+            return {"schema": VERSION, "status": "unchanged", "generation": generation, "actions": actions, "execution_effects": 0}
+        generations = store / "generations"
+        generations.mkdir(exist_ok=True, mode=0o700)
+        if generations.is_symlink():
+            raise Refusal("unsafe generations directory")
+        target = generations / generation
+        if target.exists():
+            read_generation(store, generation)
+        else:
+            stage = Path(tempfile.mkdtemp(prefix=".stage-", dir=generations))
+            try:
+                render(stage, result)
+                os.replace(stage, target)
+            finally:
+                if stage.exists():
+                    shutil.rmtree(stage)
+        read_generation(store, generation)
+        publish_pointer(store, generation)
+        readback, _ = current(store)
+        if readback != generation:
+            raise Refusal("publication readback failed")
+        return {"schema": VERSION, "status": "applied", "generation": generation, "previous_generation": previous, "actions": actions, "missing_from_snapshot": missing, "execution_effects": 0}
+
+
+def validate_store(root):
+    store = home(root)
+    generation, value = current(store)
+    if generation is None:
+        raise Refusal("registry has no published generation")
+    for key, record in value["tasks"].items():
+        task = record["current"]["definition"]
+        directory = store / "current/tasks" / key
+        for path in directory.rglob("*"):
+            if path.is_symlink():
+                raise Refusal("task record symlink refused")
+        if (directory / "prompt.txt").read_bytes() != task["prompt"].encode():
+            raise Refusal("exact prompt readback mismatch")
+        for number, revision in enumerate(record["revisions"], 1):
+            if json.loads((directory / "revisions" / f"{number:04d}.json").read_text()) != revision:
+                raise Refusal("revision readback mismatch")
+        envelope = {"schema": "atlas-task-intake/v1", **{s:record["current"][s] for s in ["source", "explicit_user_request", "privacy"]}, "tasks": [task]}
+        validate_input(envelope)
+    return {"schema": VERSION, "status": "valid", "generation": generation, "task_count": len(value["tasks"]), "execution_effects": 0}
+
+
+def status(root):
+    generation, value = current(home(root))
+    tasks = []
+    for key, record in sorted(value["tasks"].items()):
+        task = record["current"]["definition"]
+        tasks.append({"registry_id": key, "title": task["title"], "registration_status": task["registration_status"], "source_observed_at": record["current"]["source"]["observed_at"], "trigger_verification": task.get("trigger", {}).get("verification"), "unverified_destinations": sum(d["verification"] == "unverified" for d in task["destinations"])})
+    return {"schema": VERSION, "status": "observed" if generation else "empty", "generation": generation, "tasks": tasks, "automatic_capture": "not_verified", "execution_effects": 0}
+
+
+def inventory_limit(limit: int) -> None:
+    """Bound all read-only projections without silently truncating coverage."""
+    if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 1000:
+        raise Refusal("inventory limit must be between 1 and 1000 tasks")
+
+
+def channel_evidence(record: dict) -> tuple[list[dict], list[str]]:
+    """Extract identity metadata only; never parse prompts or workflow prose."""
+    task = record["definition"]
+    evidence = []
+    gaps = []
+    references = [(destination["reference"], destination["verification"], "origin" if destination["kind"] == "source thread" else "destination", "destination") for destination in task["destinations"]]
+    references.append((record["explicit_user_request"]["reference"], "user_defined", "origin", "explicit_user_request"))
+    for reference, verification, relation, basis in references:
+        pairs = list(CHANNEL_PAIR.finditer(reference))
+        for pair in pairs:
+            evidence.append({"workspace_id": pair["workspace"], "channel_id": pair["channel"], "verification": verification, "relation": relation, "basis": basis, "reference_sha256": hashlib.sha256(reference.encode()).hexdigest()})
+        if not pairs and re.search(r"(?<![A-Z0-9])[CG][A-Z0-9]{8,32}(?![A-Z0-9])", reference):
+            gaps.append("channel_workspace_unknown")
+    for binding in task.get("channel_bindings", []):
+        evidence.append({name: binding[name] for name in ["workspace_id", "channel_id", "verification", "relation"]} | {"basis": "channel_binding", "reference_sha256": hashlib.sha256(binding["evidence_ref"].encode()).hexdigest()})
+    if not evidence:
+        gaps.append("channel_identity_unknown")
+    return evidence, sorted(set(gaps))
+
+
+def inventory_task(key: str, entry: dict) -> dict:
+    """Project operational metadata while excluding task/source content."""
+    record = entry["current"]
+    task = record["definition"]
+    gaps = []
+    if "ownership" not in task:
+        gaps.append("ownership_unknown")
+    if not task.get("component_bindings"):
+        gaps.append("source_components_unbound")
+    elif any(binding["verification"] == "unverified" for binding in task["component_bindings"]):
+        gaps.append("source_components_unverified")
+    capture = task.get("prompt_capture", "exact_source_prompt")
+    if capture == "summary_only":
+        gaps.append("exact_user_prompt_unavailable")
+    cadence = {name: task[name] for name in ["is_enabled", "default_timezone", "timing_mode", "next_run_time"] if name in task}
+    cadence["schedule_sha256"] = hashlib.sha256(task["schedule"].encode()).hexdigest() if "schedule" in task else None
+    return {
+        "registry_id": key,
+        "source_id": task["id"],
+        "source_system": record["source"]["system"],
+        "source_observed_at": record["source"]["observed_at"],
+        "first_observed_at": entry["revisions"][0]["source"]["observed_at"],
+        "requested_at": record["explicit_user_request"]["requested_at"],
+        "source_snapshot_scope": record["source"]["snapshot_scope"],
+        "registration_status": task["registration_status"],
+        "revision": len(entry["revisions"]),
+        "ownership": task.get("ownership"),
+        "definition_sha256": digest(task),
+        "prompt_sha256": hashlib.sha256(task["prompt"].encode()).hexdigest(),
+        "prompt_capture": capture,
+        "cadence": cadence,
+        "execution_authority": record["execution_authority"],
+        "component_bindings": task.get("component_bindings", []),
+        "gaps": gaps,
+    }
+
+
+def channels(root: str | Path, limit: int = 100) -> dict:
+    """Group existing definitions by verified identities and separate candidates."""
+    inventory_limit(limit)
+    generation, value = current(home(root))
+    groups = {}
+    ungrouped = []
+    for key, entry in sorted(value["tasks"].items())[:limit]:
+        row = inventory_task(key, entry)
+        evidence, gaps = channel_evidence(entry["current"])
+        row["gaps"] = sorted(set(row["gaps"] + gaps))
+        identities = {}
+        for item in evidence:
+            identity = (item["workspace_id"], item["channel_id"])
+            identities.setdefault(identity, []).append({name: item[name] for name in ["verification", "relation", "basis", "reference_sha256"]})
+        if not identities:
+            ungrouped.append(row)
+        for (workspace, channel), proofs in sorted(identities.items()):
+            verified = any(proof["verification"] == "provider_verified" for proof in proofs)
+            group_id = (workspace, channel, verified)
+            group = groups.setdefault(group_id, {"workspace_id": workspace, "channel_id": channel, "identity_verification": "provider_verified" if verified else "unverified", "tasks": []})
+            projected = {**row, "channel_evidence": proofs}
+            if not verified:
+                projected["gaps"] = sorted(set(row["gaps"] + ["channel_identity_unverified"]))
+            group["tasks"].append(projected)
+    return {
+        "schema": "atlas-channel-inventory/v1",
+        "status": "observed" if generation else "empty",
+        "generation": generation,
+        "coverage": {"scope": "registered_definitions_only", "historical_source_coverage": "not_verified", "automatic_capture": "not_verified", "task_count": len(value["tasks"]), "included_task_count": min(limit, len(value["tasks"])), "omitted_task_count": max(0, len(value["tasks"]) - limit), "limit": limit},
+        "channels": [group for identity, group in sorted(groups.items()) if identity[2]],
+        "candidates": [group for identity, group in sorted(groups.items()) if not identity[2]],
+        "ungrouped": ungrouped,
+        "audience_authorization": "not_established_by_inventory",
+        "execution_effects": 0,
+    }
+
+
+def validate_components(root: str | Path, repository: str, source_root: str | Path, limit: int = 100) -> dict:
+    """Read back pinned source bytes locally without running or fetching code."""
+    inventory_limit(limit)
+    validate_repository(repository)
+    try:
+        source = Path(source_root).expanduser().resolve()
+    except (OSError, RuntimeError):
+        raise Refusal("component source root is unavailable or cyclic") from None
+    if not source.is_dir():
+        raise Refusal("component source root is unavailable")
+    generation, value = current(home(root))
+    checks = []
+    for key, entry in sorted(value["tasks"].items())[:limit]:
+        for binding in entry["current"]["definition"].get("component_bindings", []):
+            if binding["repository"] != repository:
+                continue
+            file = source / binding["path"]
+            # Check lexical ancestors first: resolving a cycle raises before
+            # a later symlink guard can return the structured refusal.
+            if any(parent.is_symlink() for parent in [file, *file.parents] if parent != source and parent.is_relative_to(source)) or not file.resolve().is_relative_to(source):
+                outcome = "redirect_refused"
+            elif not file.is_file():
+                outcome = "file_unavailable"
+            elif file.stat().st_size > MAX_BYTES:
+                outcome = "file_exceeds_limit"
+            elif binding["sha256"] is None:
+                outcome = "content_pin_unavailable"
+            elif hashlib.sha256(file.read_bytes()).hexdigest() != binding["sha256"]:
+                outcome = "content_mismatch"
+            else:
+                outcome = "content_verified"
+            checks.append({"registry_id": key, "reference": binding["reference"], "path": binding["path"], "status": outcome, "revision_verification": "not_checked"})
+    complete = bool(checks) and all(check["status"] == "content_verified" for check in checks) and len(value["tasks"]) <= limit
+    return {"schema": "atlas-component-validation/v1", "status": "valid" if complete else "incomplete", "generation": generation, "checks": checks, "coverage": "bound_components_in_selected_repository_only", "omitted_task_count": max(0, len(value["tasks"]) - limit), "execution_effects": 0}
+
+
+def rollback(root, generation, expected, apply=False):
+    store = home(root)
+    if not SHA.fullmatch(generation):
+        raise Refusal("invalid rollback generation")
+    safe_store(store)
+    with (store / ".lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        previous, old = current(store)
+        if previous != expected:
+            raise Refusal("rollback generation conflict")
+        new = read_generation(store, generation)
+        for key, record in old["tasks"].items():
+            if record["current"]["definition"]["registration_status"] == "canceled" and new["tasks"].get(key, {}).get("current", {}).get("definition", {}).get("registration_status") != "canceled":
+                raise Refusal("rollback would erase a cancellation; import a corrected definition instead")
+        if apply:
+            publish_pointer(store, generation)
+            if current(store)[0] != generation:
+                raise Refusal("rollback readback failed")
+        return {"schema": VERSION, "status": "rolled_back" if apply else "rollback_preview", "generation": generation, "previous_generation": previous, "execution_effects": 0}
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--root", default=os.environ.get("AGENTIC_OS_ROOT", str(Path.home() / "agentic_os")))
+    sub = parser.add_subparsers(dest="action", required=True)
+    imp = sub.add_parser("import", help="Preview/upsert explicit user definitions; never execute them")
+    imp.add_argument("--input", required=True)
+    imp.add_argument("--apply", action="store_true")
+    imp.add_argument("--expected-generation")
+    rec = sub.add_parser("reconcile", help="Read-only comparison with a supplied authoritative snapshot")
+    rec.add_argument("--input", required=True)
+    sub.add_parser("validate", help="Read back exact prompts, history and generation integrity")
+    sub.add_parser("status", help="Read-only registration, provenance and coverage gaps; no prompt text")
+    inventory = sub.add_parser("channels", help="Read-only channel identity inventory; no titles, prompts or task execution")
+    inventory.add_argument("--limit", type=int, default=100, help="Maximum task identities to project (1-1000); omissions remain explicit")
+    components = sub.add_parser("validate-components", help="Read back local pinned source files; never fetch or execute components")
+    components.add_argument("--repository", required=True, help="Exact HTTPS source repository identity recorded in the bindings")
+    components.add_argument("--source-root", required=True, help="Local read-only checkout or unpacked source root")
+    components.add_argument("--limit", type=int, default=100)
+    back = sub.add_parser("rollback", help="Preview/restore a local generation; cannot erase cancellations")
+    back.add_argument("--generation", required=True)
+    back.add_argument("--expected-generation", required=True)
+    back.add_argument("--apply", action="store_true")
+    pending = sub.add_parser("pending-sync", help="Stage validated intake when BigMac is unavailable; no automatic drain")
+    pending.add_argument("--input", required=True)
+    pending.add_argument("--pending-dir", required=True)
+    args = parser.parse_args(argv)
+    try:
+        if args.action in ["import", "reconcile"]:
+            incoming = load_input(args.input)
+            result = execute_import(args.root, incoming, getattr(args, "apply", False), getattr(args, "expected_generation", None))
+        elif args.action == "validate":
+            result = validate_store(args.root)
+        elif args.action == "status":
+            result = status(args.root)
+        elif args.action == "channels":
+            result = channels(args.root, args.limit)
+        elif args.action == "validate-components":
+            result = validate_components(args.root, args.repository, args.source_root, args.limit)
+        elif args.action == "rollback":
+            result = rollback(args.root, args.generation, args.expected_generation, args.apply)
+        else:
+            incoming = load_input(args.input)
+            directory = Path(args.pending_dir).expanduser()
+            directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+            target = directory / (digest(incoming) + ".json")
+            if target.is_symlink():
+                raise Refusal("unsafe pending-sync target")
+            text_file(target, encoded(incoming).decode())
+            result = {"schema": VERSION, "status": "pending_sync", "input_sha256": digest(incoming), "path": str(target), "execution_effects": 0}
+        print(json.dumps(result, sort_keys=True))
+        return 1 if result["status"] == "incomplete" else 0
+    except (Refusal, OSError, ValueError, KeyError, TypeError) as error:
+        # No input contents or potentially private provider data in errors/logs.
+        reason = str(error) if isinstance(error, Refusal) else "invalid or unavailable registry input; see operator contract"
+        print(json.dumps({"schema": VERSION, "status": "refused", "reason": reason, "execution_effects": 0}), file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())
