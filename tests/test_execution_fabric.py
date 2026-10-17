@@ -647,7 +647,7 @@ def test_named_queue_pool_and_worker_capacity_are_transactional() -> None:
         conn.close()
 
 
-def test_named_queue_bounded_aging_preserves_fresh_high_priority_work() -> None:
+def test_named_queue_aged_work_precedes_fresh_high_priority_work() -> None:
     conn = db.connect(":memory:")
     try:
         fabric.configure_queue(conn, "non_llm", max_concurrency=1)
@@ -680,13 +680,14 @@ def test_named_queue_bounded_aging_preserves_fresh_high_priority_work() -> None:
         claimed = fabric.claim_next(conn, worker_id="worker-a", worker_token=worker["lease_token"])
 
         assert claimed is not None
-        assert claimed["id"] == fresh_high["id"]
+        assert claimed["id"] == aged_low["id"]
+        assert state_queue.get(conn, fresh_high["id"])["status"] == "queued"
     finally:
         conn.close()
 
 
-@pytest.mark.parametrize(("fresh_priority", "expected"), [(9, "aged-zero"), (11, "fresh-boundary")])
-def test_named_queue_starvation_boost_boundary(fresh_priority: int, expected: str) -> None:
+@pytest.mark.parametrize(("fresh_priority", "expected"), [(9, "aged-zero"), (11, "aged-zero"), (1000, "aged-zero")])
+def test_named_queue_aged_bucket_precedes_any_fresh_priority(fresh_priority: int, expected: str) -> None:
     conn = db.connect(":memory:")
     try:
         fabric.configure_queue(conn, "non_llm", max_concurrency=1)

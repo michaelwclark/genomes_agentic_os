@@ -62,6 +62,24 @@ def parse_iso(value: str) -> datetime:
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
+def normalized_timestamp_us(value: Any) -> int | None:
+    """Normalize ISO spellings to exact UTC microseconds for queue comparisons.
+
+    Naive timestamps use UTC. Invalid values return NULL in SQLite and cannot
+    become eligible dates; integer arithmetic avoids julianday rounding.
+    """
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = parse_iso(value)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        delta = parsed.astimezone(timezone.utc) - datetime(1970, 1, 1, tzinfo=timezone.utc)
+        return (delta.days * 86400 + delta.seconds) * 1_000_000 + delta.microseconds
+    except (ValueError, TypeError, OverflowError):
+        return None
+
+
 def resolve_os_root(root: str | Path | None = None) -> Path:
     """Resolve the installed Agentic OS root.
 
@@ -106,6 +124,7 @@ def connect(db_path: str | Path = MEMORY_DB_PATH, *, busy_timeout_ms: int = 5000
         path_str = str(resolved)
     conn = sqlite3.connect(path_str, isolation_level=None, timeout=busy_timeout_ms / 1000)
     conn.row_factory = sqlite3.Row
+    conn.create_function("agentic_timestamp_us", 1, normalized_timestamp_us, deterministic=True)
     conn.execute(f"PRAGMA busy_timeout = {int(busy_timeout_ms)}")
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA journal_mode = WAL")  # silently stays "memory" for :memory: connections
@@ -140,6 +159,7 @@ def connect_readonly(db_path: str | Path, *, busy_timeout_ms: int = 5000) -> sql
     except sqlite3.Error as exc:
         raise StateDbError(f"state database is unavailable: {resolved}: {exc}") from exc
     conn.row_factory = sqlite3.Row
+    conn.create_function("agentic_timestamp_us", 1, normalized_timestamp_us, deterministic=True)
     conn.execute(f"PRAGMA busy_timeout = {int(busy_timeout_ms)}")
     conn.execute("PRAGMA query_only = ON")
     return conn
