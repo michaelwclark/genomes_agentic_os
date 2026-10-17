@@ -78,7 +78,11 @@ class MongoDBRunLogStore:
 
     def append(self, record: EvidenceRecord) -> dict[str, Any]:
         document = _validate_record(record, self.config, self.get_host(record.host_id) is not None)
-        collection = self._collection(record.model_key)
+        return self._append_document(record.model_key, document)
+
+    def _append_document(self, model_key: str, document: dict[str, Any]) -> dict[str, Any]:
+        """Persist the already validated JSON snapshot; no payload retry path."""
+        collection = self._collection(model_key)
         existing = _document(collection.find_one({"content_hash": document["content_hash"]}))
         if existing is not None:
             return existing
@@ -94,11 +98,13 @@ class MongoDBRunLogStore:
         return document
 
     def append_many(self, records: Sequence[EvidenceRecord]) -> list[dict[str, Any]]:
-        # Prevalidate the complete batch before the first write.  The adapter
-        # keeps individual idempotency behavior consistent with retrying ingress.
-        for record in records:
-            _validate_record(record, self.config, self.get_host(record.host_id) is not None)
-        return [self.append(record) for record in records]
+        # Prevalidate and freeze the complete batch before the first write.
+        # Reuse those snapshots so caller mutation cannot change later members.
+        documents = [
+            (record.model_key, _validate_record(record, self.config, self.get_host(record.host_id) is not None))
+            for record in records
+        ]
+        return [self._append_document(model_key, document) for model_key, document in documents]
 
     def import_idempotently(self, records: Sequence[EvidenceRecord]) -> list[dict[str, Any]]:
         return self.append_many(records)

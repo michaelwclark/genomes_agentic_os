@@ -1838,9 +1838,23 @@ def test_registered_team_pr_domain_worker_invokes_installed_safe_helper(
     assert byte_corrupt.value.receipt_path == str(intent_path)
 
 
+@pytest.mark.parametrize("command_source", ("proc", "ps"))
 def test_team_pr_live_pid_with_unknown_command_stays_fenced(
     monkeypatch: pytest.MonkeyPatch,
+    command_source: str,
 ) -> None:
+    class UnknownProcCommand:
+        def is_file(self) -> bool:
+            return command_source == "proc"
+
+        def read_bytes(self) -> bytes:
+            raise PermissionError("synthetic unreadable process command")
+
+    # PID 4242 may belong to a real Linux runner process. Keep both command
+    # lookup paths inside this fixture rather than consulting host /proc.
+    monkeypatch.setattr(
+        execution_fabric_remote, "Path", lambda _path: UnknownProcCommand()
+    )
     monkeypatch.setattr(
         execution_fabric_remote, "_process_is_alive", lambda _pid: True
     )
