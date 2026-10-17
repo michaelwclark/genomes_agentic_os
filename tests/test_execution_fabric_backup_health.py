@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import os
@@ -85,9 +86,9 @@ def _receipt_fixture(tmp_path: Path) -> tuple[Path, Path]:
                 "schemaVersion": "execution-fabric-backup-health/v1",
                 "status": "passed",
                 "runId": "backup-test",
-                "verifiedAt": subprocess.check_output(
-                    ["date", "-u", "+%Y-%m-%dT%H:%M:%SZ"], text=True
-                ).strip(),
+                "verifiedAt": (datetime.now(timezone.utc) - timedelta(minutes=2)).strftime(
+                    "%Y-%m-%dT%H:%M:%SZ"
+                ),
                 "backupFile": "execution_fabric.dump",
                 "backupSha256": backup_sha,
                 "restoreManifestVerified": True,
@@ -119,11 +120,27 @@ def _receipt_fixture(tmp_path: Path) -> tuple[Path, Path]:
 @pytest.mark.skipif(shutil.which("jq") is None, reason="jq is required")
 def test_validator_accepts_hash_bound_restore_manifest_and_rejects_tampering(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setenv("FABRIC_BACKUP_HEALTH_RECEIPT_MAX_AGE_SECONDS", "1")
     receipt, runtime = _receipt_fixture(tmp_path)
-    env = {**os.environ, "FABRIC_RUNTIME_ENV_FILE": str(runtime)}
+    env = {
+        "PATH": os.environ.get("PATH", os.defpath),
+        "HOME": str(tmp_path),
+        "TMPDIR": str(tmp_path),
+        "FABRIC_RUNTIME_ENV_FILE": str(runtime),
+    }
     passed = subprocess.run([str(VALIDATOR)], env=env, text=True, capture_output=True)
     assert passed.returncode == 0, passed.stderr
+
+    stale = subprocess.run(
+        [str(VALIDATOR)],
+        env={**env, "FABRIC_BACKUP_HEALTH_RECEIPT_MAX_AGE_SECONDS": "1"},
+        text=True,
+        capture_output=True,
+    )
+    assert stale.returncode == 75
+    assert "backup health receipt is stale" in stale.stderr
 
     manifest = receipt.parent / "backup-health.restore-manifest.json"
     manifest.write_text(manifest.read_text(encoding="utf-8") + " ", encoding="utf-8")
