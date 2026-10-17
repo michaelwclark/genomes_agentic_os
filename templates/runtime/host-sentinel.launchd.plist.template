@@ -4,7 +4,7 @@
   launchd agent template for the off-box host sentinel (host_agentic_os_health
   program). Renders one plist per watched host. Placeholders ({{...}}) are
   substituted at install time; do not hand-edit the rendered copy in
-  ~/Library/LaunchAgents -- re-render and re-bootstrap instead.
+  ~/Library/LaunchAgents; re-render and re-bootstrap instead.
 -->
 <plist version="1.0">
 <dict>

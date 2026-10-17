@@ -79,6 +79,7 @@ def main(argv=None) -> int:
     result = run_sentinel(
         config,
         ssh_runner=run_ssh_probe,
+        diagnostic_runner=run_ssh_probe,
         notifier=notify_via_agentic_os_notify,
         clock=utc_now,
         state_dir=state_dir,
