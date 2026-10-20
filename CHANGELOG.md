@@ -9,6 +9,18 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.11.3] - 2026-10-20
+
+### Fixed
+
+- Leave declared specialist tasks with their domain workers when the generic
+  runtime supervisor selects work, including local remote-compatible requests.
+  Preserve their status and leases while dispatching eligible generic work,
+  and expose the same read-only ownership predicate to installed adapters.
+- Preserve specialist ownership during queue or worker-pool maintenance
+  disablement while keeping admission and readiness checks strict. Invalid
+  configuration stops dispatch without changing queued work.
+
 ## [0.11.2] - 2026-10-14
 
 ### Fixed
