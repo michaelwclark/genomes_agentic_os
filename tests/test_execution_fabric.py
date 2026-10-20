@@ -1127,6 +1127,159 @@ def test_runtime_dispatch_claims_and_completes_in_execution_fabric(
     assert queue_mode_status(root)["metrics"]["live_worker_count"] == 0
 
 
+def _specialist_dispatch_root(tmp_path: Path) -> Path:
+    root = _root(tmp_path)
+    registry_path = root / "harness/shared_factory/00-control-plane/runtime-registry.yml"
+    registry = yaml.safe_load(registry_path.read_text(encoding="utf-8"))
+    registry["execution_targets"] = [{"id": "script", "status": "active"}]
+    registry_path.write_text(yaml.safe_dump(registry, sort_keys=False), encoding="utf-8")
+    apply_queue_mode(root, "execution_fabric", dry_run=False)
+    conn = db.connect(db.default_db_path(root))
+    try:
+        state_queue.update_status(conn, "legacy-1", "cancelled")
+    finally:
+        conn.close()
+    return root
+
+
+def _enqueue_specialist(root: Path, *, item_id: str = "specialist", wrapped: bool = False) -> dict:
+    conn = db.connect(db.default_db_path(root))
+    try:
+        payload = {"repository": "example/app"}
+        if wrapped:
+            payload["task_type"] = "los.team_pr.ai_review.v1"
+        return fabric.enqueue_task(
+            conn, id=item_id, queue_name="pr_reviews", worker_pool="pr_reviewers",
+            kind="remote-compatible" if wrapped else "los.team_pr.ai_review.v1",
+            execution_target="domain_worker", payload=payload, priority=10,
+        )
+    finally:
+        conn.close()
+
+
+@pytest.mark.parametrize("wrapped", [False, True])
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_runtime_next_preserves_specialist_work_and_runs_generic_behind_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, wrapped: bool, dry_run: bool,
+) -> None:
+    root = _specialist_dispatch_root(tmp_path)
+    before = _enqueue_specialist(root, wrapped=wrapped)
+    runtime_ops.append_run_queue_item(root, {"id": "generic-behind", "kind": "manual", "status": "queued",
+                                           "approval_state": "not_required", "execution_target": "script", "command": "true"})
+    executions = []
+    def execute(_root, command, **_kwargs):
+        executions.append(command)
+        return {"supported": True, "ok": True, "command": command, "errors": [], "warnings": []}
+    monkeypatch.setattr(runtime_ops, "_run_local_script", execute)
+
+    result = runtime_ops.runtime_run_next(root, dry_run=dry_run)
+
+    assert result["queue_item"]["id"] == "generic-behind"
+    assert result["status"] == ("would-run" if dry_run else "done")
+    assert executions == ([] if dry_run else ["true"])
+    conn = db.connect(db.default_db_path(root))
+    try:
+        assert state_queue.get(conn, "specialist") == before
+    finally:
+        conn.close()
+
+
+@pytest.mark.parametrize("wrapped", [False, True])
+def test_runtime_explicit_specialist_and_specialist_only_batch_leave_rows_unchanged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, wrapped: bool,
+) -> None:
+    root = _specialist_dispatch_root(tmp_path)
+    before = _enqueue_specialist(root, wrapped=wrapped)
+    monkeypatch.setattr(runtime_ops, "_run_local_script", lambda *_args, **_kwargs: pytest.fail("specialist work must never reach generic execution"))
+
+    explicit = runtime_ops.runtime_run_next(root, dry_run=False, item_id="specialist")
+    automatic = runtime_ops.runtime_run_next(root, dry_run=False)
+    batch = runtime_ops.runtime_run_batch(root, dry_run=False)
+
+    assert explicit["status"] == "specialist-owned"
+    assert automatic["status"] == "idle"
+    assert batch["status"] == "idle"
+    assert batch["results"] == []
+    assert batch["dispatched_count"] == 0
+    conn = db.connect(db.default_db_path(root))
+    try:
+        assert state_queue.get(conn, "specialist") == before
+        assert conn.execute("SELECT COUNT(*) FROM execution_workers").fetchone()[0] == 0
+    finally:
+        conn.close()
+
+
+def test_runtime_batch_keeps_specialist_owned_rows_while_dispatching_generic_work(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = _specialist_dispatch_root(tmp_path)
+    before = _enqueue_specialist(root)
+    runtime_ops.append_run_queue_item(root, {"id": "batch-generic", "kind": "manual", "status": "queued",
+                                           "approval_state": "not_required", "execution_target": "script", "command": "true"})
+    monkeypatch.setattr(runtime_ops, "_run_local_script", lambda _root, command, **_kwargs: {"supported": True, "ok": True, "command": command, "errors": [], "warnings": []})
+
+    result = runtime_ops.runtime_run_batch(root, dry_run=False)
+
+    assert result["dispatched_count"] == 1
+    assert [x["queue_item"]["id"] for x in result["results"]] == ["batch-generic"]
+    conn = db.connect(db.default_db_path(root))
+    try:
+        assert state_queue.get(conn, "specialist") == before
+    finally:
+        conn.close()
+
+
+def test_specialist_ownership_probe_is_read_only_and_recognizes_new_declared_routes(tmp_path: Path) -> None:
+    root = _root(tmp_path)
+    config_path = root / "harness/config/execution-fabric.yml"
+    config_path.parent.mkdir(parents=True)
+    config = yaml.safe_load((Path(__file__).parents[1] / "harness/config/execution-fabric.yml").read_text())
+    route = next(row for row in config["execution_fabric"]["task_routes"] if row["task_type"] == "los.team_pr.ai_review.v1")
+    route["task_type"] = "los.team_pr.hourly_review.v1"
+    route["execution"].update(remote_allowed=False, domain_worker="team_pr_hourly_local")
+    queue = next(row for row in config["execution_fabric"]["queues"] if row["id"] == "pr_reviews")
+    queue["accepted_task_types"] = ["los.team_pr.hourly_review.v1"]
+    config_path.write_text(yaml.safe_dump(config, sort_keys=False))
+    probe = {"kind": "los.team_pr.hourly_review.v1", "queue_name": "pr_reviews", "worker_pool": "pr_reviewers",
+             "execution_target": "domain_worker", "payload": {}}
+    before = config_path.read_bytes()
+
+    assert runtime_ops.execution_fabric_domain_worker_owned(root, probe) is True
+    for overrides in ({"kind": "unknown.task.v1"}, {"queue_name": "codex"}, {"worker_pool": "codex_workers"},
+                      {"execution_target": "script"}, {"payload": []}, {"task_type": "unknown.task.v1"}):
+        assert runtime_ops.execution_fabric_domain_worker_owned(root, {**probe, **overrides}) is False
+    assert runtime_ops.execution_fabric_domain_worker_owned(root, {**probe, "kind": "remote-compatible", "payload": {"task_type": probe["kind"]}}) is True
+    assert config_path.read_bytes() == before
+    assert not db.default_db_path(root).exists()
+
+
+@pytest.mark.parametrize("payload", [{"task_type": "unknown.task.v1"}, {"task_type": []}, {}])
+def test_unknown_and_malformed_wrapped_routes_keep_fail_closed_generic_behavior(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, payload: dict,
+) -> None:
+    root = _specialist_dispatch_root(tmp_path)
+    conn = db.connect(db.default_db_path(root))
+    try:
+        fabric.enqueue_task(conn, id="malformed-wrapper", queue_name="pr_reviews", worker_pool="pr_reviewers",
+                            kind="remote-compatible", execution_target="domain_worker", payload=payload)
+    finally:
+        conn.close()
+    monkeypatch.setattr(runtime_ops, "_run_local_script", lambda *_args, **_kwargs: pytest.fail("unknown specialist routes must fail closed"))
+
+    result = runtime_ops.runtime_run_next(root, dry_run=False)
+
+    assert result["status"] == "blocked"
+    assert result["queue_item"]["id"] == "malformed-wrapper"
+    conn = db.connect(db.default_db_path(root))
+    try:
+        item = state_queue.get(conn, "malformed-wrapper")
+        assert item["status"] == "blocked"
+        assert item["attempts"] == 0
+        assert item["lease_owner"] is None
+    finally:
+        conn.close()
+
+
 def test_runtime_dispatch_queue_filter_keeps_other_queues_queued(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -1758,6 +1758,45 @@ def _dispatch_blocker(item: dict[str, Any], registry: dict[str, Any]) -> str | N
     return None
 
 
+def execution_fabric_domain_worker_owned(root: str | Path, item: dict[str, Any]) -> bool:
+    """Read whether a declared specialist owns this canonical queue item.
+
+    Accept raw state rows or their flattened runtime projection. Local
+    ``remote-compatible`` rows retain their declared type in ``task_type``
+    inside the payload. The configured route, queue, pool and target must all
+    agree; an unknown or malformed routing claim is not silently skipped.
+    Business payload validation remains the specialist's responsibility.
+    This predicate does not open the queue or change task/worker state.
+    """
+    from .execution_fabric_remote import validate_task_route
+
+    if not isinstance(item, dict):
+        return False
+    payload = item.get("payload", {})
+    if not isinstance(payload, dict):
+        return False
+    flattened = {**payload, **{key: value for key, value in item.items() if key != "payload"}}
+    kind = flattened.get("kind")
+    explicit_type = flattened.get("task_type")
+    if kind == "remote-compatible":
+        task_type = explicit_type
+    else:
+        task_type = kind
+        if explicit_type is not None and explicit_type != task_type:
+            return False
+    queue_name = flattened.get("queue_name")
+    pool_name = flattened.get("worker_pool")
+    if (not isinstance(task_type, str) or not task_type or not isinstance(queue_name, str) or not queue_name or
+            not isinstance(pool_name, str) or not pool_name or flattened.get("execution_target") != "domain_worker"):
+        return False
+    try:
+        route = validate_task_route(root, queue_name, task_type)
+    except (OSError, ValueError):
+        return False
+    return bool(route.get("execution_target") == "domain_worker" and route.get("domain_worker") and
+                route.get("worker_pool") == pool_name)
+
+
 def _dispatch_timeout_seconds(item: dict[str, Any]) -> int:
     runtime_policy = item.get("runtime_policy") or {}
     values = [
@@ -2823,7 +2862,7 @@ def runtime_run_batch(
         )
         if "result" in preparation:
             result = preparation["result"]
-            if result.get("status") not in {"at-capacity", "already-claimed"}:
+            if result.get("status") not in {"at-capacity", "already-claimed", "specialist-owned"}:
                 immediate_results.append(result)
             continue
         preparations.append(preparation)
@@ -3183,18 +3222,22 @@ def _prepare_execution_fabric_dispatch(
                 if worker_pool:
                     candidate_clauses.append("worker_pool = ?")
                     candidate_params.append(worker_pool)
-                row = conn.execute(
+                rows = conn.execute(
                     "\n".join(
                         (
                             "SELECT id FROM run_queue",
                             "WHERE " + " AND ".join(candidate_clauses),
                             f"ORDER BY {state_queue.DISPATCH_ORDER_SQL}",
-                            "LIMIT 1",
                         )
                     ),
                     (*candidate_params, state_queue.starvation_cutoff(now_value), state_queue.starvation_cutoff(now_value)),
-                ).fetchone()
-                candidate_state = state_queue.get(conn, str(row["id"])) if row is not None else None
+                ).fetchall()
+                candidate_state = None
+                for row in rows:
+                    candidate = state_queue.get(conn, str(row["id"]))
+                    if candidate is not None and not execution_fabric_domain_worker_owned(os_root, candidate):
+                        candidate_state = candidate
+                        break
                 if candidate_state is None and queue_name and worker_pool:
                     mismatch_clauses = [
                         "status = 'queued'",
@@ -3202,17 +3245,19 @@ def _prepare_execution_fabric_dispatch(
                         "queue_name = ?",
                         "worker_pool != ?",
                     ]
-                    mismatch_row = conn.execute(
+                    mismatch_rows = conn.execute(
                         "\n".join(
                             (
                                 "SELECT id FROM run_queue",
                                 "WHERE " + " AND ".join(mismatch_clauses),
                                 "ORDER BY priority DESC, (due_at IS NULL) ASC, due_at, created_at, id",
-                                "LIMIT 1",
                             )
                         ),
                         (now_value, queue_name, worker_pool),
-                    ).fetchone()
+                    ).fetchall()
+                    mismatch_row = next((row for row in mismatch_rows
+                                         if (candidate := state_queue.get(conn, str(row["id"]))) is not None
+                                         and not execution_fabric_domain_worker_owned(os_root, candidate)), None)
                     if mismatch_row is not None:
                         candidate_state = state_queue.get(conn, str(mismatch_row["id"]))
                         if candidate_state is not None:
@@ -3240,6 +3285,11 @@ def _prepare_execution_fabric_dispatch(
                             }
             if candidate_state is None:
                 return {"result": {"root": str(os_root), "status": "idle", "dry_run": dry_run, "message": "no queued runtime work"}}
+            if execution_fabric_domain_worker_owned(os_root, candidate_state):
+                return {"result": {"root": str(os_root), "status": "specialist-owned", "dry_run": dry_run,
+                                   "queue_item": _runtime_item_from_state(candidate_state),
+                                   "queue_backend": EXECUTION_FABRIC_MODE,
+                                   "external_effect": "none; specialist-owned work remains unchanged"}}
             item = _runtime_item_from_state(candidate_state)
             if item.get("status") not in {"queued", "approval-needed"}:
                 return {

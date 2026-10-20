@@ -872,6 +872,20 @@ Status: **OK** (rc 0)
 
 Dispatch the next safe queued runtime item. Dry-run by default.
 
+With Execution Fabric active, the generic dispatcher leaves tasks assigned to
+a declared `domain_worker` route for that specialist. Automatic dispatch and
+batches continue to eligible generic work behind them. An explicit specialist
+item ID returns `specialist-owned` without changing its status, attempts or
+lease. Local `remote-compatible` tasks use their declared payload `task_type`
+for the same ownership check. Unknown or mismatched routes retain the normal
+fail-closed dispatch checks.
+
+Local adapters can check this installed behavior without mutating state through
+`runtime_ops.execution_fabric_domain_worker_owned(root, item)`. The predicate
+accepts a canonical state row or flattened runtime row and verifies its declared
+task type, enabled queue/pool and `domain_worker` target. Business payload
+validation remains with the specialist.
+
 | Arg / Flag | Required | Description |
 |---|---|---|
 | `--root` | No | Installed OS root path |
