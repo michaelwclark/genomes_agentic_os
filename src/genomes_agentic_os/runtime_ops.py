@@ -1766,9 +1766,11 @@ def execution_fabric_domain_worker_owned(root: str | Path, item: dict[str, Any])
     inside the payload. The configured route, queue, pool and target must all
     agree; an unknown or malformed routing claim is not silently skipped.
     Business payload validation remains the specialist's responsibility.
-    This predicate does not open the queue or change task/worker state.
+    Maintenance disablement changes admission, not ownership. Configuration
+    errors propagate before dispatch can mutate a row. This predicate does
+    not open the queue or change task/worker state.
     """
-    from .execution_fabric_remote import validate_task_route
+    from .execution_fabric_config import load_execution_fabric_config
 
     if not isinstance(item, dict):
         return False
@@ -1789,12 +1791,17 @@ def execution_fabric_domain_worker_owned(root: str | Path, item: dict[str, Any])
     if (not isinstance(task_type, str) or not task_type or not isinstance(queue_name, str) or not queue_name or
             not isinstance(pool_name, str) or not pool_name or flattened.get("execution_target") != "domain_worker"):
         return False
-    try:
-        route = validate_task_route(root, queue_name, task_type)
-    except (OSError, ValueError):
+    config = load_execution_fabric_config(root).value["execution_fabric"]
+    queue = next((row for row in config["queues"] if row["id"] == queue_name), None)
+    if (queue is None or queue["worker_pool"] != pool_name or
+            task_type not in queue.get("accepted_task_types", [])):
         return False
-    return bool(route.get("execution_target") == "domain_worker" and route.get("domain_worker") and
-                route.get("worker_pool") == pool_name)
+    if not any(row["id"] == pool_name for row in config["worker_pools"]):
+        return False
+    route = next((row for row in config.get("task_routes", [])
+                  if row["task_type"] == task_type and row["queue"] == queue_name), None)
+    execution = route.get("execution", {}) if route is not None else {}
+    return bool(execution.get("target") == "domain_worker" and execution.get("domain_worker"))
 
 
 def _dispatch_timeout_seconds(item: dict[str, Any]) -> int:

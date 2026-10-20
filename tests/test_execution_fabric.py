@@ -1280,6 +1280,122 @@ def test_unknown_and_malformed_wrapped_routes_keep_fail_closed_generic_behavior(
         conn.close()
 
 
+def _configure_specialist_admission(root: Path, disabled: str) -> None:
+    config = yaml.safe_load(
+        (Path(__file__).parents[1] / "harness/config/execution-fabric.yml").read_text(encoding="utf-8")
+    )
+    value = config["execution_fabric"]
+    if disabled == "queue":
+        next(row for row in value["queues"] if row["id"] == "pr_reviews")["enabled"] = False
+    elif disabled == "pool":
+        next(row for row in value["worker_pools"] if row["id"] == "pr_reviewers")["enabled"] = False
+    else:
+        assert disabled == "invalid_configuration"
+        value["admission"]["global_max_running"] = -1
+    path = root / "harness/config/execution-fabric.yml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
+
+
+@pytest.mark.parametrize("disabled", ["queue", "pool"])
+@pytest.mark.parametrize("entrypoint", ["automatic", "explicit", "batch"])
+@pytest.mark.parametrize("wrapped", [False, True])
+def test_disabled_specialist_admission_preserves_ownership_and_queued_row(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, disabled: str, entrypoint: str, wrapped: bool,
+) -> None:
+    from genomes_agentic_os.execution_fabric_remote import validate_task_route
+
+    root = _specialist_dispatch_root(tmp_path)
+    before = _enqueue_specialist(root, wrapped=wrapped)
+    _configure_specialist_admission(root, disabled)
+    assert runtime_ops.execution_fabric_domain_worker_owned(root, before)
+    # The read-only ownership check must not qualify disabled work for execution.
+    with pytest.raises(ValueError, match="disabled|no enabled worker pool"):
+        validate_task_route(root, "pr_reviews", "los.team_pr.ai_review.v1")
+    monkeypatch.setattr(runtime_ops, "_run_local_script", lambda *_args, **_kwargs: pytest.fail("disabled specialist must not execute"))
+
+    if entrypoint == "batch":
+        result = runtime_ops.runtime_run_batch(root, dry_run=False)
+        assert result["results"] == []
+        assert result["dispatched_count"] == 0
+    else:
+        result = runtime_ops.runtime_run_next(
+            root, dry_run=False, **({"item_id": "specialist"} if entrypoint == "explicit" else {})
+        )
+    assert result["status"] == ("specialist-owned" if entrypoint == "explicit" else "idle")
+    conn = db.connect(db.default_db_path(root))
+    try:
+        assert state_queue.get(conn, "specialist") == before
+        assert conn.execute("SELECT COUNT(*) FROM execution_workers").fetchone()[0] == 0
+    finally:
+        conn.close()
+
+
+@pytest.mark.parametrize("disabled", ["queue", "pool"])
+@pytest.mark.parametrize("entrypoint", ["automatic", "explicit", "batch"])
+def test_disabled_specialist_admission_keeps_generic_work_dispatchable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, disabled: str, entrypoint: str,
+) -> None:
+    root = _specialist_dispatch_root(tmp_path)
+    before = _enqueue_specialist(root, wrapped=True)
+    runtime_ops.append_run_queue_item(root, {
+        "id": "generic-behind", "kind": "manual", "status": "queued",
+        "approval_state": "not_required", "execution_target": "script", "command": "true",
+    })
+    _configure_specialist_admission(root, disabled)
+    executions = []
+
+    def execute(_root, command, **_kwargs):
+        executions.append(command)
+        return {"supported": True, "ok": True, "command": command, "errors": [], "warnings": []}
+
+    monkeypatch.setattr(runtime_ops, "_run_local_script", execute)
+    if entrypoint == "batch":
+        result = runtime_ops.runtime_run_batch(root, dry_run=False)
+        assert [row["queue_item"]["id"] for row in result["results"]] == ["generic-behind"]
+        assert result["dispatched_count"] == 1
+        assert result["results"][0]["status"] == "done"
+    else:
+        result = runtime_ops.runtime_run_next(
+            root, dry_run=False, **({"item_id": "generic-behind"} if entrypoint == "explicit" else {})
+        )
+        assert result["queue_item"]["id"] == "generic-behind"
+    assert result["status"] == ("batch-complete" if entrypoint == "batch" else "done")
+    assert executions == ["true"]
+    conn = db.connect(db.default_db_path(root))
+    try:
+        assert state_queue.get(conn, "specialist") == before
+    finally:
+        conn.close()
+
+
+@pytest.mark.parametrize("entrypoint", ["automatic", "explicit", "batch"])
+def test_invalid_specialist_configuration_stops_dispatch_without_mutation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, entrypoint: str,
+) -> None:
+    from genomes_agentic_os.execution_fabric_config import ExecutionFabricConfigError
+
+    root = _specialist_dispatch_root(tmp_path)
+    before = _enqueue_specialist(root, wrapped=True)
+    _configure_specialist_admission(root, "invalid_configuration")
+    monkeypatch.setattr(runtime_ops, "_run_local_script", lambda *_args, **_kwargs: pytest.fail("invalid configuration must not execute"))
+    with pytest.raises(ExecutionFabricConfigError):
+        runtime_ops.execution_fabric_domain_worker_owned(root, before)
+    with pytest.raises(ExecutionFabricConfigError):
+        if entrypoint == "batch":
+            runtime_ops.runtime_run_batch(root, dry_run=False)
+        else:
+            runtime_ops.runtime_run_next(
+                root, dry_run=False, **({"item_id": "specialist"} if entrypoint == "explicit" else {})
+            )
+    conn = db.connect(db.default_db_path(root))
+    try:
+        assert state_queue.get(conn, "specialist") == before
+        assert conn.execute("SELECT COUNT(*) FROM execution_workers").fetchone()[0] == 0
+    finally:
+        conn.close()
+
+
 def test_runtime_dispatch_queue_filter_keeps_other_queues_queued(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

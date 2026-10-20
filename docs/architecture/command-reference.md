@@ -876,14 +876,18 @@ With Execution Fabric active, the generic dispatcher leaves tasks assigned to
 a declared `domain_worker` route for that specialist. Automatic dispatch and
 batches continue to eligible generic work behind them. An explicit specialist
 item ID returns `specialist-owned` without changing its status, attempts or
-lease. Local `remote-compatible` tasks use their declared payload `task_type`
+lease, including while the declared queue or worker pool is disabled for
+maintenance. Ownership does not make disabled work eligible to run; normal
+admission and local readiness checks still require an enabled queue and pool.
+Local `remote-compatible` tasks use their declared payload `task_type`
 for the same ownership check. Unknown or mismatched routes retain the normal
 fail-closed dispatch checks.
 
 Local adapters can check this installed behavior without mutating state through
 `runtime_ops.execution_fabric_domain_worker_owned(root, item)`. The predicate
 accepts a canonical state row or flattened runtime row and verifies its declared
-task type, enabled queue/pool and `domain_worker` target. Business payload
+task type, matching declared queue/pool and `domain_worker` target. Invalid
+configuration raises before dispatch changes queue state. Business payload
 validation remains with the specialist.
 
 | Arg / Flag | Required | Description |
