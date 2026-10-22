@@ -10,11 +10,11 @@
       "tag": "8.1.9-alpine"
     },
     "minio": {
-      "repository": "docker.io/minio/minio",
+      "repository": "ghcr.io/michaelwclark/genomes-agentic-os-execution-fabric-minio",
       "tag": "RELEASE.2025-09-07T16-13-09Z"
     },
     "minio_client": {
-      "repository": "docker.io/minio/mc",
+      "repository": "ghcr.io/michaelwclark/genomes-agentic-os-execution-fabric-minio-client",
       "tag": "RELEASE.2025-08-13T08-35-41Z"
     }
   }

@@ -19,6 +19,39 @@ All notable changes to this project are documented here. The format follows
   exact reference UUIDs, active-modification conflict checks, and a separate
   boarded confirmation token.
 
+## [0.11.3] - 2026-10-20
+
+### Fixed
+
+- Leave declared specialist tasks with their domain workers when the generic
+  runtime supervisor selects work, including local remote-compatible requests.
+  Preserve their status and leases while dispatching eligible generic work,
+  and expose the same read-only ownership predicate to installed adapters.
+- Preserve specialist ownership during queue or worker-pool maintenance
+  disablement while keeping admission and readiness checks strict. Invalid
+  configuration stops dispatch without changing queued work.
+
+## [0.11.2] - 2026-10-14
+
+### Fixed
+
+- Resolve published MinIO server and client indexes to verified architecture
+  children before Docker identity and storage checks. Retain signed parent
+  indexes and validate the executed child identity in publication receipts.
+- Gate publication on a Linux Docker store that executes amd64 and then arm64
+  checks against immutable published images.
+
+## [0.11.1] - 2026-10-14
+
+### Fixed
+
+- Build owned MinIO server and client images from the existing, signed upstream
+  releases when their public container repositories cannot supply the configured
+  images. Pin the runtime base and bind the published index, platform images and
+  provenance to verified build inputs.
+- Require real amd64 and arm64 storage, health, secret-file, persistence and
+  cleanup checks before publishing the complete Execution Fabric and SDK release.
+
 ## [0.11.0] - 2026-10-14
 
 ### Added

@@ -17,7 +17,7 @@ The shared release contract standardizes the part every repository needs:
 > gate → tag → GitHub release → provider readback
 
 Build and publish remain local because the products are different. Agentic OS
-publishes Python distributions, operational bundles, an SBOM, and three OCI
+publishes Python distributions, operational bundles, an SBOM, and five OCI
 images. Harness publishes a packaged desktop artifact. Library publishes a
 deterministic archive and validation receipts. Brain publishes release metadata.
 
@@ -110,7 +110,7 @@ a SHA other than `target_sha`, the contract fails closed and never moves it.
 
 | Repository role | Expected release assets | Publish target |
 | --- | --- | --- |
-| Agentic OS | Wheel, source distribution, checksum file, release manifest containing the immutable control-plane OCI digest, image-lock receipt, emergency bundle, configuration-schema bundle, SPDX SBOM | GitHub Release plus three multi-architecture OCI images with adjacent provenance attestations |
+| Agentic OS | Wheel, source distribution, checksum file, release manifest containing the immutable control-plane OCI digest, image-lock receipt, emergency bundle, configuration-schema bundle, SPDX SBOM | GitHub Release plus five multi-architecture OCI images with adjacent provenance attestations |
 | Harness | Verified packaged desktop archive from the completed CI run | GitHub Release |
 | Library | Deterministic library archive, file manifest, validation receipt, build receipt, release-readback receipt | GitHub Release |
 | Brain | Generated notes and release metadata; no binary asset manifest today | GitHub Release |
