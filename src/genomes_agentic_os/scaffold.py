@@ -1017,6 +1017,7 @@ def backup_policy_payload() -> dict[str, object]:
                 "harness/logs/",
                 "harness/security/ssh/*",
                 "**/.env",
+                "**/hosts.env",
                 "**/*secret*",
                 "**/*token*",
             ],
@@ -1981,6 +1982,37 @@ safety, privacy, production, billing, legal, or customer-visible work.
 """
 
 
+HOST_ACCESS_CONTRACT = """<!-- agentic-os-host-access:start -->
+## Shared SSH and sudo access
+
+All workflows and Claude, Codex, or Atlas executions with a local host executor
+use `harness/bin/agentic-os-host` for configured host access. It reads the
+executing user's owner-only `hosts.env`; never source, print, copy into prompts,
+or log this file. Use `check --sudo`, `run HOST -- COMMAND ...`, or
+`sudo HOST -- COMMAND ...` (HOST: genomesbox, bigmac, workmac).
+SSH uses public keys, strict host trust, and no agent or password fallback.
+Sudo uses the stored password privately with fresh authentication; its command
+receives /dev/null stdin. Read `harness/rules/host-access.md` for the contract.
+Reuse configured routes and keys; do not ask the operator to paste passwords or
+repeat commands when this helper works. Authentication retains ordinary task
+scope and action approvals. Cloud-only Atlas tasks require an authorized local
+executor; a local task mirror does not change the cloud provider's capabilities.
+<!-- agentic-os-host-access:end -->
+"""
+
+
+def ensure_host_access_contract(root: Path, result: ScaffoldResult) -> None:
+    """Add discovery to existing harnesses without replacing operator text."""
+    for name in ("AGENTS.md", "RULES.md", "TOOLS.md"):
+        path = harness_path(root, name)
+        if not path.exists():
+            continue
+        text = path.read_text(encoding="utf-8")
+        if "<!-- agentic-os-host-access:start -->" not in text:
+            path.write_text(text.rstrip() + "\n\n" + HOST_ACCESS_CONTRACT, encoding="utf-8")
+            result.updated.append(path)
+
+
 def root_tools() -> str:
     hooks = "\n".join(
         f"| `{entry['id']}` | {entry['description']} | `{entry.get('source', '')}` |"
@@ -2086,6 +2118,7 @@ the source of truth by themselves.
 | `agentic-os context build` | Build a deterministic context packet. | Use for handoffs and repeatable runs. |
 | `agentic-os project onboard` | Create or repair a project-local agent/config surface. | Additive by default. |
 | `harness/bin/agentic-os-quiet-run` | Run long local commands with file-backed state. | Use for tests, setup, watchers, and slow waits. |
+| `harness/bin/agentic-os-host` | SSH or fresh sudo using private `hosts.env`. | `check --sudo`, `run HOST -- COMMAND ...`, `sudo HOST -- COMMAND ...`; see `harness/rules/host-access.md`. |
 | `agentic-os cockpit snapshot/build/open` | Build or open the read-only local engineering cockpit. | Generates disposable JSON/HTML under the canonical report root. |
 | `agentic-os gui snapshot/transcript/open` | Inspect or open AgenticOSGui's native Claude/Codex conversation surface. | Provider stores remain read-only; interactive actions stay behind desktop IPC. |
 | `agentic-os runtime snapshot` | Inspect queue depth, workers, task/run states, retries, dead letters, and current health. | Backend-neutral read; Command Center consumes this same projection. |
@@ -2956,6 +2989,7 @@ def ensure_root_files(
     write_file_once(harness_root / "CONTEXT.md", root_context(domains_list), result)
     write_file_once(harness_root / "RULES.md", root_rules(), result)
     write_file_once(harness_root / "TOOLS.md", root_tools(), result)
+    ensure_host_access_contract(root, result)
     ensure_root_instruction_adapters(root, result)
     if include_legacy_agent:
         write_file_once(harness_root / "AGENT.md", legacy_agent_adapter(), result)
@@ -3221,6 +3255,7 @@ def install_docs(root: str | Path) -> ScaffoldResult:
     ensure_auto_dev_program_alias(os_root, result)
     ensure_self_improvement_surface(os_root, result)
     ensure_execution_fabric_routing_blocks(os_root, result)
+    ensure_host_access_contract(os_root, result)
     return result
 
 

@@ -16,6 +16,10 @@ the source of truth by themselves.
 
 ## External Tool Routing
 
+- Configured SSH and sudo access uses `harness/bin/agentic-os-host` and the
+  executing user's owner-only `hosts.env`. See `rules/host-access.md` for
+  invocation, trust, deadlines, and Atlas local-executor requirements.
+
 - For external SaaS/app tool use, follow the provider order in this file or the backing registry. For Jira work-item creation or updates, use the verified Atlassian CLI `acli` first with native Atlassian Document Format (ADF), then read the issue back through `acli` to verify rendering. Use MCP, connector, or direct API only after an ACLI authentication or capability failure, and record that fallback reason.
 - If Composio is unauthorized, not connected, missing the needed slug/scope, or points at the wrong workspace/account, record that fallback reason and then use the native MCP/connector/CLI/direct API listed in this layer.
 - Customer-visible, destructive, billing, deploy, email/message, tracker, database, and Notion writes still require explicit approval plus target verification.
