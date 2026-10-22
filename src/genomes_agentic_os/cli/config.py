@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import argparse
+import json
 
 from ..cli_help import AosHelpFormatter, env_epilog
 from ..config_ops import LAYERS as CONFIG_LAYERS
 from ..config_ops import doctor_config, install_config, install_config_tree
 from ..doc_config import build_doc_config_plan, doc_config_doctor, format_doc_config_result, init_doc_config
 from ..hook_ops import hook_doctor, hook_sync
+from ..memory_endpoint_migration import (
+    MemoryEndpointMigrationError, execute_memory_endpoint, plan_memory_endpoint, read_document,
+)
 
 from ._shared import DEFAULT_ROOT, yaml_dump
 
@@ -93,6 +97,28 @@ def handle_hook_doctor(args: argparse.Namespace) -> int:
     return 0 if result.ok else 1
 
 
+def handle_memory_endpoint(args: argparse.Namespace) -> int:
+    """Emit secret-safe plans/results; never contact a memory service."""
+    try:
+        if args.memory_operation == "plan":
+            result = plan_memory_endpoint(
+                args.root, host=args.host, paths=args.path,
+                service_receipt=read_document(args.service_receipt),
+            )
+        else:
+            result = execute_memory_endpoint(
+                args.root, read_document(args.plan), operation=args.memory_operation,
+                apply=args.apply,
+            )
+    except MemoryEndpointMigrationError as exc:
+        print(json.dumps({"schema": "memory-endpoint-migration-result/v1",
+                          "status": "refused", "reason": str(exc),
+                          "target_changes": None if getattr(args, "apply", False) else False}))
+        return 2
+    print(json.dumps(result, sort_keys=True, indent=2, allow_nan=False))
+    return 0
+
+
 def register(subparsers) -> None:
     """Register the config / doc-config / hook command group."""
     config_parser = subparsers.add_parser(
@@ -153,6 +179,26 @@ def register(subparsers) -> None:
     config_doctor.add_argument("--root", default=DEFAULT_ROOT, help="Directory containing config.toml.")
     config_doctor.add_argument("--layer", required=True, choices=sorted(CONFIG_LAYERS), help="Agentic OS config layer.")
     config_doctor.set_defaults(handler=handle_config_doctor)
+
+    memory = config_subparsers.add_parser(
+        "memory-endpoint", help="Plan, apply, or roll back an exact managed Brain URL patch.",
+        description="No network requests. Apply/rollback default to a read-only preview; see the migration runbook.",
+    )
+    operations = memory.add_subparsers(dest="memory_operation", required=True)
+    plan = operations.add_parser("plan", help="Inventory explicit managed files without writing them.")
+    plan.add_argument("--root", default=DEFAULT_ROOT)
+    plan.add_argument("--host", required=True, help="Verified logical host name.")
+    plan.add_argument("--path", action="append", required=True, help="Exact managed relative path; repeat explicitly.")
+    plan.add_argument("--service-receipt", required=True, help="Fresh separately verified Brain service receipt.")
+    plan.set_defaults(handler=handle_memory_endpoint)
+    for operation in ("apply", "rollback"):
+        parser = operations.add_parser(operation, help=f"Preview or explicitly {operation} an exact plan.")
+        parser.add_argument("--root", default=DEFAULT_ROOT)
+        parser.add_argument("--plan", required=True, help="Unchanged generated plan JSON.")
+        mode = parser.add_mutually_exclusive_group()
+        mode.add_argument("--dry-run", action="store_true")
+        mode.add_argument("--apply", action="store_true", help="Perform guarded local file changes.")
+        parser.set_defaults(handler=handle_memory_endpoint)
 
     doc_config_parser = subparsers.add_parser(
         "doc-config",

@@ -59,7 +59,7 @@ MCP_SERVERS: dict[str, McpServer] = {
     "genomes_brain": McpServer(
         id="genomes_brain",
         display_name="Genome's Brain",
-        url="http://127.0.0.1:3155/mcp",
+        url="http://127.0.0.1:3166/mcp",
         use_when="Durable cross-session memory reads and non-secret writes.",
         boundary="No secrets; use project rules and memory policy before writing.",
         install_scope="every layer",

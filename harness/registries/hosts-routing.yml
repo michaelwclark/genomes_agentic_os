@@ -53,5 +53,5 @@ artifact_return:
 
 memory_plane:
   shared: false                   # set true when one memory service serves every host
-  endpoint_local: 127.0.0.1:3155
-  note: "Point every host at one shared memory endpoint before enabling."
+  endpoint_local: 127.0.0.1:3166
+  note: "Verify the current Brain service and each host's configured transport before enabling shared routing."
