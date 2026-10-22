@@ -1,0 +1,80 @@
+{
+  "schema": "atlas-task-intake/v1",
+  "source": {
+    "system": "chatgpt_cloud_automations",
+    "observed_at": "2026-10-06T20:46:00Z",
+    "reference": "synthetic listing",
+    "snapshot_scope": "partial"
+  },
+  "explicit_user_request": {
+    "reference": "synthetic explicit request",
+    "requested_at": "2026-10-06T20:00:00Z"
+  },
+  "privacy": {
+    "attested_by": "synthetic operator",
+    "task_definitions_only": true,
+    "excluded_sensitive_content": true
+  },
+  "tasks": [
+    {
+      "id": "synthetic-1",
+      "title": "Synthetic public research",
+      "prompt": "Research public documentation.\nPreserve exact punctuation: café’s.",
+      "is_enabled": true,
+      "default_timezone": "America/Chicago",
+      "timing_mode": "flexible_schedule",
+      "schedule": "BEGIN:VEVENT\nDTSTART;TZID=America/Chicago:20261007T080000\nRRULE:FREQ=DAILY;BYHOUR=8;BYMINUTE=0;BYSECOND=0\nEND:VEVENT",
+      "registration_status": "registered",
+      "destinations": [
+        {
+          "kind": "brief",
+          "reference": "synthetic destination",
+          "verification": "unverified"
+        }
+      ],
+      "workflow": {
+        "inputs": [
+          "Synthetic inputs"
+        ],
+        "process": [
+          "Synthetic process"
+        ],
+        "outputs": [
+          "Synthetic outputs"
+        ],
+        "review": [
+          "Synthetic review"
+        ],
+        "handoff": [
+          "Synthetic handoff"
+        ]
+      },
+      "ownership": {
+        "scope": "root"
+      },
+      "channel_bindings": [
+        {
+          "workspace_id": "TSYNTH001",
+          "channel_id": "CSYNTH001",
+          "relation": "destination",
+          "verification": "unverified",
+          "evidence_ref": "Synthetic channel identity example; verify at the provider before grouping"
+        }
+      ],
+      "component_bindings": [
+        {
+          "kind": "workflow",
+          "reference": "workflow:root:public_research",
+          "repository": "https://github.com/example/workflows",
+          "path": "lib/workflows/root/public_research/object.yml",
+          "revision": null,
+          "sha256": null,
+          "ownership": {
+            "scope": "root"
+          },
+          "verification": "unverified"
+        }
+      ]
+    }
+  ]
+}
