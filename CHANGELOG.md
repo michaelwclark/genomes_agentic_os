@@ -9,6 +9,16 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Add an opt-in boarded synthetic loan profile with a fresh servicing account,
+  disabled primary applicant, deterministic account number, completed boarding
+  proof, and transaction-bound qualification for authorized lender renewal and
+  short-term extension setup.
+- Preserve LLC/trust borrower selection and enforce full idempotent reuse,
+  exact reference UUIDs, active-modification conflict checks, and a separate
+  boarded confirmation token.
+
 ## [0.11.3] - 2026-10-20
 
 ### Fixed
