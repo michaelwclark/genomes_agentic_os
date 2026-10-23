@@ -2132,6 +2132,128 @@ Groom-through-PR-Create boundary is eligible. Exact replay is idempotent; stale
 downstream stage receipts remain historical until their current-head replacements
 are recorded. See [the Auto-Dev program](../42-auto-dev-program.md) for its schema.
 
+Refresh an accepted historical GitHub PR receipt through its selected repository
+catalog alias using the ordinary typed writer:
+
+```bash
+agentic-os develop stage <development-task-state.json> \
+  --stage release_propagation \
+  --receipt release_propagation=<packet-contained-successor-evidence.json> \
+  --idempotency-prefix <stable-refresh-key> --json
+```
+
+This compatibility path applies only at `local_validation` when the immutable
+predecessor identifies `github:owner/repository#number` and the successor uses
+`selected_alias#number` for the same PR. Both receipts must contain the selected
+`repository`, canonical `github_repository`, `provider: github`, captured
+`base_branch` and `base_sha`, registered `source_branch`, and full commit
+`source_head_sha`. The existing new-head, `readback_verified`, and explicit
+prior-head `supersession` gates still apply. The successor's `provider_observed`
+must bind the canonical repository/qualified PR, captured base/branch, exact
+new head, `state: OPEN`, and `is_draft: false`.
+
+The successor must also provide exactly these `evidence.repository_alias_authority`
+fields; an unknown or missing field rejects the refresh:
+
+| Field | Required proof |
+|---|---|
+| `schema` | `development-repository-alias-authority/v1` |
+| `kind` | `current_catalog` |
+| `profile_source`, `profile_sha256` | The task's recorded profile path and SHA-256 of its current raw file bytes |
+| `catalog_entry_sha256` | SHA-256 of the unique current catalog row, serialized as sorted compact JSON (`sort_keys=True`, `ensure_ascii=True`, separators `,` and `:`, UTF-8); mapping catalog keys become the row's `id` |
+| `repository_id`, `root`, `base_branch`, `github_repository` | Exact selected row matching the frozen task alias/root/base and predecessor's canonical GitHub repository |
+| `canonical_origin` | `git:github.com/owner/repository`, verified against actual source and registered worktree remotes |
+| `worktree_path` | The task's original clean registered checkout, on its recorded branch at the provider-read new head |
+
+The current selected validation policy must match the integrity-checked frozen
+task snapshot, and the prior source commit must be an ancestor of the new head.
+Changed or ambiguous selection, noncanonical origins, a dirty or stale checkout,
+different PR/base/source, closed or draft PR, and missing supersession all fail
+before mutation. Active project registration must match the captured checkout
+name, path and branch; equal registry projections agree, but conflicting copies
+or duplicate entries within one registry source reject the refresh. Each
+registry source comes from its actual file; persisted `_source` metadata is
+rejected. The historical catalog hash was not recorded: this is explicitly
+current catalog authority fenced by immutable task and predecessor identity.
+Only the comparison copy is qualified. The successor records normalization
+provenance and the original wrapper/evidence hashes; original files stay intact.
+Exact replay remains idempotent. This path neither changes review policy nor
+declares merge, release, installation, or deployment readiness.
+
+The ordinary `develop stage --stage review` writer also accepts an immutable
+provider-canonical review for a selected catalog alias when preflighting from
+`local_validation` to `ready_for_merge`.
+This separate comparison requires the same exact `repository_alias_authority`
+and full `provider_observed` fields above, with the reviewed head equal to the
+clean registered checkout. It additionally requires
+`canonical_review_receipt_sha256` (raw receipt bytes), `canonical_review_key`,
+`canonical_subject` (the original complete subject), and
+`review_policy_fingerprint`, alongside the existing
+`review_coordination_receipt`. The canonical subject must name the exact GitHub
+repository and `github:owner/repository#number`, captured base branch/SHA,
+reviewed head, selected review policy and `review_self` purpose. Missing proof
+does not fall back to an alias guess.
+
+The original canonical assertion still requires a clean terminal review under
+its existing semantics, including a genuine clean `operator_resolution`.
+Findings and unavailable review remain ineligible. Only the new typed readiness
+snapshot gains `review_identity_normalization` with both identities, the original
+subject/key/raw digest, and catalog/origin/registration provenance. The canonical
+review file, its stable key, and earlier delivery receipts remain unchanged.
+This joins the same PR at the same head; it does not authorize a sibling PR,
+change review outcomes or policy, or replace Finalize and Merge gates.
+
+An already normalized catalog alias also resolves its expected provider through
+the current selected catalog and the integrity-checked frozen policy when
+superseding an unmerged ready state. The repository identifier stays unchanged;
+the provider is never inferred from the incoming readiness claim. Unknown
+selection, changed policy, or an ambiguous provider fails closed. Existing
+repository, author, source, policy and prior-readiness checks still apply.
+Both historical and already normalized aliases require active, consistent
+project registration, a clean checkout at the provider-read successor head,
+and the prior source head as its actual Git ancestor.
+
+For an older invalid zero-call advisory derivative, the Python coordination API
+provides an explicit quarantine operation:
+
+```python
+coordinator.quarantine_invalid_advisory_derivative(
+    key,
+    receipt_sha256=invalid_receipt_sha256,
+    source_key=paid_source_key,
+    source_receipt_sha256=paid_source_sha256,
+    approval_path=approval_path,
+    approval_sha256=approval_sha256,
+)
+```
+
+The approval JSON uses `auto-dev-zero-call-quarantine-approval/v1`, with
+`approved: true`, a nonempty `reason`, and the exact `key`,
+`receipt_sha256`, `family_key`, `source_key` and
+`source_receipt_sha256`. The operation verifies its raw digest, the native
+unpaid advisory index, unchanged valid full/delta findings source, original
+response and structured-findings digests, deterministic derivation key, and the
+actual inherited-finding defect. It refuses paid, unknown, valid, tampered or
+cross-family candidates before changing evidence.
+
+The original invalid bytes move through native quarantine; an already
+quarantined identical record can be classified under the same proof. The
+tombstone records immutable approval and source hashes with
+`mode: advisory_recovery` and `budget_consumed: false`. Exact concurrent
+retries are idempotent. The bad key stays unusable, original paid receipts and
+their counts stay unchanged, and later deltas still need genuine parent
+resolution declarations. This operation grants no clean review, provider post,
+readiness or merge authority. Unidentified and unproved quarantine records
+continue to fail closed.
+
+Advisory recovery alone opts into idempotent references to known, already
+resolved IDs in the exact delta parent. It retains their history and applies
+no new closure. Ordinary producer parsing stays strict. The recovery parser
+still requires the exact parent key/hash and unique known IDs, returns only
+open resolution IDs, and refuses unknown or duplicate IDs. Any surviving open
+inherited finding still prevents deriving clean authority. The original paid
+receipt, model verdict, response, resolution warning and budget remain intact.
+
 Adopt one exact active packet created before `autodev.json` existed:
 
 ```bash

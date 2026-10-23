@@ -29,6 +29,9 @@ where to put it, which format to use, or what evidence to leave behind, use the
 [`operating-manual/`](../operating-manual/README.md); it is the operator/agent
 manual copied into the installed OS.
 
+Required sibling PRs have their own [immutable family target authority](architecture/family-target-authority.md).
+The canonical primary task and ordinary Finalize authority remain unchanged.
+
 ---
 
 ## Runs from either harness
