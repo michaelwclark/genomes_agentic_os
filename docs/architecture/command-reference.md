@@ -2132,6 +2132,77 @@ Groom-through-PR-Create boundary is eligible. Exact replay is idempotent; stale
 downstream stage receipts remain historical until their current-head replacements
 are recorded. See [the Auto-Dev program](../42-auto-dev-program.md) for its schema.
 
+Refresh an accepted historical GitHub PR receipt through its selected repository
+catalog alias using the ordinary typed writer:
+
+```bash
+agentic-os develop stage <development-task-state.json> \
+  --stage release_propagation \
+  --receipt release_propagation=<packet-contained-successor-evidence.json> \
+  --idempotency-prefix <stable-refresh-key> --json
+```
+
+This compatibility path applies only at `local_validation` when the immutable
+predecessor identifies `github:owner/repository#number` and the successor uses
+`selected_alias#number` for the same PR. Both receipts must contain the selected
+`repository`, canonical `github_repository`, `provider: github`, captured
+`base_branch` and `base_sha`, registered `source_branch`, and full commit
+`source_head_sha`. The existing new-head, `readback_verified`, and explicit
+prior-head `supersession` gates still apply. The successor's `provider_observed`
+must bind the canonical repository/qualified PR, captured base/branch, exact
+new head, `state: OPEN`, and `is_draft: false`.
+
+The successor must also provide exactly these `evidence.repository_alias_authority`
+fields; an unknown or missing field rejects the refresh:
+
+| Field | Required proof |
+|---|---|
+| `schema` | `development-repository-alias-authority/v1` |
+| `kind` | `current_catalog` |
+| `profile_source`, `profile_sha256` | The task's recorded profile path and SHA-256 of its current raw file bytes |
+| `catalog_entry_sha256` | SHA-256 of the unique current catalog row, serialized as sorted compact JSON (`sort_keys=True`, `ensure_ascii=True`, separators `,` and `:`, UTF-8); mapping catalog keys become the row's `id` |
+| `repository_id`, `root`, `base_branch`, `github_repository` | Exact selected row matching the frozen task alias/root/base and predecessor's canonical GitHub repository |
+| `canonical_origin` | `git:github.com/owner/repository`, verified against actual source and registered worktree remotes |
+| `worktree_path` | The task's original clean registered checkout, on its recorded branch at the provider-read new head |
+
+The current selected validation policy must match the integrity-checked frozen
+task snapshot, and the prior source commit must be an ancestor of the new head.
+Changed or ambiguous selection, noncanonical origins, a dirty or stale checkout,
+different PR/base/source, closed or draft PR, and missing supersession all fail
+before mutation. Active project registration must match the captured checkout
+name, path and branch; equal registry projections agree, but conflicting copies
+or duplicate entries within one registry source reject the refresh. Each
+registry source comes from its actual file; persisted `_source` metadata is
+rejected. The historical catalog hash was not recorded: this is explicitly
+current catalog authority fenced by immutable task and predecessor identity.
+Only the comparison copy is qualified. The successor records normalization
+provenance and the original wrapper/evidence hashes; original files stay intact.
+Exact replay remains idempotent. This path neither changes review policy nor
+declares merge, release, installation, or deployment readiness.
+
+The ordinary `develop stage --stage review` writer also accepts an immutable
+provider-canonical review for a selected catalog alias when preflighting from
+`local_validation` to `ready_for_merge`.
+This separate comparison requires the same exact `repository_alias_authority`
+and full `provider_observed` fields above, with the reviewed head equal to the
+clean registered checkout. It additionally requires
+`canonical_review_receipt_sha256` (raw receipt bytes), `canonical_review_key`,
+`canonical_subject` (the original complete subject), and
+`review_policy_fingerprint`, alongside the existing
+`review_coordination_receipt`. The canonical subject must name the exact GitHub
+repository and `github:owner/repository#number`, captured base branch/SHA,
+reviewed head, selected review policy and `review_self` purpose. Missing proof
+does not fall back to an alias guess.
+
+The original canonical assertion still requires a clean terminal review under
+its existing semantics, including a genuine clean `operator_resolution`.
+Findings and unavailable review remain ineligible. Only the new typed readiness
+snapshot gains `review_identity_normalization` with both identities, the original
+subject/key/raw digest, and catalog/origin/registration provenance. The canonical
+review file, its stable key, and earlier delivery receipts remain unchanged.
+This joins the same PR at the same head; it does not authorize a sibling PR,
+change review outcomes or policy, or replace Finalize and Merge gates.
+
 Adopt one exact active packet created before `autodev.json` existed:
 
 ```bash
