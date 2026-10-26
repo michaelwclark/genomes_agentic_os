@@ -23,6 +23,9 @@ source/deploy/emergency-bundle/manifest.yml
 source/installers/bin/promote.sh
 source/installers/bin/failback.sh
 source/installers/bin/materialize-image-lock.sh
+source/installers/bin/held-staging.py
+source/installers/bin/recovery-inventory.py
+source/docs/development/fabric-held-restoration.md
 "
 for relative in $required_files; do
   [ -s "$bundle/$relative" ] || {
