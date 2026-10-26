@@ -1,5 +1,12 @@
 # Execution Fabric deployment
 
+Complete daily recovery sets and isolated restore drills are documented in
+[backup and recovery](../../docs/operations/execution-fabric-backup-recovery.md).
+Whole-set capture and BigMac collection remain opt-in until installed stores,
+custody and maintenance holds are qualified. The existing PostgreSQL daily
+backup remains the default path; a passing per-store check does not establish
+a complete recoverable Fabric.
+
 This directory is the portable deployment surface for the Agentic OS Execution
 Fabric. It keeps deployment mechanics separate from the generic control-plane
 service and from the one editable instance policy at

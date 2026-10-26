@@ -23,6 +23,9 @@ source/deploy/emergency-bundle/manifest.yml
 source/installers/bin/promote.sh
 source/installers/bin/failback.sh
 source/installers/bin/materialize-image-lock.sh
+source/schemas/execution-fabric-recovery-set.schema.json
+source/schemas/execution-fabric-recovery-daily.schema.json
+source/docs/operations/execution-fabric-backup-recovery.md
 "
 for relative in $required_files; do
   [ -s "$bundle/$relative" ] || {

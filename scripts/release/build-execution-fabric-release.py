@@ -388,7 +388,11 @@ def build(
     )
     deterministic_tar(
         output / "execution-fabric-config-schema.tar.gz",
-        [config, schema, STATIC_MANIFEST],
+        [
+            config, schema, STATIC_MANIFEST,
+            ROOT / "schemas/execution-fabric-recovery-set.schema.json",
+            ROOT / "schemas/execution-fabric-recovery-daily.schema.json",
+        ],
     )
     deterministic_tar(
         output / "execution-fabric-emergency-bundle.tar.gz",
@@ -400,6 +404,9 @@ def build(
             STATIC_MANIFEST,
             manifest_path,
             image_lock_path,
+            ROOT / "schemas/execution-fabric-recovery-set.schema.json",
+            ROOT / "schemas/execution-fabric-recovery-daily.schema.json",
+            ROOT / "docs/operations/execution-fabric-backup-recovery.md",
         ],
     )
     assets = sorted(path for path in output.iterdir() if path.is_file())

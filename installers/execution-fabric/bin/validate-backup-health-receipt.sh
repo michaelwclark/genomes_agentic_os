@@ -57,6 +57,28 @@ jq -e --arg backupSha256 "$backup_sha" '
   echo "restore manifest is invalid or does not prove disposable restore readback" >&2
   exit 75
 }
+if [ "${FABRIC_RECOVERY_REQUIRE_PG_PROVENANCE:-${FABRIC_RECOVERY_SETS_ENABLED:-0}}" = 1 ] ||
+    jq -e 'has("sourceIdentity") or has("sourceIdentityVerified")' "$receipt" >/dev/null; then
+  jq -e -s '
+    def source:
+      type=="object" and
+      (keys==["database","databaseOid","majorVersion","schemaVersion","serverVersionNum","systemId"]) and
+      .schemaVersion=="execution-fabric-postgres-source/v1" and
+      (.systemId|type=="string" and test("^[1-9][0-9]*$")) and
+      (.database|type=="string" and length>0) and
+      (.databaseOid|type=="string" and test("^[1-9][0-9]*$")) and
+      (.majorVersion|type=="number" and floor==. and .>=10) and
+      (.serverVersionNum|type=="number" and floor==.) and
+      (.serverVersionNum/10000|floor)==.majorVersion;
+    .[0].sourceIdentityVerified==true and .[1].sourceIdentityVerified==true and
+    (.[0].sourceIdentity|source) and
+    .[0].sourceIdentity==.[1].sourceIdentityBefore and
+    .[1].sourceIdentityBefore==.[1].sourceIdentityAfter
+  ' "$receipt" "$manifest" >/dev/null || {
+    echo "actual source PostgreSQL identity provenance is missing or differs" >&2
+    exit 75
+  }
+fi
 verified=$(jq -r '.verifiedAt' "$receipt")
 verified_epoch=$(date -u -d "$verified" +%s 2>/dev/null ||
   date -j -u -f "%Y-%m-%dT%H:%M:%SZ" "$verified" +%s)

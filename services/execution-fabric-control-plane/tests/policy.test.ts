@@ -4,7 +4,30 @@ import { dirname, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { stringify } from "yaml";
 import { PolicyError, PolicyManager } from "../src/policy.js";
+import type { RecoverySetsPolicy } from "../src/policy.js";
 import { createTestPolicy, testPolicyValue } from "./policy-fixture.js";
+
+function recoveryPolicy(): RecoverySetsPolicy {
+  return {
+    enabled: false,
+    primary_host_id: "genomesbox",
+    custodian_host_id: "bigmac",
+    capture_plan_file: null,
+    maintenance_receipt_file: null,
+    staging_dir: null,
+    repository: null,
+    password_file: null,
+    max_age_seconds: 86400,
+    retention: { daily: 14, weekly: 4, monthly: 3 },
+    offsite: { enabled: false, repository: null, password_file: null },
+  };
+}
+
+function policyWithRecovery(value: unknown): PolicyManager {
+  return createTestPolicy((policy) => {
+    policy.execution_fabric.recovery_sets = value;
+  }).policy;
+}
 
 describe("canonical policy", () => {
   it("loads the shipped policy and admits every remote route", () => {
@@ -14,6 +37,9 @@ describe("canonical policy", () => {
       resolve(repository, "harness/config/execution-fabric.yml"),
       resolve(repository, "schemas/execution-fabric.schema.json"),
     );
+    expect(policy.effective().execution_fabric.recovery_sets).toMatchObject({
+      enabled: false,
+    });
     expect(
       policy
         .effective()
@@ -145,6 +171,139 @@ describe("canonical policy", () => {
     });
     expect(admitted.maxAttempts).toBe(4);
     expect(admitted.priority).toBe(50);
+  });
+
+  it("preserves legacy recovery absence and disabled nullable references", () => {
+    expect(createTestPolicy().policy.effective().execution_fabric.recovery_sets).toBeUndefined();
+    const value = recoveryPolicy();
+    expect(policyWithRecovery(value).effective().execution_fabric.recovery_sets).toEqual(value);
+  });
+
+  it("accepts enabled recovery and offsite references", () => {
+    const value: RecoverySetsPolicy = {
+      ...recoveryPolicy(),
+      enabled: true,
+      capture_plan_file: "/recovery/capture.json",
+      maintenance_receipt_file: "/recovery/maintenance.json",
+      staging_dir: "/recovery/staging",
+      repository: "/recovery/repository",
+      password_file: "/recovery/password",
+      remote_staging_root: "/remote/staging",
+      local_staging_root: "/local/staging",
+      daily_plan_file: "/recovery/daily.json",
+      offsite: { enabled: true, repository: "s3:backup/bucket", password_file: "/offsite/password" },
+    };
+    expect(policyWithRecovery(value).effective().execution_fabric.recovery_sets).toEqual(value);
+    expect(policyWithRecovery({ ...value, enabled: false }).effective().execution_fabric.recovery_sets?.offsite.enabled).toBe(true);
+  });
+
+  it.each([
+    { max_age_seconds: 60, retention: { daily: 1, weekly: 0, monthly: 0 } },
+    { max_age_seconds: 604800, retention: { daily: 365, weekly: 104, monthly: 120 } },
+  ])("accepts exact recovery retention and age boundaries: %j", (bounds) => {
+    const value = { ...recoveryPolicy(), ...bounds };
+    expect(policyWithRecovery(value).effective().execution_fabric.recovery_sets).toEqual(value);
+  });
+
+  it("accepts the canonical host identity format and length boundary", () => {
+    const value = { ...recoveryPolicy(), primary_host_id: "a".repeat(128), custodian_host_id: "Host_1:pool-a.b" };
+    expect(policyWithRecovery(value).effective().execution_fabric.recovery_sets).toEqual(value);
+  });
+
+  it.each([null, [], true, "disabled"])("rejects a recovery policy that is not an object: %j", (value) => {
+    expect(() => policyWithRecovery(value)).toThrow();
+  });
+
+  it.each([
+    { surprise: true },
+    { artifact_import_qualification_file: "/not-admitted/import.json" },
+    { artifact_import_qualification_sha256: "a".repeat(64) },
+    { retention: { daily: 14, weekly: 4, monthly: 3, surprise: true } },
+    { offsite: { enabled: false, repository: null, password_file: null, surprise: true } },
+    { enabled: "false" },
+    { primary_host_id: "" },
+    { primary_host_id: "unregistered host format" },
+    { custodian_host_id: "a".repeat(129) },
+    { custodian_host_id: 1 },
+    { max_age_seconds: 59 },
+    { max_age_seconds: 604801 },
+    { max_age_seconds: 60.5 },
+    { max_age_seconds: "60" },
+    { retention: { daily: 0, weekly: 4, monthly: 3 } },
+    { retention: { daily: 366, weekly: 4, monthly: 3 } },
+    { retention: { daily: 14, weekly: -1, monthly: 3 } },
+    { retention: { daily: 14, weekly: 105, monthly: 3 } },
+    { retention: { daily: 14, weekly: 4, monthly: -1 } },
+    { retention: { daily: 14, weekly: 4, monthly: 121 } },
+    { retention: { daily: 14, weekly: 4.5, monthly: 3 } },
+    { retention: null },
+    { offsite: { enabled: "false", repository: null, password_file: null } },
+    { offsite: null },
+    { remote_staging_root: "" },
+    { local_staging_root: 1 },
+    { daily_plan_file: false },
+    { repository: "" },
+    { password_file: false },
+    { capture_plan_file: "" },
+    { maintenance_receipt_file: 1 },
+    { staging_dir: [] },
+  ])("rejects malformed or unknown recovery settings: %j", (invalid) => {
+    expect(() => policyWithRecovery({ ...recoveryPolicy(), ...invalid })).toThrow();
+  });
+
+  it.each([
+    "enabled", "primary_host_id", "custodian_host_id", "capture_plan_file",
+    "maintenance_receipt_file", "staging_dir", "repository", "password_file",
+    "max_age_seconds", "retention", "offsite",
+  ])("requires the recovery field %s", (field) => {
+    const value = { ...recoveryPolicy() } as Record<string, unknown>;
+    delete value[field];
+    expect(() => policyWithRecovery(value)).toThrow();
+  });
+
+  it.each(["daily", "weekly", "monthly"])("requires the retention field %s", (field) => {
+    const value = recoveryPolicy();
+    delete (value.retention as Record<string, unknown>)[field];
+    expect(() => policyWithRecovery(value)).toThrow();
+  });
+
+  it.each(["enabled", "repository", "password_file"])("requires the offsite field %s", (field) => {
+    const value = recoveryPolicy();
+    delete (value.offsite as Record<string, unknown>)[field];
+    expect(() => policyWithRecovery(value)).toThrow();
+  });
+
+  it.each(["capture_plan_file", "maintenance_receipt_file", "staging_dir", "repository", "password_file"])(
+    "requires enabled recovery reference %s",
+    (field) => {
+      const value = {
+        ...recoveryPolicy(), enabled: true,
+        capture_plan_file: "capture", maintenance_receipt_file: "maintenance",
+        staging_dir: "staging", repository: "repository", password_file: "password",
+        [field]: null,
+      };
+      expect(() => policyWithRecovery(value)).toThrow(/non-null reference/);
+    },
+  );
+
+  it.each(["repository", "password_file"])("requires enabled offsite reference %s", (field) => {
+    const value = recoveryPolicy();
+    value.offsite = { enabled: true, repository: "repository", password_file: "password", [field]: null };
+    expect(() => policyWithRecovery(value)).toThrow(/non-null reference/);
+  });
+
+  it.each(["bigmac", "unused_host"])("refuses recovery settings in host override %s", (host) => {
+    const previousHost = process.env.FABRIC_HOST_ID;
+    process.env.FABRIC_HOST_ID = "bigmac";
+    try {
+      expect(() => createTestPolicy((value) => {
+        value.execution_fabric.recovery_sets = recoveryPolicy();
+        value.execution_fabric.host_overrides = { [host]: { recovery_sets: recoveryPolicy() } };
+      })).toThrow(/cannot override recovery_sets/);
+    } finally {
+      if (previousHost === undefined) delete process.env.FABRIC_HOST_ID;
+      else process.env.FABRIC_HOST_ID = previousHost;
+    }
   });
 
   it("accepts personal fallback policy and validates its strict bounds", () => {

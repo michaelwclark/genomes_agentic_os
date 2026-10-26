@@ -27,6 +27,29 @@ required_fields:
   - attention_signals
   - actions
 contributors:
+  - id: fabric_complete_recovery_sets
+    title: Fabric Complete Recovery Sets
+    kind: automation
+    owner: shared_factory/execution_fabric
+    cadence: daily_after_qualified_maintenance_window
+    notion_surface: none
+    source: harness/commands/os-runtime-recovery-set.md
+    summary_source: configured recovery-set custody receipts and last-complete-success manifest
+    attention_signals:
+      - no complete verified recovery set within the configured age bound
+      - quiescence or any required authority component is missing
+      - copied or decrypted bytes differ from the immutable manifest
+      - isolated restore or credential retrieval failed
+      - deletion custody or a separately configured offsite copy remains unqualified
+    actions:
+      - id: inspect_recovery_set_receipts
+        mode: local_state_and_receipts
+        guard: read-only manifest, actual-byte and exact snapshot receipt inspection
+        approval: not required
+      - id: restore_isolated_recovery_set
+        mode: exact_snapshot_empty_target
+        guard: reviewed complete snapshot with providers and production effects held
+        approval: explicit exact restore plan required
   - id: los_fullsail_updater
     title: LOS FullSail Updater
     kind: automation

@@ -2566,6 +2566,19 @@ def test_bundle_builder_and_validator_round_trip(tmp_path: Path) -> None:
         assert f"{variable}=" in materialized
     assert "secrets_included=false" in (output / "RELEASE").read_text(encoding="utf-8")
 
+    for relative in ["schemas/execution-fabric-recovery-set.schema.json","schemas/execution-fabric-recovery-daily.schema.json","docs/operations/execution-fabric-backup-recovery.md"]:
+        assert (output / "source" / relative).read_bytes() == (SOURCE_ROOT / relative).read_bytes()
+    runbook = output / "source" / "docs/operations/execution-fabric-backup-recovery.md"
+    saved = runbook.read_bytes()
+    runbook.unlink()
+    missing = subprocess.run(
+        ["sh", str(INSTALLERS / "bin/validate-emergency-bundle.sh"), str(output)],
+        check=False, capture_output=True, text=True,
+    )
+    assert missing.returncode == 78
+    assert "required bundle file is missing" in missing.stderr
+    runbook.write_bytes(saved)
+
     (output / "images.lock.env").write_text(
         materialized.replace("FABRIC_WITNESS_IMAGE=", "FABRIC_WITNESS_IMAGE=mutable:"),
         encoding="utf-8",
