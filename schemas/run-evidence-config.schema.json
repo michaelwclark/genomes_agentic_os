@@ -37,7 +37,11 @@
         "queue_capacity": {"type": "integer", "minimum": 1},
         "batch_size": {"type": "integer", "minimum": 1},
         "flush_interval_ms": {"type": "integer", "minimum": 1},
-        "write_timeout_ms": {"type": "integer", "minimum": 1}
+        "write_timeout_ms": {"type": "integer", "minimum": 1},
+        "overflow_policy": {"enum": ["outbox", "reject"]},
+        "max_record_bytes": {"type": "integer", "minimum": 2048},
+        "max_outbox_items": {"type": "integer", "minimum": 2},
+        "max_outbox_bytes": {"type": "integer", "minimum": 4096}
       },
       "additionalProperties": false
     },

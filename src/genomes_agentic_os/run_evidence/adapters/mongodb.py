@@ -7,6 +7,7 @@ application port never makes MongoDB a transitive dependency for callers.
 from __future__ import annotations
 
 import os
+from contextlib import AbstractContextManager
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime, timedelta
@@ -33,6 +34,12 @@ class MongoDBRunLogStore:
     def __init__(self, config: RunLogStoreConfig, database: Any):
         self.config = config
         self.database = database
+
+    def write_deadline(self, seconds: float) -> AbstractContextManager[None]:
+        """Enforce one PyMongo client-side deadline over a complete batch."""
+        from pymongo import timeout
+
+        return timeout(seconds)
 
     @classmethod
     def from_config(cls, config: RunLogStoreConfig, *, client: Any | None = None) -> "MongoDBRunLogStore":
