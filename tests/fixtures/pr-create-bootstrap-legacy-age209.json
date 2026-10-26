@@ -1,0 +1,103 @@
+{
+  "family-complete.json": {
+    "schema": "auto-dev-pr-family/v1",
+    "status": "completed",
+    "completed_at": "2026-08-25T08:51:35Z",
+    "ticket": "AGE-209",
+    "repository": "michaelwclark/genomes_agentic_os",
+    "source": {
+      "branch": "feature/age-209-bug-allow-initial-review-self-request-for-shared",
+      "sha": "40e283cca6ecf7e426a85311060a727d83da584d"
+    },
+    "effective_policy_fingerprint": "97b2d43873448bc30f610bec18d1219d1160b2259cd4fa569f8b31fe994502d1",
+    "targets": [
+      {
+        "role": "primary",
+        "classification": "pr_required",
+        "repository": "michaelwclark/genomes_agentic_os",
+        "base_branch": "main",
+        "head_branch": "feature/age-209-bug-allow-initial-review-self-request-for-shared",
+        "head_sha": "40e283cca6ecf7e426a85311060a727d83da584d",
+        "pull_request_number": 257,
+        "url": "https://github.com/michaelwclark/genomes_agentic_os/pull/257",
+        "provider_readback": "pull-request-provider-readback.json"
+      }
+    ],
+    "gates_not_included": [
+      "provider review",
+      "hosted CI completion",
+      "merge",
+      "release publication",
+      "deployment"
+    ]
+  },
+  "pull-request-provider-readback.json": {
+    "schema": "github-pull-request-readback/v1",
+    "repository": "michaelwclark/genomes_agentic_os",
+    "number": 257,
+    "url": "https://github.com/michaelwclark/genomes_agentic_os/pull/257",
+    "state": "OPEN",
+    "draft": false,
+    "title": "[Bug] Allow initial Review Self request for shared-factory PR packets",
+    "base_branch": "main",
+    "base_sha": "2dd2add8e6f9c30e25c9ef5b61f662107a50582d",
+    "head_branch": "feature/age-209-bug-allow-initial-review-self-request-for-shared",
+    "head_sha": "40e283cca6ecf7e426a85311060a727d83da584d",
+    "remote_head_sha": "40e283cca6ecf7e426a85311060a727d83da584d",
+    "mergeable": "MERGEABLE",
+    "merge_state_status": "CLEAN",
+    "checks": "success: nine required checks at exact head; deploy skipped",
+    "reviews": [],
+    "comments": [],
+    "read_back_at": "2026-08-25T09:19:13Z"
+  },
+  "source-snapshot.json": {
+    "schema": "auto-dev-pr-source-snapshot/v1",
+    "ticket": "AGE-209",
+    "repository": "michaelwclark/genomes_agentic_os",
+    "source_branch": "feature/age-209-bug-allow-initial-review-self-request-for-shared",
+    "source_sha": "40e283cca6ecf7e426a85311060a727d83da584d",
+    "source_clean": true,
+    "base_branch": "main",
+    "base_sha": "2dd2add8e6f9c30e25c9ef5b61f662107a50582d",
+    "authority": "Explicit Project Rubicon mutation authority recorded in the governed run plan.",
+    "effective_policy_fingerprint": "97b2d43873448bc30f610bec18d1219d1160b2259cd4fa569f8b31fe994502d1",
+    "existing_equivalent_pr_before_write": null,
+    "captured_at": "2026-08-25T08:51:35Z"
+  },
+  "topology.json": {
+    "schema": "auto-dev-pr-topology/v1",
+    "ticket": "AGE-209",
+    "profile": "continuous_delivery",
+    "targets": [
+      {
+        "role": "primary",
+        "classification": "pr_required",
+        "repository": "michaelwclark/genomes_agentic_os",
+        "base_branch": "main",
+        "head_branch": "feature/age-209-bug-allow-initial-review-self-request-for-shared",
+        "propagation": "none"
+      }
+    ],
+    "resolved_at": "2026-08-25T08:51:35Z"
+  },
+  "plan.json": {
+    "schema": "auto-dev-pr-plan/v1",
+    "ticket": "AGE-209",
+    "mode": "apply",
+    "actions": [
+      {
+        "classification": "pr_required",
+        "push": "feature/age-209-bug-allow-initial-review-self-request-for-shared@40e283cca6ecf7e426a85311060a727d83da584d",
+        "create_pull_request": "michaelwclark/genomes_agentic_os:main"
+      }
+    ],
+    "excluded_actions": [
+      "review approval",
+      "merge",
+      "release publication",
+      "deployment"
+    ],
+    "planned_at": "2026-08-25T08:51:35Z"
+  }
+}
