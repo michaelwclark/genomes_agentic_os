@@ -57,9 +57,19 @@ A blank template is at `templates/profile/customer-os-profile.yml` (use
 `profile create --target <p>` to copy it). The same profile drives the real output
 examples below.
 
-**Filesystem is source of truth.** The profile YAML records intent; `customer init`
-materialises it as files; `customer validate` confirms structure. There is no runtime
-database; what is on disk is what the OS is.
+The profile YAML records customer intent; `customer init` materialises the
+approved structure, and `customer validate` checks that structure. Runtime work
+lifecycle and attention use the customer install's own control-plane database
+when configured; generated views remain projections. Use the customer's root
+explicitly when invoking state or runtime commands.
+
+A valid scaffold does not prove runtime delivery. Before customer acceptance,
+verify the installed package and launcher revision, routing, approved tool
+access, a representative workflow, and the selected runtime's admission and
+terminal receipts. Keep the customer's state, credentials, and approval policy
+isolated during fresh-install, additive-upgrade, and rollback validation. See
+[Source Of Truth Rules](25-source-of-truth.md) and
+[Execution Fabric](13-feature-guides/18-execution-fabric.md).
 
 ---
 
