@@ -188,6 +188,11 @@ def test_canonical_policy_review_producer_keeps_task_and_shared_budget_authority
     _git("commit", "-m", "docs: preserve inherited source controls", cwd=tree)
     _git("push", str(candidate["remote"]), "HEAD:refs/heads/" + candidate["provider"]["source_branch"], cwd=tree)
     candidate["provider"]["head"] = _git("rev-parse", "HEAD", cwd=tree)
+    profile_path = delivery.project_root(candidate["root"], "acme", "app") / "config/development.yml"
+    profile = yaml.safe_load(profile_path.read_text())
+    profile.setdefault("review", {})["opposing_harness"] = {
+        "model": "claude-fable-5", "transport": "claude_cli", "unavailable_policy": "continue_with_receipt"}
+    profile_path.write_text(yaml.safe_dump(profile))
     observed = _renew_assertions(candidate)
     task_raw = candidate["task"].path.read_bytes()
     with pytest.raises(delivery.DevelopmentDeliveryError, match="canonical review"):
@@ -200,7 +205,8 @@ def test_canonical_policy_review_producer_keeps_task_and_shared_budget_authority
     actual_provider = candidate["provider"]
     monkeypatch.setattr(runner, "provider_pr", lambda *_args: {
         "number": 236, "url": actual_provider["url"], "state": "OPEN", "headRefOid": actual_provider["head"],
-        "baseRefName": "main", "baseRefOid": actual_provider["base_sha"], "statusCheckRollup": []})
+        "baseRefName": "main", "baseRefOid": actual_provider["base_sha"],
+        "statusCheckRollup": [{"conclusion": "SUCCESS"}]})
     monkeypatch.setattr(runner, "git_repository", lambda _tree: "acme/app")
     original_run = runner.run
     calls: list[list[str]] = []
@@ -208,11 +214,18 @@ def test_canonical_policy_review_producer_keeps_task_and_shared_budget_authority
         """Stand in for the paid external model only; native helper/Git/coordinator stay real."""
         if command[0] == "/synthetic-read-only-reviewer":
             calls.append(command)
+            assert command[command.index("--model") + 1] == "claude-fable-5"
+            assert command[command.index("--permission-mode") + 1] == "dontAsk"
+            assert command[command.index("--allowedTools") + 1] == runner.CLAUDE_TOOLS
+            assert "ANTHROPIC_API_KEY" not in kwargs["env"]
+            assert "ANTHROPIC_AUTH_TOKEN" not in kwargs["env"]
             assert "Native delta" in command[-1]
             assert "source_rule_changes" in command[-1]
             return _completed(0, "```json\n[]\n```\nAGENTIC_OS_REVIEW_VERDICT: CLEAN\n")
         return original_run(command, **kwargs)
     monkeypatch.setattr(runner, "run", external_cli)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "synthetic-key-never-forwarded")
+    monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "synthetic-token-never-forwarded")
     monkeypatch.setattr(runner.shutil, "which", lambda _name: "/synthetic-read-only-reviewer" if available else None)
     monkeypatch.setattr(sys, "argv", ["run_opposing_model_review.py", candidate["task"].read()["ticket"],
         "--os-root", str(candidate["root"]), "--work-item", str(candidate["packet"]),
@@ -222,6 +235,17 @@ def test_canonical_policy_review_producer_keeps_task_and_shared_budget_authority
     canonical_path = Path(result["coordination_receipt"])
     canonical = load_review_receipt(canonical_path)
     assert canonical["outcome"] == ("clean" if available else "unavailable")
+    run_dir = Path(canonical["review"]["review_run_dir"])
+    validation = json.loads((run_dir / "validation-plan.json").read_text())
+    decision = json.loads((run_dir / "readiness-decision.json").read_text())
+    assert validation["validation_status"] == decision["validation_status"] == "not_started"
+    assert validation["pr_check_status"] == decision["pr_check_status"] == "not_applicable"
+    assert decision["decision"] == "blocked_validation"
+    assert not canonical["review"]["decision"].startswith("ready_")
+    review_request = json.loads((run_dir / "review-request.json").read_text())
+    assert review_request["selected_reviewer_model"] == "claude-fable-5"
+    assert review_request["review_unavailable_policy"] == "continue_with_receipt"
+    assert "- Reviewer model: `claude-fable-5`" in (run_dir / "model-receipt.md").read_text()
     assert canonical["review"]["policy_delta_sha256"] == admission.digest(observed["policy_delta"])
     subject = ReviewSubject("acme/app", "github:acme/app#236", "main", actual_provider["base_sha"],
                             actual_provider["head"], observed["policy"]["fingerprint"])

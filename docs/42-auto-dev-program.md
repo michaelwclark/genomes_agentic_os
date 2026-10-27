@@ -175,6 +175,17 @@ consumers refuse a partial projection. Repeating the exact request and key
 finishes that outbox without another transition or review claim. An existing
 binding cannot be replaced through a different idempotency key.
 
+The protected predecessor snapshot excludes known environment paths from direct
+Python content reads and retained content digests: any `.env*` path component, or a basename ending in `.env` or
+containing `.env.` (case-insensitive), plus dependency directories. It records
+those exclusions explicitly. Native Git retains its complete status observation
+and can internally inspect tracked files; this is not a guarantee that every
+process avoids reading tracked environment files. Content hashing follows no ancestor symlinks,
+records final link text without opening targets, and refuses special files,
+replacement or concurrent writes. Admission limits changed entries to 10,000,
+ordinary source files to 32 MiB each, the index to 64 MiB, and total index plus
+source reads to 128 MiB; exceeding a limit refuses binding.
+
 The local branch and provider publication branch may differ only when both
 native Git/remote and provider reads prove the same exact head. Validation
 uses the actual registered local branch; PR-family and review evidence use the
@@ -197,9 +208,17 @@ new head/base/policy and native delta. The canonical opposing-model runner's
 binding the task, includes the full policy delta in the review prompt and
 records its digest through the existing shared coordinator. It rechecks source,
 policy, provider, runtime and task identity after the reviewer returns. This
-mode grants no test or gate acceptance; unavailable reviewers and receipts for
+mode records validation as `not_started`, checks as `not_applicable`, and retains
+the helper's blocked readiness decision even when the policy/source review is
+CLEAN. It grants no test or gate acceptance; unavailable reviewers and receipts for
 a different delta refuse binding. Refresh the capsule's coordinator inventory
 after the terminal review, retaining all previous attempts and budget records.
+The selected development profile's `review.opposing_harness` model, native
+`claude_cli` transport and unavailable policy take precedence over prior request
+defaults. The actual model appears in the invocation, request, prompt and model
+receipt. The helper's legacy `opus` family label identifies the Anthropic family;
+it does not substitute the Opus model for a configured Claude Fable model.
+Unavailable execution remains an unavailable coordinator outcome and exit 2.
 
 Managed runtime support is intentionally explicit: LOS fast worktrees require
 one native owner registry row, matching `FWT_SLUG`/`FWT_INDEX`/stack identity,

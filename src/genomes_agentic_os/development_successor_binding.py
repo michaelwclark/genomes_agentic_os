@@ -34,6 +34,12 @@ from .state.db import connect_readonly, default_db_path
 SCHEMA = "development-successor-binding-request/v1"
 EFFECTS = ("task-event", "rollup-event", "portfolio-active-binding",
            "autodev-projection", "same-canonical-work-row", "active-now-projection")
+MAX_PROTECTED_FILES = 10000
+MAX_PROTECTED_FILE_BYTES = 32 * 1024 * 1024
+MAX_PROTECTED_INDEX_BYTES = 64 * 1024 * 1024
+MAX_PROTECTED_TOTAL_BYTES = 128 * 1024 * 1024
+PROTECTED_READ_CHUNK_BYTES = 64 * 1024
+MAX_PROOF_BYTES = 32 * 1024 * 1024
 
 
 def digest(value: Any) -> str:
@@ -55,17 +61,38 @@ def read_json(path: Path) -> tuple[dict[str, Any], str]:
                 _reject("duplicate JSON key")
             result[key] = value
         return result
+    descriptor: int | None = None
     try:
-        if path.is_symlink() or not stat.S_ISREG(path.stat().st_mode):
+        before = path.lstat()
+        if not stat.S_ISREG(before.st_mode):
             _reject("proof must be an ordinary regular file")
-        raw = path.read_bytes()
-        if len(raw) > 32 * 1024 * 1024:
+        if before.st_size > MAX_PROOF_BYTES:
             _reject("proof exceeds the bounded JSON size")
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        if _file_identity(os.fstat(descriptor)) != _file_identity(before):
+            _reject("proof changed type or identity before reading")
+        chunks: list[bytes] = []
+        size = 0
+        while True:
+            chunk = os.read(descriptor, min(PROTECTED_READ_CHUNK_BYTES, MAX_PROOF_BYTES - size + 1))
+            if not chunk:
+                break
+            size += len(chunk)
+            if size > MAX_PROOF_BYTES:
+                _reject("proof grew beyond the bounded JSON size")
+            chunks.append(chunk)
+        if (size != before.st_size or _file_identity(os.fstat(descriptor)) != _file_identity(before)
+                or _file_identity(path.lstat()) != _file_identity(before)):
+            _reject("proof changed during observation")
+        raw = b"".join(chunks)
         value = json.loads(raw, object_pairs_hook=unique)
     except DevelopmentDeliveryError:
         raise
     except (OSError, ValueError) as exc:
         _reject("unreadable JSON proof: " + type(exc).__name__)
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
     if not isinstance(value, dict):
         _reject("proof must be a JSON object")
     return value, hashlib.sha256(raw).hexdigest()
@@ -152,8 +179,98 @@ def _common(path: Path) -> Path:
     return (value if value.is_absolute() else path / value).resolve()
 
 
+def _known_environment_path(path: Path) -> bool:
+    """Classify conventional environment paths lexically, before any file access."""
+    parts = tuple(part.lower() for part in path.parts)
+    return (any(part.startswith(".env") for part in parts)
+            or parts[-1].endswith(".env") or ".env." in parts[-1])
+
+
+def _file_identity(value: os.stat_result) -> tuple[int, ...]:
+    """Retain the identity, type, permissions and mutation evidence of an open file."""
+    return (value.st_dev, value.st_ino, value.st_mode, value.st_nlink,
+            value.st_uid, value.st_gid, value.st_size, value.st_mtime_ns, value.st_ctime_ns)
+
+
+def _protected_entry(root: Path, relative: Path, *, limit: int,
+                     remaining: int) -> tuple[dict[str, Any], int]:
+    """Hash bounded ordinary bytes through no-follow directory and file descriptors.
+
+    Final symlinks are recorded without opening their targets. An ancestor
+    symlink, special file, replacement or concurrent write refuses admission.
+    """
+    if relative.is_absolute() or not relative.parts or any(part in {".", ".."} for part in relative.parts):
+        _reject("protected file path is not a contained relative path")
+    descriptors: list[int] = []
+    directories: list[tuple[Path, int, int]] = []
+    file_descriptor: int | None = None
+    observed = False
+    try:
+        directory = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        descriptors.append(directory)
+        info = os.fstat(directory)
+        directories.append((root, info.st_dev, info.st_ino))
+        parent = root
+        for component in relative.parts[:-1]:
+            directory = os.open(component, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                                dir_fd=directory)
+            descriptors.append(directory)
+            parent = parent / component
+            info = os.fstat(directory)
+            directories.append((parent, info.st_dev, info.st_ino))
+        name = relative.name
+        before = os.stat(name, dir_fd=directory, follow_symlinks=False)
+        observed = True
+        if stat.S_ISLNK(before.st_mode):
+            link = os.readlink(name, dir_fd=directory).encode()
+            value = {"symlink_sha256": hashlib.sha256(link).hexdigest()}
+            consumed = 0
+        elif stat.S_ISREG(before.st_mode):
+            if before.st_size > limit or before.st_size > remaining:
+                _reject("protected file exceeds its per-file or aggregate byte bound")
+            file_descriptor = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+                                      dir_fd=directory)
+            if _file_identity(os.fstat(file_descriptor)) != _file_identity(before):
+                _reject("protected file changed type or identity before reading")
+            sha = hashlib.sha256()
+            consumed = 0
+            while True:
+                chunk = os.read(file_descriptor, min(PROTECTED_READ_CHUNK_BYTES,
+                                min(limit, remaining) - consumed + 1))
+                if not chunk:
+                    break
+                consumed += len(chunk)
+                if consumed > limit or consumed > remaining:
+                    _reject("protected file grew beyond its byte bound while reading")
+                sha.update(chunk)
+            if (consumed != before.st_size
+                    or _file_identity(os.fstat(file_descriptor)) != _file_identity(before)):
+                _reject("protected file changed while reading")
+            value = {"sha256": sha.hexdigest(), "mode": stat.S_IMODE(before.st_mode)}
+        else:
+            _reject("protected file is not an ordinary file or final symlink")
+        if _file_identity(os.stat(name, dir_fd=directory, follow_symlinks=False)) != _file_identity(before):
+            _reject("protected file was replaced during observation")
+        for path, device, inode in directories:
+            current = path.lstat()
+            if not stat.S_ISDIR(current.st_mode) or (current.st_dev, current.st_ino) != (device, inode):
+                _reject("protected file ancestor changed during observation")
+        return value, consumed
+    except FileNotFoundError:
+        if observed:
+            _reject("protected file disappeared during observation")
+        return {"absent": True}, 0
+    except OSError as exc:
+        _reject("protected file observation failed: " + type(exc).__name__)
+    finally:
+        if file_descriptor is not None:
+            os.close(file_descriptor)
+        for descriptor in reversed(descriptors):
+            os.close(descriptor)
+
+
 def predecessor_boundary(current: Mapping[str, Any]) -> dict[str, Any]:
-    """Capture protected source/index identity without reading secret env files."""
+    """Capture source/index identity, excluding known env paths from Python content reads."""
     record = current["worktree"]
     path = Path(record["path"]).resolve()
     branch = git(path, "branch", "--show-current")
@@ -163,23 +280,26 @@ def predecessor_boundary(current: Mapping[str, Any]) -> dict[str, Any]:
     index = Path(git(path, "rev-parse", "--git-path", "index"))
     index = index if index.is_absolute() else path / index
     entries = git(path, "status", "--porcelain=v1", "-z", "--untracked-files=all")
+    names = list(filter(None, git(path, "ls-files", "-m", "-o", "--exclude-standard", "-z").split("\0")))
+    if len(names) > MAX_PROTECTED_FILES:
+        _reject("protected worktree exceeds its changed-file count bound")
+    index_value, total = _protected_entry(index.parent.resolve(), Path(index.name),
+                                        limit=MAX_PROTECTED_INDEX_BYTES, remaining=MAX_PROTECTED_TOTAL_BYTES)
+    if "sha256" not in index_value:
+        _reject("protected index must be an ordinary bounded file")
     files: dict[str, Any] = {}
-    # Hash the changed ordinary files; credentials/env values are never read.
-    for name in filter(None, git(path, "ls-files", "-m", "-o", "--exclude-standard", "-z").split("\0")):
+    # Python content reads/digests exclude known env paths. Native Git may
+    # internally inspect tracked files while deriving their genuine status.
+    for name in names:
         item = Path(name)
-        if (item.name.startswith(".env") or any(part in {".venv", "node_modules"} for part in item.parts)):
+        if (_known_environment_path(item) or any(part in {".venv", "node_modules"} for part in item.parts)):
             files[name] = {"excluded": "secret-or-dependency-boundary"}
             continue
-        source = path / item
-        if source.is_symlink():
-            files[name] = {"symlink_sha256": hashlib.sha256(os.readlink(source).encode()).hexdigest()}
-        elif source.is_file():
-            files[name] = {"sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
-                           "mode": stat.S_IMODE(source.stat().st_mode)}
-        else:
-            files[name] = {"absent": True}
+        files[name], consumed = _protected_entry(path, item, limit=MAX_PROTECTED_FILE_BYTES,
+                                               remaining=MAX_PROTECTED_TOTAL_BYTES - total)
+        total += consumed
     return {"schema": "development-protected-worktree/v1", "path": str(path),
-            "branch": branch, "head": head, "index_sha256": hashlib.sha256(index.read_bytes()).hexdigest(),
+            "branch": branch, "head": head, "index_sha256": index_value["sha256"],
             "status_sha256": hashlib.sha256(entries.encode()).hexdigest(), "changed_files": files}
 
 

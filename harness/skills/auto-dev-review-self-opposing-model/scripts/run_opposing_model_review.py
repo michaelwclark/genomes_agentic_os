@@ -470,10 +470,11 @@ def successor_request(work_item: Path, ticket: str, worktree: Path) -> dict[str,
         "repository_id": task["repository"]["id"], "repo_path": str(worktree),
         "implementation_summary": str(prior.get("implementation_summary") or f"Exact-head implementation for {ticket}"),
         "spec_source": "SPEC.md", "builder_model": str(prior.get("builder_model") or "codex"),
-        "selected_reviewer_model": "opus", "reviewer_selection_source": "auto-dev-review-self-opposing-model",
+        "selected_reviewer_model": str(prior.get("selected_reviewer_model") or "opus"),
+        "reviewer_selection_source": str(prior.get("reviewer_selection_source") or "auto-dev-review-self-opposing-model"),
         "mode": "post_pr", "target_branch": subject["base_branch"], "base_sha": subject["base_sha"],
         "head_sha": git_head(worktree), "pr_number": int(subject["pull_request"].rsplit("#", 1)[1]),
-        "policy_fingerprint": task["policy_fingerprint"], "review_unavailable_policy": "block",
+        "policy_fingerprint": task["policy_fingerprint"],
         "request_origin": "canonical-successor-binding"}
 
 
@@ -494,12 +495,13 @@ def successor_policy_request(work_item: Path, ticket: str, worktree: Path, reque
         "repository_id": current["repository"]["id"], "repo_path": str(worktree),
         "implementation_summary": str(prior.get("implementation_summary") or f"Exact-head implementation for {ticket}"),
         "spec_source": "SPEC.md", "builder_model": str(prior.get("builder_model") or "codex"),
-        "selected_reviewer_model": "opus", "reviewer_selection_source": "auto-dev-review-self-opposing-model",
+        "selected_reviewer_model": str(prior.get("selected_reviewer_model") or "opus"),
+        "reviewer_selection_source": str(prior.get("reviewer_selection_source") or "auto-dev-review-self-opposing-model"),
         "mode": "post_pr", "target_branch": provider["base_branch"], "base_sha": provider["base_sha"],
         "head_sha": provider["head"], "pr_number": provider["number"],
         "local_source_branch": identity["registry"]["worktree"]["branch"],
         "provider_source_branch": provider["source_branch"],
-        "policy_fingerprint": identity["policy"]["fingerprint"], "review_unavailable_policy": "block",
+        "policy_fingerprint": identity["policy"]["fingerprint"],
         "successor_policy_source": native, "request_origin": "native-successor-policy-review"}
 
 
@@ -576,6 +578,30 @@ def review_unavailable_policy(source: dict[str, Any]) -> str:
     return "continue_with_receipt"
 
 
+def reviewer_configuration(profile: dict[str, Any], source: dict[str, Any]) -> dict[str, str]:
+    """Honor the selected repository profile without changing review authority."""
+    review = profile.get("review", {})
+    if not isinstance(review, dict):
+        raise ReviewError("review configuration must be a mapping")
+    opposing = review.get("opposing_harness", {})
+    if not isinstance(opposing, dict):
+        raise ReviewError("review.opposing_harness must be a mapping")
+    model = opposing.get("model", source.get("selected_reviewer_model"))
+    if not isinstance(model, str) or not re.fullmatch(
+        r"(?:claude-[A-Za-z0-9._-]+|fable|opus|sonnet|haiku)", model
+    ):
+        raise ReviewError("opposing reviewer must select an Anthropic CLI model")
+    transport = opposing.get("transport", source.get("reviewer_transport", "claude_cli"))
+    if transport != "claude_cli":
+        raise ReviewError("opposing reviewer transport must be claude_cli")
+    unavailable_policy = opposing.get("unavailable_policy")
+    if unavailable_policy is None:
+        unavailable_policy = review_unavailable_policy(source)
+    if not isinstance(unavailable_policy, str) or unavailable_policy not in {"block", "continue_with_receipt"}:
+        raise ReviewError("review_unavailable_policy must be block or continue_with_receipt")
+    return {"model": model, "transport": transport, "unavailable_policy": unavailable_policy}
+
+
 def diff_hash(worktree: Path, base: str, head: str) -> str:
     completed = run(["git", "diff", "--binary", f"{base}..{head}"], cwd=worktree)
     if completed.returncode:
@@ -635,7 +661,7 @@ def render_prompt(request: dict[str, Any], provider: dict[str, Any]) -> str:
     values = {
         "WORK_ITEM_ID": str(request["work_item_id"]), "PROJECT": "Auto-Dev",
         "TRACKER_ID": str(request["work_item_id"]), "TRACKER_URL": "provider-read ticket context",
-        "BUILDER_FAMILY": "gpt", "REVIEWER_FAMILY": "opus", "MODE": str(request["mode"]),
+        "BUILDER_FAMILY": "gpt", "REVIEWER_FAMILY": str(request["selected_reviewer_model"]), "MODE": str(request["mode"]),
         "PR_URL": str(provider["url"]), "BASE_SHA": str(request["base_sha"]), "HEAD_SHA": str(request["head_sha"]),
         "SPEC": str(request.get("spec_source", "provider ticket")),
         "ACCEPTANCE_CRITERIA": str(request.get("spec_source", "provider ticket")),
@@ -692,8 +718,10 @@ def receipt_markdown(
     status: str,
     unavailable_policy: str,
     failure: str | None = None,
+    *,
+    reviewer_model: str = "opus",
 ) -> str:
-    lines = ["# Model Receipt", "", f"- Review run: `{run_id}`", "- Reviewer model: `opus`", "- Reviewer family: `opus`", "- Transport: `claude_cli`", "- Authentication: `cli_native`", f"- Reviewer status: `{status}`", f"- Unavailable policy: `{unavailable_policy}`"]
+    lines = ["# Model Receipt", "", f"- Review run: `{run_id}`", f"- Reviewer model: `{reviewer_model}`", "- Reviewer family: `opus`", "- Transport: `claude_cli`", "- Authentication: `cli_native`", f"- Reviewer status: `{status}`", f"- Unavailable policy: `{unavailable_policy}`"]
     if failure:
         lines.append(f"- Failure code: `{failure}`")
     return "\n".join(lines) + "\n"
@@ -752,7 +780,6 @@ def main() -> int:
             source = successor_request(work_item, args.ticket, worktree) or prior_request(work_item, args.ticket) or initial_request(
                 work_item, args.ticket, worktree
             )
-        unavailable_policy = review_unavailable_policy(source)
         head = git_head(worktree)
         base = str(source["base_sha"])
         policy = policy_fingerprint(source)
@@ -788,6 +815,8 @@ def main() -> int:
                 )
             )
             return 2
+        reviewer = reviewer_configuration(selected_profile, source)
+        unavailable_policy = reviewer["unavailable_policy"]
         pr_number = int(source["pr_number"])
         provider = provider_pr(pr_number, worktree)
         if provider["headRefOid"] != head:
@@ -877,7 +906,10 @@ def main() -> int:
                 "base_sha": base,
                 "diff_hash": review_diff_hash
                 or diff_hash(worktree, review_diff_base, head),
-                "reviewer_transport": "claude_cli",
+                "selected_reviewer_model": reviewer["model"],
+                "reviewer_selection_source": "selected development profile review.opposing_harness",
+                "review_unavailable_policy": unavailable_policy,
+                "reviewer_transport": reviewer["transport"],
                 "reviewer_auth": "cli_native",
                 "reviewer_environment_removed": list(CLAUDE_ENV_REMOVED),
                 "repository_selector": args.repository,
@@ -889,8 +921,8 @@ def main() -> int:
                 "model_identity_status": "proven",
                 "reviewer_status": "available",
                 "review_unavailable_policy": unavailable_policy,
-                "validation_status": "passed",
-                "pr_check_status": "passed"
+                "validation_status": "not_started" if source.get("successor_policy_source") else "passed",
+                "pr_check_status": "not_applicable" if source.get("successor_policy_source") else "passed"
                 if all(
                     row.get("conclusion") in {"SUCCESS", "SKIPPED"}
                     for row in provider.get("statusCheckRollup", [])
@@ -928,7 +960,7 @@ def main() -> int:
                             claude,
                             "-p",
                             "--model",
-                            "opus",
+                            reviewer["model"],
                             "--safe-mode",
                             "--permission-mode",
                             "dontAsk",
@@ -1011,6 +1043,7 @@ def main() -> int:
                     plan["reviewer_status"],
                     unavailable_policy,
                     failure,
+                    reviewer_model=reviewer["model"],
                 ),
                 encoding="utf-8",
             )
@@ -1018,7 +1051,10 @@ def main() -> int:
             if plan["reviewer_status"] in {"unavailable", "runtime_failure"}:
                 outcome = "unavailable"
             elif (
-                decision["decision"].startswith("ready_")
+                (decision["decision"].startswith("ready_")
+                 or (source.get("successor_policy_source")
+                     and decision["decision"] == "blocked_validation"
+                     and decision["active_blocker_count"] == 0))
                 and verdict_structured
                 and not any(finding["blocking"] for finding in findings)
                 and resolution_warning is None
