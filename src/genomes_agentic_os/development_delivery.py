@@ -10713,6 +10713,51 @@ def run_development_stage(
                         raise DevelopmentDeliveryError(
                             "release propagation refresh requires provider-read new head and explicit prior-head supersession"
                         )
+                    # A native-accepted predecessor can already qualify its PR
+                    # while retaining the bare GitHub repository. Normalize only
+                    # that repository comparison field after all prior/new/task
+                    # identity and complete provider readback agree.
+                    legacy_qualified_repository_normalization: dict[str, Any] | None = None
+                    qualified_identifier = legacy_pull_request.removeprefix(pull_request_prefix)
+                    qualified_url = (
+                        "https://github.com/" + legacy_repository + "/pull/" + qualified_identifier
+                    )
+                    if (
+                        expected_repository.startswith("git:github.com/")
+                        and expected_provider == "github"
+                        and expected_base_branch
+                        and expected_source_branch
+                        and str(previous_details.get("repository") or "").strip() == legacy_repository
+                        and str(previous_details.get("provider") or "").strip() == "github"
+                        and str(previous_details.get("base_branch") or "").strip() == expected_base_branch
+                        and str(previous_details.get("source_branch") or "").strip() == expected_source_branch
+                        and previous_details.get("readback_verified") is True
+                        and legacy_pull_request.startswith(pull_request_prefix)
+                        and re.fullmatch(r"[1-9][0-9]*", qualified_identifier)
+                        and refreshed_identity == {
+                            "repository": expected_repository,
+                            "base_branch": expected_base_branch,
+                            "provider": "github",
+                            "pull_request": legacy_pull_request,
+                            "source_branch": expected_source_branch,
+                        }
+                        and all(str(provider_observed.get(field) or "").strip() == value
+                                for field, value in refreshed_identity.items())
+                        and provider_observed.get("readback_verified") is True
+                        and re.fullmatch(r"[a-fA-F0-9]{40}", str(refreshed_details.get("base_sha") or ""))
+                        and provider_observed.get("base_sha") == refreshed_details.get("base_sha")
+                        and provider_observed.get("url") == qualified_url
+                        and refreshed_details.get("url") == qualified_url
+                    ):
+                        previous_details = {**previous_details, "repository": expected_repository}
+                        legacy_qualified_repository_normalization = {
+                            "identity_shape": "bare_repository_qualified_github_pull_request",
+                            "field": "repository",
+                            "source": "prior_evidence.evidence.repository",
+                            "from": legacy_repository,
+                            "value": expected_repository,
+                            "verified_by": "provider_observed.repository",
+                        }
                     # The original PR Create adapter also accepted a canonical
                     # GitHub URL in this field.  Qualify only a prior URL whose
                     # complete identity matches the registered task and the
@@ -10934,6 +10979,10 @@ def run_development_stage(
                     elif legacy_url_identity_normalization is not None:
                         payload["supersedes"]["legacy_identity_normalization"] = (
                             legacy_url_identity_normalization
+                        )
+                    elif legacy_qualified_repository_normalization is not None:
+                        payload["supersedes"]["legacy_identity_normalization"] = (
+                            legacy_qualified_repository_normalization
                         )
                     elif legacy_source_branch_derived:
                         if legacy_canonical_github_identity:
