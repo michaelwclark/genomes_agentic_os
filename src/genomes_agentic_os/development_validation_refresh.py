@@ -242,8 +242,14 @@ def _refresh_history(current: Mapping[str, Any], packet: Path) -> None:
         receipt = active_binding(current, allow_pending=True)
         predecessor = proof(packet, receipt["predecessor"]["full_state_snapshot"])[1]["task"]
         _refresh_history(predecessor, packet)
-        old_history = predecessor.get("validation_refreshes") or []
-        history = current.get("validation_refreshes") or []
+        old_history = predecessor.get("validation_refreshes")
+        history = current.get("validation_refreshes")
+        if old_history is None:
+            old_history = []
+        if history is None:
+            history = []
+        if not isinstance(old_history, list) or not isinstance(history, list):
+            _error("validation refresh history/head binding is missing or malformed")
         if history[:len(old_history)] != old_history:
             _error("successor binding changed historical validation refreshes")
         if len(history) == len(old_history):
@@ -260,6 +266,8 @@ def _refresh_epoch_history(current: Mapping[str, Any], packet: Path, *, history_
     history = current.get("validation_refreshes")
     if history is None:
         history = []
+    if not isinstance(history, list):
+        _error("validation refresh history/head binding is missing or malformed")
     history = history[history_offset:]
     refresh_receipts = [row for row in current.get("receipts") or []
                         if isinstance(row, Mapping) and row.get("kind") == "validation_refresh"][history_offset:]

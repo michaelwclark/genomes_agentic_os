@@ -170,6 +170,16 @@ def handle_successor_inspection(args: argparse.Namespace) -> int:
     return 0
 
 
+def handle_successor_abandonment(args: argparse.Namespace) -> int:
+    """Restore predecessor authority through the pending binding's fenced outbox."""
+    from ..development_successor_state import abandon_development_successor
+    result = abandon_development_successor(
+        args.state_file, expect_state_sha256=args.expect_state_sha256,
+        idempotency_key=args.idempotency_key, reason=args.reason, apply=args.apply)
+    _print(result, json_output=args.json)
+    return 0
+
+
 def _common_output(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--json", action="store_true", help="Print deterministic JSON instead of YAML.")
 
@@ -322,3 +332,15 @@ def register(subparsers) -> None:
     binding.add_argument("--apply", action="store_true", help="Commit the exact binding and resume fenced projections.")
     _common_output(binding)
     binding.set_defaults(handler=handle_successor_binding)
+
+    abandon = sub.add_parser(
+        "abandon-successor", help="Abandon an unconsumed pending binding without discarding history.",
+        description="Dry-run by default. Restore predecessor source authority using fenced projections; preserve immutable receipts, task attempts, leases and shared review budgets.",
+    )
+    abandon.add_argument("state_file")
+    abandon.add_argument("--expect-state-sha256", required=True, help="Exact raw pending-state digest from read-only inspection.")
+    abandon.add_argument("--idempotency-key", required=True)
+    abandon.add_argument("--reason", required=True, help="Bounded explanation recorded in the immutable local receipt.")
+    abandon.add_argument("--apply", action="store_true")
+    _common_output(abandon)
+    abandon.set_defaults(handler=handle_successor_abandonment)

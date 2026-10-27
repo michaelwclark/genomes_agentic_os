@@ -35,6 +35,12 @@ agentic-os develop bind-successor <task-state.json> --request <capsule.json> \
 # Apply or replay the same exact binding; fresh ordinary validation still required
 agentic-os develop bind-successor <task-state.json> --request <capsule.json> \
   --expect-state-sha256 <raw-predecessor-sha256> --idempotency-key <stable-key> --apply --json
+
+# Abandon a pending, unconsumed binding if its live source/runtime has advanced.
+# Inspect the raw pending task locally for its SHA256; plan first, then add --apply.
+agentic-os develop abandon-successor <task-state.json> \
+  --expect-state-sha256 <raw-pending-sha256> --idempotency-key <stable-key> \
+  --reason "Published successor advanced during an interrupted projection" --json
 ```
 
 Project behavior comes from `config/development.yml`, the canonical code
@@ -67,7 +73,17 @@ flag establishes ownership. The real local branch and provider publication
 branch remain distinct. A partial projection blocks consumers until exact-key
 replay finishes, and a completed binding still requires fresh frozen-command
 validation and new-epoch delivery receipts. See the same-task successor section
-of `docs/42-auto-dev-program.md` and the two closed successor schemas.
+of `docs/42-auto-dev-program.md` and the closed binding and abandonment schemas.
+
+If a legitimate push, provider update or container restart makes exact pending
+replay impossible, `abandon-successor` provides a separate receipt-backed outbox.
+It restores the immutable predecessor's source and policy authority, without
+changing either worktree or granting test/review acceptance. Only this ticket's
+owned portfolio and canonical pointers can be restored; unrelated rows and
+metadata remain intact. Original receipts, attempts, leases and shared review
+budgets remain unchanged, and abandonment receipts/events remain in history.
+An interrupted abandonment stays fenced and resumes with its original key and
+pending-state digest. A consumed or completed binding cannot be abandoned.
 
 `--touched-path` and `--subject` are normalized and frozen in the effective
 policy receipt. `--rulebook-id` is required to resolve an exact Rules Engine

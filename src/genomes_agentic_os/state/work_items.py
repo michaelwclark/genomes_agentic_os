@@ -499,6 +499,64 @@ def bind_development_successor(
     return get(conn, current["id"]) or {}
 
 
+def abandon_development_successor(
+    conn: sqlite3.Connection,
+    item_id: str,
+    *,
+    binding: Mapping[str, str],
+    predecessor_worktree_path: str,
+    predecessor_branch: str,
+    receipt_ref: str,
+) -> dict[str, Any]:
+    """Restore only an owned pending binding's source pointers, retaining audit history."""
+    expected_keys = {"binding_id", "worktree_path", "branch", "receipt_ref"}
+    if (set(binding) != expected_keys
+            or not re.fullmatch(r"[0-9a-f]{64}", str(binding.get("binding_id") or ""))
+            or not Path(predecessor_worktree_path).is_absolute()
+            or not Path(receipt_ref).is_absolute()
+            or not predecessor_branch or any(char.isspace() for char in predecessor_branch)):
+        raise WorkItemError("successor abandonment requires an exact binding and predecessor")
+    with transaction(conn):
+        current = get(conn, _identifier(item_id, "work-item id"))
+        if current is None or current["state"] in TERMINAL_STATES or current["attention"] == "closed":
+            raise WorkItemError("successor abandonment requires the same live canonical row")
+        metadata = dict(current["metadata"])
+        existing = metadata.get("active_successor_binding")
+        audit = metadata.get("abandoned_successor_bindings", {})
+        if not isinstance(audit, dict):
+            raise WorkItemError("canonical abandonment audit is malformed")
+        entry = {"receipt_ref": receipt_ref, "worktree_path": predecessor_worktree_path,
+                 "branch": predecessor_branch}
+        if binding["binding_id"] in audit:
+            if (audit[binding["binding_id"]] != entry or existing is not None
+                    or current["worktree_path"] != predecessor_worktree_path
+                    or current["branch"] != predecessor_branch):
+                raise WorkItemError("canonical abandonment replay has a foreign pointer")
+            return current
+        if existing is not None:
+            if (existing != dict(binding) or current["worktree_path"] != binding["worktree_path"]
+                    or current["branch"] != binding["branch"]):
+                raise WorkItemError("canonical successor pointer is foreign")
+        elif (current["worktree_path"] != predecessor_worktree_path
+              or current["branch"] != predecessor_branch):
+            raise WorkItemError("canonical predecessor pointer changed")
+        metadata.pop("active_successor_binding", None)
+        metadata["abandoned_successor_bindings"] = {**audit, binding["binding_id"]: entry}
+        timestamp = utc_now_iso()
+        conn.execute(
+            "UPDATE work_items SET worktree_path = ?, branch = ?, metadata_json = ?, updated_at = ? WHERE id = ?",
+            (predecessor_worktree_path, predecessor_branch, _json_mapping(metadata), timestamp, current["id"]),
+        )
+        conn.execute(
+            "INSERT INTO work_item_history (work_item_id, changed_at, actor, from_state, to_state, "
+            "from_attention, to_attention, summary, receipt_ref, metadata_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (current["id"], timestamp, "development-successor-abandonment", current["state"], current["state"],
+             current["attention"], current["attention"], "Abandoned pending binding; preserved predecessor authority",
+             receipt_ref, _json_mapping(entry)),
+        )
+    return get(conn, current["id"]) or {}
+
+
 def update(
     conn: sqlite3.Connection,
     item_id: str,

@@ -169,11 +169,25 @@ the native task and review-family locks it writes an immutable intent, then
 atomically replaces only the same task's active worktree/runtime/policy/PR
 binding. The original run, task, packet, receipt bytes, attempts, lease, failure
 history, review coordinator and budgets remain intact. It preserves the old
-portfolio snapshot and adds a per-task active-binding pointer. Separate event,
+portfolio and updates only this task's active-binding pointer. Unrelated rows
+and metadata can advance without invalidating this ticket's replay. Separate event,
 SQLite, active-now and Auto-Dev projection writes form a recoverable outbox;
 consumers refuse a partial projection. Repeating the exact request and key
 finishes that outbox without another transition or review claim. An existing
 binding cannot be replaced through a different idempotency key.
+
+If the successor source, provider or runtime advances while projections are
+pending, `develop abandon-successor` offers a separate, dry-run-first recovery.
+An explicit pending-state SHA-256, stable key and bounded reason produce an
+immutable abandonment receipt and a fenced rollback outbox. It restores only
+this binding's owned portfolio and canonical source pointers, then the
+immutable predecessor's task/source/policy authority. Original receipt bytes,
+stage history, lease, attempts, retry limits and shared review budgets remain
+intact. A foreign pointer or a changed protected task field refuses rollback.
+The abandoned binding's receipts, events and canonical audit history remain;
+no tests or delivery gates become accepted. Interrupted abandonment resumes
+with its original key and pending digest. Consumers refuse its partial
+projections, and a completed binding cannot be abandoned.
 
 The protected predecessor snapshot excludes known environment paths from direct
 Python content reads and retained content digests: any `.env*` path component, or a basename ending in `.env` or
@@ -217,6 +231,11 @@ the helper's blocked readiness decision even when the policy/source review is
 CLEAN. It grants no test or gate acceptance; unavailable reviewers and receipts for
 a different delta refuse binding. Refresh the capsule's coordinator inventory
 after the terminal review, retaining all previous attempts and budget records.
+The policy admission uses the dedicated `successor_policy_delta:full-pr`
+subject and chain partition. Ordinary merge-readiness review remains separate,
+with ordinary alias keys and the shared absolute PR-family budgets unchanged.
+Policy receipts, including legacy ordinary-key receipts carrying policy-delta
+provenance, cannot establish ordinary merge-readiness authority.
 The selected development profile's `review.opposing_harness` model, native
 `claude_cli` transport and unavailable policy take precedence over prior request
 defaults. The actual model appears in the invocation, request, prompt and model

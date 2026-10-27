@@ -181,7 +181,9 @@ def test_canonical_policy_review_producer_keeps_task_and_shared_budget_authority
 ) -> None:
     """The real runner/coordinator binds a native rule delta; only its external CLI is substituted."""
     from test_opposing_model_review_runner import _completed, _load_runner
-    from genomes_agentic_os.review_coordination import ReviewSubject, load_review_receipt, stable_review_key
+    from genomes_agentic_os.review_coordination import (
+        SUCCESSOR_POLICY_REVIEW_PURPOSE, ReviewSubject, load_review_receipt, stable_review_key,
+    )
     tree = candidate["candidate"]
     (tree / "AGENTS.md").write_text("Preserve 95 coverage and all account identity checks.\n")
     _git("add", "AGENTS.md", cwd=tree)
@@ -248,7 +250,8 @@ def test_canonical_policy_review_producer_keeps_task_and_shared_budget_authority
     assert "- Reviewer model: `claude-fable-5`" in (run_dir / "model-receipt.md").read_text()
     assert canonical["review"]["policy_delta_sha256"] == admission.digest(observed["policy_delta"])
     subject = ReviewSubject("acme/app", "github:acme/app#236", "main", actual_provider["base_sha"],
-                            actual_provider["head"], observed["policy"]["fingerprint"])
+                            actual_provider["head"], observed["policy"]["fingerprint"],
+                            purpose=SUCCESSOR_POLICY_REVIEW_PURPOSE)
     assert canonical["key"] == stable_review_key(subject)
     assert len(calls) == int(available)
     assert candidate["task"].path.read_bytes() == task_raw

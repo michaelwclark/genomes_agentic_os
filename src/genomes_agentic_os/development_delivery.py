@@ -1843,6 +1843,11 @@ class TaskState:
         value = json.loads(self.path.read_text(encoding="utf-8"))
         if not isinstance(value, dict):
             raise DevelopmentDeliveryError(f"invalid task state: {self.path}")
+        if value.get("successor_abandonment") or value.get("abandoned_successor_bindings"):
+            from .development_successor_state import abandonment_status
+            abandoned = abandonment_status(value, allow_pending=allow_pending_binding)
+            if abandoned["task_state_ref"] != str(self.path.resolve()):
+                raise DevelopmentDeliveryError("successor abandonment belongs to another task state path")
         if value.get("active_successor_binding") or value.get("successor_bindings"):
             from .development_successor_state import active_binding
             receipt = active_binding(value, allow_pending=allow_pending_binding)
@@ -1860,6 +1865,28 @@ class TaskState:
 
     def transition(self, target: str, *, receipt: str, idempotency_key: str) -> dict[str, Any]:
         replayed = False
+        observed = self.read()
+        bound_evidence: Mapping[str, Any] | None = None
+        bound_receipt_sha: str | None = None
+        receipt_reference = receipt
+        if observed.get("active_successor_binding") and observed.get("last_transition_key") != idempotency_key:
+            from .development_successor_state import binding_evidence
+            receipt_path = Path(receipt).expanduser()
+            if not receipt_path.is_absolute():
+                receipt_path = Path(observed["work_item"]) / receipt_path
+            if receipt_path.is_file():
+                from .development_successor_binding import read_json
+                payload, bound_receipt_sha = read_json(receipt_path)
+            else:
+                payload = {}
+            bound_evidence = payload.get("evidence", {})
+            if not isinstance(bound_evidence, Mapping):
+                raise DevelopmentDeliveryError("successor transition evidence must be a mapping")
+            # Network observations must not hold the task/heartbeat state lock.
+            binding_evidence(observed, bound_evidence, verify_provider=target not in {
+                "merged", "deployment_pending", "deploying", "post_deploy_validation", "cleanup_pending", "delivery_complete"})
+            if receipt_path.is_file():
+                receipt_reference = str(receipt_path.resolve())
         with _file_lock(self.path.with_suffix(self.path.suffix + ".lock")):
             state = self.read()
             current = str(state["state"])
@@ -1868,17 +1895,23 @@ class TaskState:
             else:
                 if not receipt.strip():
                     raise DevelopmentDeliveryError("every transition requires a receipt")
+                if (state.get("active_successor_binding") or observed.get("active_successor_binding")) and state != observed:
+                    raise DevelopmentDeliveryError("task changed during transition admission; retry from current state")
                 if state.get("active_successor_binding"):
                     from .development_successor_state import binding_evidence
-                    payload = _read_mapping(Path(receipt))
-                    binding_evidence(state, payload.get("evidence") or {}, verify_provider=target not in {
-                        "merged", "deployment_pending", "deploying", "post_deploy_validation", "cleanup_pending", "delivery_complete"})
+                    if bound_evidence is None:
+                        raise DevelopmentDeliveryError("successor transition lacks admitted binding evidence")
+                    if bound_receipt_sha is not None:
+                        from .development_successor_binding import read_json
+                        if read_json(Path(receipt_reference))[1] != bound_receipt_sha:
+                            raise DevelopmentDeliveryError("successor transition receipt changed during admission")
+                    binding_evidence(state, bound_evidence, verify_provider=False)
                 if not _legal_transition(current, target):
                     raise DevelopmentDeliveryError(f"illegal transition: {current} -> {target}")
                 now = utc_now()
                 state.update({"state": target, "updated_at": now, "last_transition_key": idempotency_key})
-                receipt_row = {"state": target, "ref": receipt, "recorded_at": now}
-                receipt_path = Path(receipt).expanduser()
+                receipt_row = {"state": target, "ref": receipt_reference, "recorded_at": now}
+                receipt_path = Path(receipt_reference).expanduser()
                 if receipt_path.is_file():
                     receipt_row["sha256"] = hashlib.sha256(receipt_path.read_bytes()).hexdigest()
                 state.setdefault("receipts", []).append(receipt_row)

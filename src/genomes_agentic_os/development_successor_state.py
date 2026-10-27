@@ -17,7 +17,9 @@ from .development_successor_binding import (
     EFFECTS, _reject, _review_policy_delta, contained, digest, family_admission_lock,
     observe_successor, proof, read_json, validate_schema,
 )
-from .review_coordination import ReviewSubject, shared_review_coordination_root
+from .review_coordination import (
+    ReviewSubject, SUCCESSOR_POLICY_REVIEW_PURPOSE, shared_review_coordination_root,
+)
 from .state import work_items
 from .state.db import connect, default_db_path
 
@@ -133,6 +135,8 @@ def _match_inputs(current: Mapping[str, Any], packet: Path, request: Mapping[str
     successor = request["successor"]
     record = observation["registry"]["worktree"]
     provider = observation["provider"]
+    if not set(current["worktree"]).issubset(record):
+        _reject("successor worktree record drops predecessor contract keys")
     if (successor["registry_id"] != record["name"] or successor["real_path"] != record["path"]
             or successor["local_source_branch"] != record["branch"]
             or successor["expected_head"] != provider["head"] or successor["expected_base_sha"] != provider["base_sha"]
@@ -159,7 +163,7 @@ def _match(current: Mapping[str, Any], packet: Path, request: Mapping[str, Any],
     provider = observation["provider"]
     subject = ReviewSubject(provider["repository"], "github:" + provider["repository"] + "#" + str(provider["number"]),
                             provider["base_branch"], provider["base_sha"], provider["head"],
-                            observation["policy"]["fingerprint"])
+                            observation["policy"]["fingerprint"], SUCCESSOR_POLICY_REVIEW_PURPOSE)
     review = proof(packet, request["policy"]["delta_review"])[1]
     _review_policy_delta(packet, review, observation["policy_delta"],
                          shared_review_coordination_root(current["os_root"]), subject)
@@ -414,6 +418,8 @@ def current_stage_authority(current: Mapping[str, Any], row: Mapping[str, Any]) 
 def _finish(state_path: Path, receipt: Mapping[str, Any]) -> dict[str, Any]:
     """Idempotently project a committed intent, preserving the original portfolio."""
     current, _ = read_json(state_path)
+    if current.get("successor_abandonment", {}).get("status") == "abandoning":
+        _reject("pending abandonment requires abandon-successor replay")
     active_binding(current, allow_pending=True)
     packet = Path(current["work_item"])
     binding_id = receipt["binding_id"]
@@ -430,13 +436,18 @@ def _finish(state_path: Path, receipt: Mapping[str, Any]) -> dict[str, Any]:
                      idempotency_key=event_key, payload=payload)
     portfolio_path = state_path.parents[2] / "portfolio.json"
     with _file_lock(portfolio_path.with_suffix(".json.lock")):
-        portfolio, portfolio_sha = read_json(portfolio_path)
+        portfolio, _ = read_json(portfolio_path)
         pointers = portfolio.get("active_successor_bindings", {})
+        rows = [row for row in portfolio.get("tasks", [])
+                if isinstance(row, Mapping) and row.get("ticket") == current["ticket"]]
+        if (not isinstance(pointers, Mapping) or len(rows) != 1
+                or Path(str(rows[0].get("state_ref") or "")).resolve() != state_path.resolve()):
+            _reject("portfolio no longer owns this exact task")
         previous = pointers.get(current["ticket"])
         expected = current["active_successor_binding"]["receipt"]
         if previous != expected:
-            if portfolio_sha != receipt["predecessor"]["raw_portfolio_sha256"]:
-                _reject("portfolio changed before outbox projection")
+            if previous is not None:
+                _reject("portfolio has a foreign successor binding")
             portfolio.setdefault("active_successor_bindings", {})[current["ticket"]] = expected
             _atomic_json(portfolio_path, portfolio)
     connection = connect(default_db_path(current["os_root"]))
@@ -472,6 +483,172 @@ def _finish(state_path: Path, receipt: Mapping[str, Any]) -> dict[str, Any]:
         _reject("final Auto-Dev fence projection requires repair")
     return {"task": read_json(state_path)[0], "status": read_json(state_path)[0]["active_successor_binding"]["status"],
             "binding_id": binding_id}
+
+
+def abandonment_status(current: Mapping[str, Any], *, allow_pending: bool = False) -> dict[str, Any] | None:
+    """Verify abandonment history and fence consumers until its projections agree."""
+    marker = current.get("successor_abandonment")
+    history = current.get("abandoned_successor_bindings")
+    if marker is None and not history:
+        return None
+    if (not isinstance(marker, Mapping) or set(marker) != {"receipt", "status"}
+            or marker["status"] not in {"abandoning", "abandoned"}
+            or not isinstance(history, list) or not history or history[-1] != marker["receipt"]):
+        _reject("successor abandonment history is malformed")
+    packet = Path(current["work_item"])
+    for index, ref in enumerate(history):
+        _, receipt, _ = proof(packet, ref)
+        validate_schema(receipt, "development-successor-abandonment-receipt.schema.json")
+        binding = proof(packet, receipt["binding_receipt"])[1]
+        predecessor = proof(packet, receipt["predecessor_snapshot"])[1]["task"]
+        if (binding["binding_id"] != receipt["binding_id"]
+                or binding["predecessor"]["full_state_snapshot"] != receipt["predecessor_snapshot"]
+                or receipt["canonical_work_id"] != current["canonical_work_id"]
+                or predecessor.get("abandoned_successor_bindings", []) != history[:index]
+                or predecessor["work_item"] != current["work_item"]
+                or predecessor["run_id"] != current["run_id"]
+                or predecessor["canonical_work_id"] != current["canonical_work_id"]):
+            _reject("abandonment belongs to another task or binding")
+    if not allow_pending:
+        if marker["status"] == "abandoning":
+            _reject("successor abandonment projections remain pending")
+        manifest, _ = read_json(packet / "autodev.json")
+        delivery = manifest.get("delivery")
+        if (not isinstance(delivery, Mapping)
+                or delivery.get("successor_abandonment") != marker
+                or delivery.get("abandoned_successor_bindings") != history):
+            _reject("abandonment projection fence requires abandon-successor replay")
+    return receipt
+
+
+def _finish_abandonment(state_path: Path, ref: Mapping[str, Any]) -> dict[str, Any]:
+    """Replay pointer-only rollback before restoring the predecessor's task authority."""
+    current, _ = read_json(state_path)
+    receipt = abandonment_status(current, allow_pending=True)
+    if receipt is None or current["successor_abandonment"]["receipt"] != ref:
+        _reject("abandonment replay does not own the current outbox")
+    packet = Path(current["work_item"])
+    if current["successor_abandonment"]["status"] == "abandoned":
+        if _sync_auto_dev_projection(state_path) is None:
+            _reject("abandonment Auto-Dev projection requires replay")
+        abandonment_status(current)
+        return {"status": "abandoned", "binding_id": receipt["binding_id"], "task": current}
+    bound = active_binding(current, allow_pending=True)
+    if (bound is None or bound["binding_id"] != receipt["binding_id"]
+            or current["active_successor_binding"]["status"] != "projections_pending"):
+        _reject("only an unconsumed pending binding can be abandoned")
+    predecessor = proof(packet, receipt["predecessor_snapshot"])[1]["task"]
+    exempt = set(BINDING_FIELDS) | set(BOOKKEEPING) | {"successor_abandonment", "abandoned_successor_bindings"}
+    if {k: v for k, v in current.items() if k not in exempt} != {
+            k: v for k, v in predecessor.items() if k not in exempt}:
+        _reject("abandonment replay would discard changed task history, lease or attempts")
+    expected_pointer = current["active_successor_binding"]["receipt"]
+    portfolio_path = state_path.parents[2] / "portfolio.json"
+    with _file_lock(portfolio_path.with_suffix(".json.lock")):
+        portfolio, _ = read_json(portfolio_path)
+        rows = [row for row in portfolio.get("tasks", [])
+                if isinstance(row, Mapping) and row.get("ticket") == current["ticket"]]
+        pointers = portfolio.get("active_successor_bindings", {})
+        if (not isinstance(pointers, Mapping) or len(rows) != 1
+                or Path(str(rows[0].get("state_ref") or "")).resolve() != state_path.resolve()
+                or pointers.get(current["ticket"]) not in (None, expected_pointer)):
+            _reject("abandonment portfolio pointer is foreign")
+        if current["ticket"] in pointers:
+            portfolio["active_successor_bindings"] = {
+                key: value for key, value in pointers.items() if key != current["ticket"]}
+            _atomic_json(portfolio_path, portfolio)
+    connection = connect(default_db_path(current["os_root"]))
+    try:
+        work_items.abandon_development_successor(
+            connection, current["canonical_work_id"],
+            binding={"binding_id": bound["binding_id"], "worktree_path": current["worktree"]["path"],
+                     "branch": current["worktree"]["branch"],
+                     "receipt_ref": str(packet / expected_pointer["packet_ref"])},
+            predecessor_worktree_path=predecessor["worktree"]["path"],
+            predecessor_branch=predecessor["worktree"]["branch"],
+            receipt_ref=str(packet / ref["packet_ref"]))
+        work_items.write_active_projection(connection, Path(current["os_root"]))
+    finally:
+        connection.close()
+    payload = {"ticket": current["ticket"], "binding_id": receipt["binding_id"], "receipt": dict(ref)}
+    event_key = "successor-abandonment:" + ref["sha256"]
+    append_event(state_path.parent / "events.jsonl", event_type="development.successor.abandoned",
+                 idempotency_key=event_key, payload=payload)
+    if current.get("rollup_ledger"):
+        append_event(Path(current["rollup_ledger"]), event_type="development.successor.abandoned",
+                     idempotency_key=event_key, payload=payload)
+    with _file_lock(state_path.with_suffix(".json.lock")):
+        live, _ = read_json(state_path)
+        if live != current:
+            _reject("task changed during abandonment projection")
+        restored = deepcopy(predecessor)
+        restored.update({"successor_abandonment": {"receipt": dict(ref), "status": "abandoned"},
+                         "abandoned_successor_bindings": current["abandoned_successor_bindings"],
+                         "updated_at": receipt["recorded_at"]})
+        _commit_task(state_path, restored)
+    if _sync_auto_dev_projection(state_path) is None:
+        _reject("abandonment Auto-Dev projection requires replay")
+    abandonment_status(restored)
+    return {"status": "abandoned", "binding_id": receipt["binding_id"], "task": restored}
+
+
+def abandon_development_successor(state_file: str | Path, *, expect_state_sha256: str,
+                                  idempotency_key: str, reason: str, apply: bool = False) -> dict[str, Any]:
+    """Abandon only a pending, unconsumed intent; retain its immutable receipts and budgets."""
+    if (not idempotency_key.strip() or not reason.strip() or len(reason) > 2000
+            or len(expect_state_sha256) != 64
+            or any(char not in "0123456789abcdef" for char in expect_state_sha256)):
+        _reject("abandonment needs an exact pending-state hash, stable key and bounded reason")
+    state_path = Path(state_file).resolve()
+    current, raw_sha = read_json(state_path)
+    packet = Path(current["work_item"])
+    marker = current.get("successor_abandonment")
+    if marker:
+        previous = abandonment_status(current, allow_pending=True)
+        if previous["idempotency_key"] == idempotency_key:
+            if (previous["expected_pending_state_sha256"] != expect_state_sha256
+                    or previous["reason"] != reason or previous["task_state_ref"] != str(state_path)):
+                _reject("abandonment idempotency key collision")
+            if not apply:
+                return {"status": "read_only_plan", "binding_id": previous["binding_id"], "replayed": True}
+            with _task_provisioning_admission_lock(state_path):
+                result = _finish_abandonment(state_path, marker["receipt"])
+            return {**result, "replayed": True}
+        if marker["status"] == "abandoning":
+            _reject("pending abandonment requires its original exact key")
+    bound = active_binding(current, allow_pending=True)
+    if (raw_sha != expect_state_sha256 or bound is None
+            or current["active_successor_binding"]["status"] != "projections_pending"):
+        _reject("abandonment requires the exact unconsumed pending task")
+    predecessor = proof(packet, bound["predecessor"]["full_state_snapshot"])[1]["task"]
+    exempt = set(BINDING_FIELDS) | set(BOOKKEEPING) | {"successor_abandonment", "abandoned_successor_bindings"}
+    if {k: v for k, v in current.items() if k not in exempt} != {
+            k: v for k, v in predecessor.items() if k not in exempt}:
+        _reject("abandonment would discard changed task history, lease or attempts")
+    if not apply:
+        return {"status": "read_only_plan", "binding_id": bound["binding_id"],
+                "restores_worktree": predecessor["worktree"], "grants_delivery_acceptance": False}
+    key = digest({"binding_id": bound["binding_id"], "key": idempotency_key, "pending_sha": raw_sha})
+    folder = packet / current["active_successor_binding"]["receipt"]["packet_ref"]
+    path = folder.parent / "abandonments" / key / "receipt.json"
+    recorded = read_json(path)[0]["recorded_at"] if path.exists() else utc_now()
+    receipt = {"schema": "development-successor-abandonment-receipt/v1",
+               "binding_id": bound["binding_id"], "idempotency_key": idempotency_key,
+               "expected_pending_state_sha256": raw_sha, "recorded_at": recorded, "reason": reason,
+               "task_state_ref": str(state_path), "canonical_work_id": current["canonical_work_id"],
+               "binding_receipt": current["active_successor_binding"]["receipt"],
+               "predecessor_snapshot": bound["predecessor"]["full_state_snapshot"]}
+    validate_schema(receipt, "development-successor-abandonment-receipt.schema.json")
+    with _task_provisioning_admission_lock(state_path):
+        with _file_lock(state_path.with_suffix(".json.lock")):
+            if read_json(state_path)[1] != raw_sha:
+                _reject("pending task changed before abandonment CAS")
+            ref = _reference(packet, path, receipt)
+            updated = deepcopy(current)
+            updated["successor_abandonment"] = {"receipt": ref, "status": "abandoning"}
+            updated.setdefault("abandoned_successor_bindings", []).append(ref)
+            _commit_task(state_path, updated)
+        return _finish_abandonment(state_path, ref)
 
 
 def bind_development_successor(state_file: str | Path, *, request_file: str | Path,

@@ -27,7 +27,9 @@ from .development_delivery import (
     select_development_repository, worktree_entries_for_project,
 )
 from .development_validation_refresh import _clean_worktree
-from .review_coordination import ReviewSubject, review_family_key, shared_review_coordination_root
+from .review_coordination import (
+    ReviewSubject, SUCCESSOR_POLICY_REVIEW_PURPOSE, review_family_key, shared_review_coordination_root,
+)
 from .state import work_items
 from .state.db import connect_readonly, default_db_path
 
@@ -312,12 +314,27 @@ def predecessor_boundary(current: Mapping[str, Any]) -> dict[str, Any]:
 def historical_inventory(current: Mapping[str, Any]) -> dict[str, Any]:
     """Verify all existing file-backed receipts and preserve remote/string references."""
     values: list[dict[str, Any]] = []
+    total = 0
     refs = [dict(row) for row in current.get("receipts", []) if isinstance(row, Mapping)]
     for row in refs:
         raw = str(row.get("ref") or "")
         path = Path(raw)
-        if path.is_file():
-            sha = hashlib.sha256(path.read_bytes()).hexdigest()
+        try:
+            mode = path.lstat().st_mode if raw else None
+        except FileNotFoundError:
+            mode = None
+        except OSError as exc:
+            _reject("historical receipt observation failed: " + type(exc).__name__)
+        # Provisioning legitimately records packet/worktree directories as
+        # unhashed references. They are not file-backed receipt payloads.
+        if mode is not None and not stat.S_ISDIR(mode):
+            value, consumed = _protected_entry(
+                path.parent, Path(path.name), limit=MAX_PROOF_BYTES,
+                remaining=MAX_PROTECTED_TOTAL_BYTES - total)
+            if "sha256" not in value:
+                _reject("historical receipt must be an ordinary regular file")
+            sha = value["sha256"]
+            total += consumed
             if row.get("sha256") and row["sha256"] != sha:
                 _reject("historical receipt bytes changed")
             values.append({"ref": raw, "sha256": sha})
@@ -577,6 +594,8 @@ def _review_policy_delta(packet: Path, review: Mapping[str, Any], delta: Mapping
         return
     if set(review) != {*expected, "canonical_review_sha256"} or any(review.get(k) != v for k, v in expected.items()):
         _reject("changed policy prose lacks exact canonical review authority")
+    if subject.purpose != SUCCESSOR_POLICY_REVIEW_PURPOSE:
+        _reject("policy admission requires its dedicated pre-validation review purpose")
     canonical = shared / "receipts" / (stable_review_key(subject) + ".json")
     try:
         receipt = load_review_receipt(canonical)
@@ -691,7 +710,7 @@ def observe_successor(state_file: str | Path, *, registry_id: str,
         if (marker_path if marker_path.is_absolute() else tree / marker_path).exists():
             _reject("successor has an in-progress Git operation")
     name = row.get("id") or row.get("name")
-    record = {"name": name, "path": str(tree), "branch": branch,
+    record = {**deepcopy(current["worktree"]), "name": name, "path": str(tree), "branch": branch,
               "repository_id": current["repository"]["id"], "base_branch": current["repository"]["base_branch"]}
     expected_repo = current["repository"]["id"].removeprefix("git:github.com/")
     if _repository_url(git(tree, "remote", "get-url", "origin")) != expected_repo:
@@ -699,6 +718,9 @@ def observe_successor(state_file: str | Path, *, registry_id: str,
     provider = _provider(tree, expected_repo, pull_request)
     head = git(tree, "rev-parse", "HEAD")
     base = provider["base_sha"]
+    record["base_sha"] = base
+    if "resumed" in record:
+        record["resumed"] = True
     expected_url = "https://github.com/" + expected_repo + "/pull/" + str(pull_request)
     if (provider["repository"] != expected_repo or provider["source_repository"] != expected_repo
             or provider["state"] != "open" or provider["merged"] or provider["url"] != expected_url

@@ -33,6 +33,7 @@ from genomes_agentic_os.review_coordination import (  # noqa: E402
     ReviewCoordinationError,
     ReviewCoordinator,
     ReviewSubject,
+    SUCCESSOR_POLICY_REVIEW_PURPOSE,
     canonical_review_purpose,
     load_review_receipt,
     parse_parent_resolution_refs,
@@ -46,6 +47,7 @@ from genomes_agentic_os.development_delivery import (  # noqa: E402
     select_development_repository,
 )
 from genomes_agentic_os.review_verdicts import reconcile_json_verdict  # noqa: E402
+from genomes_agentic_os.auto_dev_orchestration import AutoDevStateError  # noqa: E402
 
 HELPER = ROOT / "harness/skills/finishing-touches-review/scripts/finishing_touches_review_helper.py"
 TEMPLATE = ROOT / "harness/skills/auto-dev/templates/reviewer-prompt.md"
@@ -190,6 +192,17 @@ def normalize_review_purpose(purpose: str, scope: str) -> tuple[str, str]:
         canonical_review_purpose(f"{requested_purpose}:{normalized_scope}"),
         normalized_scope,
     )
+
+
+def review_boundary_stage(purpose: str) -> str:
+    """Select the canonical workflow stage without buying a separate review key."""
+    normalize_review_purpose(purpose, "full-pr")
+    normalized = str(purpose).strip().lower().replace("-", "_")
+    if normalized in {"review_self", "review_repair"}:
+        return "review_self"
+    if normalized == "review_others":
+        return "review_others"
+    return "finalize"
 
 
 def parse_review_verdict(response: str) -> tuple[str, bool]:
@@ -437,7 +450,9 @@ def initial_request(work_item: Path, ticket: str, worktree: Path) -> dict[str, A
     }
 
 
-def successor_request(work_item: Path, ticket: str, worktree: Path) -> dict[str, Any] | None:
+def successor_request(
+    work_item: Path, ticket: str, worktree: Path, *, purpose: str = "review_self"
+) -> dict[str, Any] | None:
     """Read the native current binding instead of reusing a predecessor's subject."""
     manifest_path = work_item / "autodev.json"
     if not manifest_path.is_file():
@@ -463,7 +478,7 @@ def successor_request(work_item: Path, ticket: str, worktree: Path) -> dict[str,
     if (task["ticket"] != ticket or Path(task["work_item"]).resolve() != work_item.resolve()
             or Path(task["worktree"]["path"]).resolve() != worktree.resolve()):
         raise ReviewError("explicit review packet/worktree differs from the canonical successor binding")
-    require_auto_dev_predecessors(manifest_path, "review_self")
+    require_auto_dev_predecessors(manifest_path, review_boundary_stage(purpose))
     active = task["active_successor_binding"]
     subject = task["pull_request_subject"]
     metadata = {"binding_id": active["binding_id"],
@@ -472,7 +487,11 @@ def successor_request(work_item: Path, ticket: str, worktree: Path) -> dict[str,
                 "provider_source_branch": subject["source_branch"]}
     binding_evidence(task, metadata)
     repository = task["repository"]["id"].removeprefix("git:github.com/")
-    prior = prior_request(work_item, ticket) or {}
+    prior = dict(prior_request(work_item, ticket) or {})
+    # The latest request may be the earlier pre-validation policy review.
+    # Only the freshly rederived binding may supply ordinary review authority.
+    prior.pop("successor_policy_source", None)
+    prior.pop("policy_delta_sha256", None)
     return {**prior, **metadata, "work_item_id": ticket, "repository": repository,
         "repository_id": task["repository"]["id"], "repo_path": str(worktree),
         "implementation_summary": str(prior.get("implementation_summary") or f"Exact-head implementation for {ticket}"),
@@ -779,6 +798,7 @@ def main() -> int:
     parser.add_argument("--scope", default="full-pr")
     args = parser.parse_args()
     try:
+        purpose, _scope = normalize_review_purpose(args.purpose, args.scope)
         os_root = resolve_os_root(args.os_root)
         work_item = (args.work_item or locate_work_item(os_root, args.ticket)).resolve()
         worktree = (args.worktree or locate_worktree(os_root, args.ticket)).resolve()
@@ -786,10 +806,13 @@ def main() -> int:
             if args.mode != "full" or args.parent_key or args.recover_advisory_from:
                 raise ReviewError("successor policy admission requires the ordinary full review with no recovery override")
             source = successor_policy_request(work_item, args.ticket, worktree, args.successor_policy_request)
+            purpose = SUCCESSOR_POLICY_REVIEW_PURPOSE
         else:
-            source = successor_request(work_item, args.ticket, worktree) or prior_request(work_item, args.ticket) or initial_request(
+            source = successor_request(work_item, args.ticket, worktree, purpose=args.purpose) or prior_request(work_item, args.ticket) or initial_request(
                 work_item, args.ticket, worktree
             )
+            if source.get("successor_policy_source"):
+                raise ReviewError("successor policy admission is not an ordinary merge-readiness review request")
         head = git_head(worktree)
         base = str(source["base_sha"])
         policy = policy_fingerprint(source)
@@ -836,7 +859,6 @@ def main() -> int:
                 f"exact-base mismatch: provider={provider['baseRefOid']} request={base}"
             )
         repository = git_repository(worktree)
-        purpose, _scope = normalize_review_purpose(args.purpose, args.scope)
         subject = ReviewSubject(
             repository=repository,
             pull_request=f"github:{repository}#{pr_number}",
@@ -1082,6 +1104,8 @@ def main() -> int:
                 "reviewer_status": plan["reviewer_status"],
                 "failure_code": failure,
                 "decision": decision["decision"],
+                "validation_status": plan["validation_status"],
+                "pr_check_status": plan["pr_check_status"],
                 "response": response,
                 "parsed_outcome": parsed_outcome,
                 "verdict_structured": verdict_structured,
@@ -1126,7 +1150,7 @@ def main() -> int:
         write_json(run_dir / "opposing-model-review-receipt.json", receipt)
         print(json.dumps(receipt, indent=2))
         return 0 if result.receipt["outcome"] == "clean" else 2
-    except (DevelopmentDeliveryError, ReviewError, ReviewCoordinationError, KeyError) as exc:
+    except (AutoDevStateError, DevelopmentDeliveryError, ReviewError, ReviewCoordinationError, KeyError) as exc:
         print(json.dumps({"ok": False, "error": str(exc)}, indent=2))
         return 2
 
