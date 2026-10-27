@@ -447,6 +447,58 @@ def upsert(
     return get(conn, normalized["id"]) or {}
 
 
+def bind_development_successor(
+    conn: sqlite3.Connection,
+    item_id: str,
+    *,
+    expected_revision: str,
+    binding_id: str,
+    worktree_path: str,
+    branch: str,
+    receipt_ref: str,
+) -> dict[str, Any]:
+    """CAS only a live work row's binding, preserving its lifecycle and history.
+
+    The task-state owner commits its fenced outbox first. This independent
+    SQLite effect is replayable and makes no cross-file atomicity claim.
+    """
+    if (not isinstance(expected_revision, str) or not re.fullmatch(r"[0-9a-f]{64}", expected_revision)
+            or not isinstance(binding_id, str) or not re.fullmatch(r"[0-9a-f]{64}", binding_id)
+            or not isinstance(worktree_path, str) or not Path(worktree_path).is_absolute()
+            or not isinstance(receipt_ref, str) or not Path(receipt_ref).is_absolute()
+            or not isinstance(branch, str) or not branch or any(char.isspace() for char in branch)):
+        raise WorkItemError("successor projection requires exact hashes, absolute paths and one branch")
+    with transaction(conn):
+        current = get(conn, _identifier(item_id, "work-item id"))
+        if current is None or current["state"] in TERMINAL_STATES or current["attention"] == "closed":
+            raise WorkItemError("successor binding requires the same live canonical work row")
+        metadata = dict(current["metadata"])
+        existing = metadata.get("active_successor_binding")
+        binding = {"binding_id": binding_id, "worktree_path": worktree_path,
+                   "branch": branch, "receipt_ref": receipt_ref}
+        if existing == binding:
+            if current["worktree_path"] != worktree_path or current["branch"] != branch:
+                raise WorkItemError("canonical successor replay has inconsistent source pointers")
+            return current
+        revision = hashlib.sha256(json.dumps(current, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        if revision != expected_revision or existing is not None:
+            raise WorkItemError("canonical work row changed before successor projection")
+        metadata["active_successor_binding"] = binding
+        timestamp = utc_now_iso()
+        conn.execute(
+            "UPDATE work_items SET worktree_path = ?, branch = ?, metadata_json = ?, updated_at = ? WHERE id = ?",
+            (worktree_path, branch, _json_mapping(metadata), timestamp, current["id"]),
+        )
+        conn.execute(
+            "INSERT INTO work_item_history (work_item_id, changed_at, actor, from_state, to_state, "
+            "from_attention, to_attention, summary, receipt_ref, metadata_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (current["id"], timestamp, "development-successor-binding", current["state"], current["state"],
+             current["attention"], current["attention"], "Bound registered successor; fresh validation remains required",
+             receipt_ref, _json_mapping(binding)),
+        )
+    return get(conn, current["id"]) or {}
+
+
 def update(
     conn: sqlite3.Connection,
     item_id: str,

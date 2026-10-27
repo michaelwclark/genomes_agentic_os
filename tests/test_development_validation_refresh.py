@@ -208,7 +208,8 @@ def _fixture(tmp_path: Path, *, changed: bool = True, mode: str = "single_stage"
         # system-Python symlink has this disposable environment's packages.
         (worktree / ".venv").symlink_to(sys.prefix, target_is_directory=True)
     for stage in ("groom", "detective", "create_artifacts"):
-        _record_standalone_stage(task, stage)
+        if current["auto_dev_start_stage"] == "groom":
+            _record_standalone_stage(task, stage)
     delivery.run_development_stage(task.path, stage="readiness",
         receipts={"planned": _stage_receipt(packet, "planned")},
         idempotency_prefix="planned")

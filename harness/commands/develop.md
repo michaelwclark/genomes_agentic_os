@@ -23,6 +23,18 @@ agentic-os develop start <domain> <project> <ticket> [<ticket> ...] --apply
 
 # Compact portfolio/task readback
 agentic-os develop status <run-dir>
+
+# Inspect an already registered successor; no provisioning or task write
+agentic-os develop inspect-successor <task-state.json> \
+  --worktree-id <exact-project-registry-id> --pull-request <existing-family-pr> --json
+
+# Plan a same-task binding from an exact packet-contained proof capsule
+agentic-os develop bind-successor <task-state.json> --request <capsule.json> \
+  --expect-state-sha256 <raw-predecessor-sha256> --idempotency-key <stable-key> --json
+
+# Apply or replay the same exact binding; fresh ordinary validation still required
+agentic-os develop bind-successor <task-state.json> --request <capsule.json> \
+  --expect-state-sha256 <raw-predecessor-sha256> --idempotency-key <stable-key> --apply --json
 ```
 
 Project behavior comes from `config/development.yml`, the canonical code
@@ -47,6 +59,15 @@ agentic-os develop policy <domain> <project> --plane environment_access --json
 The conventional folder order is root → domain → project. Projects may provide
 an ordered 1-N path list in `config/development.yml`; adding a Markdown file is
 picked up automatically on the next run.
+
+Same-task successor binding preserves the original task, packet, receipt and
+review-budget history. It requires independent native Git/registry/runtime/PR
+and policy-delta proofs; neither a new branch name nor a caller's `verified`
+flag establishes ownership. The real local branch and provider publication
+branch remain distinct. A partial projection blocks consumers until exact-key
+replay finishes, and a completed binding still requires fresh frozen-command
+validation and new-epoch delivery receipts. See the same-task successor section
+of `docs/42-auto-dev-program.md` and the two closed successor schemas.
 
 `--touched-path` and `--subject` are normalized and frozen in the effective
 policy receipt. `--rulebook-id` is required to resolve an exact Rules Engine

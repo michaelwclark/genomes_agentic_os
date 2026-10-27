@@ -1837,18 +1837,23 @@ class TaskState:
     def ledger(self) -> Path:
         return self.path.parent / "events.jsonl"
 
-    def read(self) -> dict[str, Any]:
+    def read(self, *, allow_pending_binding: bool = False) -> dict[str, Any]:
         if not self.path.is_file():
             raise DevelopmentDeliveryError(f"task state not found: {self.path}")
         value = json.loads(self.path.read_text(encoding="utf-8"))
         if not isinstance(value, dict):
             raise DevelopmentDeliveryError(f"invalid task state: {self.path}")
+        if value.get("active_successor_binding") or value.get("successor_bindings"):
+            from .development_successor_state import active_binding
+            receipt = active_binding(value, allow_pending=allow_pending_binding)
+            if receipt["task"]["state_path"] != str(self.path.resolve()):
+                raise DevelopmentDeliveryError("successor binding belongs to another task state path")
         return value
 
     def emit(self, *, event_type: str, idempotency_key: str, payload: Mapping[str, Any]) -> None:
         """Write the task ledger and its optional root rollup pointer ledger."""
         append_event(self.ledger, event_type=event_type, idempotency_key=idempotency_key, payload=payload)
-        state = self.read()
+        state = self.read(allow_pending_binding=True)
         rollup = state.get("rollup_ledger")
         if rollup:
             append_event(Path(str(rollup)), event_type=event_type, idempotency_key=idempotency_key, payload=payload)
@@ -1863,6 +1868,11 @@ class TaskState:
             else:
                 if not receipt.strip():
                     raise DevelopmentDeliveryError("every transition requires a receipt")
+                if state.get("active_successor_binding"):
+                    from .development_successor_state import binding_evidence
+                    payload = _read_mapping(Path(receipt))
+                    binding_evidence(state, payload.get("evidence") or {}, verify_provider=target not in {
+                        "merged", "deployment_pending", "deploying", "post_deploy_validation", "cleanup_pending", "delivery_complete"})
                 if not _legal_transition(current, target):
                     raise DevelopmentDeliveryError(f"illegal transition: {current} -> {target}")
                 now = utc_now()
@@ -8503,6 +8513,11 @@ def start_development_run(
                 packet=existing_work_item,
                 diagnostic_root=run_dir,
             )
+            binding_overrides: dict[str, Any] = {}
+            if current.get("active_successor_binding"):
+                from .development_successor_state import BINDING_FIELDS, active_binding
+                active_binding(current)
+                binding_overrides = {key: deepcopy(current[key]) for key in BINDING_FIELDS}
             current.update(
                 {
                     "os_root": str(expand_path(root)),
@@ -8532,6 +8547,7 @@ def start_development_run(
                     "canonical_work_id": canonical_work_id,
                 }
             )
+            current.update(binding_overrides)
             _atomic_json(state_path, current)
             _sync_auto_dev_projection(state_path)
             _sync_canonical_development_work(
@@ -9893,6 +9909,12 @@ def run_development_stage(
         evidence = payload.get("evidence")
         if not isinstance(evidence, (Mapping, list)) or not evidence:
             raise DevelopmentDeliveryError(f"{target} receipt requires structured evidence")
+        if state.read().get("active_successor_binding"):
+            from .development_successor_state import binding_evidence
+            if not isinstance(evidence, Mapping):
+                raise DevelopmentDeliveryError("successor binding requires structured current-epoch evidence")
+            binding_evidence(state.read(), evidence, verify_provider=target not in {
+                "merged", "deployment_pending", "deploying", "post_deploy_validation", "cleanup_pending", "delivery_complete"})
         if target == "local_validation" and isinstance(evidence, Mapping):
             unavailable = evidence.get("unavailable_check")
             if unavailable is not None and status != "deferred_to_ci":
@@ -10515,6 +10537,10 @@ def run_development_stage(
                         else {}
                     )
                     expected_source_branch = str(worktree.get("branch") or "").strip()
+                    if task_value.get("active_successor_binding"):
+                        from .development_successor_state import active_binding
+                        active_binding(task_value)
+                        expected_source_branch = task_value["pull_request_subject"]["source_branch"]
                     expected_provider = ""
                     if expected_repository.startswith(("github:", "git:github.com/")):
                         expected_provider = "github"

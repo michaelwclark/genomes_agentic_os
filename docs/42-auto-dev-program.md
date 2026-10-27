@@ -149,6 +149,68 @@ the task is still in local validation; once PR review begins, a changed head
 requires a fresh delivery run so review, QA, and Finalize cannot stay attached
 to the old commit.
 
+An isolated successor worktree can continue the same modern task while it is
+still at `local_validation`. `develop inspect-successor` reads the exact project
+registry entry, clean local Git branch/head/index, original ancestry, live PR
+and remote source/base refs, runtime ownership, effective policy, original
+receipt inventory, canonical work row, and shared review lineage. Its output
+is an observation, not permission to change task state. Prepare the closed
+`development-successor-binding-request/v1` capsule beneath the original packet's
+`artifacts/`; every assertion and hash is independently rederived at admission.
+The admitted original workflow must start at Groom or at the native default
+Readiness stage and include PR Create. Binding preserves the original workflow
+window, mode, applicability and early-stage exclusions. Readiness-start fresh
+validation is admitted only after a complete native successor binding;
+ordinary unbound validation-refresh eligibility remains unchanged.
+
+`develop bind-successor` is read-only unless `--apply` is supplied. Apply requires
+the explicit raw predecessor-state SHA-256 and a stable idempotency key. Under
+the native task and review-family locks it writes an immutable intent, then
+atomically replaces only the same task's active worktree/runtime/policy/PR
+binding. The original run, task, packet, receipt bytes, attempts, lease, failure
+history, review coordinator and budgets remain intact. It preserves the old
+portfolio snapshot and adds a per-task active-binding pointer. Separate event,
+SQLite, active-now and Auto-Dev projection writes form a recoverable outbox;
+consumers refuse a partial projection. Repeating the exact request and key
+finishes that outbox without another transition or review claim. An existing
+binding cannot be replaced through a different idempotency key.
+
+The local branch and provider publication branch may differ only when both
+native Git/remote and provider reads prove the same exact head. Validation
+uses the actual registered local branch; PR-family and review evidence use the
+provider branch and also name both branches plus the binding ID and immutable
+binding-receipt hash. Binding clears current validation authority and makes all
+new-epoch delivery stages pending while retaining old evidence as history.
+Fresh frozen-command execution, ordinary PR/review/QA/Finalize/merge gates and
+the project's complete coverage requirements remain mandatory.
+If the original workflow ended at PR Create, resume the same run through the
+existing native named-stage entrypoint before Review Self. The review runner
+refuses an out-of-window review; successor binding never widens its own scope.
+
+Policy fingerprints may change because source paths or inherited policy text
+changed. Native admission retains original selectors, ordering and source
+scope, the complete validation profile, inherited safety lines and source-rule
+files. It rejects reduced or unknown validation semantics. Changed prose,
+context or Git rule blobs require a CLEAN canonical full review of the exact
+new head/base/policy and native delta. The canonical opposing-model runner's
+`--successor-policy-request <capsule.json>` mode derives that subject without
+binding the task, includes the full policy delta in the review prompt and
+records its digest through the existing shared coordinator. It rechecks source,
+policy, provider, runtime and task identity after the reviewer returns. This
+mode grants no test or gate acceptance; unavailable reviewers and receipts for
+a different delta refuse binding. Refresh the capsule's coordinator inventory
+after the terminal review, retaining all previous attempts and budget records.
+
+Managed runtime support is intentionally explicit: LOS fast worktrees require
+one native owner registry row, matching `FWT_SLUG`/`FWT_INDEX`/stack identity,
+bounded Docker compose ownership and a real `/app` bind mount of the selected
+source, plus no foreign canonical work-item claim. Docker reads select only
+daemon/container IDs, compose-project ownership and mounts; they never read
+container environment values or execute cleanup. Stopped registered containers
+can prove their configured source mount; this does not assert application
+health. Other managed providers refuse until they have an ownership observer.
+An unmanaged profile records that fact explicitly.
+
 For a modern task still at `local_validation`, bind successor validation with
 `agentic-os develop refresh-validation <task-state.json> --evidence
 <successor-evidence.json> --idempotency-key <stable-key>`. This appends a receipt

@@ -1,0 +1,315 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "development-successor-binding-receipt.schema.json",
+  "title": "Immutable same-task successor-binding receipt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "binding_id",
+    "idempotency_key",
+    "request_sha256",
+    "recorded_at",
+    "task",
+    "predecessor",
+    "successor",
+    "proofs",
+    "preserved_invariants",
+    "effects",
+    "resulting_authority"
+  ],
+  "properties": {
+    "schema": {
+      "const": "development-successor-binding-receipt/v1"
+    },
+    "binding_id": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "idempotency_key": {
+      "type": "string",
+      "minLength": 1
+    },
+    "request_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "recorded_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "task": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "state_path",
+        "run_id",
+        "ticket",
+        "canonical_work_id",
+        "work_item",
+        "repository_id"
+      ],
+      "properties": {
+        "state_path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "run_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "ticket": {
+          "type": "string",
+          "minLength": 1
+        },
+        "canonical_work_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "work_item": {
+          "type": "string",
+          "minLength": 1
+        },
+        "repository_id": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "predecessor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "raw_state_sha256",
+        "raw_portfolio_sha256",
+        "raw_autodev_sha256",
+        "canonical_work_row_revision",
+        "full_state_snapshot",
+        "protected_boundary",
+        "original_policy",
+        "historical_receipts"
+      ],
+      "properties": {
+        "raw_state_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "raw_portfolio_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "raw_autodev_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "canonical_work_row_revision": {
+          "type": "string",
+          "minLength": 1
+        },
+        "full_state_snapshot": {
+          "$ref": "#/$defs/proofRef"
+        },
+        "protected_boundary": {
+          "$ref": "#/$defs/proofRef"
+        },
+        "original_policy": {
+          "$ref": "#/$defs/proofRef"
+        },
+        "historical_receipts": {
+          "$ref": "#/$defs/proofRef"
+        }
+      }
+    },
+    "successor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "worktree_record",
+        "runtime_native_identity",
+        "local_source_branch",
+        "provider_source_branch",
+        "head_sha",
+        "base_sha",
+        "pull_request_subject",
+        "policy_receipt",
+        "policy_delta"
+      ],
+      "properties": {
+        "worktree_record": {
+          "$ref": "#/$defs/proofRef"
+        },
+        "runtime_native_identity": {
+          "$ref": "#/$defs/proofRef"
+        },
+        "local_source_branch": {
+          "type": "string",
+          "minLength": 1
+        },
+        "provider_source_branch": {
+          "type": "string",
+          "minLength": 1
+        },
+        "head_sha": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{40}$"
+        },
+        "base_sha": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{40}$"
+        },
+        "pull_request_subject": {
+          "$ref": "#/$defs/proofRef"
+        },
+        "policy_receipt": {
+          "$ref": "#/$defs/proofRef"
+        },
+        "policy_delta": {
+          "$ref": "#/$defs/proofRef"
+        }
+      }
+    },
+    "proofs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "native_admission",
+        "accepted_request",
+        "policy_delta_admission",
+        "provider_and_remote_equality",
+        "real_git_ancestry",
+        "actual_policy_resolution",
+        "shared_review_lineage"
+      ],
+      "properties": {
+        "accepted_request": {
+          "$ref": "#/$defs/proofRef"
+        },
+        "policy_delta_admission": {
+          "$ref": "#/$defs/proofRef"
+        },
+        "native_admission": {
+          "$ref": "#/$defs/proofRef"
+        },
+        "provider_and_remote_equality": {
+          "$ref": "#/$defs/proofRef"
+        },
+        "real_git_ancestry": {
+          "$ref": "#/$defs/proofRef"
+        },
+        "actual_policy_resolution": {
+          "$ref": "#/$defs/proofRef"
+        },
+        "shared_review_lineage": {
+          "$ref": "#/$defs/proofRef"
+        }
+      }
+    },
+    "preserved_invariants": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "receipts_and_stage_history_sha256",
+        "attempts_failures_restarts_sha256",
+        "lease_authorship_and_retry_limits_sha256",
+        "original_runtime_history_sha256",
+        "shared_coordinator_and_budget_inventory_sha256"
+      ],
+      "properties": {
+        "receipts_and_stage_history_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "attempts_failures_restarts_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "lease_authorship_and_retry_limits_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "original_runtime_history_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "shared_coordinator_and_budget_inventory_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      }
+    },
+    "effects": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "outbox_id",
+        "task_patch_payload_sha256",
+        "required_effects"
+      ],
+      "properties": {
+        "outbox_id": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "task_patch_payload_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "required_effects": {
+          "type": "array",
+          "uniqueItems": true,
+          "prefixItems": [
+            {
+              "const": "task-event"
+            },
+            {
+              "const": "rollup-event"
+            },
+            {
+              "const": "portfolio-active-binding"
+            },
+            {
+              "const": "autodev-projection"
+            },
+            {
+              "const": "same-canonical-work-row"
+            },
+            {
+              "const": "active-now-projection"
+            }
+          ],
+          "items": false,
+          "minItems": 6,
+          "maxItems": 6
+        }
+      }
+    },
+    "resulting_authority": {
+      "const": "local_validation; new binding must complete projections, fresh native validation, provider-family continuation and all ordinary review/QA/Finalize gates"
+    }
+  },
+  "$defs": {
+    "proofRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "packet_ref",
+        "sha256",
+        "schema"
+      ],
+      "properties": {
+        "packet_ref": {
+          "type": "string",
+          "pattern": "^artifacts/[^\\r\\n]+$"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "schema": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  }
+}

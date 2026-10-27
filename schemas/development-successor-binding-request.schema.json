@@ -1,0 +1,335 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "development-successor-binding-request.schema.json",
+  "title": "Same-task successor worktree binding request",
+  "description": "Request data is never proof; native admission rederives all provider/Git/runtime/policy/lineage values. Default CLI mode is read-only. No task reset or gate acceptance.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "reason",
+    "expected",
+    "identity",
+    "predecessor",
+    "successor",
+    "pull_request",
+    "policy",
+    "review_lineage"
+  ],
+  "properties": {
+    "schema": {
+      "const": "development-successor-binding-request/v1"
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 10,
+      "maxLength": 1000
+    },
+    "expected": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "task_sha256",
+        "portfolio_sha256",
+        "autodev_sha256",
+        "canonical_work_row_revision"
+      ],
+      "properties": {
+        "task_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "portfolio_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "autodev_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "canonical_work_row_revision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      }
+    },
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "run_id",
+        "ticket",
+        "canonical_work_id",
+        "domain",
+        "project",
+        "repository_id",
+        "work_item"
+      ],
+      "properties": {
+        "run_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "ticket": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "canonical_work_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "domain": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "project": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "repository_id": {
+          "type": "string",
+          "pattern": "^git:github\\.com/[^/]+/[^/]+$"
+        },
+        "work_item": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "predecessor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_head",
+        "policy_fingerprint",
+        "protected_boundary_snapshot",
+        "historical_receipt_inventory",
+        "original_runtime_record"
+      ],
+      "properties": {
+        "source_head": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{40}$"
+        },
+        "policy_fingerprint": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "protected_boundary_snapshot": {
+          "$ref": "#/$defs/proofRef"
+        },
+        "historical_receipt_inventory": {
+          "$ref": "#/$defs/proofRef"
+        },
+        "original_runtime_record": {
+          "$ref": "#/$defs/proofRef"
+        }
+      }
+    },
+    "successor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "registry_id",
+        "real_path",
+        "local_source_branch",
+        "expected_head",
+        "expected_base_sha",
+        "registry_snapshot",
+        "runtime"
+      ],
+      "properties": {
+        "registry_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "real_path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "local_source_branch": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "expected_head": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{40}$"
+        },
+        "expected_base_sha": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{40}$"
+        },
+        "registry_snapshot": {
+          "$ref": "#/$defs/proofRef"
+        },
+        "runtime": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "provider",
+            "identity",
+            "namespace",
+            "native_readback"
+          ],
+          "properties": {
+            "provider": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "identity": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "namespace": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "native_readback": {
+              "$ref": "#/$defs/proofRef"
+            }
+          }
+        }
+      }
+    },
+    "pull_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "provider",
+        "number",
+        "repository_id",
+        "base_branch",
+        "base_sha",
+        "provider_source_branch",
+        "source_head",
+        "family_predecessor",
+        "provider_readback",
+        "remote_ref_readback"
+      ],
+      "properties": {
+        "provider": {
+          "const": "github"
+        },
+        "number": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "repository_id": {
+          "type": "string",
+          "pattern": "^git:github\\.com/[^/]+/[^/]+$"
+        },
+        "base_branch": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "base_sha": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{40}$"
+        },
+        "provider_source_branch": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "source_head": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{40}$"
+        },
+        "family_predecessor": {
+          "$ref": "#/$defs/proofRef"
+        },
+        "provider_readback": {
+          "$ref": "#/$defs/proofRef"
+        },
+        "remote_ref_readback": {
+          "$ref": "#/$defs/proofRef"
+        }
+      }
+    },
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "new_effective_policy",
+        "new_fingerprint",
+        "delta_review"
+      ],
+      "properties": {
+        "new_effective_policy": {
+          "$ref": "#/$defs/proofRef"
+        },
+        "new_fingerprint": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "delta_review": {
+          "$ref": "#/$defs/proofRef"
+        }
+      }
+    },
+    "review_lineage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "existing_shared_coordinator_root",
+        "family_key",
+        "coordinator_inventory",
+        "attempt_and_budget_inventory"
+      ],
+      "properties": {
+        "existing_shared_coordinator_root": {
+          "type": "string",
+          "minLength": 1
+        },
+        "family_key": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "coordinator_inventory": {
+          "$ref": "#/$defs/proofRef"
+        },
+        "attempt_and_budget_inventory": {
+          "$ref": "#/$defs/proofRef"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "proofRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "packet_ref",
+        "sha256",
+        "schema"
+      ],
+      "properties": {
+        "packet_ref": {
+          "type": "string",
+          "pattern": "^artifacts/(?!.*(?:^|/)\\.\\.(?:/|$))[^\\r\\n]+$"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "schema": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        }
+      }
+    }
+  }
+}
