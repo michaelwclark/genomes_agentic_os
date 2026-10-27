@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import os
 from pathlib import Path
+import sys
 from typing import Any
 
 import pytest
@@ -200,3 +201,48 @@ def test_proof_json_size_refuses_before_open_and_final_symlink_is_never_followed
     link.symlink_to(source)
     with pytest.raises(DevelopmentDeliveryError, match="ordinary regular file"):
         admission.read_json(link)
+
+
+@pytest.mark.parametrize("name", [
+    " leading.py", "trailing.py ", "\tleading.py", "leading\nline.py",
+    "leading\rline.py", "leading\r\nline.py", "trailing.py\n",
+])
+def test_real_nul_delimited_git_filename_keeps_whitespace_and_detects_changed_bytes(
+    protected_tree: dict[str, Any], name: str,
+) -> None:
+    """Native Git inventories retain the exact path and protect genuinely changed dirty bytes."""
+    root = Path(protected_tree["worktree"]["path"])
+    source = root / name
+    before = b"before\n"
+    after = b"after with different protected bytes\n"
+    source.write_bytes(before)
+    first = admission.predecessor_boundary(protected_tree)
+    assert set(first["changed_files"]) == {name}
+    assert first["changed_files"][name]["sha256"] == hashlib.sha256(before).hexdigest()
+    source.write_bytes(after)
+    second = admission.predecessor_boundary(protected_tree)
+    assert set(second["changed_files"]) == {name}
+    assert second["changed_files"][name]["sha256"] == hashlib.sha256(after).hexdigest()
+    assert first["status_sha256"] == second["status_sha256"]
+    assert first != second
+
+
+def test_native_observation_preserves_all_embedded_crlf_and_nul_stdout() -> None:
+    """Real child stdout is decoded without trimming or universal-newline normalization."""
+    content = " leading\r\nname\x00trailing\n\x00\n\n"
+    result = admission.native([sys.executable, "-c", "import sys; sys.stdout.buffer.write(" + repr(content.encode()) + ")"])
+    assert result == content
+    assert result.endswith("\n\n")
+
+
+def test_scalar_git_observation_removes_only_one_record_lf(protected_tree: dict[str, Any]) -> None:
+    """A scalar Git value ending in LF retains that data when its record LF is removed."""
+    root = Path(protected_tree["worktree"]["path"])
+    _git("config", "probe.value", "value ending in LF\n", cwd=root)
+    assert admission.git(root, "config", "--get", "probe.value") == "value ending in LF\n"
+
+
+def test_native_invalid_text_encoding_refuses_without_echoing_raw_bytes() -> None:
+    """Unsupported native output fails closed before a corrupted path can enter a receipt."""
+    with pytest.raises(DevelopmentDeliveryError, match="unsupported text encoding"):
+        admission.native([sys.executable, "-c", "import sys; sys.stdout.buffer.write(bytes([255]))"])

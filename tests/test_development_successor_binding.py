@@ -629,6 +629,44 @@ def test_protected_dirty_predecessor_is_preserved_and_drift_rejected(candidate: 
     assert candidate["task"].path.read_bytes() == before
 
 
+@pytest.mark.parametrize("name", ["internal\ttab.py", "internal\nline.py", "internal\r\nline.py"])
+def test_committed_source_paths_and_complete_diff_bytes_reach_native_policy_selection(
+    candidate: dict[str, Any], name: str,
+) -> None:
+    """Actual Git filenames, context selectors and binary diff digest retain their full identity."""
+    tree = candidate["candidate"]
+    (tree / name).write_text("independently changed successor source\n")
+    _git("add", "--", name, cwd=tree)
+    _git("commit", "-m", "test: exact successor filename", cwd=tree)
+    _git("push", str(candidate["remote"]), "HEAD:refs/heads/" + candidate["provider"]["source_branch"], cwd=tree)
+    head = _git("rev-parse", "HEAD", cwd=tree)
+    candidate["provider"]["head"] = head
+    observed = _renew_assertions(candidate)
+    assert observed["ancestry"]["changed_paths"] == sorted(["README.md", name])
+    assert name in observed["policy"]["context_selection"]["selection"]["touched_paths"]
+    raw = subprocess.check_output(["git", "-C", str(tree), "diff", "--no-ext-diff", "--no-textconv",
+                                   "--binary", observed["provider"]["base_sha"], head, "--"])
+    assert raw.endswith(b"\n")
+    assert observed["ancestry"]["diff_sha256"] == hashlib.sha256(raw).hexdigest()
+
+
+@pytest.mark.parametrize("name", [" leading.py", "trailing.py ", "\tleading.py", "trailing.py\n"])
+def test_committed_source_path_normalization_refuses_without_changing_shared_selector(
+    candidate: dict[str, Any], name: str,
+) -> None:
+    """An existing selector's whitespace normalization cannot silently drop a real changed path."""
+    tree = candidate["candidate"]
+    (tree / name).write_text("actual successor bytes\n")
+    _git("add", "--", name, cwd=tree)
+    _git("commit", "-m", "test: reject lossy selector input", cwd=tree)
+    _git("push", str(candidate["remote"]), "HEAD:refs/heads/" + candidate["provider"]["source_branch"], cwd=tree)
+    candidate["provider"]["head"] = _git("rev-parse", "HEAD", cwd=tree)
+    before = candidate["task"].path.read_bytes()
+    with pytest.raises(delivery.DevelopmentDeliveryError, match="cannot preserve the exact"):
+        _renew_assertions(candidate)
+    assert candidate["task"].path.read_bytes() == before
+
+
 def test_real_review_family_lock_is_nonblocking(candidate: dict[str, Any]) -> None:
     """An in-flight shared family claim prevents binding instead of consuming or resetting it."""
     import fcntl

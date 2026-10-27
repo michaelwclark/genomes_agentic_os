@@ -146,7 +146,7 @@ def native(command: list[str], *, cwd: Path | None = None) -> str:
         environment = {key: value for key, value in environment.items() if not key.startswith("GIT_")}
         environment.update({"GIT_NO_LAZY_FETCH": "1", "GIT_TERMINAL_PROMPT": "0", "GIT_OPTIONAL_LOCKS": "0"})
     try:
-        result = subprocess.run(command, cwd=cwd, capture_output=True, text=True, timeout=30,
+        result = subprocess.run(command, cwd=cwd, capture_output=True, timeout=30,
                                 env=environment)
     except (OSError, subprocess.TimeoutExpired) as exc:
         _reject("native observation unavailable: " + type(exc).__name__)
@@ -154,13 +154,19 @@ def native(command: list[str], *, cwd: Path | None = None) -> str:
         _reject("native observation failed: " + command[0])
     if len(result.stdout) > 32 * 1024 * 1024:
         _reject("native observation exceeds its output bound")
-    return result.stdout.strip()
+    try:
+        # NUL-delimited Git paths can contain spaces, tabs, CR and LF. Text
+        # mode or strip() would corrupt their identity before observation.
+        return result.stdout.decode("utf-8")
+    except UnicodeError:
+        _reject("native observation contains an unsupported text encoding")
 
 
 def git(path: Path, *args: str) -> str:
     """Read real Git objects with replacement objects and lazy fetching disabled."""
-    return native(["git", "--no-replace-objects", "-c", "core.fsmonitor=false",
-                   "-c", "core.hooksPath=/dev/null", "-c", "diff.external=", "-C", str(path), *args])
+    output = native(["git", "--no-replace-objects", "-c", "core.fsmonitor=false",
+                     "-c", "core.hooksPath=/dev/null", "-c", "diff.external=", "-C", str(path), *args])
+    return output if "-z" in args or "--binary" in args else output.removesuffix("\n")
 
 
 def _repository_url(url: str) -> str:
@@ -400,7 +406,7 @@ def _native_runtime(current: Mapping[str, Any], profile: Mapping[str, Any],
             _reject("native runtime namespace disagrees with its registry")
     # Read only whitelisted Docker fields, never Config.Env, logs or exec.
     stack = "los-" + slug
-    daemon = native(["docker", "info", "--format", "{{.ID}}"])
+    daemon = native(["docker", "info", "--format", "{{.ID}}"]).removesuffix("\n")
     ids = native(["docker", "ps", "--all", "--quiet", "--no-trunc", "--filter",
                   "label=com.docker.compose.project=" + stack]).splitlines()
     if not daemon or len(daemon) > 256 or not ids or len(ids) > 32 or len(ids) != len(set(ids)):
@@ -681,7 +687,7 @@ def observe_successor(state_file: str | Path, *, registry_id: str,
         git(tree, "merge-base", "--is-ancestor", ancestor, head)
         if git(tree, "merge-base", "--all", ancestor, head).splitlines() != [ancestor]:
             _reject("source/base ancestry is ambiguous")
-    changed = sorted(filter(None, git(tree, "diff", "--no-ext-diff", "--no-textconv", "--name-only", "--no-renames", base, head, "--").splitlines()))
+    changed = sorted(filter(None, git(tree, "diff", "--no-ext-diff", "--no-textconv", "--name-only", "-z", "--no-renames", base, head, "--").split("\0")))
     profile, source = _profile(current)
     old, old_sha = read_json(Path(current["policy_receipt"]))
     selection = current.get("context_selection", {}).get("selection", {})
@@ -690,6 +696,9 @@ def observe_successor(state_file: str | Path, *, registry_id: str,
         touched_paths=sorted(set(changed) | set(selection.get("touched_paths", []))),
         subjects=selection.get("subjects", []),
         rulebook_ids=selection.get("rulebook_ids", []))
+    intended_paths = set(changed) | set(selection.get("touched_paths", []))
+    if set(new.get("context_selection", {}).get("selection", {}).get("touched_paths", [])) != intended_paths:
+        _reject("native context selection cannot preserve the exact changed and inherited source paths")
     delta = policy_delta(old, new)
     old_selection_current = _resolve_development_context_selection(
         current["os_root"], current["domain"], current["project"],

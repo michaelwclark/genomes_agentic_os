@@ -185,6 +185,10 @@ records final link text without opening targets, and refuses special files,
 replacement or concurrent writes. Admission limits changed entries to 10,000,
 ordinary source files to 32 MiB each, the index to 64 MiB, and total index plus
 source reads to 128 MiB; exceeding a limit refuses binding.
+Native observations preserve UTF-8 filename bytes and NUL-delimited inventories
+without newline translation; binary diff hashes cover the complete output.
+Unsupported encoding or a context selector that changes a real source path
+refuses admission rather than silently shortening or omitting it.
 
 The local branch and provider publication branch may differ only when both
 native Git/remote and provider reads prove the same exact head. Validation
