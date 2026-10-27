@@ -356,6 +356,35 @@ def coordinator_inventory(root: Path, subject: ReviewSubject) -> dict[str, Any]:
             "family_key": review_family_key(subject), "files": inventory}
 
 
+
+def _runtime_observer_configuration(
+    current: Mapping[str, Any], profile: Mapping[str, Any], provider: str
+) -> dict[str, Any]:
+    """Admit only the fixed native parser, explicitly scoped by trusted profile data.
+
+    Configuration selects ownership metadata only; commands, parser behavior,
+    mount destination and slug/namespace rules remain package-owned.
+    """
+    configured = profile.get("runtime", {}).get("successor_observer")
+    if not isinstance(configured, Mapping):
+        _reject("managed runtime requires an explicit supported observer configuration")
+    validate_schema(configured, "development-runtime-observer.schema.json")
+    observer = deepcopy(dict(configured))
+    if (observer["provider"] != provider or observer["domain"] != current["domain"]
+            or observer["project"] != current["project"]):
+        _reject("runtime observer provider or project scope is foreign")
+    keys = observer["identity_keys"]
+    names = [keys["slug"], keys["compose_project"], keys["namespace"],
+             *keys["optional_namespace_aliases"]]
+    if len(set(names)) != len(names):
+        _reject("runtime observer identity keys must name distinct metadata")
+    registry = Path(observer["registry_path"]).expanduser()
+    if not registry.is_absolute():
+        _reject("runtime observer registry must resolve to an absolute path")
+    observer["registry_path"] = str(registry)
+    return observer
+
+
 def _native_runtime(current: Mapping[str, Any], profile: Mapping[str, Any],
                     record: Mapping[str, Any]) -> dict[str, Any]:
     """Prove registration with a dedicated read-only provider observation.
@@ -371,11 +400,8 @@ def _native_runtime(current: Mapping[str, Any], profile: Mapping[str, Any],
         _reject("runtime provider or command semantics changed from the original registration")
     if runtime["ownership"] == "not_managed":
         return {"schema": "development-successor-runtime/v1", **runtime, "namespace": "not-managed"}
-    if (runtime["provider"] != "los_fast_worktree" or current["domain"] != "los"
-            or current["project"] != "los_app_los_django"):
-        _reject("runtime provider has no supported successor ownership observer")
-    state = Path.home() / ".los-fast-worktree"
-    registry = state / "registry.tsv"
+    observer = _runtime_observer_configuration(current, profile, runtime["provider"])
+    registry = Path(observer["registry_path"]).expanduser()
     if registry.is_symlink() or not registry.is_file() or registry.stat().st_uid != os.getuid():
         _reject("native fast-worktree registry is unavailable")
     slug = re.sub(r"-+", "-", re.sub(r"[^a-z0-9-]", "-", record["name"].lower())).strip("-")[:40]
@@ -390,7 +416,9 @@ def _native_runtime(current: Mapping[str, Any], profile: Mapping[str, Any],
     path = Path(record["path"]) / ".env.worktree"
     if path.is_symlink() or not path.is_file() or path.stat().st_uid != os.getuid():
         _reject("native runtime worktree identity is missing")
-    allowed = {"FWT_SLUG", "LOS_STACK_NAME", "FWT_INDEX", "FWT_ID", "FWT_NAMESPACE"}
+    keys = observer["identity_keys"]
+    allowed = {keys["slug"], keys["compose_project"], keys["namespace"],
+               *keys["optional_namespace_aliases"]}
     identity: dict[str, str] = {}
     for line in path.read_text().splitlines():
         key, sep, value = line.partition("=")
@@ -398,14 +426,14 @@ def _native_runtime(current: Mapping[str, Any], profile: Mapping[str, Any],
             if key.strip() in identity:
                 _reject("duplicate runtime identity key")
             identity[key.strip()] = value.strip()
-    if (identity.get("FWT_SLUG") != slug or identity.get("LOS_STACK_NAME") != "los-" + slug
-            or identity.get("FWT_INDEX") != namespace):
+    stack = observer["compose_project_prefix"] + slug
+    if (identity.get(keys["slug"]) != slug or identity.get(keys["compose_project"]) != stack
+            or identity.get(keys["namespace"]) != namespace):
         _reject("native runtime ownership identity disagrees with its registry")
-    for key in ("FWT_ID", "FWT_NAMESPACE"):
+    for key in keys["optional_namespace_aliases"]:
         if key in identity and identity[key] != namespace:
             _reject("native runtime namespace disagrees with its registry")
     # Read only whitelisted Docker fields, never Config.Env, logs or exec.
-    stack = "los-" + slug
     daemon = native(["docker", "info", "--format", "{{.ID}}"]).removesuffix("\n")
     ids = native(["docker", "ps", "--all", "--quiet", "--no-trunc", "--filter",
                   "label=com.docker.compose.project=" + stack]).splitlines()
@@ -438,6 +466,8 @@ def _native_runtime(current: Mapping[str, Any], profile: Mapping[str, Any],
     finally:
         connection.close()
     return {"schema": "development-successor-runtime/v1", **runtime, "namespace": namespace,
+            "observer_configuration": observer,
+            "observer_configuration_sha256": digest(observer),
             "worktree": str(Path(record["path"]).resolve()), "registry_row_sha256": digest(rows[0]),
             "daemon": daemon, "containers": containers,
             "work_item_claim": {"canonical_work_id": current["canonical_work_id"],
@@ -625,15 +655,18 @@ def observe_successor(state_file: str | Path, *, registry_id: str,
     portfolio_path = path.parents[2] / "portfolio.json"
     portfolio, portfolio_sha = read_json(portfolio_path)
     manifest, manifest_sha = read_json(packet / "autodev.json")
+    delivery = manifest.get("delivery")
+    if not isinstance(delivery, Mapping):
+        _reject("Auto-Dev delivery link must be a mapping")
     task_rows = [row for row in portfolio.get("tasks", []) if row.get("ticket") == current["ticket"]]
     if (not path.is_relative_to(project / "state/development-runs")
             or path.parents[2].name != current["run_id"] or len(task_rows) != 1
             or Path(task_rows[0].get("state_ref", "")).resolve() != path):
         _reject("task is not the original portfolio's exact registered state path")
-    if (manifest.get("delivery", {}).get("task_state_ref") != str(path)
+    if (delivery.get("task_state_ref") != str(path)
             or manifest.get("canonical_work_id") != current["canonical_work_id"]
-            or manifest.get("delivery", {}).get("worktree") != current["worktree"]
-            or manifest.get("delivery", {}).get("policy_fingerprint") != current["policy_fingerprint"]
+            or delivery.get("worktree") != current["worktree"]
+            or delivery.get("policy_fingerprint") != current["policy_fingerprint"]
             or portfolio.get("run_id") != current["run_id"]
             or portfolio.get("repository") != current["repository"]):
         _reject("linked portfolio or Auto-Dev identity does not match")

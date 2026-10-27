@@ -19,7 +19,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -443,9 +443,16 @@ def successor_request(work_item: Path, ticket: str, worktree: Path) -> dict[str,
     if not manifest_path.is_file():
         return None
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    task_ref = manifest.get("delivery", {}).get("task_state_ref")
-    if not task_ref or not Path(task_ref).is_file():
+    delivery = manifest.get("delivery", {})
+    if not isinstance(delivery, Mapping):
+        raise ReviewError("canonical delivery link must be a mapping")
+    task_ref = delivery.get("task_state_ref")
+    if task_ref is not None and not isinstance(task_ref, str):
+        raise ReviewError("canonical delivery task reference must be a path string")
+    if not task_ref:
         return None
+    if not Path(task_ref).is_file():
+        raise ReviewError("linked canonical delivery task is unavailable")
     raw = json.loads(Path(task_ref).read_text(encoding="utf-8"))
     if not raw.get("active_successor_binding"):
         return None
@@ -482,7 +489,10 @@ def successor_policy_request(work_item: Path, ticket: str, worktree: Path, reque
     """Admit the unchanged canonical task's proposed successor to a full policy review."""
     from genomes_agentic_os.development_successor_state import successor_policy_review_request
     manifest = json.loads((work_item / "autodev.json").read_text(encoding="utf-8"))
-    task_path = Path(str(manifest.get("delivery", {}).get("task_state_ref") or ""))
+    delivery = manifest.get("delivery")
+    if not isinstance(delivery, Mapping) or not isinstance(delivery.get("task_state_ref"), str) or not delivery["task_state_ref"]:
+        raise ReviewError("successor policy review requires a linked canonical delivery task")
+    task_path = Path(delivery["task_state_ref"])
     native = successor_policy_review_request(task_path, request_file)
     identity = native["identity"]
     current = json.loads(task_path.read_text(encoding="utf-8"))
@@ -661,7 +671,7 @@ def render_prompt(request: dict[str, Any], provider: dict[str, Any]) -> str:
     values = {
         "WORK_ITEM_ID": str(request["work_item_id"]), "PROJECT": "Auto-Dev",
         "TRACKER_ID": str(request["work_item_id"]), "TRACKER_URL": "provider-read ticket context",
-        "BUILDER_FAMILY": "gpt", "REVIEWER_FAMILY": str(request["selected_reviewer_model"]), "MODE": str(request["mode"]),
+        "BUILDER_FAMILY": "gpt", "REVIEWER_FAMILY": str(request.get("selected_reviewer_model", "opus")), "MODE": str(request["mode"]),
         "PR_URL": str(provider["url"]), "BASE_SHA": str(request["base_sha"]), "HEAD_SHA": str(request["head_sha"]),
         "SPEC": str(request.get("spec_source", "provider ticket")),
         "ACCEPTANCE_CRITERIA": str(request.get("spec_source", "provider ticket")),

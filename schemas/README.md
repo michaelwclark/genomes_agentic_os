@@ -33,6 +33,14 @@ These schemas change no existing historical receipt format. Unbound tasks keep
 their existing behavior; bound tasks require fresh epoch metadata and ordinary
 validation/delivery acceptance.
 
+`development-runtime-observer.schema.json` closes the explicit managed-runtime
+ownership metadata selected by `runtime.successor_observer`. It admits the
+package-owned compose/TSV parser with exact provider/project scope, registry
+location, compose prefix and environment identity keys. It accepts no commands
+or caller-supplied observer code. The normalized configuration and digest are
+part of native successor evidence; the historical runtime registration remains
+unchanged.
+
 `program-run-packet.schema.json` validates immutable `00-program.json` and
 ordered workflow records in the canonical cross-program run packet. Its
 execution outcome is intentionally separate from its quality outcome so a

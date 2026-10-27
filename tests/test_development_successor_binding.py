@@ -261,15 +261,24 @@ def test_canonical_policy_review_producer_keeps_task_and_shared_budget_authority
         assert candidate["task"].path.read_bytes() == task_raw
 
 
-@pytest.mark.parametrize("fault", [None, "namespace", "mount", "duplicate", "foreign_claim", "missing"])
+def _managed_observer_configuration(registry: Path) -> dict[str, Any]:
+    """Select the package-owned format using only explicit generic ownership metadata."""
+    return {"schema": "development-runtime-observer/v1", "kind": "compose_registry_tsv",
+        "provider": "fast_worktree", "domain": "acme", "project": "app",
+        "registry_path": str(registry), "compose_project_prefix": "runtime-",
+        "identity_keys": {"slug": "FWT_SLUG", "compose_project": "STACK_NAME", "namespace": "FWT_INDEX",
+                          "optional_namespace_aliases": ["FWT_ID", "FWT_NAMESPACE"]}}
+
+
+@pytest.mark.parametrize("fault", [None, "namespace", "mount", "duplicate", "foreign_claim", "missing",
+                                 "alias", "duplicate_key", "foreign_row", "registry_symlink", "env_symlink"])
 def test_managed_runtime_observer_binds_real_registry_and_sqlite_claims_with_docker_boundary(
     candidate: dict[str, Any], monkeypatch: pytest.MonkeyPatch, fault: str | None,
 ) -> None:
     """Exercise real owner files/claim queries with only the external Docker response substituted."""
     current = deepcopy(candidate["task"].read())
-    current.update({"domain": "los", "project": "los_app_los_django"})
     profile, _ = admission._profile(candidate["task"].read())
-    profile["runtime"] = {"ownership": "managed", "provider": "los_fast_worktree",
+    profile["runtime"] = {"ownership": "managed", "provider": "fast_worktree",
         "identity_template": "{domain}-{project}-{worktree}",
         "teardown_command": "true {runtime_identity}", "readback_command": "true {runtime_identity}"}
     current["runtime"] = delivery._runtime_registration(profile, current["worktree"],
@@ -278,20 +287,30 @@ def test_managed_runtime_observer_binds_real_registry_and_sqlite_claims_with_doc
     slug = record["name"].lower()
     home = candidate["packet"] / "artifacts/observer-home"
     home.mkdir()
-    monkeypatch.setattr(Path, "home", classmethod(lambda _cls: home))
-    registry = home / ".los-fast-worktree/registry.tsv"
+    registry = home / ".fast-worktree/registry.tsv"
     registry.parent.mkdir()
-    row = "53\t" + slug + "\t" + record["path"] + "\tfixture-registration\n"
+    profile["runtime"]["successor_observer"] = _managed_observer_configuration(registry)
+    row = "53\t" + slug + "\t" + (str(home) if fault == "foreign_row" else record["path"]) + "\tfixture-registration\n"
     registry.write_text(row * (2 if fault == "duplicate" else 1))
+    if fault == "registry_symlink":
+        original_registry = registry.with_suffix(".original")
+        registry.rename(original_registry)
+        registry.symlink_to(original_registry)
     env = Path(record["path"]) / ".env.worktree"
-    env.write_text("FWT_SLUG=" + slug + "\nLOS_STACK_NAME=los-" + slug
+    env.write_text("FWT_SLUG=" + slug + "\nSTACK_NAME=runtime-" + slug
                    + "\nFWT_INDEX=" + ("54" if fault == "namespace" else "53")
+                   + "\nFWT_ID=" + ("54" if fault == "alias" else "53")
+                   + ("\nFWT_SLUG=" + slug if fault == "duplicate_key" else "")
                    + "\nUNRELATED_SECRET=must-never-appear-in-the-proof\n")
+    if fault == "env_symlink":
+        original_env = env.with_suffix(".original")
+        env.rename(original_env)
+        env.symlink_to(original_env)
     if fault == "foreign_claim":
         connection = connect(default_db_path(candidate["root"]))
         try:
             work_items.upsert(connection, item_id="foreign-runtime-owner", title="Foreign owner",
-                worktree_path=record["path"], packet_path=str(home), domain="los", project="los_app_los_django")
+                worktree_path=record["path"], packet_path=str(home), domain=current["domain"], project=current["project"])
         finally:
             connection.close()
     container = "c" * 64
@@ -306,7 +325,7 @@ def test_managed_runtime_observer_binds_real_registry_and_sqlite_claims_with_doc
         if command[1] == "ps":
             return "" if fault == "missing" else container
         assert "Config.Env" not in command[3]
-        return json.dumps({"id": container, "project": "los-" + slug,
+        return json.dumps({"id": container, "project": "runtime-" + slug,
             "mounts": [{"Type": "bind", "Source": str(home) if fault == "mount" else record["path"],
                         "Destination": "/app"}]})
     monkeypatch.setattr(admission, "native", docker_read)
@@ -316,11 +335,83 @@ def test_managed_runtime_observer_binds_real_registry_and_sqlite_claims_with_doc
     else:
         observed = admission._native_runtime(current, profile, record)
         assert observed["namespace"] == "53"
-        assert observed["containers"] == [{"id": container, "compose_project": "los-" + slug,
+        assert observed["containers"] == [{"id": container, "compose_project": "runtime-" + slug,
             "source": record["path"], "destination": "/app"}]
+        assert observed["observer_configuration"] == profile["runtime"]["successor_observer"]
+        assert observed["observer_configuration_sha256"] == admission.digest(profile["runtime"]["successor_observer"])
+        assert {key: observed[key] for key in current["runtime"]} == delivery._runtime_registration(
+            profile, record, domain=current["domain"], project=current["project"], ticket=current["ticket"])
         assert observed["work_item_claim"]["canonical_work_id"] == current["canonical_work_id"]
         assert "must-never-appear" not in json.dumps(observed)
         assert [row[1] for row in calls] == ["info", "ps", "inspect"]
+
+
+@pytest.mark.parametrize("fault", ["missing", "schema", "kind", "property", "provider", "domain", "project",
+    "duplicate_key", "relative_path", "unknown_role", "alias_duplicate", "path_nul", "path_cr", "path_lf"])
+def test_managed_runtime_observer_configuration_refuses_before_native_commands(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fault: str,
+) -> None:
+    """Reject malformed or foreign typed ownership metadata before any provider read."""
+    configured = _managed_observer_configuration(tmp_path / "registry.tsv")
+    if fault in {"schema", "kind", "provider", "domain", "project"}:
+        configured[fault] = "unknown"
+    elif fault == "property":
+        configured["command"] = "arbitrary observer must never execute"
+    elif fault == "duplicate_key":
+        configured["identity_keys"]["namespace"] = configured["identity_keys"]["slug"]
+    elif fault == "relative_path":
+        configured["registry_path"] = "relative/registry.tsv"
+    elif fault == "unknown_role":
+        configured["identity_keys"]["cleanup"] = "CLEANUP"
+    elif fault == "alias_duplicate":
+        configured["identity_keys"]["optional_namespace_aliases"] = ["FWT_ID", "FWT_ID"]
+    elif fault.startswith("path_"):
+        configured["registry_path"] = str(tmp_path) + {"path_nul": "\0", "path_cr": "\r", "path_lf": "\n"}[fault] + "registry.tsv"
+    profile = {"runtime": {"ownership": "managed", "provider": "fast_worktree",
+        "identity_template": "{domain}-{project}-{worktree}",
+        "teardown_command": "true {runtime_identity}", "readback_command": "true {runtime_identity}"}}
+    if fault != "missing":
+        profile["runtime"]["successor_observer"] = configured
+    current = {"domain": "acme", "project": "app", "ticket": "APP-1",
+               "worktree": {"name": "original"}}
+    current["runtime"] = delivery._runtime_registration(profile, current["worktree"],
+        domain=current["domain"], project=current["project"], ticket=current["ticket"])
+    before = deepcopy(profile)
+    def forbidden_native(*_args: Any, **_kwargs: Any) -> str:
+        """Any command would violate closed configuration admission ordering."""
+        pytest.fail("invalid observer configuration reached a native command")
+    monkeypatch.setattr(admission, "native", forbidden_native)
+    with pytest.raises(delivery.DevelopmentDeliveryError):
+        admission._native_runtime(current, profile, {"name": "successor"})
+    assert profile == before
+
+
+def test_runtime_observer_configuration_and_digest_remain_in_every_live_identity(
+    tmp_path: Path,
+) -> None:
+    """Keep normalized parser metadata in CAS and post-review identity comparisons."""
+    configuration = _managed_observer_configuration(tmp_path / "registry.tsv")
+    profile = {"runtime": {"successor_observer": configuration}}
+    current = {"domain": "acme", "project": "app"}
+    normalized = admission._runtime_observer_configuration(current, profile, "fast_worktree")
+    assert normalized == configuration
+    assert normalized is not configuration
+    assert normalized["identity_keys"] is not configuration["identity_keys"]
+    observed = {key: {} for key in ("expected", "protected_boundary", "historical_receipts", "original_runtime",
+        "registry", "runtime", "provider", "remote", "ancestry", "policy", "old_policy_sha256", "policy_delta")}
+    observed["runtime"] = {"observer_configuration": normalized,
+                           "observer_configuration_sha256": admission.digest(normalized)}
+    identity = binding.policy_review_identity(observed)
+    for key, value in (("registry_path", str(tmp_path / "other.tsv")), ("compose_project_prefix", "other-"),
+                       ("identity_keys", {**normalized["identity_keys"], "namespace": "OTHER_INDEX"})):
+        changed = deepcopy(configuration)
+        changed[key] = value
+        admitted = admission._runtime_observer_configuration(current, {"runtime": {"successor_observer": changed}}, "fast_worktree")
+        assert admitted != normalized
+        assert admission.digest(admitted) != identity["runtime"]["observer_configuration_sha256"]
+        observed["runtime"] = {"observer_configuration": admitted,
+                               "observer_configuration_sha256": admission.digest(admitted)}
+        assert binding.policy_review_identity(observed) != identity
 
 
 def test_native_plan_preserves_every_task_and_source_byte(candidate: dict[str, Any]) -> None:
@@ -856,6 +947,44 @@ def test_policy_review_invalid_input_is_pre_admission_refusal(candidate: dict[st
     assert runner.main() == 2
     assert "closed schema" in json.loads(capsys.readouterr().out)["error"]
     assert not Path(candidate["observation"]["coordinator"]["root"]).joinpath("attempts").exists()
+
+
+@pytest.mark.parametrize("link", [None, "not-a-mapping", []])
+def test_malformed_delivery_link_refuses_new_successor_readers_without_prior_request_fallback(
+    candidate: dict[str, Any], link: Any,
+) -> None:
+    """Broken durable linkage yields typed refusals and cannot select an old review subject."""
+    from test_opposing_model_review_runner import _load_runner
+    runner = _load_runner()
+    manifest_path = candidate["packet"] / "autodev.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["delivery"] = link
+    _write(manifest_path, manifest)
+    task_raw = candidate["task"].path.read_bytes()
+    with pytest.raises(runner.ReviewError, match="delivery link"):
+        runner.successor_request(candidate["packet"], candidate["task"].read()["ticket"], candidate["candidate"])
+    with pytest.raises(runner.ReviewError, match="linked canonical delivery task"):
+        runner.successor_policy_request(candidate["packet"], candidate["task"].read()["ticket"], candidate["candidate"],
+                                        candidate["binding_request"])
+    with pytest.raises(delivery.DevelopmentDeliveryError, match="delivery link"):
+        admission.observe_successor(candidate["task"].path,
+            registry_id=candidate["binding_payload"]["successor"]["registry_id"], pull_request=236)
+    assert candidate["task"].path.read_bytes() == task_raw
+
+
+@pytest.mark.parametrize("shape", [None, "not-a-mapping", [], {}])
+def test_active_successor_delivery_projection_shape_is_a_typed_fence(
+    candidate: dict[str, Any], shape: Any,
+) -> None:
+    """A malformed completed projection cannot be read as a usable current binding."""
+    _bind(candidate)
+    current = json.loads(candidate["task"].path.read_text())
+    manifest_path = candidate["packet"] / "autodev.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["delivery"] = shape
+    _write(manifest_path, manifest)
+    with pytest.raises(delivery.DevelopmentDeliveryError, match="projection fence"):
+        binding.active_binding(current)
 
 
 @pytest.mark.parametrize("candidate", ["readiness"], indirect=True)

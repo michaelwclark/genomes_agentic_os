@@ -2435,7 +2435,10 @@ def require_auto_dev_predecessors(state_file: str | Path, stage: str) -> dict[st
     """Fail unless every in-scope configured predecessor is terminal."""
 
     current = read_auto_dev_state(state_file)
-    task_ref = current.get("delivery", {}).get("task_state_ref")
+    delivery = current.get("delivery")
+    task_ref = delivery.get("task_state_ref") if isinstance(delivery, Mapping) else None
+    if task_ref is not None and not isinstance(task_ref, str):
+        raise AutoDevStateError("delivery task reference must be a path string")
     if task_ref:
         from .development_delivery import TaskState
         task = TaskState(Path(task_ref)).read()

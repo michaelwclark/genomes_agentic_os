@@ -322,7 +322,8 @@ def active_binding(current: Mapping[str, Any], *, allow_pending: bool = False) -
     proof(packet, receipt["successor"]["policy_receipt"])
     if not allow_pending:
         manifest, _ = read_json(packet / "autodev.json")
-        if manifest.get("delivery", {}).get("active_successor_binding") != active:
+        delivery = manifest.get("delivery")
+        if not isinstance(delivery, Mapping) or delivery.get("active_successor_binding") != active:
             _reject("binding projection fence requires native sync or exact replay")
     if current.get("validation_pending_binding") not in {None, active["binding_id"]}:
         _reject("validation fence belongs to a different binding")
@@ -453,9 +454,11 @@ def _finish(state_path: Path, receipt: Mapping[str, Any]) -> dict[str, Any]:
     if _sync_auto_dev_projection(state_path) is None:
         _reject("Auto-Dev outbox projection requires repair")
     manifest, _ = read_json(packet / "autodev.json")
-    if (manifest["delivery"].get("active_successor_binding") != current["active_successor_binding"]
-            or manifest["delivery"]["worktree"] != current["worktree"]
-            or manifest["delivery"]["policy_fingerprint"] != current["policy_fingerprint"]):
+    delivery = manifest.get("delivery")
+    if (not isinstance(delivery, Mapping)
+            or delivery.get("active_successor_binding") != current["active_successor_binding"]
+            or delivery.get("worktree") != current["worktree"]
+            or delivery.get("policy_fingerprint") != current["policy_fingerprint"]):
         _reject("Auto-Dev outbox readback disagrees")
     with _file_lock(state_path.with_suffix(".json.lock")):
         live, _ = read_json(state_path)

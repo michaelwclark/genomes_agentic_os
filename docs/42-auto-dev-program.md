@@ -224,15 +224,25 @@ receipt. The helper's legacy `opus` family label identifies the Anthropic family
 it does not substitute the Opus model for a configured Claude Fable model.
 Unavailable execution remains an unavailable coordinator outcome and exit 2.
 
-Managed runtime support is intentionally explicit: LOS fast worktrees require
-one native owner registry row, matching `FWT_SLUG`/`FWT_INDEX`/stack identity,
+Managed runtime support is intentionally explicit: the selected project's
+`runtime.successor_observer` must satisfy the closed
+`development-runtime-observer/v1` contract. The supported `compose_registry_tsv`
+format selects only provider/domain/project, registry location, compose prefix
+and ownership-key names. It requires one native owner registry row and matching
+slug/namespace/stack identity,
 bounded Docker compose ownership and a real `/app` bind mount of the selected
 source, plus no foreign canonical work-item claim. Docker reads select only
 daemon/container IDs, compose-project ownership and mounts; they never read
 container environment values or execute cleanup. Stopped registered containers
 can prove their configured source mount; this does not assert application
-health. Other managed providers refuse until they have an ownership observer.
-An unmanaged profile records that fact explicitly.
+health. Missing, unknown or foreign observer configuration refuses before a
+provider command runs. No configured cleanup command or caller-selected code
+can become an observer. The normalized configuration and digest participate in
+request admission, locked CAS, replay and post-review comparison; the original
+five-field runtime registration remains unchanged. Historical policy snapshots
+do not claim to freeze newly added observer metadata. Install that owning
+project metadata separately after reviewing it; there is no silent profile
+migration. An unmanaged profile records that fact explicitly.
 
 For a modern task still at `local_validation`, bind successor validation with
 `agentic-os develop refresh-validation <task-state.json> --evidence
