@@ -135,6 +135,7 @@ weakening the stricter canonical policy or overwriting user-authored content.
 | `policy_plane.py` | — | **Composable Markdown policy discovery.** Ordered 1-N folders, safe frontmatter parsing, provenance, and stable fingerprints shared by workflow-specific resolvers. |
 | `artifact_contracts.py` | — | **Polymorphic artifact authoring.** Root/domain/project provider-type composition, monotonic safety, native rendering, validation, explicit apply/handoff, readback, and receipts. |
 | `development_delivery.py` | — | **Auto-Dev execution engine.** Project profiles, dynamic dev/QA/gitflow policy snapshots, 1-N task state, isolated worktrees, recovery, and delivery receipts. |
+| `development_successor_binding.py` / `development_successor_state.py` | — | **Same-task successor binding.** Read-only native Git/provider/runtime/policy admission, explicit predecessor CAS, preserved review lineage, immutable receipts and replayable fenced projections. Binding grants no validation or delivery acceptance. |
 | `automation_ops.py` | 282 | **Automation maturity.** Readiness checks + the `observe→prepare→propose→execute_approved→execute_guarded` ladder + project attachment. |
 | `workflow_ops.py` | 278 | **Workflow readiness + run closeout.** Required-section checks, `run-log close` audit writes. |
 | `workflow_engine.py` | — | **Governed workflow authoring.** Typed definition/version/instance/run projections, field-addressable validation, drift-safe create/update/publish, exact readback, rollback, and queue-only run requests. |

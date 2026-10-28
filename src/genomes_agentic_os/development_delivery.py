@@ -1837,24 +1837,56 @@ class TaskState:
     def ledger(self) -> Path:
         return self.path.parent / "events.jsonl"
 
-    def read(self) -> dict[str, Any]:
+    def read(self, *, allow_pending_binding: bool = False) -> dict[str, Any]:
         if not self.path.is_file():
             raise DevelopmentDeliveryError(f"task state not found: {self.path}")
         value = json.loads(self.path.read_text(encoding="utf-8"))
         if not isinstance(value, dict):
             raise DevelopmentDeliveryError(f"invalid task state: {self.path}")
+        if value.get("successor_abandonment") or value.get("abandoned_successor_bindings"):
+            from .development_successor_state import abandonment_status
+            abandoned = abandonment_status(value, allow_pending=allow_pending_binding)
+            if abandoned["task_state_ref"] != str(self.path.resolve()):
+                raise DevelopmentDeliveryError("successor abandonment belongs to another task state path")
+        if value.get("active_successor_binding") or value.get("successor_bindings"):
+            from .development_successor_state import active_binding
+            receipt = active_binding(value, allow_pending=allow_pending_binding)
+            if receipt["task"]["state_path"] != str(self.path.resolve()):
+                raise DevelopmentDeliveryError("successor binding belongs to another task state path")
         return value
 
     def emit(self, *, event_type: str, idempotency_key: str, payload: Mapping[str, Any]) -> None:
         """Write the task ledger and its optional root rollup pointer ledger."""
         append_event(self.ledger, event_type=event_type, idempotency_key=idempotency_key, payload=payload)
-        state = self.read()
+        state = self.read(allow_pending_binding=True)
         rollup = state.get("rollup_ledger")
         if rollup:
             append_event(Path(str(rollup)), event_type=event_type, idempotency_key=idempotency_key, payload=payload)
 
     def transition(self, target: str, *, receipt: str, idempotency_key: str) -> dict[str, Any]:
         replayed = False
+        observed = self.read()
+        bound_evidence: Mapping[str, Any] | None = None
+        bound_receipt_sha: str | None = None
+        receipt_reference = receipt
+        if observed.get("active_successor_binding") and observed.get("last_transition_key") != idempotency_key:
+            from .development_successor_state import binding_evidence
+            receipt_path = Path(receipt).expanduser()
+            if not receipt_path.is_absolute():
+                receipt_path = Path(observed["work_item"]) / receipt_path
+            if receipt_path.is_file():
+                from .development_successor_binding import read_json
+                payload, bound_receipt_sha = read_json(receipt_path)
+            else:
+                payload = {}
+            bound_evidence = payload.get("evidence", {})
+            if not isinstance(bound_evidence, Mapping):
+                raise DevelopmentDeliveryError("successor transition evidence must be a mapping")
+            # Network observations must not hold the task/heartbeat state lock.
+            binding_evidence(observed, bound_evidence, verify_provider=target not in {
+                "merged", "deployment_pending", "deploying", "post_deploy_validation", "cleanup_pending", "delivery_complete"})
+            if receipt_path.is_file():
+                receipt_reference = str(receipt_path.resolve())
         with _file_lock(self.path.with_suffix(self.path.suffix + ".lock")):
             state = self.read()
             current = str(state["state"])
@@ -1863,12 +1895,23 @@ class TaskState:
             else:
                 if not receipt.strip():
                     raise DevelopmentDeliveryError("every transition requires a receipt")
+                if (state.get("active_successor_binding") or observed.get("active_successor_binding")) and state != observed:
+                    raise DevelopmentDeliveryError("task changed during transition admission; retry from current state")
+                if state.get("active_successor_binding"):
+                    from .development_successor_state import binding_evidence
+                    if bound_evidence is None:
+                        raise DevelopmentDeliveryError("successor transition lacks admitted binding evidence")
+                    if bound_receipt_sha is not None:
+                        from .development_successor_binding import read_json
+                        if read_json(Path(receipt_reference))[1] != bound_receipt_sha:
+                            raise DevelopmentDeliveryError("successor transition receipt changed during admission")
+                    binding_evidence(state, bound_evidence, verify_provider=False)
                 if not _legal_transition(current, target):
                     raise DevelopmentDeliveryError(f"illegal transition: {current} -> {target}")
                 now = utc_now()
                 state.update({"state": target, "updated_at": now, "last_transition_key": idempotency_key})
-                receipt_row = {"state": target, "ref": receipt, "recorded_at": now}
-                receipt_path = Path(receipt).expanduser()
+                receipt_row = {"state": target, "ref": receipt_reference, "recorded_at": now}
+                receipt_path = Path(receipt_reference).expanduser()
                 if receipt_path.is_file():
                     receipt_row["sha256"] = hashlib.sha256(receipt_path.read_bytes()).hexdigest()
                 state.setdefault("receipts", []).append(receipt_row)
@@ -8503,6 +8546,11 @@ def start_development_run(
                 packet=existing_work_item,
                 diagnostic_root=run_dir,
             )
+            binding_overrides: dict[str, Any] = {}
+            if current.get("active_successor_binding"):
+                from .development_successor_state import BINDING_FIELDS, active_binding
+                active_binding(current)
+                binding_overrides = {key: deepcopy(current[key]) for key in BINDING_FIELDS}
             current.update(
                 {
                     "os_root": str(expand_path(root)),
@@ -8532,6 +8580,7 @@ def start_development_run(
                     "canonical_work_id": canonical_work_id,
                 }
             )
+            current.update(binding_overrides)
             _atomic_json(state_path, current)
             _sync_auto_dev_projection(state_path)
             _sync_canonical_development_work(
@@ -9463,6 +9512,118 @@ def reopen_auto_dev_item(
     }
 
 
+def _normalize_exact_legacy_single_target_identity(
+    details: Mapping[str, Any],
+    *,
+    expected_repository: str,
+    expected_base_branch: str,
+    expected_provider: str,
+    expected_source_branch: str,
+    expected_prior_base_sha: str,
+    expected_ticket: str,
+    expected_policy_fingerprint: str,
+    successor: Mapping[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Bind the historical source_sha/single-target shape for comparison only.
+
+    Both copies of its source head and its full target identity must agree with
+    the unchanged selected task and the explicit provider-read successor. The
+    caller has already checked the immutable prior wrapper/evidence digest;
+    neither that receipt nor historical validation authority is rewritten.
+    """
+
+    message = "legacy source_sha/single-target identity does not exactly bind the selected task and provider-read successor"
+    targets = details.get("targets")
+    if not isinstance(targets, list) or len(targets) != 1 or not isinstance(targets[0], Mapping):
+        raise DevelopmentDeliveryError(message)
+    if any(field in details for field in (
+        "source_head_sha", "base_branch", "provider", "pull_request", "source_branch", "source", "family",
+    )):
+        raise DevelopmentDeliveryError(message)
+    if not (
+        expected_repository.startswith("git:github.com/")
+        and expected_provider == "github"
+        and expected_base_branch
+        and expected_source_branch
+        and expected_ticket
+        and re.fullmatch(r"[a-f0-9]{40}", expected_prior_base_sha)
+        and re.fullmatch(r"[a-f0-9]{64}", expected_policy_fingerprint)
+        and details.get("canonical_stage") == "pr_create"
+        and details.get("ticket") == expected_ticket
+        and details.get("policy_fingerprint") == expected_policy_fingerprint
+        and details.get("family_complete") is True
+        and details.get("publication_goal_complete") is True
+    ):
+        raise DevelopmentDeliveryError(message)
+    legacy_repository = expected_repository.removeprefix("git:github.com/")
+    target = targets[0]
+    number = target.get("pr_number")
+    old_head = details.get("source_sha")
+    if not (
+        type(number) is int and number > 0
+        and isinstance(old_head, str) and re.fullmatch(r"[a-f0-9]{40}", old_head)
+        and details.get("repository") == legacy_repository
+        and target.get("repository") == legacy_repository
+        and target.get("base_branch") == expected_base_branch
+        and target.get("base_sha") == expected_prior_base_sha
+        and target.get("head_branch") == expected_source_branch
+        and target.get("head_sha") == old_head
+        and target.get("source_sha") == old_head
+        and target.get("disposition") == "pr_required"
+        and target.get("status") == "verified_open"
+    ):
+        raise DevelopmentDeliveryError(message)
+    qualified_pr = f"github:{legacy_repository}#{number}"
+    url = f"https://github.com/{legacy_repository}/pull/{number}"
+    identity = {
+        "repository": expected_repository,
+        "base_branch": expected_base_branch,
+        "provider": expected_provider,
+        "pull_request": qualified_pr,
+        "source_branch": expected_source_branch,
+    }
+    observed = successor.get("provider_observed")
+    supersession = successor.get("supersession")
+    new_head = successor.get("source_head_sha")
+    new_base = successor.get("base_sha")
+    if not (
+        target.get("url") == url
+        and all(successor.get(field) == value for field, value in identity.items())
+        and successor.get("ticket") == expected_ticket
+        and successor.get("policy_fingerprint") == expected_policy_fingerprint
+        and successor.get("url") == url
+        and successor.get("readback_verified") is True
+        and isinstance(new_head, str) and re.fullmatch(r"[a-f0-9]{40}", new_head)
+        and new_head != old_head
+        and ("source_sha" not in successor or successor["source_sha"] == new_head)
+        and isinstance(new_base, str) and re.fullmatch(r"[a-f0-9]{40}", new_base)
+        and isinstance(observed, Mapping)
+        and all(observed.get(field) == value for field, value in identity.items())
+        and observed.get("head_sha") == new_head
+        and observed.get("base_sha") == new_base
+        and observed.get("url") == url
+        and observed.get("readback_verified") is True
+        and isinstance(supersession, Mapping)
+        and supersession.get("supersedes_source_head_sha") == old_head
+        and isinstance(supersession.get("reason"), str)
+        and supersession["reason"].strip()
+    ):
+        raise DevelopmentDeliveryError(message)
+    normalized = {**details, **identity, "source_head_sha": old_head}
+    provenance = {
+        "identity_shape": "top_level_source_sha_single_target",
+        "source": "prior_evidence.evidence.source_sha and targets[0]",
+        "legacy_fields": {
+            "repository": legacy_repository, "pr_number": number,
+            "base_branch": expected_base_branch, "base_sha": expected_prior_base_sha,
+            "head_branch": expected_source_branch, "head_sha": old_head, "source_sha": old_head, "url": url,
+        },
+        "normalized_identity": {**identity, "source_head_sha": old_head},
+        "verified_by": "selected_task identity plus explicit provider_observed and prior-head supersession",
+    }
+    return normalized, provenance
+
+
 def _normalize_exact_legacy_family_identity(
     details: Mapping[str, Any],
     *,
@@ -9893,6 +10054,12 @@ def run_development_stage(
         evidence = payload.get("evidence")
         if not isinstance(evidence, (Mapping, list)) or not evidence:
             raise DevelopmentDeliveryError(f"{target} receipt requires structured evidence")
+        if state.read().get("active_successor_binding"):
+            from .development_successor_state import binding_evidence
+            if not isinstance(evidence, Mapping):
+                raise DevelopmentDeliveryError("successor binding requires structured current-epoch evidence")
+            binding_evidence(state.read(), evidence, verify_provider=target not in {
+                "merged", "deployment_pending", "deploying", "post_deploy_validation", "cleanup_pending", "delivery_complete"})
         if target == "local_validation" and isinstance(evidence, Mapping):
             unavailable = evidence.get("unavailable_check")
             if unavailable is not None and status != "deferred_to_ci":
@@ -10515,6 +10682,10 @@ def run_development_stage(
                         else {}
                     )
                     expected_source_branch = str(worktree.get("branch") or "").strip()
+                    if task_value.get("active_successor_binding"):
+                        from .development_successor_state import active_binding
+                        active_binding(task_value)
+                        expected_source_branch = task_value["pull_request_subject"]["source_branch"]
                     expected_provider = ""
                     if expected_repository.startswith(("github:", "git:github.com/")):
                         expected_provider = "github"
@@ -10536,6 +10707,30 @@ def run_development_stage(
                             "git:bitbucket.org/"
                         )
                     pull_request_prefix = f"{pull_request_repository}#"
+                    legacy_single_target_identity_normalization: dict[str, Any] | None = None
+                    if (
+                        not previous_details.get("source_head_sha")
+                        and "source_sha" in previous_details
+                        and "targets" in previous_details
+                    ):
+                        (
+                            previous_details,
+                            legacy_single_target_identity_normalization,
+                        ) = _normalize_exact_legacy_single_target_identity(
+                            previous_details,
+                            expected_repository=expected_repository,
+                            expected_base_branch=expected_base_branch,
+                            expected_provider=expected_provider,
+                            expected_source_branch=expected_source_branch,
+                            expected_prior_base_sha=str(worktree.get("base_sha") or ""),
+                            expected_ticket=str(task_value.get("ticket") or ""),
+                            expected_policy_fingerprint=str(task_value.get("policy_fingerprint") or ""),
+                            successor=(
+                                release_receipt_payload.get("evidence")
+                                if isinstance(release_receipt_payload.get("evidence"), Mapping)
+                                else {}
+                            ),
+                        )
                     legacy_family_identity_normalization: dict[str, Any] | None = None
                     if (
                         not previous_details.get("source_head_sha")
@@ -10654,6 +10849,51 @@ def run_development_stage(
                         raise DevelopmentDeliveryError(
                             "release propagation refresh requires provider-read new head and explicit prior-head supersession"
                         )
+                    # A native-accepted predecessor can already qualify its PR
+                    # while retaining the bare GitHub repository. Normalize only
+                    # that repository comparison field after all prior/new/task
+                    # identity and complete provider readback agree.
+                    legacy_qualified_repository_normalization: dict[str, Any] | None = None
+                    qualified_identifier = legacy_pull_request.removeprefix(pull_request_prefix)
+                    qualified_url = (
+                        "https://github.com/" + legacy_repository + "/pull/" + qualified_identifier
+                    )
+                    if (
+                        expected_repository.startswith("git:github.com/")
+                        and expected_provider == "github"
+                        and expected_base_branch
+                        and expected_source_branch
+                        and str(previous_details.get("repository") or "").strip() == legacy_repository
+                        and str(previous_details.get("provider") or "").strip() == "github"
+                        and str(previous_details.get("base_branch") or "").strip() == expected_base_branch
+                        and str(previous_details.get("source_branch") or "").strip() == expected_source_branch
+                        and previous_details.get("readback_verified") is True
+                        and legacy_pull_request.startswith(pull_request_prefix)
+                        and re.fullmatch(r"[1-9][0-9]*", qualified_identifier)
+                        and refreshed_identity == {
+                            "repository": expected_repository,
+                            "base_branch": expected_base_branch,
+                            "provider": "github",
+                            "pull_request": legacy_pull_request,
+                            "source_branch": expected_source_branch,
+                        }
+                        and all(str(provider_observed.get(field) or "").strip() == value
+                                for field, value in refreshed_identity.items())
+                        and provider_observed.get("readback_verified") is True
+                        and re.fullmatch(r"[a-fA-F0-9]{40}", str(refreshed_details.get("base_sha") or ""))
+                        and provider_observed.get("base_sha") == refreshed_details.get("base_sha")
+                        and provider_observed.get("url") == qualified_url
+                        and refreshed_details.get("url") == qualified_url
+                    ):
+                        previous_details = {**previous_details, "repository": expected_repository}
+                        legacy_qualified_repository_normalization = {
+                            "identity_shape": "bare_repository_qualified_github_pull_request",
+                            "field": "repository",
+                            "source": "prior_evidence.evidence.repository",
+                            "from": legacy_repository,
+                            "value": expected_repository,
+                            "verified_by": "provider_observed.repository",
+                        }
                     # The original PR Create adapter also accepted a canonical
                     # GitHub URL in this field.  Qualify only a prior URL whose
                     # complete identity matches the registered task and the
@@ -10872,9 +11112,17 @@ def run_development_stage(
                         payload["supersedes"]["legacy_identity_normalization"] = (
                             legacy_family_identity_normalization
                         )
+                    elif legacy_single_target_identity_normalization is not None:
+                        payload["supersedes"]["legacy_identity_normalization"] = (
+                            legacy_single_target_identity_normalization
+                        )
                     elif legacy_url_identity_normalization is not None:
                         payload["supersedes"]["legacy_identity_normalization"] = (
                             legacy_url_identity_normalization
+                        )
+                    elif legacy_qualified_repository_normalization is not None:
+                        payload["supersedes"]["legacy_identity_normalization"] = (
+                            legacy_qualified_repository_normalization
                         )
                     elif legacy_source_branch_derived:
                         if legacy_canonical_github_identity:

@@ -19,7 +19,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -33,6 +33,7 @@ from genomes_agentic_os.review_coordination import (  # noqa: E402
     ReviewCoordinationError,
     ReviewCoordinator,
     ReviewSubject,
+    SUCCESSOR_POLICY_REVIEW_PURPOSE,
     canonical_review_purpose,
     load_review_receipt,
     parse_parent_resolution_refs,
@@ -46,6 +47,7 @@ from genomes_agentic_os.development_delivery import (  # noqa: E402
     select_development_repository,
 )
 from genomes_agentic_os.review_verdicts import reconcile_json_verdict  # noqa: E402
+from genomes_agentic_os.auto_dev_orchestration import AutoDevStateError  # noqa: E402
 
 HELPER = ROOT / "harness/skills/finishing-touches-review/scripts/finishing_touches_review_helper.py"
 TEMPLATE = ROOT / "harness/skills/auto-dev/templates/reviewer-prompt.md"
@@ -190,6 +192,17 @@ def normalize_review_purpose(purpose: str, scope: str) -> tuple[str, str]:
         canonical_review_purpose(f"{requested_purpose}:{normalized_scope}"),
         normalized_scope,
     )
+
+
+def review_boundary_stage(purpose: str) -> str:
+    """Select the canonical workflow stage without buying a separate review key."""
+    normalize_review_purpose(purpose, "full-pr")
+    normalized = str(purpose).strip().lower().replace("-", "_")
+    if normalized in {"review_self", "review_repair"}:
+        return "review_self"
+    if normalized == "review_others":
+        return "review_others"
+    return "finalize"
 
 
 def parse_review_verdict(response: str) -> tuple[str, bool]:
@@ -437,6 +450,103 @@ def initial_request(work_item: Path, ticket: str, worktree: Path) -> dict[str, A
     }
 
 
+def successor_request(
+    work_item: Path, ticket: str, worktree: Path, *, purpose: str = "review_self"
+) -> dict[str, Any] | None:
+    """Read the native current binding instead of reusing a predecessor's subject."""
+    manifest_path = work_item / "autodev.json"
+    if not manifest_path.is_file():
+        return None
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    delivery = manifest.get("delivery", {})
+    if not isinstance(delivery, Mapping):
+        raise ReviewError("canonical delivery link must be a mapping")
+    task_ref = delivery.get("task_state_ref")
+    if task_ref is not None and not isinstance(task_ref, str):
+        raise ReviewError("canonical delivery task reference must be a path string")
+    if not task_ref:
+        return None
+    if not Path(task_ref).is_file():
+        raise ReviewError("linked canonical delivery task is unavailable")
+    raw = json.loads(Path(task_ref).read_text(encoding="utf-8"))
+    if not raw.get("active_successor_binding"):
+        return None
+    from genomes_agentic_os.development_delivery import TaskState
+    from genomes_agentic_os.development_successor_state import binding_evidence
+    from genomes_agentic_os.auto_dev_orchestration import require_auto_dev_predecessors
+    task = TaskState(Path(task_ref)).read()
+    if (task["ticket"] != ticket or Path(task["work_item"]).resolve() != work_item.resolve()
+            or Path(task["worktree"]["path"]).resolve() != worktree.resolve()):
+        raise ReviewError("explicit review packet/worktree differs from the canonical successor binding")
+    require_auto_dev_predecessors(manifest_path, review_boundary_stage(purpose))
+    active = task["active_successor_binding"]
+    subject = task["pull_request_subject"]
+    metadata = {"binding_id": active["binding_id"],
+                "binding_receipt_sha256": active["receipt"]["sha256"],
+                "local_source_branch": task["worktree"]["branch"],
+                "provider_source_branch": subject["source_branch"]}
+    binding_evidence(task, metadata)
+    repository = task["repository"]["id"].removeprefix("git:github.com/")
+    prior = dict(prior_request(work_item, ticket) or {})
+    # The latest request may be the earlier pre-validation policy review.
+    # Only the freshly rederived binding may supply ordinary review authority.
+    prior.pop("successor_policy_source", None)
+    prior.pop("policy_delta_sha256", None)
+    return {**prior, **metadata, "work_item_id": ticket, "repository": repository,
+        "repository_id": task["repository"]["id"], "repo_path": str(worktree),
+        "implementation_summary": str(prior.get("implementation_summary") or f"Exact-head implementation for {ticket}"),
+        "spec_source": "SPEC.md", "builder_model": str(prior.get("builder_model") or "codex"),
+        "selected_reviewer_model": str(prior.get("selected_reviewer_model") or "opus"),
+        "reviewer_selection_source": str(prior.get("reviewer_selection_source") or "auto-dev-review-self-opposing-model"),
+        "mode": "post_pr", "target_branch": subject["base_branch"], "base_sha": subject["base_sha"],
+        "head_sha": git_head(worktree), "pr_number": int(subject["pull_request"].rsplit("#", 1)[1]),
+        "policy_fingerprint": task["policy_fingerprint"],
+        "request_origin": "canonical-successor-binding"}
+
+
+def successor_policy_request(work_item: Path, ticket: str, worktree: Path, request_file: Path) -> dict[str, Any]:
+    """Admit the unchanged canonical task's proposed successor to a full policy review."""
+    from genomes_agentic_os.development_successor_state import successor_policy_review_request
+    manifest = json.loads((work_item / "autodev.json").read_text(encoding="utf-8"))
+    delivery = manifest.get("delivery")
+    if not isinstance(delivery, Mapping) or not isinstance(delivery.get("task_state_ref"), str) or not delivery["task_state_ref"]:
+        raise ReviewError("successor policy review requires a linked canonical delivery task")
+    task_path = Path(delivery["task_state_ref"])
+    native = successor_policy_review_request(task_path, request_file)
+    identity = native["identity"]
+    current = json.loads(task_path.read_text(encoding="utf-8"))
+    if (current["ticket"] != ticket or Path(current["work_item"]).resolve() != work_item.resolve()
+            or Path(identity["registry"]["worktree"]["path"]).resolve() != worktree.resolve()):
+        raise ReviewError("policy review packet/worktree differs from the native successor proposal")
+    provider = identity["provider"]
+    prior = prior_request(work_item, ticket) or {}
+    return {**prior, "work_item_id": ticket, "repository": provider["repository"],
+        "repository_id": current["repository"]["id"], "repo_path": str(worktree),
+        "implementation_summary": str(prior.get("implementation_summary") or f"Exact-head implementation for {ticket}"),
+        "spec_source": "SPEC.md", "builder_model": str(prior.get("builder_model") or "codex"),
+        "selected_reviewer_model": str(prior.get("selected_reviewer_model") or "opus"),
+        "reviewer_selection_source": str(prior.get("reviewer_selection_source") or "auto-dev-review-self-opposing-model"),
+        "mode": "post_pr", "target_branch": provider["base_branch"], "base_sha": provider["base_sha"],
+        "head_sha": provider["head"], "pr_number": provider["number"],
+        "local_source_branch": identity["registry"]["worktree"]["branch"],
+        "provider_source_branch": provider["source_branch"],
+        "policy_fingerprint": identity["policy"]["fingerprint"],
+        "successor_policy_source": native, "request_origin": "native-successor-policy-review"}
+
+
+def recheck_successor_policy(source: dict[str, Any]) -> None:
+    """Re-read native authority after the model, excluding only its own budget writes."""
+    from genomes_agentic_os.development_successor_binding import observe_successor, read_json
+    from genomes_agentic_os.development_successor_state import policy_review_identity
+    native = source["successor_policy_source"]
+    if read_json(Path(native["request_ref"]))[1] != native["request_sha256"]:
+        raise ReviewError("successor policy request changed during review")
+    observed = observe_successor(native["task_state_ref"], registry_id=native["registry_id"],
+                                  pull_request=native["pull_request"])
+    if policy_review_identity(observed) != native["identity"]:
+        raise ReviewError("successor source/task/policy/runtime/provider changed during review")
+
+
 def provider_pr(pr_number: int, worktree: Path) -> dict[str, Any]:
     completed = run(["gh", "pr", "view", str(pr_number), "--json", "number,url,state,headRefOid,baseRefName,baseRefOid,statusCheckRollup"], cwd=worktree)
     if completed.returncode:
@@ -495,6 +605,30 @@ def review_unavailable_policy(source: dict[str, Any]) -> str:
     if any(candidate not in (None, "") for candidate in candidates):
         raise ReviewError("review_unavailable_policy must be block or continue_with_receipt")
     return "continue_with_receipt"
+
+
+def reviewer_configuration(profile: dict[str, Any], source: dict[str, Any]) -> dict[str, str]:
+    """Honor the selected repository profile without changing review authority."""
+    review = profile.get("review", {})
+    if not isinstance(review, dict):
+        raise ReviewError("review configuration must be a mapping")
+    opposing = review.get("opposing_harness", {})
+    if not isinstance(opposing, dict):
+        raise ReviewError("review.opposing_harness must be a mapping")
+    model = opposing.get("model", source.get("selected_reviewer_model"))
+    if not isinstance(model, str) or not re.fullmatch(
+        r"(?:claude-[A-Za-z0-9._-]+|fable|opus|sonnet|haiku)", model
+    ):
+        raise ReviewError("opposing reviewer must select an Anthropic CLI model")
+    transport = opposing.get("transport", source.get("reviewer_transport", "claude_cli"))
+    if transport != "claude_cli":
+        raise ReviewError("opposing reviewer transport must be claude_cli")
+    unavailable_policy = opposing.get("unavailable_policy")
+    if unavailable_policy is None:
+        unavailable_policy = review_unavailable_policy(source)
+    if not isinstance(unavailable_policy, str) or unavailable_policy not in {"block", "continue_with_receipt"}:
+        raise ReviewError("review_unavailable_policy must be block or continue_with_receipt")
+    return {"model": model, "transport": transport, "unavailable_policy": unavailable_policy}
 
 
 def diff_hash(worktree: Path, base: str, head: str) -> str:
@@ -556,7 +690,7 @@ def render_prompt(request: dict[str, Any], provider: dict[str, Any]) -> str:
     values = {
         "WORK_ITEM_ID": str(request["work_item_id"]), "PROJECT": "Auto-Dev",
         "TRACKER_ID": str(request["work_item_id"]), "TRACKER_URL": "provider-read ticket context",
-        "BUILDER_FAMILY": "gpt", "REVIEWER_FAMILY": "opus", "MODE": str(request["mode"]),
+        "BUILDER_FAMILY": "gpt", "REVIEWER_FAMILY": str(request.get("selected_reviewer_model", "opus")), "MODE": str(request["mode"]),
         "PR_URL": str(provider["url"]), "BASE_SHA": str(request["base_sha"]), "HEAD_SHA": str(request["head_sha"]),
         "SPEC": str(request.get("spec_source", "provider ticket")),
         "ACCEPTANCE_CRITERIA": str(request.get("spec_source", "provider ticket")),
@@ -573,6 +707,18 @@ def render_prompt(request: dict[str, Any], provider: dict[str, Any]) -> str:
     prompt = TEMPLATE.read_text(encoding="utf-8")
     for key, value in values.items():
         prompt = prompt.replace("{{" + key + "}}", value)
+    if request.get("successor_policy_source"):
+        native = request["successor_policy_source"]
+        prompt += (
+            "\n\nAlso independently review this natively derived successor policy delta. "
+            "The original task, historical receipts and shared review budgets must remain intact. "
+            "Reject any reduction of inherited validation, coverage, identity/security, ownership or review controls. "
+            "Inspect changed source-rule blobs in the exact PR diff and all changed policy/context text below. "
+            "Unknown equivalence is a blocking finding. A CLEAN verdict covers both the full PR and this exact delta; "
+            "it does not claim that tests, coverage or delivery gates passed.\n\nNative delta:\n```json\n"
+            + json.dumps(native["identity"]["policy_delta"], indent=2, sort_keys=True)
+            + "\n```\nEnd with the ordinary AGENTIC_OS_REVIEW_VERDICT line.\n"
+        )
     if request.get("review_mode") == "delta":
         parent, digest = verified_parent_review(request)
         context = {"parent_key": parent["key"], "parent_receipt_sha256": digest,
@@ -601,8 +747,10 @@ def receipt_markdown(
     status: str,
     unavailable_policy: str,
     failure: str | None = None,
+    *,
+    reviewer_model: str = "opus",
 ) -> str:
-    lines = ["# Model Receipt", "", f"- Review run: `{run_id}`", "- Reviewer model: `opus`", "- Reviewer family: `opus`", "- Transport: `claude_cli`", "- Authentication: `cli_native`", f"- Reviewer status: `{status}`", f"- Unavailable policy: `{unavailable_policy}`"]
+    lines = ["# Model Receipt", "", f"- Review run: `{run_id}`", f"- Reviewer model: `{reviewer_model}`", "- Reviewer family: `opus`", "- Transport: `claude_cli`", "- Authentication: `cli_native`", f"- Reviewer status: `{status}`", f"- Unavailable policy: `{unavailable_policy}`"]
     if failure:
         lines.append(f"- Failure code: `{failure}`")
     return "\n".join(lines) + "\n"
@@ -628,6 +776,8 @@ def main() -> int:
     )
     parser.add_argument("--work-item", type=Path)
     parser.add_argument("--worktree", type=Path)
+    parser.add_argument("--successor-policy-request", type=Path,
+                        help="Review a native proposed successor and its exact policy delta; never binds the task.")
     parser.add_argument(
         "--repository",
         help="Required catalog id for multi-repository projects; omit for repository.root.",
@@ -648,13 +798,21 @@ def main() -> int:
     parser.add_argument("--scope", default="full-pr")
     args = parser.parse_args()
     try:
+        purpose, _scope = normalize_review_purpose(args.purpose, args.scope)
         os_root = resolve_os_root(args.os_root)
         work_item = (args.work_item or locate_work_item(os_root, args.ticket)).resolve()
         worktree = (args.worktree or locate_worktree(os_root, args.ticket)).resolve()
-        source = prior_request(work_item, args.ticket) or initial_request(
-            work_item, args.ticket, worktree
-        )
-        unavailable_policy = review_unavailable_policy(source)
+        if args.successor_policy_request:
+            if args.mode != "full" or args.parent_key or args.recover_advisory_from:
+                raise ReviewError("successor policy admission requires the ordinary full review with no recovery override")
+            source = successor_policy_request(work_item, args.ticket, worktree, args.successor_policy_request)
+            purpose = SUCCESSOR_POLICY_REVIEW_PURPOSE
+        else:
+            source = successor_request(work_item, args.ticket, worktree, purpose=args.purpose) or prior_request(work_item, args.ticket) or initial_request(
+                work_item, args.ticket, worktree
+            )
+            if source.get("successor_policy_source"):
+                raise ReviewError("successor policy admission is not an ordinary merge-readiness review request")
         head = git_head(worktree)
         base = str(source["base_sha"])
         policy = policy_fingerprint(source)
@@ -690,6 +848,8 @@ def main() -> int:
                 )
             )
             return 2
+        reviewer = reviewer_configuration(selected_profile, source)
+        unavailable_policy = reviewer["unavailable_policy"]
         pr_number = int(source["pr_number"])
         provider = provider_pr(pr_number, worktree)
         if provider["headRefOid"] != head:
@@ -699,7 +859,6 @@ def main() -> int:
                 f"exact-base mismatch: provider={provider['baseRefOid']} request={base}"
             )
         repository = git_repository(worktree)
-        purpose, _scope = normalize_review_purpose(args.purpose, args.scope)
         subject = ReviewSubject(
             repository=repository,
             pull_request=f"github:{repository}#{pr_number}",
@@ -779,7 +938,10 @@ def main() -> int:
                 "base_sha": base,
                 "diff_hash": review_diff_hash
                 or diff_hash(worktree, review_diff_base, head),
-                "reviewer_transport": "claude_cli",
+                "selected_reviewer_model": reviewer["model"],
+                "reviewer_selection_source": "selected development profile review.opposing_harness",
+                "review_unavailable_policy": unavailable_policy,
+                "reviewer_transport": reviewer["transport"],
                 "reviewer_auth": "cli_native",
                 "reviewer_environment_removed": list(CLAUDE_ENV_REMOVED),
                 "repository_selector": args.repository,
@@ -791,8 +953,8 @@ def main() -> int:
                 "model_identity_status": "proven",
                 "reviewer_status": "available",
                 "review_unavailable_policy": unavailable_policy,
-                "validation_status": "passed",
-                "pr_check_status": "passed"
+                "validation_status": "not_started" if source.get("successor_policy_source") else "passed",
+                "pr_check_status": "not_applicable" if source.get("successor_policy_source") else "passed"
                 if all(
                     row.get("conclusion") in {"SUCCESS", "SKIPPED"}
                     for row in provider.get("statusCheckRollup", [])
@@ -830,7 +992,7 @@ def main() -> int:
                             claude,
                             "-p",
                             "--model",
-                            "opus",
+                            reviewer["model"],
                             "--safe-mode",
                             "--permission-mode",
                             "dontAsk",
@@ -894,6 +1056,18 @@ def main() -> int:
             if post_provider["headRefOid"] != head or post_head != head:
                 failure = "head_changed_after_review"
                 plan["reviewer_status"] = "runtime_failure"
+            if source.get("binding_id"):
+                post_source = successor_request(work_item, args.ticket, worktree)
+                if not post_source or any(post_source.get(key) != source.get(key)
+                        for key in ("binding_id", "binding_receipt_sha256", "policy_fingerprint", "base_sha")):
+                    failure = "binding_changed_after_review"
+                    plan["reviewer_status"] = "runtime_failure"
+            if source.get("successor_policy_source"):
+                try:
+                    recheck_successor_policy(source)
+                except (DevelopmentDeliveryError, ReviewError):
+                    failure = "successor_policy_changed_after_review"
+                    plan["reviewer_status"] = "runtime_failure"
             write_json(run_dir / "validation-plan.json", plan)
             (run_dir / "model-receipt.md").write_text(
                 receipt_markdown(
@@ -901,6 +1075,7 @@ def main() -> int:
                     plan["reviewer_status"],
                     unavailable_policy,
                     failure,
+                    reviewer_model=reviewer["model"],
                 ),
                 encoding="utf-8",
             )
@@ -908,7 +1083,10 @@ def main() -> int:
             if plan["reviewer_status"] in {"unavailable", "runtime_failure"}:
                 outcome = "unavailable"
             elif (
-                decision["decision"].startswith("ready_")
+                (decision["decision"].startswith("ready_")
+                 or (source.get("successor_policy_source")
+                     and decision["decision"] == "blocked_validation"
+                     and decision["active_blocker_count"] == 0))
                 and verdict_structured
                 and not any(finding["blocking"] for finding in findings)
                 and resolution_warning is None
@@ -926,6 +1104,8 @@ def main() -> int:
                 "reviewer_status": plan["reviewer_status"],
                 "failure_code": failure,
                 "decision": decision["decision"],
+                "validation_status": plan["validation_status"],
+                "pr_check_status": plan["pr_check_status"],
                 "response": response,
                 "parsed_outcome": parsed_outcome,
                 "verdict_structured": verdict_structured,
@@ -937,6 +1117,10 @@ def main() -> int:
                     not finding["blocking"] for finding in findings
                 ),
                 "readback_verified": failure != "head_changed_after_review",
+                **({"policy_delta_sha256": hashlib.sha256(json.dumps(
+                    source["successor_policy_source"]["identity"]["policy_delta"],
+                    sort_keys=True, separators=(",", ":")).encode()).hexdigest()}
+                   if source.get("successor_policy_source") else {}),
             }
 
         result = coordinator.execute(
@@ -966,7 +1150,7 @@ def main() -> int:
         write_json(run_dir / "opposing-model-review-receipt.json", receipt)
         print(json.dumps(receipt, indent=2))
         return 0 if result.receipt["outcome"] == "clean" else 2
-    except (ReviewError, ReviewCoordinationError, KeyError) as exc:
+    except (AutoDevStateError, DevelopmentDeliveryError, ReviewError, ReviewCoordinationError, KeyError) as exc:
         print(json.dumps({"ok": False, "error": str(exc)}, indent=2))
         return 2
 

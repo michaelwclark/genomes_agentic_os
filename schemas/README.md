@@ -22,6 +22,25 @@ Development Delivery state; it is not another tracker or transition engine.
 `auto-dev-health-evidence.schema.json` validates the stricter, item-scoped final
 audit used before Auto-Dev can call a preserved packet healthy and finished.
 
+`development-successor-binding-request.schema.json` is a closed same-task
+request containing exact predecessor CAS, original task/packet identity,
+packet-contained proof references, independently checked successor/provider
+branches, native policy delta and existing review-lineage assertions. Request
+data never establishes proof by itself. `development-successor-binding-receipt.schema.json`
+records the immutable native predecessor snapshot, accepted policy/source and
+runtime proofs, task patch, preserved history and fenced projection effects.
+These schemas change no existing historical receipt format. Unbound tasks keep
+their existing behavior; bound tasks require fresh epoch metadata and ordinary
+validation/delivery acceptance.
+
+`development-runtime-observer.schema.json` closes the explicit managed-runtime
+ownership metadata selected by `runtime.successor_observer`. It admits the
+package-owned compose/TSV parser with exact provider/project scope, registry
+location, compose prefix and environment identity keys. It accepts no commands
+or caller-supplied observer code. The normalized configuration and digest are
+part of native successor evidence; the historical runtime registration remains
+unchanged.
+
 `program-run-packet.schema.json` validates immutable `00-program.json` and
 ordered workflow records in the canonical cross-program run packet. Its
 execution outcome is intentionally separate from its quality outcome so a
