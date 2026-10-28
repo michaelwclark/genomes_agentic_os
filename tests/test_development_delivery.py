@@ -11083,3 +11083,280 @@ def test_review_workflow_has_one_full_owner_and_receipt_only_finalize() -> None:
     assert "sole owner of the canonical full review" in " ".join(review_self.split())
     assert "Never invoke another full review from Repair" in " ".join(repair.split())
     assert "Finalize must not invoke a reviewer" in " ".join(finalize.split())
+
+
+def _legacy_single_target_inputs(
+    old_head: str, prior_base: str, policy: str, *, ticket: str = "CC-56"
+) -> tuple[dict[str, object], dict[str, object]]:
+    """Return the historical accepted shape and a fully bound synthetic provider observation."""
+    branch = "feature/cc-56"
+    new_head = "b" * 40
+    identity = {"repository": "git:github.com/acme/app", "base_branch": "main",
+                "provider": "github", "pull_request": "github:acme/app#56", "source_branch": branch}
+    url = "https://github.com/acme/app/pull/56"
+    prior: dict[str, object] = {
+        "canonical_stage": "pr_create", "ticket": ticket, "repository": "acme/app",
+        "policy_fingerprint": policy, "source_sha": old_head,
+        "family_complete": True, "publication_goal_complete": True, "merge_ready": False,
+        "targets": [{"repository": "acme/app", "base_branch": "main", "base_sha": prior_base,
+                     "head_branch": branch, "head_sha": old_head, "source_sha": old_head,
+                     "pr_number": 56, "url": url, "role": "main", "disposition": "pr_required",
+                     "status": "verified_open", "labels": ["do not merge"]}],
+    }
+    successor: dict[str, object] = {
+        **identity, "ticket": ticket, "policy_fingerprint": policy, "source_head_sha": new_head,
+        "source_sha": new_head, "base_sha": "c" * 40, "url": url, "readback_verified": True,
+        "provider_observed": {**identity, "head_sha": new_head, "base_sha": "c" * 40,
+                              "url": url, "readback_verified": True},
+        "supersession": {"supersedes_source_head_sha": old_head,
+                         "reason": "The same existing PR advanced after ordinary source repair."},
+    }
+    return prior, successor
+
+
+def _normalize_legacy_single_target(
+    prior: dict[str, object], successor: dict[str, object], prior_base: str, policy: str
+) -> tuple[dict[str, object], dict[str, object]]:
+    """Invoke the real compatibility owner with explicit unchanged task identity."""
+    return delivery._normalize_exact_legacy_single_target_identity(
+        prior, expected_repository="git:github.com/acme/app", expected_base_branch="main",
+        expected_provider="github", expected_source_branch="feature/cc-56",
+        expected_prior_base_sha=prior_base, expected_ticket="CC-56",
+        expected_policy_fingerprint=policy, successor=successor,
+    )
+
+
+def _mutate_legacy_single_target(
+    prior: dict[str, object], successor: dict[str, object], path: tuple[str | int, ...], value: object
+) -> None:
+    """Change one explicit boundary input without deriving expected results from source."""
+    cursor: object = {"prior": prior, "successor": successor}
+    for key in path[:-1]:
+        assert isinstance(cursor, (dict, list))
+        cursor = cursor[key]
+    assert isinstance(cursor, (dict, list))
+    cursor[path[-1]] = value
+
+
+def test_exact_legacy_single_target_normalizes_only_transient_identity() -> None:
+    """A unique historical target may bind a strict successor without changing either input."""
+    prior, successor = _legacy_single_target_inputs("a" * 40, "d" * 40, "e" * 64)
+    before = json.dumps([prior, successor], sort_keys=True)
+    normalized, proof = _normalize_legacy_single_target(prior, successor, "d" * 40, "e" * 64)
+    assert json.dumps([prior, successor], sort_keys=True) == before
+    assert normalized["repository"] == "git:github.com/acme/app"
+    assert normalized["pull_request"] == "github:acme/app#56"
+    assert normalized["source_branch"] == "feature/cc-56"
+    assert normalized["source_head_sha"] == "a" * 40
+    assert normalized["source_sha"] == "a" * 40
+    assert normalized["targets"] == prior["targets"]
+    assert normalized["policy_fingerprint"] == "e" * 64
+    assert proof["identity_shape"] == "top_level_source_sha_single_target"
+    assert proof["legacy_fields"]["base_sha"] == "d" * 40
+    assert proof["normalized_identity"]["source_head_sha"] == "a" * 40
+    assert "validation_authority" not in normalized
+
+
+@pytest.mark.parametrize(
+    ("path", "value"),
+    [
+        (("prior", "targets"), []),
+        (("prior", "targets"), [{}, {}]),
+        (("prior", "targets"), ["not-an-object"]),
+        (("prior", "source"), {}),
+        (("prior", "family"), []),
+        (("prior", "source_head_sha"), "a" * 40),
+        (("prior", "repository"), "other/app"),
+        (("prior", "repository"), "git:github.com/acme/app"),
+        (("prior", "ticket"), "CC-57"),
+        (("prior", "policy_fingerprint"), "f" * 64),
+        (("prior", "canonical_stage"), "merge"),
+        (("prior", "family_complete"), False),
+        (("prior", "publication_goal_complete"), False),
+        (("prior", "targets", 0, "repository"), "other/app"),
+        (("prior", "targets", 0, "head_branch"), "feature/other"),
+        (("prior", "targets", 0, "base_branch"), "release"),
+        (("prior", "targets", 0, "base_sha"), "c" * 40),
+        (("prior", "targets", 0, "head_sha"), "f" * 40),
+        (("prior", "targets", 0, "source_sha"), "f" * 40),
+        (("prior", "targets", 0, "pr_number"), "56"),
+        (("prior", "targets", 0, "pr_number"), True),
+        (("prior", "targets", 0, "pr_number"), 0),
+        (("prior", "targets", 0, "pr_number"), 57),
+        (("prior", "targets", 0, "url"), "https://github.com/other/app/pull/56"),
+        (("prior", "targets", 0, "url"), "https://github.com/acme/app/pull/57"),
+        (("prior", "targets", 0, "url"), "https://github.com/acme/app/pull/56/"),
+        (("prior", "targets", 0, "url"), "https://github.com/acme/app/pull/56?x=1"),
+        (("prior", "targets", 0, "url"), "http://github.com/acme/app/pull/56"),
+        (("prior", "targets", 0, "status"), "pending"),
+        (("prior", "targets", 0, "disposition"), "already_equivalent"),
+        (("successor", "repository"), "git:github.com/other/app"),
+        (("successor", "pull_request"), "github:acme/app#57"),
+        (("successor", "source_branch"), "feature/other"),
+        (("successor", "base_branch"), "release"),
+        (("successor", "provider"), "gitlab"),
+        (("successor", "ticket"), "CC-57"),
+        (("successor", "policy_fingerprint"), "f" * 64),
+        (("successor", "source_head_sha"), "a" * 40),
+        (("successor", "source_head_sha"), "B" * 40),
+        (("successor", "source_head_sha"), "b" * 7),
+        (("successor", "source_head_sha"), 7),
+        (("successor", "source_sha"), "f" * 40),
+        (("successor", "base_sha"), "c" * 7),
+        (("successor", "readback_verified"), False),
+        (("successor", "url"), "https://github.com/acme/app/pull/57"),
+        (("successor", "provider_observed"), None),
+        (("successor", "provider_observed", "repository"), "git:github.com/other/app"),
+        (("successor", "provider_observed", "pull_request"), "github:acme/app#57"),
+        (("successor", "provider_observed", "source_branch"), "feature/other"),
+        (("successor", "provider_observed", "base_branch"), "release"),
+        (("successor", "provider_observed", "provider"), "gitlab"),
+        (("successor", "provider_observed", "head_sha"), "f" * 40),
+        (("successor", "provider_observed", "base_sha"), "f" * 40),
+        (("successor", "provider_observed", "url"), "https://github.com/acme/app/pull/57"),
+        (("successor", "provider_observed", "readback_verified"), False),
+        (("successor", "supersession"), None),
+        (("successor", "supersession", "supersedes_source_head_sha"), "f" * 40),
+        (("successor", "supersession", "reason"), " "),
+    ],
+)
+def test_legacy_single_target_normalizer_refuses_ambiguous_or_unbound_input(
+    path: tuple[str | int, ...], value: object
+) -> None:
+    """Foreign, malformed, multi-target or unapproved identity never gains compatibility admission."""
+    prior, successor = _legacy_single_target_inputs("a" * 40, "d" * 40, "e" * 64)
+    _mutate_legacy_single_target(prior, successor, path, value)
+    before = json.dumps([prior, successor], sort_keys=True)
+    with pytest.raises(DevelopmentDeliveryError, match="legacy source_sha/single-target identity"):
+        _normalize_legacy_single_target(prior, successor, "d" * 40, "e" * 64)
+    assert json.dumps([prior, successor], sort_keys=True) == before
+
+
+@pytest.mark.parametrize("old_head", ["A" * 40, "a" * 7, "not-a-head", None, 7])
+def test_legacy_single_target_refuses_consistently_noncanonical_prior_heads(old_head: object) -> None:
+    """Agreement among malformed old head fields cannot qualify an invalid Git source identity."""
+    prior, successor = _legacy_single_target_inputs("a" * 40, "d" * 40, "e" * 64)
+    prior["source_sha"] = old_head
+    targets = prior["targets"]
+    assert isinstance(targets, list) and isinstance(targets[0], dict)
+    targets[0]["head_sha"] = targets[0]["source_sha"] = old_head
+    supersession = successor["supersession"]
+    assert isinstance(supersession, dict)
+    supersession["supersedes_source_head_sha"] = old_head
+    with pytest.raises(DevelopmentDeliveryError, match="legacy source_sha/single-target identity"):
+        _normalize_legacy_single_target(prior, successor, "d" * 40, "e" * 64)
+
+
+def _native_legacy_single_target_stage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[TaskState, Path, dict[str, object], dict[str, object], str]:
+    """Build real temporary task/receipt state; provisioning and provider observation are explicit unit boundaries."""
+    repo, base_sha = _repository(tmp_path)
+    root = tmp_path / "os"
+    _project(root, repo, repository_id="git:github.com/acme/app")
+    monkeypatch.setattr(delivery, "create_isolated_worktree", lambda **kwargs: {
+        "name": "cc-56", "path": str(tmp_path / "selected-worktree"),
+        "branch": "feature/cc-56", "base_sha": base_sha,
+    })
+    run = delivery.start_development_run(root, "acme", "app", ["CC-56"],
+        run_id="release-propagation-single-target-identity", auto_dev_mode="everything", apply=True)
+    task = TaskState(Path(run["tasks"][0]["state_ref"]))
+    _advance_auto_dev_task_to_ready(task, subject_revision=base_sha, pull_request="github:acme/app#56")
+    # Use a scratch-only real coordinator with an explicit unit callback, never a model review.
+    _review_coordination_receipt(task, subject_revision=base_sha, pull_request="github:acme/app#56")
+    for stage_name in ("groom", "detective", "create_artifacts", "document"):
+        _record_standalone_stage(task, stage_name)
+    task_value = task.read()
+    # Model the immutable legacy local_validation boundary rather than claiming new-head validation.
+    task_value["state"] = "local_validation"
+    task.path.write_text(json.dumps(task_value), encoding="utf-8")
+    work_item = Path(task_value["work_item"])
+    prior, successor = _legacy_single_target_inputs(base_sha, base_sha, task_value["policy_fingerprint"])
+    return task, work_item, prior, successor, base_sha
+
+
+def _legacy_single_target_receipt(work_item: Path, name: str, evidence: dict[str, object]) -> Path:
+    """Write a declared test stage-input fixture; native code owns its immutable snapshot and wrapper."""
+    path = work_item / "artifacts" / "auto-dev-pr-create" / f"single-target-{name}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"schema": "development-stage-evidence/v1", "state": "release_propagation",
+        "status": "verified", "summary": "Unit fixture for native single-target family comparison",
+        "verified_at": "2026-08-12T18:00:00Z", "evidence": evidence}), encoding="utf-8")
+    return path
+
+
+def test_native_single_target_pr_refresh_preserves_original_history_and_validation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The native stage appends one exact family wrapper, keeps old validation, and reuses the same replay."""
+    task, work_item, prior, successor, base_sha = _native_legacy_single_target_stage(tmp_path, monkeypatch)
+    old = _legacy_single_target_receipt(work_item, "old", prior)
+    run_development_stage(task.path, stage="release_propagation", receipts={"release_propagation": str(old)},
+                          idempotency_prefix="cc-56:pr-create:old")
+    before = task.read()
+    old_wrapper = Path(before["stage_receipts"]["release_propagation"]["ref"])
+    old_snapshot = work_item / json.loads(old_wrapper.read_text())["receipt"]
+    frozen_bytes = {path: path.read_bytes() for path in (old, old_wrapper, old_snapshot, Path(before["policy_receipt"]))}
+    review_root = work_item / "artifacts" / "auto-dev-review"
+    review_bytes = {path: path.read_bytes() for path in review_root.rglob("*") if path.is_file()}
+    assert review_bytes
+    refreshed = _legacy_single_target_receipt(work_item, "new", successor)
+    result = run_development_stage(task.path, stage="release_propagation",
+        receipts={"release_propagation": str(refreshed)}, idempotency_prefix="cc-56:pr-create:new")
+    after = task.read()
+    new_wrapper = Path(after["stage_receipts"]["release_propagation"]["ref"])
+    assert new_wrapper != old_wrapper
+    assert result["supersedes"]["source_head_sha"] == base_sha
+    assert result["supersedes"]["wrapper_ref"] == str(old_wrapper)
+    assert result["supersedes"]["legacy_identity_normalization"]["identity_shape"] == "top_level_source_sha_single_target"
+    assert {path: path.read_bytes() for path in frozen_bytes} == frozen_bytes
+    assert {path: path.read_bytes() for path in review_bytes} == review_bytes
+    for key in ("ticket", "run_id", "canonical_work_id", "repository", "worktree", "policy_fingerprint", "policy_receipt", "attempts", "receipts"):
+        assert after.get(key) == before.get(key)
+    assert after.get("validation_head_sha") == before.get("validation_head_sha")
+    assert after.get("subject_revision") == before.get("subject_revision")
+    assert "validation_authority" not in result
+    assert after["state"] == "local_validation"
+    assert len(list(new_wrapper.parent.glob("*.json"))) == 1
+    replay_bytes = {path: path.read_bytes() for path in (new_wrapper, task.ledger, task.path)}
+    replay = run_development_stage(task.path, stage="release_propagation",
+        receipts={"release_propagation": str(refreshed)}, idempotency_prefix="cc-56:pr-create:new")
+    assert replay == result
+    assert {path: path.read_bytes() for path in replay_bytes} == replay_bytes
+    assert {path: path.read_bytes() for path in frozen_bytes} == frozen_bytes
+    assert {path: path.read_bytes() for path in review_bytes} == review_bytes
+
+
+@pytest.mark.parametrize(("path", "value"), [
+    (("prior", "targets"), [{}, {}]),
+    (("prior", "targets", 0, "repository"), "foreign/app"),
+    (("prior", "targets", 0, "head_branch"), "feature/foreign"),
+    (("prior", "targets", 0, "base_branch"), "release"),
+    (("prior", "targets", 0, "head_sha"), "f" * 40),
+    (("prior", "targets", 0, "pr_number"), True),
+    (("successor", "provider_observed", "head_sha"), "f" * 40),
+    (("successor", "readback_verified"), False),
+    (("successor", "supersession"), None),
+])
+def test_native_single_target_pr_refresh_rejection_keeps_every_prior_binding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, path: tuple[str | int, ...], value: object
+) -> None:
+    """Rejected compatibility input never rewrites native task, event, projection or predecessor bytes."""
+    task, work_item, prior, successor, _ = _native_legacy_single_target_stage(tmp_path, monkeypatch)
+    _mutate_legacy_single_target(prior, successor, path, value)
+    old = _legacy_single_target_receipt(work_item, "old", prior)
+    run_development_stage(task.path, stage="release_propagation", receipts={"release_propagation": str(old)},
+                          idempotency_prefix="cc-56:pr-create:old")
+    current = task.read()
+    old_wrapper = Path(current["stage_receipts"]["release_propagation"]["ref"])
+    old_snapshot = work_item / json.loads(old_wrapper.read_text())["receipt"]
+    new = _legacy_single_target_receipt(work_item, "new", successor)
+    protected = [task.path, task.ledger, Path(current["autodev_path"]), old, old_wrapper, old_snapshot, Path(current["policy_receipt"])]
+    before = {path: path.read_bytes() for path in protected}
+    prior_binding = current["stage_receipts"]["release_propagation"]
+    with pytest.raises(DevelopmentDeliveryError, match="legacy source_sha/single-target identity"):
+        run_development_stage(task.path, stage="release_propagation", receipts={"release_propagation": str(new)},
+                              idempotency_prefix="cc-56:pr-create:new")
+    assert {path: path.read_bytes() for path in protected} == before
+    assert task.read()["stage_receipts"]["release_propagation"] == prior_binding
+    assert not (old_wrapper.parent / "release-propagation").exists()

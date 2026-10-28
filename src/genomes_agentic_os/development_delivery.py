@@ -9512,6 +9512,118 @@ def reopen_auto_dev_item(
     }
 
 
+def _normalize_exact_legacy_single_target_identity(
+    details: Mapping[str, Any],
+    *,
+    expected_repository: str,
+    expected_base_branch: str,
+    expected_provider: str,
+    expected_source_branch: str,
+    expected_prior_base_sha: str,
+    expected_ticket: str,
+    expected_policy_fingerprint: str,
+    successor: Mapping[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Bind the historical source_sha/single-target shape for comparison only.
+
+    Both copies of its source head and its full target identity must agree with
+    the unchanged selected task and the explicit provider-read successor. The
+    caller has already checked the immutable prior wrapper/evidence digest;
+    neither that receipt nor historical validation authority is rewritten.
+    """
+
+    message = "legacy source_sha/single-target identity does not exactly bind the selected task and provider-read successor"
+    targets = details.get("targets")
+    if not isinstance(targets, list) or len(targets) != 1 or not isinstance(targets[0], Mapping):
+        raise DevelopmentDeliveryError(message)
+    if any(field in details for field in (
+        "source_head_sha", "base_branch", "provider", "pull_request", "source_branch", "source", "family",
+    )):
+        raise DevelopmentDeliveryError(message)
+    if not (
+        expected_repository.startswith("git:github.com/")
+        and expected_provider == "github"
+        and expected_base_branch
+        and expected_source_branch
+        and expected_ticket
+        and re.fullmatch(r"[a-f0-9]{40}", expected_prior_base_sha)
+        and re.fullmatch(r"[a-f0-9]{64}", expected_policy_fingerprint)
+        and details.get("canonical_stage") == "pr_create"
+        and details.get("ticket") == expected_ticket
+        and details.get("policy_fingerprint") == expected_policy_fingerprint
+        and details.get("family_complete") is True
+        and details.get("publication_goal_complete") is True
+    ):
+        raise DevelopmentDeliveryError(message)
+    legacy_repository = expected_repository.removeprefix("git:github.com/")
+    target = targets[0]
+    number = target.get("pr_number")
+    old_head = details.get("source_sha")
+    if not (
+        type(number) is int and number > 0
+        and isinstance(old_head, str) and re.fullmatch(r"[a-f0-9]{40}", old_head)
+        and details.get("repository") == legacy_repository
+        and target.get("repository") == legacy_repository
+        and target.get("base_branch") == expected_base_branch
+        and target.get("base_sha") == expected_prior_base_sha
+        and target.get("head_branch") == expected_source_branch
+        and target.get("head_sha") == old_head
+        and target.get("source_sha") == old_head
+        and target.get("disposition") == "pr_required"
+        and target.get("status") == "verified_open"
+    ):
+        raise DevelopmentDeliveryError(message)
+    qualified_pr = f"github:{legacy_repository}#{number}"
+    url = f"https://github.com/{legacy_repository}/pull/{number}"
+    identity = {
+        "repository": expected_repository,
+        "base_branch": expected_base_branch,
+        "provider": expected_provider,
+        "pull_request": qualified_pr,
+        "source_branch": expected_source_branch,
+    }
+    observed = successor.get("provider_observed")
+    supersession = successor.get("supersession")
+    new_head = successor.get("source_head_sha")
+    new_base = successor.get("base_sha")
+    if not (
+        target.get("url") == url
+        and all(successor.get(field) == value for field, value in identity.items())
+        and successor.get("ticket") == expected_ticket
+        and successor.get("policy_fingerprint") == expected_policy_fingerprint
+        and successor.get("url") == url
+        and successor.get("readback_verified") is True
+        and isinstance(new_head, str) and re.fullmatch(r"[a-f0-9]{40}", new_head)
+        and new_head != old_head
+        and ("source_sha" not in successor or successor["source_sha"] == new_head)
+        and isinstance(new_base, str) and re.fullmatch(r"[a-f0-9]{40}", new_base)
+        and isinstance(observed, Mapping)
+        and all(observed.get(field) == value for field, value in identity.items())
+        and observed.get("head_sha") == new_head
+        and observed.get("base_sha") == new_base
+        and observed.get("url") == url
+        and observed.get("readback_verified") is True
+        and isinstance(supersession, Mapping)
+        and supersession.get("supersedes_source_head_sha") == old_head
+        and isinstance(supersession.get("reason"), str)
+        and supersession["reason"].strip()
+    ):
+        raise DevelopmentDeliveryError(message)
+    normalized = {**details, **identity, "source_head_sha": old_head}
+    provenance = {
+        "identity_shape": "top_level_source_sha_single_target",
+        "source": "prior_evidence.evidence.source_sha and targets[0]",
+        "legacy_fields": {
+            "repository": legacy_repository, "pr_number": number,
+            "base_branch": expected_base_branch, "base_sha": expected_prior_base_sha,
+            "head_branch": expected_source_branch, "head_sha": old_head, "source_sha": old_head, "url": url,
+        },
+        "normalized_identity": {**identity, "source_head_sha": old_head},
+        "verified_by": "selected_task identity plus explicit provider_observed and prior-head supersession",
+    }
+    return normalized, provenance
+
+
 def _normalize_exact_legacy_family_identity(
     details: Mapping[str, Any],
     *,
@@ -10595,6 +10707,30 @@ def run_development_stage(
                             "git:bitbucket.org/"
                         )
                     pull_request_prefix = f"{pull_request_repository}#"
+                    legacy_single_target_identity_normalization: dict[str, Any] | None = None
+                    if (
+                        not previous_details.get("source_head_sha")
+                        and "source_sha" in previous_details
+                        and "targets" in previous_details
+                    ):
+                        (
+                            previous_details,
+                            legacy_single_target_identity_normalization,
+                        ) = _normalize_exact_legacy_single_target_identity(
+                            previous_details,
+                            expected_repository=expected_repository,
+                            expected_base_branch=expected_base_branch,
+                            expected_provider=expected_provider,
+                            expected_source_branch=expected_source_branch,
+                            expected_prior_base_sha=str(worktree.get("base_sha") or ""),
+                            expected_ticket=str(task_value.get("ticket") or ""),
+                            expected_policy_fingerprint=str(task_value.get("policy_fingerprint") or ""),
+                            successor=(
+                                release_receipt_payload.get("evidence")
+                                if isinstance(release_receipt_payload.get("evidence"), Mapping)
+                                else {}
+                            ),
+                        )
                     legacy_family_identity_normalization: dict[str, Any] | None = None
                     if (
                         not previous_details.get("source_head_sha")
@@ -10975,6 +11111,10 @@ def run_development_stage(
                     if legacy_family_identity_normalization is not None:
                         payload["supersedes"]["legacy_identity_normalization"] = (
                             legacy_family_identity_normalization
+                        )
+                    elif legacy_single_target_identity_normalization is not None:
+                        payload["supersedes"]["legacy_identity_normalization"] = (
+                            legacy_single_target_identity_normalization
                         )
                     elif legacy_url_identity_normalization is not None:
                         payload["supersedes"]["legacy_identity_normalization"] = (
