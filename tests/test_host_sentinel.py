@@ -33,6 +33,10 @@ FULL_PROBE = (
     "failed_system=unit-a.service,unit-b.service\n"
     "failed_user=user-unit.service\n"
     "unhealthy_containers=ctr-a,ctr-b\n"
+    "disk_total_bytes=2199023255552\n"
+    "disk_available_bytes=1099511627776\n"
+    "disk_pct=50\n"
+    "inode_pct=10\n"
 )
 
 
@@ -97,6 +101,9 @@ class TestParseProbeOutput:
         assert result.failed_system == ("unit-a.service", "unit-b.service")
         assert result.failed_user == ("user-unit.service",)
         assert result.unhealthy_containers == ("ctr-a", "ctr-b")
+        assert result.disk_pct == 50
+        assert result.disk_available_bytes == 1099511627776
+        assert result.inode_pct == 10
 
     def test_parses_missing_and_empty_fields_without_raising(self):
         result = parse_probe_output("boot_id=abc123\nuptime_s=\nfailed_system=\n")
