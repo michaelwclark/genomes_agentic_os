@@ -40,14 +40,43 @@ def runner_module():
 
 
 def parent_review(coordinator: ReviewCoordinator):
+    findings = [
+        {
+            "id": finding_id,
+            "severity": "high",
+            "summary": summary,
+            "evidence": ["src/authority.py:42"],
+        }
+        for finding_id, summary in zip(
+            PARENT_IDS,
+            ("Archive proof is unreadable", "Recorded defer cannot hand off"),
+        )
+    ]
+    historical_response = response(
+        [
+            {
+                "id": finding["id"],
+                "severity": finding["severity"],
+                "category": "correctness",
+                "file": "src/authority.py",
+                "line": 42,
+                "title": finding["summary"],
+                "detail": "Original authority defect: "
+                + finding["summary"]
+                + ". Evidence: "
+                + finding["evidence"][0],
+                "suggested_fix": "Restore the recorded authority proof and handoff contract before merge.",
+                "blocking": True,
+            }
+            for finding in findings
+        ]
+    )
     return coordinator.execute(
         subject(),
         lambda: {
             "outcome": "findings",
-            "findings": [
-                {"id": finding_id, "severity": "high", "summary": summary, "evidence": ["src/authority.py:42"]}
-                for finding_id, summary in zip(PARENT_IDS, ("Archive proof is unreadable", "Recorded defer cannot hand off"))
-            ],
+            "findings": findings,
+            "response": historical_response,
         },
     )
 
