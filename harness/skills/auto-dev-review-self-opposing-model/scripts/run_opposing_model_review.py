@@ -13,8 +13,10 @@ import argparse
 import datetime as dt
 import hashlib
 import json
+import math
 import os
 import re
+import selectors
 import shutil
 import subprocess
 import sys
@@ -62,6 +64,45 @@ MAX_PARENT_CONTEXT_BYTES = 64 * 1024
 MAX_DIAGNOSTIC_INPUT_BYTES = 64 * 1024
 MAX_DIAGNOSTIC_STREAM_BYTES = 4096
 MAX_DIAGNOSTIC_FILE_BYTES = 64 * 1024
+NATIVE_CLI_POPEN = subprocess.Popen
+PHASE_READ_BYTES = 64 * 1024
+PHASE_MAX_LINE_BYTES = 1024 * 1024
+PHASE_MAX_STDOUT_BYTES = 16 * 1024 * 1024
+PHASE_MAX_STDERR_BYTES = 1024 * 1024
+PHASE_REAP_SECONDS = 2
+PHASE_EVENT_TYPES = {"system", "assistant", "user", "result"}
+PHASE_SYSTEM_TYPES = {"init", "api_retry"}
+PHASE_TOOLS = {"Read", "Grep", "Glob", "Bash"}
+PHASE_RESULT_TYPES = {
+    "success",
+    "error_during_execution",
+    "error_max_turns",
+    "error_max_budget_usd",
+    "error_max_structured_output_retries",
+}
+PHASE_ASSISTANT_ERRORS = {
+    "authentication_failed",
+    "oauth_org_not_allowed",
+    "account_on_hold",
+    "billing_error",
+    "rate_limit",
+    "overloaded",
+    "invalid_request",
+    "model_not_found",
+    "server_error",
+    "max_output_tokens",
+    "unknown",
+}
+PHASE_HTTP_CODES = {400, 401, 403, 404, 408, 409, 413, 429, 500, 502, 503, 504, 529}
+PHASE_FAILURE_CODES = {
+    "cli_timeout",
+    "native_phase_invalid_record",
+    "native_phase_limit_exceeded",
+    "native_phase_missing_terminal",
+    "native_phase_terminal_error",
+    "native_phase_io_failed",
+    "native_phase_cleanup_failed",
+}
 DIAGNOSTIC_SENSITIVE_RE = re.compile(
     r"https?://|authorization|\b(?:bearer|basic)\b|credentials?|password|secret|token|cookie|"
     r"api[_ -]?key|access[_ -]?key|"
@@ -189,6 +230,241 @@ def repository_preflight_receipt(
 
 def run(command: list[str], *, cwd: Path | None = None, timeout: int = 30, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
     return subprocess.run(command, cwd=str(cwd) if cwd else None, text=True, capture_output=True, check=False, timeout=timeout, env=env)
+
+
+class NativePhaseFailure(RuntimeError):
+    """A fixed safe code; never an exception containing native output or argv."""
+
+    def __init__(
+        self,
+        code: str,
+        observation: dict[str, Any] | None = None,
+        returncode: int | None = None,
+    ) -> None:
+        self.code = code if code in PHASE_FAILURE_CODES else "native_phase_io_failed"
+        self.observation = observation
+        self.returncode = returncode
+        super().__init__(self.code)
+
+
+def _phase_bucket(value: Any, allowed: set[str]) -> str:
+    return value if isinstance(value, str) and value in allowed else "unknown"
+
+
+def _phase_record(record: dict[str, Any], line: bytes) -> tuple[str, bool, Any] | None:
+    """Inspect structural fields only; return final review prose in memory only."""
+
+    def invalid_constant(_value):
+        raise ValueError("invalid constant")
+
+    try:
+        event = json.loads(line.decode("utf-8"), parse_constant=invalid_constant)
+    except (UnicodeError, ValueError, RecursionError):
+        raise NativePhaseFailure("native_phase_invalid_record") from None
+    if not isinstance(event, dict) or not isinstance(event.get("type"), str):
+        raise NativePhaseFailure("native_phase_invalid_record")
+    kind = _phase_bucket(event["type"], PHASE_EVENT_TYPES)
+    record["event_counts"][kind] += 1
+    record["last_event_type"] = kind
+    if kind == "system":
+        subtype = _phase_bucket(event.get("subtype"), PHASE_SYSTEM_TYPES)
+        record["system_counts"][subtype] += 1
+        if subtype == "api_retry":
+            status = event.get("error_status")
+            code = (
+                str(status)
+                if type(status) is int and status in PHASE_HTTP_CODES
+                else "unknown"
+            )
+            record["http_error_counts"][code] += 1
+    if kind == "assistant" and "error" in event:
+        record["assistant_error_counts"][
+            _phase_bucket(event["error"], PHASE_ASSISTANT_ERRORS)
+        ] += 1
+    if kind in {"assistant", "user"}:
+        message = event.get("message", {})
+        if not isinstance(message, dict):
+            raise NativePhaseFailure("native_phase_invalid_record")
+        content = message.get("content", [])
+        if not isinstance(content, (str, list)):
+            raise NativePhaseFailure("native_phase_invalid_record")
+        for block in content if isinstance(content, list) else []:
+            if not isinstance(block, dict):
+                raise NativePhaseFailure("native_phase_invalid_record")
+            if block.get("type") == "tool_use":
+                record["tool_counts"][
+                    _phase_bucket(block.get("name"), PHASE_TOOLS)
+                ] += 1
+            elif block.get("type") == "tool_result":
+                record["tool_result_count"] += 1
+                record["tool_error_count"] += block.get("is_error") is True
+    if kind == "result":
+        subtype = _phase_bucket(event.get("subtype"), PHASE_RESULT_TYPES)
+        record["result_counts"][subtype] += 1
+        if type(event.get("is_error")) is not bool:
+            raise NativePhaseFailure("native_phase_invalid_record")
+        # Never copy errors, permission inputs, IDs, usage, or the whole envelope.
+        return subtype, event["is_error"], event.get("result")
+    return None
+
+
+def _write_phase_observation(run_dir: Path, record: dict[str, Any]) -> dict[str, Any]:
+    raw = (json.dumps(record, indent=2, sort_keys=True) + "\n").encode("utf-8")
+    path = run_dir / "native-phase-observations" / f"{uuid.uuid4().hex}.json"
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(raw)
+    except OSError:
+        return {
+            "status": "unavailable",
+            "failure_code": "phase_observation_write_failed",
+        }
+    return {
+        "status": "diagnostic_only",
+        "ref": str(path),
+        "sha256": hashlib.sha256(raw).hexdigest(),
+        "bytes": len(raw),
+    }
+
+
+def run_native_phase(
+    command: list[str],
+    *,
+    cwd: Path,
+    timeout: int | float,
+    env: dict[str, str],
+    run_dir: Path,
+) -> tuple[subprocess.CompletedProcess[str], dict[str, Any]]:
+    """Bound native JSONL IO; observation never grants reviewer authority."""
+
+    def counters(values):
+        return {key: 0 for key in sorted(set(values) | {"unknown"})}
+
+    record = {
+        "schema": "opposing-model-native-phase-observation/v1",
+        "diagnostic_only": True,
+        "usable_as_reviewer_response": False,
+        "event_counts": counters(PHASE_EVENT_TYPES),
+        "system_counts": counters(PHASE_SYSTEM_TYPES),
+        "tool_counts": counters(PHASE_TOOLS),
+        "assistant_error_counts": counters(PHASE_ASSISTANT_ERRORS),
+        "result_counts": counters(PHASE_RESULT_TYPES),
+        "http_error_counts": counters(str(code) for code in PHASE_HTTP_CODES),
+        "tool_result_count": 0,
+        "tool_error_count": 0,
+        "stdout_bytes": 0,
+        "stderr_bytes": 0,
+        "last_event_type": "none",
+    }
+    started = time.monotonic()
+    deadline = None
+    process = None
+    failure = None
+    returncode = None
+    terminal = None
+    pending = bytearray()
+    try:
+        if (
+            isinstance(timeout, bool)
+            or not isinstance(timeout, (int, float))
+            or not math.isfinite(timeout)
+            or timeout <= 0
+        ):
+            raise NativePhaseFailure("cli_timeout")
+        deadline = started + timeout
+        process = NATIVE_CLI_POPEN(
+            command,
+            cwd=str(cwd),
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        with selectors.DefaultSelector() as selector:
+            selector.register(process.stdout, selectors.EVENT_READ, "stdout")
+            selector.register(process.stderr, selectors.EVENT_READ, "stderr")
+            while selector.get_map():
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise NativePhaseFailure("cli_timeout")
+                for key, _mask in selector.select(min(remaining, 0.1)):
+                    data = os.read(key.fileobj.fileno(), PHASE_READ_BYTES)
+                    if not data:
+                        selector.unregister(key.fileobj)
+                        key.fileobj.close()
+                        continue
+                    label = key.data
+                    record[label + "_bytes"] += len(data)
+                    cap = (
+                        PHASE_MAX_STDOUT_BYTES
+                        if label == "stdout"
+                        else PHASE_MAX_STDERR_BYTES
+                    )
+                    if record[label + "_bytes"] > cap:
+                        raise NativePhaseFailure("native_phase_limit_exceeded")
+                    if label == "stderr":
+                        continue
+                    pending.extend(data)
+                    while b"\n" in pending:
+                        boundary = pending.index(b"\n")
+                        if boundary > PHASE_MAX_LINE_BYTES:
+                            raise NativePhaseFailure("native_phase_limit_exceeded")
+                        line = bytes(pending[:boundary])
+                        del pending[: boundary + 1]
+                        if line.strip():
+                            terminal = _phase_record(record, line)
+                    if len(pending) > PHASE_MAX_LINE_BYTES:
+                        raise NativePhaseFailure("native_phase_limit_exceeded")
+            if pending:
+                # A complete final JSON value need not end with a newline.
+                if pending.strip():
+                    terminal = _phase_record(record, bytes(pending))
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise NativePhaseFailure("cli_timeout")
+            returncode = process.wait(timeout=remaining)
+            if returncode == 0:
+                if record["last_event_type"] != "result" or terminal is None:
+                    raise NativePhaseFailure("native_phase_missing_terminal")
+                subtype, is_error, response = terminal
+                if subtype != "success" or is_error:
+                    raise NativePhaseFailure("native_phase_terminal_error")
+                if not isinstance(response, str) or not response.strip():
+                    raise NativePhaseFailure("native_phase_invalid_record")
+                try:
+                    response.encode("utf-8", errors="strict")
+                except UnicodeError:
+                    raise NativePhaseFailure("native_phase_invalid_record") from None
+    except NativePhaseFailure as exc:
+        failure = exc.code
+    except subprocess.TimeoutExpired:
+        failure = "cli_timeout"
+    except (OSError, ValueError, TypeError, OverflowError):
+        failure = "native_phase_io_failed"
+    finally:
+        if process is not None:
+            try:
+                if process.poll() is None:
+                    process.kill()
+                returncode = process.wait(timeout=PHASE_REAP_SECONDS)
+            except (OSError, subprocess.TimeoutExpired):
+                failure = "native_phase_cleanup_failed"
+            for pipe in (process.stdout, process.stderr):
+                if pipe is not None:
+                    try:
+                        pipe.close()
+                    except (OSError, ValueError):
+                        failure = "native_phase_cleanup_failed"
+        record["elapsed_seconds"] = round(max(0.0, time.monotonic() - started), 3)
+        record["returncode"] = returncode
+        record["failure_code"] = failure
+        observation = _write_phase_observation(run_dir, record)
+    if failure:
+        raise NativePhaseFailure(failure, observation, returncode) from None
+    response = terminal[2] if returncode == 0 else ""
+    return subprocess.CompletedProcess(command, returncode, response, ""), observation
 
 
 def diagnostic_stream(value: str | bytes | None) -> dict[str, Any]:
@@ -919,6 +1195,11 @@ def main() -> int:
         help="Required catalog id for multi-repository projects; omit for repository.root.",
     )
     parser.add_argument("--timeout-seconds", type=int, default=180)
+    parser.add_argument(
+        "--native-phase-observation",
+        action="store_true",
+        help="Keep structural-only native CLI phase diagnostics; no raw stream or debug logs.",
+    )
     parser.add_argument("--mode", choices=["full", "delta"], default="full")
     parser.add_argument("--parent-key")
     parser.add_argument(
@@ -1116,6 +1397,7 @@ def main() -> int:
             resolution_refs: list[str] = []
             resolution_warning: str | None = None
             diagnostics: dict[str, Any] | None = None
+            phase_observation: dict[str, Any] | None = None
             if not claude:
                 failure = "cli_not_found"
                 plan["reviewer_status"] = "unavailable"
@@ -1125,26 +1407,34 @@ def main() -> int:
                     env.pop(key, None)
                 transport_started = time.monotonic()
                 try:
-                    completed = run(
-                        [
-                            claude,
-                            "-p",
-                            "--model",
-                            reviewer["model"],
-                            "--safe-mode",
-                            "--permission-mode",
-                            "dontAsk",
-                            "--tools",
-                            "Read,Grep,Glob,Bash",
-                            "--allowedTools",
-                            CLAUDE_TOOLS,
-                            "--no-session-persistence",
-                            prompt,
-                        ],
-                        cwd=worktree,
-                        timeout=args.timeout_seconds,
-                        env=env,
-                    )
+                    command = [
+                        claude,
+                        "-p",
+                        "--model",
+                        reviewer["model"],
+                        "--safe-mode",
+                        "--permission-mode",
+                        "dontAsk",
+                        "--tools",
+                        "Read,Grep,Glob,Bash",
+                        "--allowedTools",
+                        CLAUDE_TOOLS,
+                        "--no-session-persistence",
+                        prompt,
+                    ]
+                    if args.native_phase_observation:
+                        command[-1:-1] = ["--output-format", "stream-json", "--verbose"]
+                        completed, phase_observation = run_native_phase(
+                            command,
+                            cwd=worktree,
+                            timeout=args.timeout_seconds,
+                            env=env,
+                            run_dir=run_dir,
+                        )
+                    else:
+                        completed = run(
+                            command, cwd=worktree, timeout=args.timeout_seconds, env=env
+                        )
                     if completed.returncode:
                         failure = "cli_runtime_failed"
                         diagnostics = transport_diagnostics(
@@ -1188,6 +1478,18 @@ def main() -> int:
                                 ),
                                 encoding="utf-8",
                             )
+                except NativePhaseFailure as exc:
+                    failure = exc.code
+                    phase_observation = exc.observation
+                    diagnostics = transport_diagnostics(
+                        run_dir,
+                        failure=failure,
+                        elapsed=time.monotonic() - transport_started,
+                        timeout=args.timeout_seconds,
+                        stdout=None,
+                        stderr=None,
+                        returncode=exc.returncode,
+                    )
                 except subprocess.TimeoutExpired as exc:
                     failure = "cli_timeout"
                     diagnostics = transport_diagnostics(
@@ -1262,15 +1564,35 @@ def main() -> int:
                 "resolution_refs": resolution_refs,
                 "resolution_warning": resolution_warning,
                 "parent_receipt": parent_receipt,
-                **({"transport_diagnostics": diagnostics} if diagnostics is not None else {}),
+                **(
+                    {"transport_diagnostics": diagnostics}
+                    if diagnostics is not None
+                    else {}
+                ),
+                **(
+                    {"native_phase_observation": phase_observation}
+                    if phase_observation is not None
+                    else {}
+                ),
                 "advisory_finding_count": sum(
                     not finding["blocking"] for finding in findings
                 ),
                 "readback_verified": failure != "head_changed_after_review",
-                **({"policy_delta_sha256": hashlib.sha256(json.dumps(
-                    source["successor_policy_source"]["identity"]["policy_delta"],
-                    sort_keys=True, separators=(",", ":")).encode()).hexdigest()}
-                   if source.get("successor_policy_source") else {}),
+                **(
+                    {
+                        "policy_delta_sha256": hashlib.sha256(
+                            json.dumps(
+                                source["successor_policy_source"]["identity"][
+                                    "policy_delta"
+                                ],
+                                sort_keys=True,
+                                separators=(",", ":"),
+                            ).encode()
+                        ).hexdigest()
+                    }
+                    if source.get("successor_policy_source")
+                    else {}
+                ),
             }
 
         result = coordinator.execute(
