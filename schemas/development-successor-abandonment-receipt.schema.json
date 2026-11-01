@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Development successor abandonment receipt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "binding_id", "idempotency_key", "expected_pending_state_sha256", "recorded_at", "reason", "task_state_ref", "canonical_work_id", "binding_receipt", "predecessor_snapshot"],
+  "properties": {
+    "schema": {"const": "development-successor-abandonment-receipt/v1"},
+    "binding_id": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "idempotency_key": {"type": "string", "minLength": 1},
+    "expected_pending_state_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "recorded_at": {"type": "string", "minLength": 1},
+    "reason": {"type": "string", "minLength": 1, "maxLength": 2000},
+    "task_state_ref": {"type": "string", "minLength": 1},
+    "canonical_work_id": {"type": "string", "minLength": 1},
+    "binding_receipt": {"$ref": "#/$defs/proof"},
+    "predecessor_snapshot": {"$ref": "#/$defs/proof"}
+  },
+  "$defs": {
+    "proof": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["packet_ref", "sha256", "schema"],
+      "properties": {
+        "packet_ref": {"type": "string", "pattern": "^artifacts/"},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "schema": {"type": "string", "minLength": 1}
+      }
+    }
+  }
+}

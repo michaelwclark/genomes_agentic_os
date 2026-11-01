@@ -135,6 +135,33 @@ def test_runner_uses_routed_unavailable_policy_and_rejects_unknown_values() -> N
         runner.review_unavailable_policy({"review_unavailable_policy": "permit_anything"})
 
 
+def test_reviewer_profile_precedes_prior_request_without_mutating_it() -> None:
+    """The native selected profile controls transport/model without replacing shared identity."""
+    runner = _load_runner()
+    source = {"selected_reviewer_model": "opus", "review_unavailable_policy": "block"}
+    profile = {"review": {"opposing_harness": {"model": "claude-fable-5", "transport": "claude_cli",
+                                               "unavailable_policy": "continue_with_receipt"}}}
+    assert runner.reviewer_configuration(profile, source) == {
+        "model": "claude-fable-5", "transport": "claude_cli", "unavailable_policy": "continue_with_receipt",
+    }
+    assert source == {"selected_reviewer_model": "opus", "review_unavailable_policy": "block"}
+    assert runner.reviewer_configuration({}, source) == {
+        "model": "opus", "transport": "claude_cli", "unavailable_policy": "block",
+    }
+
+
+@pytest.mark.parametrize("opposing", [
+    {"model": "gpt-6.1"}, {"model": "claude-fable-5", "transport": "api"},
+    {"model": "claude-fable-5", "unavailable_policy": "permit_anything"},
+    {"model": "claude-fable-5 --unsafe"}, {"model": ""},
+])
+def test_reviewer_profile_rejects_unsupported_model_transport_and_policy(opposing: dict[str, str]) -> None:
+    """Malformed configured reviewer inputs fail before a model/coordinator call."""
+    runner = _load_runner()
+    with pytest.raises(runner.ReviewError):
+        runner.reviewer_configuration({"review": {"opposing_harness": opposing}}, {"selected_reviewer_model": "opus"})
+
+
 def test_review_repository_selector_omits_singleton_and_requires_catalog_choice() -> None:
     runner = _load_runner()
     singleton = {

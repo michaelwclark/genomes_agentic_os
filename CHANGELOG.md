@@ -7,10 +7,12 @@ All notable changes to this project are documented here. The format follows
 [Semantic Versioning](https://semver.org/) computed from Conventional Commits
 (breaking → major, `feat` → minor, `fix`/`perf` → patch).
 
-## [Unreleased]
+## [0.12.0] - 2026-10-27
 
 ### Added
 
+- Bind a verified successor worktree to the existing development task while
+  preserving its history, policy, review budgets, and immutable evidence.
 - Add an opt-in boarded synthetic loan profile with a fresh servicing account,
   disabled primary applicant, deterministic account number, completed boarding
   proof, and transaction-bound qualification for authorized lender renewal and
@@ -18,6 +20,13 @@ All notable changes to this project are documented here. The format follows
 - Preserve LLC/trust borrower selection and enforce full idempotent reuse,
   exact reference UUIDs, active-modification conflict checks, and a separate
   boarded confirmation token.
+
+### Fixed
+
+- Keep policy review receipts separate from ordinary merge readiness and recover
+  interrupted successor bindings without replacing task history.
+- Refresh an accepted prior GitHub PR family with a bare repository identity
+  only when its complete task and provider identity match the current head.
 
 ## [0.11.3] - 2026-10-20
 

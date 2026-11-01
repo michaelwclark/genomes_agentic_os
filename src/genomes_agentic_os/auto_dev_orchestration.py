@@ -1137,6 +1137,18 @@ def sync_delivery_projection(task_state_path: str | Path) -> dict[str, Any] | No
             suppress_revision_sensitive_stages=pending_supersession is not None,
             validation_head_sha=task.get("validation_head_sha"),
         )
+        if task.get("active_successor_binding"):
+            from .development_successor_state import active_binding, current_stage_authority
+            active_binding(task, allow_pending=True)
+            epoch_stages = AUTO_DEV_STAGE_ORDER[AUTO_DEV_STAGE_ORDER.index("develop"):]
+            for name in epoch_stages:
+                if not current_stage_authority(task, stages[name]):
+                    stages[name] = _stage_row(name)
+            if task.get("validation_pending_binding"):
+                stages["develop"] = _stage_row("develop")
+            subject_revision = str(task.get("subject_revision") or "") or None
+            if task.get("validation_head_sha") and subject_revision != task["validation_head_sha"]:
+                subject_revision = None
         for name, row in stages.items():
             policy = stage_policies.get(name, {"applicability": "required"})
             row["applicability"] = policy["applicability"]
@@ -1211,6 +1223,11 @@ def sync_delivery_projection(task_state_path: str | Path) -> dict[str, Any] | No
                 "terminal_revision": terminal_revision,
                 "deployed_revision": task.get("deployed_revision"),
                 "canonical_work_id": task.get("canonical_work_id") or existing.get("canonical_work_id"),
+                **({"active_successor_binding": task["active_successor_binding"]}
+                   if task.get("active_successor_binding") else {}),
+                **({"successor_abandonment": task["successor_abandonment"],
+                    "abandoned_successor_bindings": task["abandoned_successor_bindings"]}
+                   if task.get("successor_abandonment") else {}),
             },
             "run_packet": existing.get("run_packet"),
             "compatibility": {
@@ -2423,6 +2440,15 @@ def require_auto_dev_predecessors(state_file: str | Path, stage: str) -> dict[st
     """Fail unless every in-scope configured predecessor is terminal."""
 
     current = read_auto_dev_state(state_file)
+    delivery = current.get("delivery")
+    task_ref = delivery.get("task_state_ref") if isinstance(delivery, Mapping) else None
+    if task_ref is not None and not isinstance(task_ref, str):
+        raise AutoDevStateError("delivery task reference must be a path string")
+    if task_ref:
+        from .development_delivery import TaskState
+        task = TaskState(Path(task_ref)).read()
+        if task.get("active_successor_binding") and task.get("validation_pending_binding"):
+            raise AutoDevStateError("successor binding requires fresh native validation before downstream stages")
     name = stage.strip().lower().replace("-", "_")
     if name not in AUTO_DEV_STAGE_ORDER:
         raise AutoDevStateError(f"unknown Auto-Dev predecessor target: {name}")
@@ -4434,6 +4460,13 @@ def record_auto_dev_stage(
         # checks so operators receive the strict contract failure first.
         _validate_health_schema(evidence, state_path.parent, current)
     subject_revision = str(evidence.get("subject_revision") or "").strip() or None
+    if task_ref:
+        from .development_delivery import TaskState
+        from .development_successor_state import binding_evidence
+        task = TaskState(Path(task_ref)).read()
+        if task.get("active_successor_binding"):
+            binding_evidence(task, {**evidence, **(evidence.get("evidence") or {})},
+                             verify_provider=name not in {"merge", "release", "deploy", "closeout", "health"})
     evidence_terminal_revision = (
         str(evidence.get("terminal_revision") or "").strip() or None
     )

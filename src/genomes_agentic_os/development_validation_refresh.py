@@ -5,6 +5,7 @@ from datetime import datetime
 import hashlib
 import importlib.util
 import json
+import os
 from pathlib import Path
 import shlex
 import subprocess
@@ -90,9 +91,12 @@ def _snapshot_target(packet: Path, digest: str) -> Path:
 
 
 def _git(worktree: Path, *args: str) -> str:
+    environment = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+    environment.update({"GIT_NO_LAZY_FETCH": "1", "GIT_TERMINAL_PROMPT": "0", "GIT_OPTIONAL_LOCKS": "0"})
     try:
-        result = subprocess.run(["git", *args], cwd=worktree, text=True,
-                                capture_output=True, timeout=10)
+        result = subprocess.run(["git", "--no-replace-objects", "-c", "core.fsmonitor=false",
+                                 "-c", "core.hooksPath=/dev/null", *args], cwd=worktree, text=True,
+                                capture_output=True, timeout=10, env=environment)
     except (OSError, subprocess.TimeoutExpired) as exc:
         _error(f"registered validation worktree Git identity is unavailable: {type(exc).__name__}")
     if result.returncode:
@@ -185,7 +189,8 @@ def _context(state_file: str | Path) -> tuple[Any, dict[str, Any], Path, Path, d
     window = auto_dev_workflow_window(current.get("auto_dev_stage_order") or AUTO_DEV_STAGE_ORDER,
                                      current.get("auto_dev_start_stage") or "groom",
                                      current.get("auto_dev_completion_stage") or "health")
-    if (not current.get("canonical_work_id") or window[0] != "groom" or "pr_create" not in window
+    early_window = window[0] == "groom" or (window[0] == "readiness" and bool(current.get("active_successor_binding")))
+    if (not current.get("canonical_work_id") or not early_window or "pr_create" not in window
             or current.get("terminal_revision") or current.get("deployed_revision")
             or manifest.get("start_stage") != window[0] or manifest.get("completion_stage") != window[-1]
             or current.get("autodev_path") != str(packet / "autodev.json")
@@ -231,11 +236,41 @@ def _context(state_file: str | Path) -> tuple[Any, dict[str, Any], Path, Path, d
 
 
 def _refresh_history(current: Mapping[str, Any], packet: Path) -> None:
+    """Validate immutable predecessor epochs separately from current authority."""
+    if current.get("active_successor_binding"):
+        from .development_successor_state import active_binding, proof
+        receipt = active_binding(current, allow_pending=True)
+        predecessor = proof(packet, receipt["predecessor"]["full_state_snapshot"])[1]["task"]
+        _refresh_history(predecessor, packet)
+        old_history = predecessor.get("validation_refreshes")
+        history = current.get("validation_refreshes")
+        if old_history is None:
+            old_history = []
+        if history is None:
+            history = []
+        if not isinstance(old_history, list) or not isinstance(history, list):
+            _error("validation refresh history/head binding is missing or malformed")
+        if history[:len(old_history)] != old_history:
+            _error("successor binding changed historical validation refreshes")
+        if len(history) == len(old_history):
+            if current.get("validation_head_sha") != predecessor.get("validation_head_sha"):
+                _error("successor binding invented current validation authority")
+            return
+        _refresh_epoch_history(current, packet, history_offset=len(old_history))
+        return
+    _refresh_epoch_history(current, packet)
+
+
+def _refresh_epoch_history(current: Mapping[str, Any], packet: Path, *, history_offset: int = 0) -> None:
+    """Validate one frozen-policy validation epoch without rewriting prior rows."""
     history = current.get("validation_refreshes")
     if history is None:
         history = []
+    if not isinstance(history, list):
+        _error("validation refresh history/head binding is missing or malformed")
+    history = history[history_offset:]
     refresh_receipts = [row for row in current.get("receipts") or []
-                        if isinstance(row, Mapping) and row.get("kind") == "validation_refresh"]
+                        if isinstance(row, Mapping) and row.get("kind") == "validation_refresh"][history_offset:]
     if (not isinstance(history, list) or bool(history) != bool(current.get("validation_head_sha"))
             or len(history) != len(refresh_receipts)):
         _error("validation refresh history/head binding is missing or malformed")
@@ -312,6 +347,9 @@ def _latest(current: Mapping[str, Any], packet: Path) -> tuple[Path, dict[str, A
 def _predecessor_identity(current: Mapping[str, Any], packet: Path, path: Path,
                           payload: Mapping[str, Any], digest: str, *, verify_worktree: bool = True) -> dict[str, Any]:
     """Attest absent legacy identity from one original hash-bound task receipt."""
+    if current.get("active_successor_binding"):
+        from .development_successor_state import predecessor_authority
+        current = predecessor_authority(current, path, digest)
     evidence = payload.get("evidence")
     if (payload.get("schema") != "development-stage-evidence/v1" or payload.get("state") != "local_validation"
             or not isinstance(evidence, Mapping)):
@@ -503,11 +541,16 @@ def pr_create_validation_authority(state_file: str | Path, family: Mapping[str, 
         validate_deferred_pr_create(state_file, path)
     head = _head(payload.get("evidence") or {})
     evidence = family.get("evidence") or {}
+    expected_source_branch = current["worktree"]["branch"]
+    if current.get("active_successor_binding"):
+        from .development_successor_state import active_binding
+        active_binding(current)
+        expected_source_branch = current["pull_request_subject"]["source_branch"]
     if (head != _git(worktree, "rev-parse", "HEAD") or _head(evidence) != head
             or evidence.get("ticket") != current["ticket"]
             or not _repository_matches(evidence.get("repository"), current)
             or evidence.get("policy_fingerprint") != current["policy_fingerprint"]
-            or evidence.get("source_branch") != current["worktree"]["branch"]):
+            or evidence.get("source_branch") != expected_source_branch):
         _error("PR Create family does not match current exact-head validation authority")
     return {"status": "deferred_to_ci" if deferred else "passed", "head_sha": head,
             "path": str(path), "sha256": digest, "ci_authority": "pending" if deferred else "unknown",
@@ -774,6 +817,9 @@ def refresh_development_validation(state_file: str | Path, *, evidence_file: str
         _deferred(payload, profile["validation"])
         unavailable = evidence["unavailable_check"]
     head = _head(evidence)
+    if current.get("active_successor_binding"):
+        from .development_successor_state import binding_evidence
+        binding_evidence(current, evidence, validation=True)
     if (evidence.get("head_sha") != head or evidence.get("ticket") != current["ticket"]
             or evidence.get("canonical_work_id") != current["canonical_work_id"]
             or evidence.get("repository_id") != current["repository"]["id"]
@@ -848,6 +894,9 @@ def refresh_development_validation(state_file: str | Path, *, evidence_file: str
                 "successor_sha256": request_digest, "policy_fingerprint": current["policy_fingerprint"], "recorded_at": now,
                 "predecessor_identity_attestation": attestation})
             current["validation_head_sha"] = head
+            if current.get("active_successor_binding"):
+                current.pop("validation_pending_binding", None)
+                current["active_successor_binding"]["status"] = "bound"
             current["updated_at"] = now
             _atomic_json(task.path, current)
         task.emit(event_type="development.validation.refreshed", idempotency_key=idempotency_key,

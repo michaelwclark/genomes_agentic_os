@@ -149,6 +149,120 @@ the task is still in local validation; once PR review begins, a changed head
 requires a fresh delivery run so review, QA, and Finalize cannot stay attached
 to the old commit.
 
+An isolated successor worktree can continue the same modern task while it is
+still at `local_validation`. `develop inspect-successor` reads the exact project
+registry entry, clean local Git branch/head/index, original ancestry, live PR
+and remote source/base refs, runtime ownership, effective policy, original
+receipt inventory, canonical work row, and shared review lineage. Its output
+is an observation, not permission to change task state. Prepare the closed
+`development-successor-binding-request/v1` capsule beneath the original packet's
+`artifacts/`; every assertion and hash is independently rederived at admission.
+The admitted original workflow must start at Groom or at the native default
+Readiness stage and include PR Create. Binding preserves the original workflow
+window, mode, applicability and early-stage exclusions. Readiness-start fresh
+validation is admitted only after a complete native successor binding;
+ordinary unbound validation-refresh eligibility remains unchanged.
+
+`develop bind-successor` is read-only unless `--apply` is supplied. Apply requires
+the explicit raw predecessor-state SHA-256 and a stable idempotency key. Under
+the native task and review-family locks it writes an immutable intent, then
+atomically replaces only the same task's active worktree/runtime/policy/PR
+binding. The original run, task, packet, receipt bytes, attempts, lease, failure
+history, review coordinator and budgets remain intact. It preserves the old
+portfolio and updates only this task's active-binding pointer. Unrelated rows
+and metadata can advance without invalidating this ticket's replay. Separate event,
+SQLite, active-now and Auto-Dev projection writes form a recoverable outbox;
+consumers refuse a partial projection. Repeating the exact request and key
+finishes that outbox without another transition or review claim. An existing
+binding cannot be replaced through a different idempotency key.
+
+If the successor source, provider or runtime advances while projections are
+pending, `develop abandon-successor` offers a separate, dry-run-first recovery.
+An explicit pending-state SHA-256, stable key and bounded reason produce an
+immutable abandonment receipt and a fenced rollback outbox. It restores only
+this binding's owned portfolio and canonical source pointers, then the
+immutable predecessor's task/source/policy authority. Original receipt bytes,
+stage history, lease, attempts, retry limits and shared review budgets remain
+intact. A foreign pointer or a changed protected task field refuses rollback.
+The abandoned binding's receipts, events and canonical audit history remain;
+no tests or delivery gates become accepted. Interrupted abandonment resumes
+with its original key and pending digest. Consumers refuse its partial
+projections, and a completed binding cannot be abandoned.
+
+The protected predecessor snapshot excludes known environment paths from direct
+Python content reads and retained content digests: any `.env*` path component, or a basename ending in `.env` or
+containing `.env.` (case-insensitive), plus dependency directories. It records
+those exclusions explicitly. Native Git retains its complete status observation
+and can internally inspect tracked files; this is not a guarantee that every
+process avoids reading tracked environment files. Content hashing follows no ancestor symlinks,
+records final link text without opening targets, and refuses special files,
+replacement or concurrent writes. Admission limits changed entries to 10,000,
+ordinary source files to 32 MiB each, the index to 64 MiB, and total index plus
+source reads to 128 MiB; exceeding a limit refuses binding.
+Native observations preserve UTF-8 filename bytes and NUL-delimited inventories
+without newline translation; binary diff hashes cover the complete output.
+Unsupported encoding or a context selector that changes a real source path
+refuses admission rather than silently shortening or omitting it.
+
+The local branch and provider publication branch may differ only when both
+native Git/remote and provider reads prove the same exact head. Validation
+uses the actual registered local branch; PR-family and review evidence use the
+provider branch and also name both branches plus the binding ID and immutable
+binding-receipt hash. Binding clears current validation authority and makes all
+new-epoch delivery stages pending while retaining old evidence as history.
+Fresh frozen-command execution, ordinary PR/review/QA/Finalize/merge gates and
+the project's complete coverage requirements remain mandatory.
+If the original workflow ended at PR Create, resume the same run through the
+existing native named-stage entrypoint before Review Self. The review runner
+refuses an out-of-window review; successor binding never widens its own scope.
+
+Policy fingerprints may change because source paths or inherited policy text
+changed. Native admission retains original selectors, ordering and source
+scope, the complete validation profile, inherited safety lines and source-rule
+files. It rejects reduced or unknown validation semantics. Changed prose,
+context or Git rule blobs require a CLEAN canonical full review of the exact
+new head/base/policy and native delta. The canonical opposing-model runner's
+`--successor-policy-request <capsule.json>` mode derives that subject without
+binding the task, includes the full policy delta in the review prompt and
+records its digest through the existing shared coordinator. It rechecks source,
+policy, provider, runtime and task identity after the reviewer returns. This
+mode records validation as `not_started`, checks as `not_applicable`, and retains
+the helper's blocked readiness decision even when the policy/source review is
+CLEAN. It grants no test or gate acceptance; unavailable reviewers and receipts for
+a different delta refuse binding. Refresh the capsule's coordinator inventory
+after the terminal review, retaining all previous attempts and budget records.
+The policy admission uses the dedicated `successor_policy_delta:full-pr`
+subject and chain partition. Ordinary merge-readiness review remains separate,
+with ordinary alias keys and the shared absolute PR-family budgets unchanged.
+Policy receipts, including legacy ordinary-key receipts carrying policy-delta
+provenance, cannot establish ordinary merge-readiness authority.
+The selected development profile's `review.opposing_harness` model, native
+`claude_cli` transport and unavailable policy take precedence over prior request
+defaults. The actual model appears in the invocation, request, prompt and model
+receipt. The helper's legacy `opus` family label identifies the Anthropic family;
+it does not substitute the Opus model for a configured Claude Fable model.
+Unavailable execution remains an unavailable coordinator outcome and exit 2.
+
+Managed runtime support is intentionally explicit: the selected project's
+`runtime.successor_observer` must satisfy the closed
+`development-runtime-observer/v1` contract. The supported `compose_registry_tsv`
+format selects only provider/domain/project, registry location, compose prefix
+and ownership-key names. It requires one native owner registry row and matching
+slug/namespace/stack identity,
+bounded Docker compose ownership and a real `/app` bind mount of the selected
+source, plus no foreign canonical work-item claim. Docker reads select only
+daemon/container IDs, compose-project ownership and mounts; they never read
+container environment values or execute cleanup. Stopped registered containers
+can prove their configured source mount; this does not assert application
+health. Missing, unknown or foreign observer configuration refuses before a
+provider command runs. No configured cleanup command or caller-selected code
+can become an observer. The normalized configuration and digest participate in
+request admission, locked CAS, replay and post-review comparison; the original
+five-field runtime registration remains unchanged. Historical policy snapshots
+do not claim to freeze newly added observer metadata. Install that owning
+project metadata separately after reviewing it; there is no silent profile
+migration. An unmanaged profile records that fact explicitly.
+
 For a modern task still at `local_validation`, bind successor validation with
 `agentic-os develop refresh-validation <task-state.json> --evidence
 <successor-evidence.json> --idempotency-key <stable-key>`. This appends a receipt

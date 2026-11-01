@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "development-runtime-observer.schema.json",
+  "title": "Explicit development runtime observer",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "kind",
+    "provider",
+    "domain",
+    "project",
+    "registry_path",
+    "compose_project_prefix",
+    "identity_keys"
+  ],
+  "properties": {
+    "schema": {
+      "const": "development-runtime-observer/v1"
+    },
+    "kind": {
+      "const": "compose_registry_tsv"
+    },
+    "provider": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$",
+      "maxLength": 80
+    },
+    "domain": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$",
+      "maxLength": 80
+    },
+    "project": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$",
+      "maxLength": 100
+    },
+    "registry_path": {
+      "type": "string",
+      "pattern": "^(?:~/|/)[^\\u0000\\r\\n]+$",
+      "maxLength": 4096
+    },
+    "compose_project_prefix": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_-]{0,30}-$"
+    },
+    "identity_keys": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "slug",
+        "compose_project",
+        "namespace",
+        "optional_namespace_aliases"
+      ],
+      "properties": {
+        "slug": {
+          "$ref": "#/$defs/environment_key"
+        },
+        "compose_project": {
+          "$ref": "#/$defs/environment_key"
+        },
+        "namespace": {
+          "$ref": "#/$defs/environment_key"
+        },
+        "optional_namespace_aliases": {
+          "type": "array",
+          "maxItems": 8,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/environment_key"
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "environment_key": {
+      "type": "string",
+      "pattern": "^[A-Z][A-Z0-9_]{0,63}$"
+    }
+  }
+}

@@ -22,6 +22,7 @@ import uuid
 
 
 REVIEW_RECEIPT_SCHEMA = "auto-dev-review-receipt/v1"
+SUCCESSOR_POLICY_REVIEW_PURPOSE = "successor_policy_delta:full-pr"
 TERMINAL_REVIEW_OUTCOMES = {"clean", "findings", "unavailable"}
 SUCCESSFUL_REVIEW_OUTCOMES = {"clean", "findings"}
 FINDING_STATUSES = {"open", "resolved"}
@@ -264,9 +265,11 @@ def review_chain_key(subject: ReviewSubject) -> str:
 
     value = asdict(subject)
     value.pop("head_sha")
-    # Stages may describe the same review as review_self, finalize, or another
-    # purpose.  Purpose is provenance, not a fresh paid-review budget.
-    value.pop("purpose")
+    # Ordinary stage aliases still share one paid-review chain. A native
+    # pre-validation policy admission has different authority, while retaining
+    # the same absolute PR-family budget and single-flight lock.
+    if subject.purpose != SUCCESSOR_POLICY_REVIEW_PURPOSE:
+        value.pop("purpose")
     return _canonical_hash(value)
 
 
@@ -323,8 +326,10 @@ def provider_review_marker(key: str) -> str:
 
 
 def canonical_review_purpose(_value: str | None = None) -> str:
-    """Collapse stage/scope labels onto the one paid Auto-Dev review purpose."""
+    """Share ordinary stage authority while preserving native policy admission."""
 
+    if str(_value or "").strip().lower() == SUCCESSOR_POLICY_REVIEW_PURPOSE:
+        return SUCCESSOR_POLICY_REVIEW_PURPOSE
     return "review_self"
 
 
@@ -870,6 +875,36 @@ def load_review_receipt(path: str | Path) -> dict[str, Any]:
     return payload
 
 
+def _is_merge_readiness_subject(subject: ReviewSubject) -> bool:
+    """Recognize only canonical or legacy ordinary merge-readiness purpose labels."""
+    stage, separator, scope = str(subject.purpose).strip().lower().partition(":")
+    return (
+        stage.replace("-", "_") in {"review_self", "review_repair", "review_others", "finalize", "merge_readiness"}
+        and (not separator or scope in {"full-pr", "full_pr", "pr"})
+    )
+
+
+def _assert_ordinary_review_authority(
+    payload: Mapping[str, Any], *, consumer: str
+) -> None:
+    """Refuse policy or explicitly unvalidated authority without changing durable receipts."""
+    subject = payload["subject"]
+    review = payload["review"]
+    # Older policy producers used the ordinary key; the native delta digest
+    # and pre-validation decision must remain a refusal on those immutable rows.
+    if (
+        subject.get("purpose") == SUCCESSOR_POLICY_REVIEW_PURPOSE
+        or "policy_delta_sha256" in review
+        or review.get("decision") == "blocked_validation"
+    ):
+        raise ReviewCoordinationError(
+            f"{consumer} cannot consume successor policy or pre-validation review authority"
+        )
+    for status in ("validation_status", "pr_check_status"):
+        if status in review and review[status] != "passed":
+            raise ReviewCoordinationError(f"{consumer} requires passed review {status}")
+
+
 def assert_exact_head_review_receipt(
     path: str | Path,
     *,
@@ -883,6 +918,7 @@ def assert_exact_head_review_receipt(
 
     payload = load_review_receipt(path)
     subject = payload["subject"]
+    _assert_ordinary_review_authority(payload, consumer="ready_for_merge")
     checks = {
         "head_sha": head_sha,
         **({"pull_request": str(pull_request)} if pull_request else {}),
@@ -1293,6 +1329,8 @@ class ReviewCoordinator:
                         f"until recovery: {quarantined['ref']}"
                     ) from exc
                 if existing.get("outcome") in SUCCESSFUL_REVIEW_OUTCOMES:
+                    if _is_merge_readiness_subject(subject) and existing.get("outcome") == "clean":
+                        _assert_ordinary_review_authority(existing, consumer="ordinary review reuse")
                     return self._result(path, existing, reused=True)
                 # Unavailable is an attempt, not a terminal authority.  Preserve
                 # it immutably and allow the exact same subject to retry.
@@ -1308,6 +1346,8 @@ class ReviewCoordinator:
                 except ReviewCoordinationError:
                     continue
                 if prior_subject == subject and row.get("outcome") in SUCCESSFUL_REVIEW_OUTCOMES:
+                    if _is_merge_readiness_subject(subject) and row.get("outcome") == "clean":
+                        _assert_ordinary_review_authority(row, consumer="ordinary review reuse")
                     legacy_path = self._path(str(row["key"]))
                     return self._result(legacy_path, row, reused=True)
             successful_family = [
@@ -1913,4 +1953,6 @@ class ReviewCoordinator:
                     "finalize requires an exact-head terminal review receipt"
                 )
             receipt = load_review_receipt(path)
+            if _is_merge_readiness_subject(subject) and receipt.get("outcome") == "clean":
+                _assert_ordinary_review_authority(receipt, consumer="ordinary finalize reuse")
             return self._result(path, receipt, reused=True)
