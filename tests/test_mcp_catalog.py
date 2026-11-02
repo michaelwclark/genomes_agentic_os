@@ -81,6 +81,21 @@ def test_mcp_config_payload_command_server_has_args_not_url():
     assert "url" not in payload
 
 
+def test_brain_generated_default_is_current_and_additive_merge_preserves_existing_values():
+    from genomes_agentic_os.config_ops import config_template, merge_config
+
+    assert mcp_config_payload(MCP_SERVERS["genomes_brain"])["url"] == "http://127.0.0.1:3166/mcp"
+    template = config_template("agentic_os_root")
+    assert 'url = "http://127.0.0.1:3166/mcp"' in template
+    for existing in (
+        '[mcp_servers.genomes_brain]\nurl = "http://127.0.0.1:3155/mcp"\n',
+        '[mcp_servers.genomes_brain]\nurl = "https://custom.invalid/mcp"\n',
+    ):
+        merged, _ = merge_config(existing, template)
+        for line in existing.splitlines():
+            assert line in merged
+
+
 def test_mcp_config_payload_bearer_token_env_var_included_when_present():
     payload = mcp_config_payload(MCP_SERVERS["github"])
     assert payload["bearer_token_env_var"] == "GITHUB_PAT_TOKEN"

@@ -5,7 +5,7 @@
 # block hook completion.
 set -uo pipefail
 
-MCP_URL="${GENOMES_BRAIN_MCP_URL:-${LOSMON_MEMORY_MCP_URL:-http://127.0.0.1:3155/mcp}}"
+MCP_URL="${GENOMES_BRAIN_MCP_URL:-${LOSMON_MEMORY_MCP_URL:-http://127.0.0.1:3166/mcp}}"
 LOG_DIR="${HOME}/.local/state/harness"
 LOG_FILE="${LOG_DIR}/emit-trace.log"
 AGENT="${1:-unknown}"

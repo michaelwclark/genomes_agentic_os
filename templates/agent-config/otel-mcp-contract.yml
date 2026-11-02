@@ -19,7 +19,7 @@ mcp_registration_points:
     url: https://mcp.notion.com/mcp
     install_scope: every layer
   genomes_brain:
-    url: http://127.0.0.1:3155/mcp
+    url: http://127.0.0.1:3166/mcp
     install_scope: every layer
     credential_policy: no secrets in memory writes
   github:
