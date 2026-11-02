@@ -21,6 +21,7 @@ from ..execution_fabric_remote import (
     RemoteFabricWorker,
     materialize_approval_state,
     personal_fallback_status,
+    personal_fallback_submission_guard,
     probe_personal_fallback,
     resolve_remote_settings,
     validate_task_route,
@@ -221,6 +222,16 @@ def _configured_worker_defaults(
 
 
 def handle_runtime_submit(args: argparse.Namespace) -> int:
+    if not args.apply:
+        return _handle_runtime_submit(args)
+    settings = resolve_remote_settings(args.root, role="submit")
+    if settings.mode != "remote_with_local_fallback":
+        return _handle_runtime_submit(args)
+    with personal_fallback_submission_guard(args.root):
+        return _handle_runtime_submit(args)
+
+
+def _handle_runtime_submit(args: argparse.Namespace) -> int:
     payload = _runtime_payload(args)
     settings = resolve_remote_settings(args.root, role="submit")
     route = validate_task_route(
@@ -271,6 +282,8 @@ def handle_runtime_submit(args: argparse.Namespace) -> int:
         "priority": args.priority,
         "max_attempts": args.max_attempts,
         "due_at": args.available_at,
+        "_fabric_namespace": args.namespace,
+        "_fabric_required_capabilities": list(args.capability),
         **payload,
         "execution_target": args.execution_target or route["execution_target"],
         "approval_state": materialize_approval_state(
