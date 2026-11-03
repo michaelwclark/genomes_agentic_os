@@ -22,6 +22,168 @@ def _digest(value):
     return hashlib.sha256(reconciliation._bytes(value)).hexdigest()
 
 
+@pytest.mark.parametrize("stale_kind", ["lease", "proof", "owner", "head", "profile"])
+def test_stale_authority_does_not_break_lifecycle_audit_or_grant_actions(
+    tmp_path, monkeypatch, stale_kind
+):
+    from datetime import datetime, timedelta
+    from genomes_agentic_os.auto_dev_orchestration import sync_delivery_projection
+
+    case = _case(tmp_path)
+    plan_path, _ = _plan(case)
+    _apply(case, plan_path)
+    task = case["task"]
+    original = task.read()
+    historical_files = {
+        name: Path(name).read_bytes() for name in case["inspected"]["historical_files"]
+    }
+    budget = reconciliation._budget_history(original)
+    if stale_kind in {"lease", "owner"}:
+        stale = task.read()
+        if stale_kind == "lease":
+            stale["lease"]["until"] = "2000-01-01T00:00:00Z"
+        else:
+            stale["lease"]["owner"] = "test-successor-owner"
+        _write(task.path, stale)
+    elif stale_kind == "proof":
+        class ExpiredProofClock(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return datetime.now(tz) + timedelta(hours=2)
+
+        monkeypatch.setattr(reconciliation, "datetime", ExpiredProofClock)
+    elif stale_kind == "head":
+        (case["receiving"] / "README.md").write_text("unqualified source repair\n")
+        _git("add", "README.md", cwd=case["receiving"])
+        _git("commit", "-m", "unqualified source repair", cwd=case["receiving"])
+    else:
+        configuration = (
+            delivery.project_root(case["root"], "acme", "app")
+            / "config/development.yml"
+        )
+        configuration.write_text(configuration.read_text() + "\n# current policy changed\n")
+
+    for action in ("pr_create", "review"):
+        with pytest.raises(delivery.DevelopmentDeliveryError):
+            reconciliation.current_action_validation_authority(task.path, action=action)
+
+    if stale_kind == "lease":
+        assert task.recover_stale_lease() == {
+            "recovered": True, "reason": "lease_expired"
+        }
+        failure_detail = "worker heartbeat lease expired"
+    else:
+        failure_detail = "test-owned failure while current authority is stale"
+        task.fail(
+            kind="test_failed", detail=failure_detail,
+            receipt="test-owned lifecycle failure", idempotency_key="stale-failure",
+        )
+    failed = task.read()
+    assert failed["failure"]["recoverable"] is True
+    assert failed["state"] == "local_validation"
+    projected_failure = _canonical_delivery_row(case["root"], task)
+    assert projected_failure["state"] == "validating"
+    assert projected_failure["attention"] == "active"
+    assert projected_failure["blocked_reason"] == failure_detail
+    assert projected_failure["worktree_path"] == original["worktree"]["path"]
+    task.recover(receipt="test-owned recovery", idempotency_key="stale-recovery")
+    assert task.read()["state"] == "local_validation"
+    assert task.read()["failure"] is None
+    recovered = _canonical_delivery_row(case["root"], task)
+    assert recovered["attention"] == "active"
+    assert recovered["state"] == "validating"
+    assert recovered["blocked_reason"] is None
+    task.transition(
+        "pre_pr_review", receipt=_stage_receipt(case["packet"], "pre_pr_review"),
+        idempotency_key="stale-lifecycle-transition",
+    )
+    assert task.read()["state"] == "pre_pr_review"
+    current = sync_delivery_projection(task.path)
+    assert current["delivery"]["current_action_status"]["status"] == "unqualified_current_evidence"
+    assert "current_action_authority" not in current["delivery"]
+    for action in ("pr_create", "review"):
+        with pytest.raises(delivery.DevelopmentDeliveryError):
+            reconciliation.current_action_validation_authority(task.path, action=action)
+    assert task.read()["receipts"][:len(original["receipts"])] == original["receipts"]
+    assert task.read()[reconciliation.HISTORY] == original[reconciliation.HISTORY]
+    assert reconciliation._budget_history(task.read()) == budget
+    assert all(Path(name).read_bytes() == content for name, content in historical_files.items())
+    events = [json.loads(line) for line in task.ledger.read_text().splitlines()]
+    assert any(row["type"] == "development.task.failed" for row in events)
+    assert any(row["type"] == "development.task.recovered" for row in events)
+
+
+@pytest.mark.parametrize("consumer", ["pull_request", "develop_binding"])
+def test_stale_reconciliation_consumers_preserve_orchestration_error_contract(
+    tmp_path, consumer
+):
+    from genomes_agentic_os.auto_dev_orchestration import (
+        AutoDevStateError,
+        validate_pull_request_authority,
+    )
+
+    case = _case(tmp_path)
+    plan_path, _ = _plan(case)
+    _apply(case, plan_path)
+    _document(case)
+    require_auto_dev_predecessors(case["packet"] / "autodev.json", "pr_create")
+    stale = case["task"].read()
+    stale["lease"]["until"] = "2000-01-01T00:00:00Z"
+    _write(case["task"].path, stale)
+    before = case["task"].path.read_bytes()
+    events = case["task"].ledger.read_bytes()
+    with pytest.raises(AutoDevStateError, match="owner/lease"):
+        if consumer == "pull_request":
+            validate_pull_request_authority(stale, {}, "pre_pr_review")
+        else:
+            require_auto_dev_predecessors(
+                case["packet"] / "autodev.json", "pr_create"
+            )
+    assert case["task"].path.read_bytes() == before
+    assert case["task"].ledger.read_bytes() == events
+
+
+@pytest.mark.parametrize("lineage", ["rewound", "unrelated"])
+def test_nonancestor_source_has_governance_diagnostic_without_task_writes(
+    tmp_path, lineage
+):
+    case = _case(tmp_path)
+    if lineage == "rewound":
+        (case["worktree"] / "README.md").write_text("historical checkout advanced\n")
+        _git("add", "README.md", cwd=case["worktree"])
+        _git("commit", "-m", "advance original checkout", cwd=case["worktree"])
+    else:
+        branch = "feature/test-unrelated-source"
+        _git("checkout", "--orphan", branch, cwd=case["receiving"])
+        _git("commit", "-m", "independent source history", cwd=case["receiving"])
+        request = json.loads(case["reconciliation_request"].read_text())
+        request["worktree"]["branch"] = branch
+        _write(case["reconciliation_request"], request)
+    before = case["task"].path.read_bytes()
+    events = case["task"].ledger.read_bytes()
+    with pytest.raises(
+        delivery.DevelopmentDeliveryError,
+        match="current source must descend from the original historical worktree head",
+    ):
+        _plan(case, "nonancestor")
+    assert case["task"].path.read_bytes() == before
+    assert case["task"].ledger.read_bytes() == events
+
+
+@pytest.mark.parametrize("unavailable", ["missing_commit", "missing_worktree"])
+def test_ancestry_git_failure_retains_availability_diagnostic(tmp_path, unavailable):
+    case = _case(tmp_path)
+    with pytest.raises(
+        delivery.DevelopmentDeliveryError, match="Git identity is unavailable"
+    ):
+        reconciliation._require_source_ancestor(
+            case["receiving"] if unavailable == "missing_commit" else tmp_path / "absent",
+            "0" * 40 if unavailable == "missing_commit" else case["head"],
+            case["head"],
+        )
+
+
+
 @pytest.fixture(autouse=True)
 def isolated_controller_environment(monkeypatch):
     # No inherited live Fabric file or canonical-root redirect may reach a

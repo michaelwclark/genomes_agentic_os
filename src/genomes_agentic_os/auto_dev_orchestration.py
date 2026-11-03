@@ -203,10 +203,11 @@ def validate_pull_request_authority(
 ) -> dict[str, str]:
     """Classify one provider-read PR identity against the frozen task profile."""
     if task.get("validation_reconciliations"):
+        from .development_delivery import DevelopmentDeliveryError
         from .development_validation_reconciliation import current_action_task_view
         try:
             task = current_action_task_view(task, action="pr_create" if target == "release_propagation" else "review")
-        except RuntimeError as exc:
+        except DevelopmentDeliveryError as exc:
             raise AutoDevStateError(str(exc)) from exc
     authority = {
         "provider": str(evidence.get("provider") or "").strip().lower(),
@@ -1704,10 +1705,11 @@ def _validate_delivery_stage_task_binding(
     task_path = Path(task_ref).expanduser().resolve()
     task = _read_json(task_path)
     if stage == "develop" and task.get("validation_reconciliations"):
+        from .development_delivery import DevelopmentDeliveryError
         from .development_validation_reconciliation import current_action_validation_authority
         try:
             authority = current_action_validation_authority(task_path)
-        except RuntimeError as exc:
+        except DevelopmentDeliveryError as exc:
             raise AutoDevStateError(str(exc)) from exc
         if (Path(authority["path"]).resolve() != path.resolve()
                 or authority["sha256"] != hashlib.sha256(path.read_bytes()).hexdigest()):

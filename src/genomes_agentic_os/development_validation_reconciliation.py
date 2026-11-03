@@ -14,6 +14,7 @@ import hashlib
 import json
 from pathlib import Path
 import re
+import subprocess
 from typing import Any, Iterator, Mapping
 
 from . import development_delivery as delivery
@@ -410,6 +411,23 @@ def inspect_development_reconciliation(state_file: str | Path) -> dict[str, Any]
             "current_evidence_readiness": "not_evaluated_by_inspect"}
 
 
+def _require_source_ancestor(worktree: Path, original_head: str, head: str) -> None:
+    """Git status1 is a valid lineage refusal; other failures are unavailable."""
+    try:
+        result = subprocess.run(
+            ["git", "merge-base", "--is-ancestor", original_head, head],
+            cwd=worktree, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise delivery.DevelopmentDeliveryError(
+            "registered validation worktree Git identity is unavailable: "
+            + type(exc).__name__
+        ) from exc
+    _require(result.returncode in (0, 1), "registered validation worktree Git identity is unavailable")
+    _require(result.returncode == 0, "current source must descend from the original historical worktree head")
+
+
 def _source(value: Mapping[str, Any], record: Mapping[str, Any]) -> dict[str, Any]:
     project = delivery.project_root(value["os_root"], value["domain"], value["project"])
     _require(isinstance(record, Mapping) and record.get("path") and record.get("name") and record.get("branch"), "current registered worktree selection is incomplete")
@@ -429,7 +447,7 @@ def _source(value: Mapping[str, Any], record: Mapping[str, Any]) -> dict[str, An
     original = Path(value["worktree"]["path"]).resolve()
     original_head = _git(original, "rev-parse", "HEAD")
     head = _git(worktree, "rev-parse", "HEAD")
-    _git(worktree, "merge-base", "--is-ancestor", original_head, head)
+    _require_source_ancestor(worktree, original_head, head)
     return {"worktree": dict(record), "head_sha": head, "tree_sha": _git(worktree, "rev-parse", "HEAD^{tree}"),
             "parents": _git(worktree, "show", "-s", "--format=%P", "HEAD").split(),
             "original_worktree_observation": {"path": str(original), "head_sha": original_head,

@@ -2719,10 +2719,12 @@ def _sync_canonical_task_progress(
 
     task = _read_mapping(task_state_path)
     if task.get("validation_reconciliations"):
-        from .development_validation_reconciliation import current_action_validation_authority
-        authority = current_action_validation_authority(task_state_path)
-        # This owner projects source identity; it does not execute PR Create.
-        task = {**task, "worktree": authority["worktree"]}
+        from .development_validation_reconciliation import current_action_projection
+        projection = current_action_projection(task_state_path)
+        # Lifecycle/audit writes must survive expired action authority. Only a
+        # qualified projection may replace the historical source identity.
+        if projection and projection.get("authority"):
+            task = {**task, "worktree": projection["authority"]["worktree"]}
     required = (
         task.get("os_root"),
         task.get("domain"),
