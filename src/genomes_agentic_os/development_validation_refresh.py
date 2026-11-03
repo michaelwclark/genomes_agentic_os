@@ -175,6 +175,9 @@ def _context(state_file: str | Path) -> tuple[Any, dict[str, Any], Path, Path, d
                                         read_auto_dev_state)
     task = TaskState(Path(state_file).resolve())
     current = task.read()
+    from .development_validation_reconciliation import _history_record
+    if _history_record(task.path) is not None:
+        _error("accepted current reconciliation cannot refresh the historical validation subject")
     if current.get("state") != "local_validation" or current.get("schema") != "development-task/v1":
         _error("validation refresh requires a modern local_validation task")
     packet = Path(str(current.get("work_item") or "")).resolve()
@@ -465,6 +468,10 @@ def validate_deferred_pr_create(state_file: str | Path, receipt: Path) -> None:
 
 def pr_create_validation_authority(state_file: str | Path, family: Mapping[str, Any]) -> dict[str, Any] | None:
     """Fence refreshed/deferred PR families with their current validation head."""
+    from .development_validation_reconciliation import pr_create_reconciliation_authority
+    reconciled = pr_create_reconciliation_authority(state_file, family)
+    if reconciled is not None:
+        return reconciled
     from .development_delivery import TaskState
     current = TaskState(Path(state_file).resolve()).read()
     packet = Path(str(current.get("work_item") or "")).resolve()

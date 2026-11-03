@@ -149,6 +149,32 @@ def handle_validation_refresh(args: argparse.Namespace) -> int:
     return 0
 
 
+def handle_validation_reconciliation(args: argparse.Namespace) -> int:
+    from ..development_validation_reconciliation import (
+        apply_development_reconciliation, inspect_development_reconciliation,
+        plan_development_reconciliation,
+    )
+    if args.reconciliation_action == "inspect":
+        result = inspect_development_reconciliation(args.state_file)
+    elif args.reconciliation_action == "plan":
+        result = plan_development_reconciliation(args.state_file, request_file=args.request, idempotency_key=args.idempotency_key)
+        if args.output:
+            from ..development_validation_reconciliation import _contained
+            packet = Path(TaskState(Path(args.state_file).resolve()).read()["work_item"]).resolve()
+            output = Path(args.output).expanduser()
+            output = _contained(packet, output if output.is_absolute() else packet / output)
+            # Plan output is an artifact, not adopted task authority. Never
+            # overwrite another plan or historical receipt.
+            with output.open("x") as stream:
+                json.dump(result, stream, indent=2, sort_keys=True)
+                stream.write("\n")
+    else:
+        result = apply_development_reconciliation(args.state_file, plan_file=args.plan,
+                    plan_sha256=args.plan_sha256, execute=args.execute)
+    _print(result, json_output=args.json)
+    return 0
+
+
 def _common_output(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--json", action="store_true", help="Print deterministic JSON instead of YAML.")
 
@@ -280,3 +306,21 @@ def register(subparsers) -> None:
     refresh.add_argument("--idempotency-key", required=True)
     _common_output(refresh)
     refresh.set_defaults(handler=handle_validation_refresh)
+
+    reconciliation = sub.add_parser("reconcile-validation", help="Inspect, plan or explicitly adopt current evidence without rewriting legacy delivery history.")
+    actions = reconciliation.add_subparsers(dest="reconciliation_action", required=True)
+    for action in ("inspect", "plan", "apply"):
+        command = actions.add_parser(action, help={"inspect": "Read original custody and current policy; adopt no authority.",
+            "plan": "Verify current source/project proof and build an unadopted compare-and-swap plan.",
+            "apply": "Adopt one exact plan only with --execute; preserve history and review charges."}[action])
+        command.add_argument("state_file")
+        if action == "plan":
+            command.add_argument("--request", required=True, help="Packet-contained typed request with actual project execution proof.")
+            command.add_argument("--idempotency-key", required=True)
+            command.add_argument("--output", help="Write a new packet-contained plan artifact; refuses existing files and symlinks.")
+        if action == "apply":
+            command.add_argument("--plan", required=True)
+            command.add_argument("--plan-sha256", required=True)
+            command.add_argument("--execute", action="store_true", help="Explicitly append current authority; default is read-only.")
+        _common_output(command)
+        command.set_defaults(handler=handle_validation_reconciliation)
