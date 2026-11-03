@@ -50,11 +50,16 @@ def _now() -> str:
 def _command_proof(root: Path, packet: Path, worktree: Path, command: str, head: str, policy: str,
                    annotated: bool = False, expected_status: str = "success", verify_interpreter: bool = True,
                    node_install: Path | None = None, node_guards: bool = True,
-                   python_install: tuple[Path, Path, Path] | None = None) -> dict:
+                   python_install: tuple[Path, Path, Path] | None = None,
+                   node_tool_contract: dict | None = None) -> dict:
+    execution_dir = worktree
+    if node_tool_contract is not None:
+        from genomes_agentic_os.validation_node_provenance import node_project
+        execution_dir, _ = node_project({"validation": {"node_tool_contract": node_tool_contract}}, worktree)
     identity = {"repository": _git("config", "--get", "remote.origin.url", cwd=worktree),
                 "branch": _git("branch", "--show-current", cwd=worktree),
                 "head": head, "clean": "false" if _git("status", "--porcelain", cwd=worktree) else "true",
-                "worktree": str(worktree)}
+                "worktree": str(execution_dir)}
     argv = shlex.split(command)
     if annotated:
         argv[0] = str(worktree / ".venv/bin/python")
@@ -79,17 +84,22 @@ def _command_proof(root: Path, packet: Path, worktree: Path, command: str, head:
         pre, post, lock = [pre_check], [post_check], str(packet / "artifacts" / PYTHON_LOCK)
         environment["PYTHONDONTWRITEBYTECODE"] = "1"
     is_node = shlex.split(command) in (["npm", "ci"], ["npx", "tsc", "--noEmit"], ["npx", "playwright", "test", "--list"])
+    if node_tool_contract is not None:
+        from genomes_agentic_os.validation_node_provenance import selected_node_command
+        selected_node_command(command, node_tool_contract, argv)
+        is_node = True
     if is_node and node_guards:
         install = node_install or run_path
         snapshot_sha = _bound(install / SNAPSHOT)["sha256"] if node_install else None
-        pre_check, post_check = guard_checks(install, run_path, worktree, snapshot_sha)
+        pre_check, post_check = guard_checks(install, run_path, execution_dir, snapshot_sha,
+                                            tool_contract=node_tool_contract)
         pre, post, lock = [pre_check], [post_check], str(packet / "artifacts" / LOCK)
         if "playwright" in argv:
             environment["PWTEST_CACHE_DIR"] = str(run_path / "playwright-cache")
     state = start_run(root, command=["env", "REVIEW_POLICY_FINGERPRINT=" + policy, *argv], label="actual validation proof",
                       artifact_dir=str(packet / "artifacts/command-runs"),
                       run_id=identifier,
-                      work_dir=str(worktree), expected_git_identity=identity,
+                      work_dir=str(execution_dir), expected_git_identity=identity,
                       environment_overrides=environment, mutation_lock=lock,
                       preflight_checks=pre, post_run_checks=post,
                       budgets={"wall_clock_minutes": 0.5, "no_progress_minutes": 0.33})
@@ -113,12 +123,16 @@ def _command_proof(root: Path, packet: Path, worktree: Path, command: str, head:
     return proof
 
 
-def _node_repository(repo: Path, *, deferred: bool) -> None:
+def _node_repository(repo: Path, *, deferred: bool, tool_contract: dict | None = None) -> None:
     """Synthetic, offline npm packages; no real account/path payloads in fixtures."""
     (repo / ".gitignore").write_text("node_modules/\n")
+    package_root = repo / tool_contract["project_subdir"] if tool_contract is not None else repo
+    package_root.mkdir(parents=True, exist_ok=True)
     dependencies = {}
-    for name, binary in (("synthetic-typescript", "tsc"), ("synthetic-playwright", "playwright")):
-        archive = repo / (name + ".tgz")
+    pairs = (("synthetic-typescript", "tsc"), ("synthetic-playwright", "playwright")) if tool_contract is None else tuple(
+        (package, executable) for executable, package in tool_contract["required_executables"].items())
+    for name, binary in pairs:
+        archive = package_root / (name.replace("/", "-") + ".tgz")
         data = {"name": name, "version": "1.0.0", "bin": {binary: "cli.js"}}
         code = "#!/usr/bin/env node\nconsole.log('actual synthetic " + binary + " validation');\n"
         if binary == "playwright" and deferred:
@@ -129,8 +143,8 @@ def _node_repository(repo: Path, *, deferred: bool) -> None:
                 info.size, info.mode = len(raw), mode
                 tar.addfile(info, io.BytesIO(raw))
         dependencies[name] = "file:" + archive.name
-    (repo / "package.json").write_text(json.dumps({"name": "synthetic-validation", "version": "1.0.0", "dependencies": dependencies}))
-    subprocess.run(["npm", "install", "--package-lock-only", "--ignore-scripts", "--offline"], cwd=repo,
+    (package_root / "package.json").write_text(json.dumps({"name": "synthetic-validation", "version": "1.0.0", "dependencies": dependencies}))
+    subprocess.run(["npm", "install", "--package-lock-only", "--ignore-scripts", "--offline"], cwd=package_root,
                    check=True, capture_output=True, timeout=20)
     _git("add", ".", cwd=repo); _git("commit", "-m", "synthetic offline Node fixture", cwd=repo)
     _git("push", "origin", "main", cwd=repo)
@@ -142,13 +156,15 @@ def _fixture(tmp_path: Path, *, changed: bool = True, mode: str = "single_stage"
               fallback: bool = True, registered_metadata: bool = False, declare_interpreter: bool = True,
               npm_without_ci: bool = False, node_commands: bool = False,
               repository_setup=None, python_runtime: bool = False,
-              single_command_deferred: bool = False) -> dict:
+              single_command_deferred: bool = False, node_tool_contract: dict | None = None) -> dict:
     repo, old_head = _repository(tmp_path)
     if repository_setup is not None:
         repository_setup(repo)
         old_head = _git("rev-parse", "HEAD", cwd=repo)
+    if node_tool_contract is not None:
+        node_commands = True
     if node_commands:
-        _node_repository(repo, deferred=deferred_successor)
+        _node_repository(repo, deferred=deferred_successor, tool_contract=node_tool_contract)
         old_head = _git("rev-parse", "HEAD", cwd=repo)
     if annotated:
         (repo / ".gitignore").write_text(".venv\n.pytest_cache/\n__pycache__/\n*.pyc\n")
@@ -181,9 +197,13 @@ def _fixture(tmp_path: Path, *, changed: bool = True, mode: str = "single_stage"
         commands = [unavailable_command] if single_command_deferred else [*commands, unavailable_command]
         command = commands[0]
     if node_commands:
-        commands = ["npm ci", "npx tsc --noEmit", "npx playwright test --list"]
+        commands = (["npm ci", "npx tsc --noEmit", "npx playwright test --list"] if node_tool_contract is None else
+                    ["npm ci", *("npx --no-install " + executable + " --version"
+                                 for executable in node_tool_contract["required_executables"])])
         command = commands[0]
     profile["validation"]["commands"] = commands
+    if node_tool_contract is not None:
+        profile["validation"]["node_tool_contract"] = node_tool_contract
     if not annotated and declare_interpreter and not npm_without_ci and not node_commands and not python_runtime:
         profile["validation"]["isolated_python_interpreters"] = {
             configured: {"authority": "frozen_selected_profile", "dependency_mode": "isolated_stdlib_diagnostic",
@@ -276,7 +296,7 @@ def _fixture(tmp_path: Path, *, changed: bool = True, mode: str = "single_stage"
                            "failure" if deferred_successor and i == len(commands) - 1 else "success",
                            verify_interpreter=declare_interpreter and not npm_without_ci,
                            node_install=Path(proofs[0]["command_receipt"]["path"]).parent if node_commands and proofs else None,
-                           python_install=python_install)
+                           python_install=python_install, node_tool_contract=node_tool_contract)
         proofs.append(proof)
     current = task.read()
     evidence = {"ticket": current["ticket"], "canonical_work_id": current["canonical_work_id"],

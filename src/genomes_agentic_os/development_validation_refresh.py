@@ -125,8 +125,17 @@ def _repository_matches(value: Any, current: Mapping[str, Any]) -> bool:
     return isinstance(value, str) and value in _repository_names(current)
 
 
-def _clean_worktree(current: Mapping[str, Any], project: Path, worktree: Path) -> bool:
+def _clean_worktree(current: Mapping[str, Any], project: Path, worktree: Path,
+                    profile: Mapping[str, Any]) -> bool:
     """Exclude only configured metadata in the registered task's artifact namespace."""
+    from .validation_node_provenance import node_project, source_binding
+    try:
+        node_root, contract = node_project(profile, worktree)
+        if contract is not None:
+            source_binding(node_root, contract)
+    except ValueError:
+        return False
+    node_modules = node_root.relative_to(worktree) / "node_modules"
     ignored = _git(worktree, "ls-files", "--others", "--ignored", "--exclude-standard", "-z").split("\0")
     for item in filter(None, ignored):
         path = Path(item)
@@ -134,7 +143,7 @@ def _clean_worktree(current: Mapping[str, Any], project: Path, worktree: Path) -
         # closure and native execution-time checks below; Git never attests them.
         # Ignored Python/venv bytes are never source authority. Qualified
         # pytest uses tracked source and its separately captured packet runtime.
-        if path.parts[0] != "node_modules" and (path.parts[0] == ".venv"
+        if not path.is_relative_to(node_modules) and (path.parts[0] == ".venv"
                 or path.name in {".npmrc", ".coveragerc", "pyvenv.cfg"}
                 or path.suffix.lower() in {".py", ".pyc", ".pyo", ".pth", ".pyd", ".so", ".dylib",
                                           ".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx", ".sh", ".exe"}):
@@ -216,16 +225,16 @@ def _context(state_file: str | Path) -> tuple[Any, dict[str, Any], Path, Path, d
         mappings.add(str((registered if registered.is_absolute() else project / registered).resolve()))
     common = (worktree / _git(worktree, "rev-parse", "--git-common-dir")).resolve()
     source_common = (source / _git(source, "rev-parse", "--git-common-dir")).resolve()
-    if (mappings != {str(worktree)} or worktree == source or common != source_common
-            or record.get("repository_id") != repository.get("id")
-            or not record.get("branch") or _git(worktree, "branch", "--show-current") != record["branch"]
-            or not _clean_worktree(current, project, worktree)):
-        _error("validation selection must match one clean registered feature worktree")
     frozen, _ = _read(Path(str(current.get("policy_receipt") or "")))
     profile = _validate_effective_policy_snapshot(frozen, require_selected_profile=True)
     if (frozen.get("fingerprint") != current.get("policy_fingerprint")
             or not isinstance(profile, dict) or profile.get("repository_id") != repository.get("id")):
         _error("validation frozen policy does not match the selected repository")
+    if (mappings != {str(worktree)} or worktree == source or common != source_common
+            or record.get("repository_id") != repository.get("id")
+            or not record.get("branch") or _git(worktree, "branch", "--show-current") != record["branch"]
+            or not _clean_worktree(current, project, worktree, profile)):
+        _error("validation selection must match one clean registered feature worktree")
     _refresh_history(current, packet)
     return task, current, packet, worktree, profile
 
@@ -519,18 +528,22 @@ def _commands(evidence: Mapping[str, Any], current: Mapping[str, Any], packet: P
               unavailable: Mapping[str, Any] | None = None, *, task_path: Path | None = None) -> None:
     from .validation_command_authority import execution_argv, matches_command, runtime_provenance_check
     from .development_delivery import project_root
+    from .validation_node_provenance import node_project, selected_node_command
     commands = profile.get("validation", {}).get("commands")
     runs = evidence.get("validation_runs")
     if (not isinstance(commands, list) or not commands or not all(isinstance(c, str) and c for c in commands)
             or not isinstance(runs, list) or not all(isinstance(r, Mapping) for r in runs)
             or [r.get("command") for r in runs] != commands):
         _error("fresh validation requires complete ordered frozen-command proof")
-    if not _clean_worktree(current, project_root(current["os_root"], current["domain"], current["project"]), worktree):
+    if not _clean_worktree(current, project_root(current["os_root"], current["domain"], current["project"]), worktree, profile):
         _error("frozen execution requires the registered tracked/source cleanliness guard")
+    try:
+        node_root, node_contract = node_project(profile, worktree)
+    except ValueError as exc:
+        _error(str(exc))
     identity = {"repository": _git(worktree, "config", "--get", "remote.origin.url"),
                 "branch": current["worktree"]["branch"], "head": head,
                 "clean": "false" if _git(worktree, "status", "--porcelain") else "true"}
-    expected_identity = {**identity, "worktree": str(worktree)}
     verified = _timestamp(evidence.get("verified_at"))
     passed = 0
     deferred = 0
@@ -540,6 +553,17 @@ def _commands(evidence: Mapping[str, Any], current: Mapping[str, Any], packet: P
         terminal_path, terminal, _ = _bound(run.get("terminal"), packet)
         command_path, command, _ = _bound(run.get("command_receipt"), packet)
         actual_argv, environment = execution_argv(command, current)
+        if not actual_argv:
+            _error("fresh validation execution argv or environment is not authorized")
+        launcher = Path(actual_argv[0]).name.lower()
+        node_execution = launcher in {"npm", "npx", "node"}
+        execution_dir = node_root if node_execution else worktree
+        expected_identity = {**identity, "worktree": str(execution_dir)}
+        if node_execution and node_contract is not None:
+            try:
+                selected_node_command(run["command"], node_contract, actual_argv)
+            except ValueError as exc:
+                _error(str(exc))
         qualified_python = None
         if run.get("python_install_closure") is not None:
             if task_path is None:
@@ -560,7 +584,7 @@ def _commands(evidence: Mapping[str, Any], current: Mapping[str, Any], packet: P
                 or not matches_command(run["command"], actual_argv, current, profile, qualified_runtime=qualified_python)
                 or ("REVIEW_POLICY_FINGERPRINT" in environment
                     and environment["REVIEW_POLICY_FINGERPRINT"] != current["policy_fingerprint"])
-                or Path(str(command.get("work_dir") or "")).resolve() != worktree
+                or Path(str(command.get("work_dir") or "")).resolve() != execution_dir
                 or command.get("id") != terminal.get("id")
                 or terminal_path.parent != command_path.parent
                 or Path(str(command.get("run_dir") or "")).resolve() != command_path.parent
@@ -569,18 +593,19 @@ def _commands(evidence: Mapping[str, Any], current: Mapping[str, Any], packet: P
                 or terminal.get("expected_git_identity") != expected_identity
                 or command.get("expected_git_identity") != expected_identity):
             _error("fresh validation command/terminal identity is incomplete or unsuccessful")
-        launcher = Path(actual_argv[0]).name.lower()
         npm_ci = shlex.split(run["command"]) == ["npm", "ci"]
-        if launcher in {"npm", "npx", "node"}:
+        if node_execution:
             if npm_ci:
-                _git(worktree, "ls-files", "--error-unmatch", "package-lock.json")
+                _git(worktree, "ls-files", "--error-unmatch", str(node_root.relative_to(worktree) / "package-lock.json"))
                 if is_unavailable:
                     _error("Node recovery requires actual passed npm ci install provenance")
-                node_install = _node_proof(run, command_path, command, terminal, packet, worktree)
+                node_install = _node_proof(run, command_path, command, terminal, packet, node_root,
+                                           tool_contract=node_contract)
             elif node_install is None:
                 _error("Node dependency validation requires prior actual passed frozen npm ci")
             else:
-                _node_proof(run, command_path, command, terminal, packet, worktree, node_install)
+                _node_proof(run, command_path, command, terminal, packet, node_root, node_install,
+                            tool_contract=node_contract)
         try:
             check = runtime_provenance_check(run["command"], actual_argv, current, profile, qualified_runtime=qualified_python)
         except ValueError as exc:
@@ -690,12 +715,15 @@ def _python_proof(run: Mapping[str, Any], command_path: Path, command: Mapping[s
 
 def _node_proof(run: Mapping[str, Any], command_path: Path, command: Mapping[str, Any],
                 terminal: Mapping[str, Any], packet: Path, worktree: Path,
-                install: tuple[Path, str] | None = None) -> tuple[Path, str]:
-    from .validation_node_provenance import (LOCK, SCHEMA, SNAPSHOT, dependency_closure, guard_checks)
+                install: tuple[Path, str] | None = None,
+                *, tool_contract: Mapping[str, Any] | None = None) -> tuple[Path, str]:
+    from .validation_node_provenance import (APPLICATION_SCHEMA, LOCK, SCHEMA, SNAPSHOT,
+        contract_binding, contract_provenance, dependency_closure, guard_checks, source_binding)
     install_run = install[0] if install else command_path.parent
     snapshot_path, snapshot, digest = _bound(run.get("node_install_closure"), packet)
     if (snapshot_path != install_run / SNAPSHOT or install is not None and digest != install[1]
-            or snapshot.get("schema") != SCHEMA or snapshot.get("run_id") != install_run.name
+            or snapshot.get("schema") != (APPLICATION_SCHEMA if tool_contract is not None else SCHEMA)
+            or snapshot.get("run_id") != install_run.name
             or snapshot.get("command_sha256") != _read(install_run / "command.json")[1]
             or snapshot.get("identity") != command.get("expected_git_identity")
             or snapshot.get("worktree") != str(worktree)
@@ -704,15 +732,27 @@ def _node_proof(run: Mapping[str, Any], command_path: Path, command: Mapping[str
             or not Path(command["mutation_lock"]).is_relative_to(packet / "artifacts")):
         _error("Node install closure must bind its actual passed npm ci and item-owned lock")
     try:
-        if snapshot.get("entries") != dependency_closure(worktree):
+        if (snapshot.get("entries") != dependency_closure(worktree, tool_contract)
+                or (snapshot.get("tool_contract") != contract_provenance(worktree, tool_contract)
+                    if tool_contract is not None else "tool_contract" in snapshot)):
             _error("installed Node dependency closure changed after npm ci")
-        pre_check, post_check = guard_checks(install_run, command_path.parent, worktree, digest if install else None)
+        source = source_binding(worktree, tool_contract, command["expected_git_identity"]["head"]) if tool_contract is not None else None
+        if (snapshot.get("source_binding") != source if tool_contract is not None else "source_binding" in snapshot):
+            _error("Node source binding differs from its committed manifest and lock")
+        pre_check, post_check = guard_checks(install_run, command_path.parent, worktree, digest if install else None,
+                                           tool_contract=tool_contract)
         preflight_path, preflight, _ = _bound(run.get("preflight"), packet)
         pre_capsule = {"operation": "prepare", "run_id": install_run.name} if install is None else {
             "operation": "verify", "run_id": command_path.parent.name,
             "install_run_id": install_run.name, "snapshot_sha256": digest}
         post_capsule = {"operation": "capture" if install is None else "verify",
             "run_id": command_path.parent.name, "install_run_id": install_run.name, "snapshot_sha256": digest}
+        if tool_contract is not None:
+            fingerprint = contract_binding(worktree, tool_contract)["fingerprint"]
+            pre_capsule["tool_contract_fingerprint"] = fingerprint
+            post_capsule["tool_contract_fingerprint"] = fingerprint
+            pre_capsule["source_binding_fingerprint"] = source["fingerprint"]
+            post_capsule["source_binding_fingerprint"] = source["fingerprint"]
         def checked(rows: Any, phase: str, expected: str, capsule: dict) -> bool:
             matches = [row for row in rows if isinstance(row, Mapping) and row.get("phase") == phase]
             return (len(matches) == 1 and matches[0].get("command") == expected

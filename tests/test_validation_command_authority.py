@@ -195,3 +195,75 @@ def test_a_declared_or_self_named_pytest_executable_without_native_qualification
     assert matches_command(FROZEN, argv, task, selected)
     with pytest.raises(ValueError, match="independently declared dependency provenance"):
         runtime_provenance_check(FROZEN, argv, task, selected)
+
+
+def _app_authority(tmp_path, command="npx --no-install eslint --version"):
+    """Only local package-provenance units; native admission is tested separately."""
+    from test_validation_node_provenance import _app_guard_context
+    _, _, worktree, _, contract = _app_guard_context(tmp_path)
+    task = {"worktree": {"path": str(worktree)}, "work_item": str(tmp_path / "packet")}
+    selected = {"validation": {"commands": ["npm ci", command], "node_tool_contract": contract}}
+    return task, selected, worktree
+
+
+@pytest.mark.parametrize("command", ["npm ci", "npx --no-install eslint --version",
+    "npx --no-install prettier --version", "npx --no-install tsc --noEmit"])
+def test_explicit_app_node_authority_requires_frozen_locally_bound_tools(tmp_path, command):
+    import shlex
+    from genomes_agentic_os.validation_command_authority import runtime_provenance_check
+    task, selected, worktree = _app_authority(tmp_path, command)
+    assert not (worktree / "node_modules/.bin/playwright").exists()
+    assert runtime_provenance_check(command, shlex.split(command), task, selected) is None
+
+
+@pytest.mark.parametrize("command", ["npx eslint --version", "npx --no-install unknown --version",
+    "npx --package=eslint --no-install eslint --version", "npx --prefix /outside --no-install eslint",
+    "npx --no-install eslint --package=unqualified", "npx --no-install eslint --prefix=/outside",
+    "npx --no-install eslint -p unqualified", "npx --yes eslint --version", "npm exec -- eslint --version",
+    "npm ci --ignore-scripts", "node arbitrary.js"])
+def test_even_frozen_app_commands_cannot_install_or_select_unknown_execution(tmp_path, command):
+    import shlex
+    from genomes_agentic_os.validation_command_authority import runtime_provenance_check
+    task, selected, _ = _app_authority(tmp_path, command)
+    with pytest.raises(ValueError):
+        runtime_provenance_check(command, shlex.split(command), task, selected)
+
+
+@pytest.mark.parametrize("mutation", ["unfrozen", "argv", "missing-required", "wrong-owner", "unknown-selector", "null"])
+def test_app_node_authority_cannot_infer_or_broaden_the_selected_contract(tmp_path, mutation):
+    import json
+    import shlex
+    from genomes_agentic_os.validation_command_authority import runtime_provenance_check
+    command = "npx --no-install eslint --version"
+    task, selected, worktree = _app_authority(tmp_path, command)
+    actual = shlex.split(command)
+    if mutation == "unfrozen":
+        selected["validation"]["commands"].remove(command)
+    elif mutation == "argv":
+        actual.append("--quiet")
+    elif mutation == "missing-required":
+        (worktree / "node_modules/.bin/prettier").unlink()
+    elif mutation == "wrong-owner":
+        path = worktree / "node_modules/eslint/package.json"
+        metadata = json.loads(path.read_text()); metadata["name"] = "other"
+        path.write_text(json.dumps(metadata))
+    elif mutation == "unknown-selector":
+        selected["validation"]["node_tool_contract"]["profile"] = "skip_missing"
+    else:
+        selected["validation"]["node_tool_contract"] = None
+    with pytest.raises((ValueError, OSError)):
+        runtime_provenance_check(command, actual, task, selected)
+
+
+@pytest.mark.parametrize("command", ["npm ci", "npx tsc --noEmit", "npx playwright test --list"])
+def test_generic_node_authority_keeps_its_original_exact_whitelist(tmp_path, command):
+    import shlex
+    from genomes_agentic_os.validation_command_authority import runtime_provenance_check
+    assert runtime_provenance_check(command, shlex.split(command), _task(tmp_path), {"validation": {}}) is None
+
+
+def test_app_tools_do_not_implicitly_extend_generic_node_authority(tmp_path):
+    from genomes_agentic_os.validation_command_authority import runtime_provenance_check
+    with pytest.raises(ValueError):
+        runtime_provenance_check("npx --no-install eslint --version",
+            ["npx", "--no-install", "eslint", "--version"], _task(tmp_path), {"validation": {}})
