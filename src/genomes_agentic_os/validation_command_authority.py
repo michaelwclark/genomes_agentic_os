@@ -153,6 +153,19 @@ def runtime_provenance_check(configured: str, actual: list[str], task: Mapping[s
     lexical = Path(os.path.abspath(roots[1] / executable)) if actual[0].startswith(".") else executable
     if lexical.is_absolute() and any(lexical.is_relative_to(root) for root in roots):
         raise ValueError("work-item executable requires independently declared dependency provenance")
+    if ("node_tool_contract" in selected.get("validation", {})
+            and Path(actual[0]).name.lower() in {"npm", "npx", "node"}):
+        from .validation_node_provenance import contract_binding, contract_provenance, node_project, selected_node_command, source_binding
+        node_root, contract = node_project(selected, roots[1])
+        if configured not in selected.get("validation", {}).get("commands", []):
+            raise ValueError("app-static Node command is not frozen in the selected profile")
+        executable_name = selected_node_command(configured, contract, actual)
+        source_binding(node_root, contract)
+        if executable_name is None:
+            contract_binding(node_root, contract)  # Before npm ci, bind the locked declaration only.
+        else:
+            contract_provenance(node_root, contract)  # All required tools must already be local and package-owned.
+        return None  # The consumer separately verifies the exact native install and execution-time closure checks.
     if shlex.split(configured) in (["npm", "ci"], ["npx", "tsc", "--noEmit"],
                                   ["npx", "playwright", "test", "--list"]):
         return None

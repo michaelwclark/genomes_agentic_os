@@ -18,6 +18,324 @@ from test_development_delivery import _git
 from test_long_run import _wait_for
 
 
+def _app_contract(subdir=".", *, typescript=True):
+    """Explicit selected-profile input, not a missing-binary inference."""
+    required = {"eslint": "eslint", "prettier": "prettier"}
+    if typescript:
+        required["tsc"] = "typescript"
+    return {"schema": "development-node-tool-contract/v1", "profile": "application_static",
+            "project_subdir": subdir, "required_executables": required}
+
+
+def _app_guard_context(tmp_path, *, typescript=True, source=True):
+    """Helper-unit fixture only; it never claims actual npm/native admission."""
+    worktree = tmp_path / "app"
+    worktree.mkdir()
+    selection = _app_contract(typescript=typescript)
+    manifest = {"name": "locked-app", "version": "1.0.0", "devDependencies": {
+        package: "1.2.3" for package in selection["required_executables"].values()}}
+    packages = {"": manifest}
+    root = worktree / "node_modules"
+    (root / ".bin").mkdir(parents=True)
+    for executable, package in selection["required_executables"].items():
+        metadata = {"name": package, "version": "1.2.3", "bin": {executable: "cli.js"}}
+        _write(root / package / "package.json", metadata)
+        binary = root / package / "cli.js"
+        binary.write_text("#!/usr/bin/env node\nconsole.log('1.2.3');\n")
+        binary.chmod(0o755)
+        (root / ".bin" / executable).symlink_to("../" + package + "/cli.js")
+        packages["node_modules/" + package] = {"version": "1.2.3", "bin": metadata["bin"]}
+    _write(worktree / "package.json", manifest)
+    _write(worktree / "package-lock.json", {"lockfileVersion": 3, "packages": packages})
+    head = "1" * 40
+    if source:
+        _git("init", "-b", "main", cwd=worktree)
+        _git("config", "user.email", "synthetic@example.invalid", cwd=worktree)
+        _git("config", "user.name", "Synthetic Node authority fixture", cwd=worktree)
+        (worktree / ".gitignore").write_text("node_modules/\n")
+        _git("add", ".gitignore", "package.json", "package-lock.json", cwd=worktree)
+        _git("commit", "-m", "synthetic committed Node inputs", cwd=worktree)
+        head = _git("rev-parse", "HEAD", cwd=worktree)
+    base = tmp_path / "packet/artifacts/command-runs/async-runs"
+    install, dependent = base / "install", base / "dependent"
+    lock = install.parents[2] / LOCK
+    for run, command in ((install, ["npm", "ci"]), (dependent, ["npx", "--no-install", "eslint", "--version"])):
+        _write(run / "command.json", {"id": run.name, "run_dir": str(run), "work_dir": str(worktree),
+            "expected_git_identity": {"head": head, "clean": "false"}, "mutation_lock": str(lock),
+            "command": command, "environment_overrides": {}})
+    _write(lock, {"run_id": install.name, "pid": os.getpid()})
+    return install, dependent, worktree, lock, selection
+
+
+@pytest.mark.parametrize("typescript", [False, True])
+def test_explicit_app_static_capture_binds_declared_tools_without_playwright(tmp_path, typescript):
+    from genomes_agentic_os.validation_node_provenance import APPLICATION_SCHEMA, contract_binding
+    install, dependent, worktree, lock, selection = _app_guard_context(tmp_path, typescript=typescript)
+    # Equivalent reported failure: the unchanged generic QA contract cannot
+    # capture this app installation, and no successful capture is left behind.
+    with pytest.raises(FileNotFoundError):
+        run_guard("capture", install, install, worktree, "post-run", "-")
+    assert not (install / SNAPSHOT).exists()
+    binding = contract_binding(worktree, selection)
+    prepared = run_guard("prepare", install, install, worktree, "preflight", "-", binding)
+    capture = run_guard("capture", install, install, worktree, "post-run", "-", binding)
+    snapshot = _json(install / SNAPSHOT)
+    assert snapshot["schema"] == APPLICATION_SCHEMA
+    assert prepared["tool_contract_fingerprint"] == capture["tool_contract_fingerprint"] == binding["fingerprint"]
+    assert {row["executable"]: row["package"] for row in snapshot["tool_contract"]["installed_tools"]} == selection["required_executables"]
+    assert all(row["version"] == "1.2.3" and len(row["sha256"]) == 64 for row in snapshot["tool_contract"]["installed_tools"])
+    assert not (worktree / "node_modules/.bin/playwright").exists()
+    _write(lock, {"run_id": dependent.name, "pid": os.getpid()})
+    run_guard("verify", install, dependent, worktree, "preflight", capture["snapshot_sha256"], binding)
+    run_guard("verify", install, dependent, worktree, "post-run", capture["snapshot_sha256"], binding)
+
+
+@pytest.mark.parametrize("change", ["missing-eslint", "missing-tsc", "wrong-version", "wrong-owner", "wrong-bin",
+    "contents", "mode", "manifest", "lock", "profile", "redirected-package", "redirected-manifest"])
+def test_app_static_required_tool_and_frozen_contract_drift_is_refused(tmp_path, change):
+    from genomes_agentic_os.validation_node_provenance import contract_binding
+    install, dependent, worktree, lock, selection = _app_guard_context(tmp_path)
+    binding = contract_binding(worktree, selection)
+    capture = run_guard("capture", install, install, worktree, "post-run", "-", binding)
+    root = worktree / "node_modules"
+    if change.startswith("missing-"):
+        (root / ".bin" / change.removeprefix("missing-")).unlink()
+    elif change in {"wrong-version", "wrong-owner", "wrong-bin"}:
+        path = root / "eslint/package.json"
+        metadata = _json(path)
+        if change == "wrong-version": metadata["version"] = "9.9.9"
+        elif change == "wrong-owner": metadata["name"] = "another-package"
+        else: metadata["bin"] = {"another-command": "cli.js"}
+        _write(path, metadata)
+    elif change == "contents": (root / "eslint/cli.js").write_text("unqualified new bytes")
+    elif change == "mode": (root / "eslint/cli.js").chmod(0o644)
+    elif change == "manifest":
+        value = _json(worktree / "package.json"); value["devDependencies"].pop("eslint"); _write(worktree / "package.json", value)
+    elif change == "lock":
+        value = _json(worktree / "package-lock.json"); value["packages"]["node_modules/eslint"]["version"] = "9.9.9"; _write(worktree / "package-lock.json", value)
+    elif change == "profile":
+        reduced = {**selection, "required_executables": {"eslint": "eslint"}}
+        binding = contract_binding(worktree, reduced)
+    elif change == "redirected-package":
+        # A symlinked package manifest must not be used as authority, even
+        # when its destination happens to be another contained package.
+        path = root / "eslint/package.json"; path.unlink(); path.symlink_to("../prettier/package.json")
+    else:
+        path = worktree / "package.json"; outside = tmp_path / "outside.json"; outside.write_bytes(path.read_bytes()); path.unlink(); path.symlink_to(outside)
+    _write(lock, {"run_id": dependent.name, "pid": os.getpid()})
+    with pytest.raises((ValueError, OSError)):
+        run_guard("verify", install, dependent, worktree, "preflight", capture["snapshot_sha256"], binding)
+
+
+@pytest.mark.parametrize("mutation", ["selector", "schema", "empty", "unsafe-bin", "unsafe-package", "undeclared", "unknown-field", "parent", "absolute", "noncanonical"])
+def test_app_static_selection_cannot_remove_or_guess_requirements(tmp_path, mutation):
+    from genomes_agentic_os.validation_node_provenance import contract_binding, node_project
+    _, _, worktree, _, selection = _app_guard_context(tmp_path)
+    if mutation == "selector": selection["profile"] = "skip_missing"
+    elif mutation == "schema": selection["schema"] = "unknown/v1"
+    elif mutation == "empty": selection["required_executables"] = {}
+    elif mutation == "unsafe-bin": selection["required_executables"] = {"../eslint": "eslint"}
+    elif mutation == "unsafe-package": selection["required_executables"] = {"eslint": "../eslint"}
+    elif mutation == "undeclared": selection["required_executables"] = {"missing": "undeclared"}
+    elif mutation == "unknown-field": selection["skip_missing"] = True
+    elif mutation == "parent": selection["project_subdir"] = "../outside"
+    elif mutation == "absolute": selection["project_subdir"] = str(tmp_path)
+    else: selection["project_subdir"] = "./"
+    with pytest.raises((ValueError, OSError)):
+        node_project({"validation": {"node_tool_contract": selection}}, worktree)
+        contract_binding(worktree, selection)
+
+
+@pytest.mark.parametrize("location,explicit,allowed", [
+    ("ui/node_modules/tool/cli.js", True, True),
+    ("ui/node_modules/tool/cli.js", False, False),
+    ("node_modules/tool/cli.js", True, False),
+    ("node_modules/tool/cli.js", False, True),
+    ("sibling/node_modules/tool/cli.js", True, False),
+    ("ui/node_modules-other/cli.js", True, False),
+    ("ui/scratch.js", True, False),
+    ("ui/.npmrc", True, False),
+])
+def test_cleanliness_defers_only_the_exact_frozen_node_closure(tmp_path, location, explicit, allowed):
+    from genomes_agentic_os.development_validation_refresh import _clean_worktree
+    from test_development_delivery import _repository
+    repo, _ = _repository(tmp_path)
+    (repo / ".gitignore").write_text("node_modules/\nnode_modules-other/\nscratch.js\n.npmrc\n")
+    _git("add", ".gitignore", cwd=repo); _git("commit", "-m", "fixture ignore rules", cwd=repo)
+    (repo / "ui").mkdir()
+    manifest = {"name": "cleanliness-fixture", "devDependencies": {
+        name: "1.2.3" for name in _app_contract("ui")["required_executables"].values()}}
+    _write(repo / "ui/package.json", manifest)
+    _write(repo / "ui/package-lock.json", {"lockfileVersion": 3, "packages": {
+        "": manifest, **{"node_modules/" + name: {"version": "1.2.3"} for name in manifest["devDependencies"]}}})
+    _git("add", "ui/package.json", "ui/package-lock.json", cwd=repo)
+    _git("commit", "-m", "committed selected Node input fixture", cwd=repo)
+    path = repo / location
+    path.parent.mkdir(parents=True, exist_ok=True); path.write_text("ignored executable or config")
+    profile = {"validation": {"node_tool_contract": _app_contract("ui")}} if explicit else {"validation": {}}
+    assert _clean_worktree({"ticket": "TEST-1"}, tmp_path, repo, profile) is allowed
+
+
+@pytest.mark.parametrize("selection", [None, {"schema": "unknown"}])
+def test_cleanliness_never_uses_invalid_explicit_node_selection(tmp_path, selection):
+    from genomes_agentic_os.development_validation_refresh import _clean_worktree
+    from test_development_delivery import _repository
+    repo, _ = _repository(tmp_path)
+    assert not _clean_worktree({}, tmp_path, repo, {"validation": {"node_tool_contract": selection}})
+
+
+def test_cleanliness_rejects_redirected_project_before_any_node_exemption(tmp_path):
+    from genomes_agentic_os.development_validation_refresh import _clean_worktree
+    from test_development_delivery import _repository
+    repo, _ = _repository(tmp_path)
+    outside = tmp_path / "outside"; outside.mkdir()
+    (repo / "ui").symlink_to(outside, target_is_directory=True)
+    assert not _clean_worktree({}, tmp_path, repo, {"validation": {"node_tool_contract": _app_contract("ui")}})
+
+
+@pytest.mark.parametrize("filename", ["package.json", "package-lock.json"])
+@pytest.mark.parametrize("boundary", ["producer", "consumer", "command-authority"])
+def test_ignored_app_manifest_cannot_supply_untracked_npm_lifecycle_authority(tmp_path, boundary, filename):
+    """No npm or scripts execute: an ignored manifest must fail before admission."""
+    from genomes_agentic_os.development_validation_refresh import _clean_worktree
+    from genomes_agentic_os.validation_command_authority import runtime_provenance_check
+    from genomes_agentic_os.validation_node_provenance import guard_checks
+    install, _, worktree, _, selection = _app_guard_context(tmp_path, source=False)
+    manifest = _json(worktree / "package.json")
+    manifest["scripts"] = {"preinstall": "UNTRUSTED_LIFECYCLE_MUST_NOT_EXECUTE"}
+    _write(worktree / "package.json", manifest)
+    _git("init", "-b", "main", cwd=worktree)
+    _git("config", "user.email", "synthetic@example.invalid", cwd=worktree)
+    _git("config", "user.name", "Synthetic Node authority fixture", cwd=worktree)
+    (worktree / ".gitignore").write_text(filename + "\nnode_modules/\n")
+    _git("add", ".gitignore", "package-lock.json" if filename == "package.json" else "package.json", cwd=worktree)
+    _git("commit", "-m", "tracked lock with deliberately ignored manifest", cwd=worktree)
+    assert _git("status", "--porcelain", cwd=worktree) == ""
+    assert _git("ls-files", filename, cwd=worktree) == ""
+    profile = {"validation": {"commands": ["npm ci"], "node_tool_contract": selection}}
+    if boundary == "producer":
+        with pytest.raises(ValueError, match="source"):
+            guard_checks(install, install, worktree, tool_contract=selection)
+    elif boundary == "consumer":
+        assert not _clean_worktree({"ticket": "TEST-1"}, tmp_path, worktree, profile)
+    else:
+        task = {"work_item": str(tmp_path / "packet"), "worktree": {"path": str(worktree)}}
+        with pytest.raises(ValueError, match="source"):
+            runtime_provenance_check("npm ci", ["npm", "ci"], task, profile)
+
+
+@pytest.mark.parametrize("filename", ["package.json", "package-lock.json"])
+@pytest.mark.parametrize("staged", [False, True])
+def test_app_source_binding_rejects_uncommitted_input_even_if_git_status_is_suppressed(tmp_path, filename, staged):
+    from genomes_agentic_os.validation_node_provenance import guard_checks, source_binding
+    install, _, worktree, _, selection = _app_guard_context(tmp_path)
+    path = worktree / filename
+    value = _json(path); value["uncommitted_input"] = "must never supply npm source authority"
+    _write(path, value)
+    if staged:
+        _git("add", filename, cwd=worktree)
+    else:
+        _git("update-index", "--assume-unchanged", filename, cwd=worktree)
+        assert _git("status", "--porcelain", cwd=worktree) == ""
+    with pytest.raises(ValueError, match="source"):
+        source_binding(worktree, selection)
+    with pytest.raises(ValueError, match="source"):
+        guard_checks(install, install, worktree, tool_contract=selection)
+
+
+def test_native_app_prepare_rechecks_source_and_requires_its_frozen_head(tmp_path):
+    from genomes_agentic_os.validation_node_provenance import contract_binding, guard_checks
+    install, _, worktree, _, selection = _app_guard_context(tmp_path)
+    guard_checks(install, install, worktree, tool_contract=selection)
+    binding = contract_binding(worktree, selection)
+    command = _json(install / "command.json")
+    command["expected_git_identity"]["head"] = "2" * 40
+    _write(install / "command.json", command)
+    with pytest.raises(ValueError, match="source"):
+        run_guard("prepare", install, install, worktree, "preflight", "-", binding)
+    command["expected_git_identity"]["head"] = _git("rev-parse", "HEAD", cwd=worktree)
+    _write(install / "command.json", command)
+    # Drift after check construction must still refuse before npm executes.
+    manifest = _json(worktree / "package.json"); manifest["scripts"] = {"preinstall": "MUST_NOT_EXECUTE"}
+    _write(worktree / "package.json", manifest)
+    with pytest.raises(ValueError, match="source"):
+        run_guard("prepare", install, install, worktree, "preflight", "-", contract_binding(worktree, selection))
+
+
+def test_app_source_binding_cannot_replace_the_frozen_original_commit(tmp_path):
+    """Fixture-only Git replacements must not substitute new lifecycle bytes."""
+    from genomes_agentic_os.validation_node_provenance import source_binding
+    _, _, worktree, _, selection = _app_guard_context(tmp_path)
+    original = _git("rev-parse", "HEAD", cwd=worktree)
+    manifest = _json(worktree / "package.json")
+    manifest["scripts"] = {"preinstall": "REPLACEMENT_LIFECYCLE_MUST_NOT_EXECUTE"}
+    _write(worktree / "package.json", manifest)
+    _git("add", "package.json", cwd=worktree)
+    _git("commit", "-m", "alternate fixture manifest", cwd=worktree)
+    alternate = _git("rev-parse", "HEAD", cwd=worktree)
+    _git("reset", "--soft", original, cwd=worktree)
+    _git("replace", original, alternate, cwd=worktree)
+    assert _git("rev-parse", "HEAD", cwd=worktree) == original
+    assert _git("status", "--porcelain", cwd=worktree) == ""
+    with pytest.raises(ValueError, match="source"):
+        source_binding(worktree, selection, head=original)
+
+
+def test_app_source_query_cannot_adopt_an_ambient_foreign_git_directory(tmp_path, monkeypatch):
+    from genomes_agentic_os.validation_node_provenance import source_binding
+    owned = tmp_path / "owned"; owned.mkdir()
+    foreign = tmp_path / "foreign"; foreign.mkdir()
+    _, _, worktree, _, selection = _app_guard_context(owned)
+    _, _, other, _, _ = _app_guard_context(foreign)
+    original = _git("rev-parse", "HEAD", cwd=worktree)
+    _git("commit", "--allow-empty", "-m", "distinct foreign fixture head", cwd=other)
+    assert _git("rev-parse", "HEAD", cwd=other) != original
+    monkeypatch.setenv("GIT_DIR", str(other / ".git"))
+    monkeypatch.setenv("GIT_WORK_TREE", str(worktree))
+    assert source_binding(worktree, selection)["head_sha"] == original
+
+
+@pytest.mark.parametrize("override", ["GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_INDEX_FILE", "GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS"])
+def test_app_source_query_ignores_ambient_git_metadata_without_mutating_it(tmp_path, monkeypatch, override):
+    from genomes_agentic_os.validation_node_provenance import source_binding
+    _, _, worktree, _, selection = _app_guard_context(tmp_path)
+    expected = source_binding(worktree, selection)
+    outside = tmp_path / "foreign-metadata"; outside.mkdir()
+    if override == "GIT_CONFIG_COUNT":
+        monkeypatch.setenv(override, "1")
+        monkeypatch.setenv("GIT_CONFIG_KEY_0", "core.worktree")
+        monkeypatch.setenv("GIT_CONFIG_VALUE_0", str(outside))
+    elif override == "GIT_CONFIG_PARAMETERS":
+        monkeypatch.setenv(override, "'core.worktree'='" + str(outside) + "'")
+    else:
+        monkeypatch.setenv(override, str(outside / "index") if override == "GIT_INDEX_FILE" else str(outside))
+    assert source_binding(worktree, selection) == expected
+    assert expected["object_resolution"] == "raw_no_replace"
+    assert list(outside.iterdir()) == []
+    assert override in os.environ  # Only the read-only child's environment is controlled.
+
+
+@pytest.mark.parametrize("subdir", [".", "ui"])
+def test_actual_offline_app_static_native_consumer_uses_the_same_frozen_contract(tmp_path, subdir):
+    selection = _app_contract(subdir)
+    f = _fixture(tmp_path, node_tool_contract=selection)
+    before = f["task"].read()
+    result = _refresh(f)
+    assert result["task"]["validation_head_sha"] == f["head"]
+    assert result["task"]["receipts"][:len(before["receipts"])] == before["receipts"]
+    request = _json(f["request"])
+    rows = request["evidence"]["validation_runs"]
+    assert [r["command"] for r in rows] == ["npm ci", "npx --no-install eslint --version", "npx --no-install prettier --version", "npx --no-install tsc --version"]
+    for row in rows:
+        command = _json(Path(row["command_receipt"]["path"]))
+        terminal = _json(Path(row["terminal"]["path"]))
+        assert command["work_dir"] == str(f["worktree"] / subdir)
+        assert len(command["preflight_checks"]) == len(command["post_run_checks"]) == 1
+        assert [c["phase"] for c in terminal["checks"]] == ["preflight", "post-run"]
+    assert not (f["worktree"] / subdir / "node_modules/.bin/playwright").exists()
+
+
 def test_real_npm_ci_binds_full_closure_and_honest_frozen_deferral(tmp_path):
     f = _fixture(tmp_path, node_commands=True, legacy=True, deferred_successor=True, registered_metadata=True)
     old, before = f["predecessor"].read_bytes(), f["task"].read()

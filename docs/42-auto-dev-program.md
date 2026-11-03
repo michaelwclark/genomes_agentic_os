@@ -196,7 +196,7 @@ contained basetemp annotations are allowed. Only one `-o cache_dir=<absolute
 packet-artifacts-private-path>` override is allowed; selectors, extra test
 paths and other overrides are refused.
 
-This bounded recovery API supports `npm ci`, `npx tsc --noEmit` and the unscoped
+The default generic Node contract supports `npm ci`, `npx tsc --noEmit` and the unscoped
 `npx playwright test --list` through
 a genuinely passed frozen `npm ci` with tracked `package-lock.json` before
 dependent `npx`/Node commands. Git cleanliness does not attest ignored dependencies.
@@ -209,6 +209,65 @@ frozen argv, verifying all files, modes, directories and symlink text/contained
 targets against that capture. Added, deleted or changed dependencies, outside
 or dangling targets and unqualified local executables are refused. The same
 full comparison runs under the task lock at refresh admission.
+
+Applications with a different declared tool set may explicitly select the
+versioned application-static contract in the frozen validation profile:
+
+```yaml
+validation:
+  commands:
+    - npm ci
+    - npx --no-install eslint .
+    - npx --no-install prettier --check .
+    - npx --no-install tsc --noEmit
+  node_tool_contract:
+    schema: development-node-tool-contract/v1
+    profile: application_static
+    project_subdir: ui
+    required_executables:
+      eslint: eslint
+      prettier: prettier
+      tsc: typescript
+```
+
+`project_subdir` is a canonical, contained directory relative to the registered
+Git worktree (`.` selects its root). Node commands and their native Git identity
+must bind that exact working directory. Other validation commands retain the
+Git worktree root. Every nonempty executable-to-package binding must name a
+direct manifest dependency, match package-lock v2/v3 declarations and versions,
+and resolve to its installed package's declared executable inside that package.
+The closure binds the full installation, manifest and lock bytes, selection
+fingerprint, installed package identities, executable bytes and modes. Every
+selected tool remains required, including TypeScript when declared. A missing
+Playwright executable is irrelevant only when the explicit contract does not
+declare it; installed absence never selects the contract.
+
+Both `package.json` and `package-lock.json` must be ordinary files whose bytes
+match their committed blobs in that registered Git worktree at the native run's
+frozen head. Guard construction, native pre/post checks and consumer admission
+recheck this source binding; the capture and native outputs bind its fingerprint.
+An ignored or staged-only manifest is refused even when its dependency fields
+match a tracked lock, so untracked lifecycle scripts cannot acquire authority
+through a consistently hashed installation. Pure manifest/closure inspection
+APIs do not themselves confer native execution or source authority.
+These app-only source queries read raw Git objects with replacement resolution
+disabled and discard ambient Git metadata overrides in the child environment.
+They retain the registered directory and frozen head, leave the parent environment
+and repository metadata untouched, and avoid optional Git index writes.
+
+Resolve the frozen selection with
+`validation_node_provenance.node_project(profile, git_worktree)`, then pass the
+returned Node directory and `tool_contract=selection` to `guard_checks`. The
+producer and consumer bind the same frozen contract and native check output.
+The app-static snapshot schema is
+`development-node-install-closure/app-static-v1`. Each phase still requires
+exactly one canonical check, and dependent commands still require an actual
+passed frozen `npm ci` first. Only exact frozen `npx --no-install <required-cli>
+...` commands are accepted; implicit installation, package/prefix overrides,
+unknown tools, redirected directories and cross-profile proof are refused.
+No selection preserves the original TypeScript/Playwright contract and schema;
+an invalid, empty or unknown explicit selection fails closed. Existing failed
+receipts remain historical and require fresh qualified execution after adoption.
 
 Generate these native checks with
 `validation_node_provenance.guard_checks(install_run, run, worktree, snapshot_sha)`
