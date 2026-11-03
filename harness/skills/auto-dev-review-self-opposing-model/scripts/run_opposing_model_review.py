@@ -42,8 +42,12 @@ from genomes_agentic_os.review_coordination import (  # noqa: E402
 )
 from genomes_agentic_os.development_delivery import (  # noqa: E402
     DevelopmentDeliveryError,
+    _normalized_repository_identity,
     load_development_profile,
     select_development_repository,
+)
+from genomes_agentic_os.development_validation_reconciliation import (  # noqa: E402
+    review_reconciliation_authority,
 )
 from genomes_agentic_os.review_verdicts import reconcile_json_verdict  # noqa: E402
 
@@ -650,10 +654,22 @@ def main() -> int:
     try:
         os_root = resolve_os_root(args.os_root)
         work_item = (args.work_item or locate_work_item(os_root, args.ticket)).resolve()
-        worktree = (args.worktree or locate_worktree(os_root, args.ticket)).resolve()
-        source = prior_request(work_item, args.ticket) or initial_request(
-            work_item, args.ticket, worktree
-        )
+        current_authority = review_reconciliation_authority(work_item, args.ticket)
+        selected_worktree = Path(current_authority["worktree"]["path"]) if current_authority else None
+        worktree = (args.worktree or selected_worktree or locate_worktree(os_root, args.ticket)).resolve()
+        if current_authority:
+            if worktree != selected_worktree:
+                raise ReviewError("review worktree differs from accepted current reconciliation")
+            # A new explicit action consumes the canonical PR Create readback.
+            # Historical review requests and their frozen policies stay intact.
+            source = initial_request(work_item, args.ticket, worktree)
+            if source["head_sha"] != current_authority["head_sha"]:
+                raise ReviewError("PR Create readback differs from accepted current reconciliation")
+            source = {**source, "policy_fingerprint": current_authority["policy_fingerprint"],
+                      "review_unavailable_policy": current_authority["review_unavailable_policy"],
+                      "validation_reconciliation": current_authority}
+        else:
+            source = prior_request(work_item, args.ticket) or initial_request(work_item, args.ticket, worktree)
         unavailable_policy = review_unavailable_policy(source)
         head = git_head(worktree)
         base = str(source["base_sha"])
@@ -664,6 +680,8 @@ def main() -> int:
             selected_profile = validate_review_repository_selection(
                 profile, args.repository
             )
+            if current_authority and _normalized_repository_identity(selected_profile["repository"]) != current_authority["repository_id"]:
+                raise ReviewError("review repository selector differs from accepted current reconciliation")
         except ReviewError as exc:
             repository_hint = source.get("repository_id") or source.get("repository")
             if isinstance(repository_hint, dict):
@@ -699,10 +717,20 @@ def main() -> int:
                 f"exact-base mismatch: provider={provider['baseRefOid']} request={base}"
             )
         repository = git_repository(worktree)
+        if current_authority and repository.casefold() != current_authority["provider_repository"]:
+            raise ReviewError("provider repository differs from accepted current reconciliation")
+        native_repository, native_pull_request = repository, f"github:{repository}#{pr_number}"
+        if current_authority:
+            provider_family = f"github:{current_authority['provider_repository']}#{pr_number}"
+            original_subjects = [row for row in current_authority["review_family_subjects"].values()
+                                 if row["provider_family"] == provider_family]
+            if original_subjects:
+                native_repository = original_subjects[0]["repository"]
+                native_pull_request = original_subjects[0]["pull_request"]
         purpose, _scope = normalize_review_purpose(args.purpose, args.scope)
         subject = ReviewSubject(
-            repository=repository,
-            pull_request=f"github:{repository}#{pr_number}",
+            repository=native_repository,
+            pull_request=native_pull_request,
             base_branch=str(provider["baseRefName"]),
             base_sha=base,
             head_sha=head,
@@ -768,6 +796,9 @@ def main() -> int:
             failure: str | None = None
             request = {
                 **source,
+                "repository": repository,
+                "review_subject_repository": subject.repository,
+                "provider_repository": repository,
                 "run_id": run_id,
                 "artifact_dir": str(run_dir.relative_to(work_item)),
                 "review_key": review_key,
@@ -966,7 +997,7 @@ def main() -> int:
         write_json(run_dir / "opposing-model-review-receipt.json", receipt)
         print(json.dumps(receipt, indent=2))
         return 0 if result.receipt["outcome"] == "clean" else 2
-    except (ReviewError, ReviewCoordinationError, KeyError) as exc:
+    except (ReviewError, ReviewCoordinationError, DevelopmentDeliveryError, KeyError) as exc:
         print(json.dumps({"ok": False, "error": str(exc)}, indent=2))
         return 2
 

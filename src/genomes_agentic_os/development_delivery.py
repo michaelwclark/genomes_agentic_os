@@ -2718,6 +2718,11 @@ def _sync_canonical_task_progress(
     """Project a linked delivery task into canonical work state monotonically."""
 
     task = _read_mapping(task_state_path)
+    if task.get("validation_reconciliations"):
+        from .development_validation_reconciliation import current_action_validation_authority
+        authority = current_action_validation_authority(task_state_path)
+        # This owner projects source identity; it does not execute PR Create.
+        task = {**task, "worktree": authority["worktree"]}
     required = (
         task.get("os_root"),
         task.get("domain"),
@@ -10066,6 +10071,9 @@ def run_development_stage(
                 evidence.get("review_coordination_receipt") or ""
             ).strip()
             task_value = state.read()
+            if task_value.get("validation_reconciliations"):
+                from .development_validation_reconciliation import current_action_task_view
+                task_value = current_action_task_view(task_value, action="review")
             if task_value.get("autodev_path") and not coordination_ref:
                 raise DevelopmentDeliveryError(
                     "Auto-Dev ready_for_merge requires review_coordination_receipt"
@@ -10093,6 +10101,13 @@ def run_development_stage(
                 if coordination_path is None:
                     raise DevelopmentDeliveryError(
                         "ready_for_merge review_coordination_receipt is not readable"
+                    )
+                action_authority = task_value.get("current_action_authority")
+                if action_authority and not coordination_path.is_relative_to(
+                    Path(action_authority["review_coordination_root"]) / "receipts"
+                ):
+                    raise DevelopmentDeliveryError(
+                        "current reconciliation cannot replace the original review ledger root"
                     )
                 try:
                     review_policy_fingerprint = str(
@@ -10292,7 +10307,10 @@ def run_development_stage(
                 require_auto_dev_predecessors(autodev_ref, "pr_create")
             except AutoDevStateError as exc:
                 raise DevelopmentDeliveryError(str(exc)) from exc
-        if current.get("state") not in {"local_validation", "ready_for_merge", "merged"}:
+        allowed_pr_create_states = {"local_validation", "ready_for_merge", "merged"}
+        if current.get("validation_reconciliations"):
+            allowed_pr_create_states.add("pr_open")
+        if current.get("state") not in allowed_pr_create_states:
             raise DevelopmentDeliveryError(
                 "PR Create compatibility recording requires local_validation, "
                 "ready_for_merge, or merged state"
@@ -10502,16 +10520,20 @@ def run_development_stage(
                                     legacy_source.get("source_head_sha") or ""
                                 ).strip(),
                             }
+                    identity_task = task_value
+                    if task_value.get("validation_reconciliations"):
+                        from .development_validation_reconciliation import current_action_task_view
+                        identity_task = current_action_task_view(task_value, action="pr_create")
                     task_repository = (
-                        task_value.get("repository")
-                        if isinstance(task_value.get("repository"), Mapping)
+                        identity_task.get("repository")
+                        if isinstance(identity_task.get("repository"), Mapping)
                         else {}
                     )
                     expected_repository = str(task_repository.get("id") or "").strip()
                     expected_base_branch = str(task_repository.get("base_branch") or "").strip()
                     worktree = (
-                        task_value.get("worktree")
-                        if isinstance(task_value.get("worktree"), Mapping)
+                        identity_task.get("worktree")
+                        if isinstance(identity_task.get("worktree"), Mapping)
                         else {}
                     )
                     expected_source_branch = str(worktree.get("branch") or "").strip()
@@ -10789,7 +10811,10 @@ def run_development_stage(
                                 f"{label} pull_request must be qualified by the selected task repository "
                                 "and contain a non-empty numeric identifier"
                             )
-                    if task_value.get("state") not in {"local_validation", "ready_for_merge"}:
+                    allowed_refresh_states = {"local_validation", "ready_for_merge"}
+                    if task_value.get("validation_reconciliations"):
+                        allowed_refresh_states.add("pr_open")
+                    if task_value.get("state") not in allowed_refresh_states:
                         raise DevelopmentDeliveryError(
                             "release propagation refresh is only allowed from local_validation or an "
                             "unmerged ready_for_merge task"
@@ -10994,6 +11019,13 @@ def run_development_stage(
             raise DevelopmentDeliveryError(str(exc)) from exc
     current_name = str(current.get("state"))
     if current_name == end_name:
+        if normalized == "review" and current.get("validation_reconciliations"):
+            from .development_validation_reconciliation import current_action_projection
+            action_projection = current_action_projection(state.path)
+            if not action_projection or not action_projection["review_current"]:
+                raise DevelopmentDeliveryError(
+                    "historical ready_for_merge cannot no-op as current review; forward review acceptance is unsupported"
+                )
         current = persist_delivery_revision_metadata()
         _refresh_portfolio_state(state.path)
         _sync_auto_dev_projection(state.path)

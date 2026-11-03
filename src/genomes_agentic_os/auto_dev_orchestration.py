@@ -202,7 +202,12 @@ def validate_pull_request_authority(
     target: str,
 ) -> dict[str, str]:
     """Classify one provider-read PR identity against the frozen task profile."""
-
+    if task.get("validation_reconciliations"):
+        from .development_validation_reconciliation import current_action_task_view
+        try:
+            task = current_action_task_view(task, action="pr_create" if target == "release_propagation" else "review")
+        except RuntimeError as exc:
+            raise AutoDevStateError(str(exc)) from exc
     authority = {
         "provider": str(evidence.get("provider") or "").strip().lower(),
         "pull_request": str(evidence.get("pull_request") or "").strip(),
@@ -601,6 +606,7 @@ def _load_stage_receipts(
     invalidated_subject_revision: str | None = None,
     suppress_revision_sensitive_stages: bool = False,
     validation_head_sha: str | None = None,
+    validation_policy_fingerprint: str | None = None,
 ) -> None:
     stage_dir = work_item / "artifacts" / "auto-dev-orchestration" / "stages"
     if stage_dir.is_dir():
@@ -738,6 +744,7 @@ def _load_stage_receipts(
                     and evidence_payload.get("status")
                     in {"verified", "passed", "completed", "not_required"}
                     and (not validation_head_sha or evidence_payload.get("evidence", {}).get("source_head_sha") == validation_head_sha)
+                    and (not validation_policy_fingerprint or wrapper.get("validation_authority", {}).get("policy_fingerprint") == validation_policy_fingerprint)
                 ):
                     stages["pr_create"].update(
                         {
@@ -1055,6 +1062,9 @@ def sync_delivery_projection(task_state_path: str | Path) -> dict[str, Any] | No
     from .development_delivery import DevelopmentDeliveryError
     try:
         _refresh_history(task, work_item)
+        from .development_validation_reconciliation import current_action_projection
+        reconciliation_projection = current_action_projection(task_path)
+        reconciled = reconciliation_projection["authority"] if reconciliation_projection else None
     except DevelopmentDeliveryError as exc:
         # Preserve the projection's existing failure-event contract. The
         # canonical task was already committed; corrupt lineage cannot project
@@ -1111,13 +1121,19 @@ def sync_delivery_projection(task_state_path: str | Path) -> dict[str, Any] | No
             "task_state_ref": str(task_path),
             "_subject_supersession_pending": pending_supersession is not None,
         }
+        if reconciled is not None:
+            task_view["receipts"] = [*task.get("receipts", []), {
+                "state": "local_validation", "ref": reconciled["path"], "sha256": reconciled["sha256"],
+                "recorded_at": task["validation_reconciliations"][-1]["recorded_at"],
+            }]
         _complete_from_delivery(stages, task_view)
         subject_revision = (
             str(task.get("subject_revision") or "") or None
             if pending_supersession is not None
             else str(task.get("subject_revision") or existing.get("subject_revision") or "") or None
         )
-        if task.get("validation_head_sha") and subject_revision != task["validation_head_sha"]:
+        validation_head = reconciled["head_sha"] if reconciled is not None else task.get("validation_head_sha")
+        if validation_head and subject_revision != validation_head:
             # A validated successor is not itself a reviewed subject. Historical
             # subject authority is restored only by fresh current-head evidence.
             subject_revision = None
@@ -1135,8 +1151,18 @@ def sync_delivery_projection(task_state_path: str | Path) -> dict[str, Any] | No
                 else None
             ),
             suppress_revision_sensitive_stages=pending_supersession is not None,
-            validation_head_sha=task.get("validation_head_sha"),
+            validation_head_sha=validation_head,
+            validation_policy_fingerprint=reconciled["policy_fingerprint"] if reconciled else None,
         )
+        if reconciliation_projection is not None:
+            stale_stages = set(REVISION_SENSITIVE_STAGES) | {"review_self", "validate_production_release"}
+            if reconciled is None:
+                stale_stages.update({"develop", "document", "pr_create"})
+            if not reconciliation_projection["review_current"]:
+                for name in stale_stages:
+                    if name in stages and stages[name].get("status") in {"completed", "running"}:
+                        stages[name].update(status="not_started", run_ref=None, receipt_refs=[], last_verified_at=None,
+                            next_action="Qualify the current source and review; historical milestones grant no current readiness")
         for name, row in stages.items():
             policy = stage_policies.get(name, {"applicability": "required"})
             row["applicability"] = policy["applicability"]
@@ -1222,6 +1248,10 @@ def sync_delivery_projection(task_state_path: str | Path) -> dict[str, Any] | No
             "created_at": existing.get("created_at") or _utc_now(),
             "updated_at": _utc_now(),
         }
+        if reconciled is not None:
+            value["delivery"]["current_action_authority"] = reconciled
+        if reconciliation_projection is not None:
+            value["delivery"]["current_action_status"] = {key: item for key, item in reconciliation_projection.items() if key != "authority"}
         run_packet = _sync_auto_dev_program_run_packet(task, value, work_item)
         if run_packet is not None:
             value["run_packet"] = run_packet
@@ -1673,6 +1703,16 @@ def _validate_delivery_stage_task_binding(
         raise AutoDevStateError(f"{stage} lacks its linked delivery task")
     task_path = Path(task_ref).expanduser().resolve()
     task = _read_json(task_path)
+    if stage == "develop" and task.get("validation_reconciliations"):
+        from .development_validation_reconciliation import current_action_validation_authority
+        try:
+            authority = current_action_validation_authority(task_path)
+        except RuntimeError as exc:
+            raise AutoDevStateError(str(exc)) from exc
+        if (Path(authority["path"]).resolve() != path.resolve()
+                or authority["sha256"] != hashlib.sha256(path.read_bytes()).hexdigest()):
+            raise AutoDevStateError("develop receipt does not match accepted current reconciliation")
+        return
     if stage == "pr_create":
         descriptor = (
             task.get("stage_receipts", {}).get("release_propagation")
