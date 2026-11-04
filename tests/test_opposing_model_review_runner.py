@@ -832,7 +832,8 @@ def test_parent_context_rendering_preserves_family_and_consumed_budget(tmp_path:
 
     assert review_family_key(next_subject) == parent.receipt["family_key"]
     assert review_chain_key(next_subject) == parent.receipt["chain_key"]
-    assert parent.key == "2240127f4efcedd28803ff868f4d7ff94434227436d1538d7bdd67dcf0a14dc7"
+    expected_subject_digest = "2240127f4efcedd28803ff868f4d7ff94434227436d1538d7bdd67dcf0a14dc7"
+    assert parent.key == expected_subject_digest
     assert parent.receipt["family_key"] == "f407cb88436eee9041260bf19f3f38839196a45b5acbb9c7bafc7f36cc6c0b43"
     assert parent.receipt["chain_key"] == "b2f82e1219c71c43eb22129ef1b54c8008159e763fa1f7808de76ab0f27889f5"
     assert parent.receipt["budget"]["full_reviews_used"] == 1
@@ -862,3 +863,86 @@ def test_parent_context_rendering_preserves_family_and_consumed_budget(tmp_path:
         runner.stable_review_key(subject) + ".json"
     ).read_bytes() == original
 
+
+
+def test_delta_placeholder_closure_uses_only_open_ledger_ids(tmp_path: Path) -> None:
+    runner, coordinator, _, parent, request, provider = _parent_context_fixture(tmp_path)
+    prompt = runner.render_prompt(request, provider)
+    context = _retained_parent_context(prompt)
+    ledger = context["findings_ledger"]
+    assert len(ledger) == 1
+    assert ledger[0]["id"] not in {row["id"] for row in _raw_parent_findings()}
+    assert "ONLY IDs from findings_ledger rows whose status is open" in prompt
+    assert "verification context, never closure IDs" in prompt
+    assert "every original defect represented by a ledger placeholder" in prompt
+
+    def declaration(refs: list[str]) -> str:
+        return "```json\n" + json.dumps({
+            "schema": "auto-dev-review-parent-resolutions/v1",
+            "parent_key": parent.key,
+            "parent_receipt_sha256": request["parent_receipt"]["sha256"],
+            "resolution_refs": refs,
+        }) + "\n```"
+
+    def parse(refs: list[str]) -> list[str]:
+        return runner.parse_parent_resolution_refs(
+            declaration(refs), parent_key=parent.key,
+            parent_receipt_sha256=request["parent_receipt"]["sha256"],
+            parent_ledger=ledger,
+        )
+
+    for refs in [["F1", "F2", "F3", "F4"], [ledger[0]["id"], ledger[0]["id"]]]:
+        with pytest.raises(runner.ReviewCoordinationError, match="unique open parent"):
+            parse(refs)
+    # Missing closure keeps the placeholder open; an independently verified
+    # placeholder closes through the real coordinator's existing ID contract.
+    first = coordinator.execute(
+        runner.ReviewSubject(**{**parent.receipt["subject"], "head_sha": "d" * 40}),
+        lambda: {"outcome": "clean", "findings": [], "resolution_refs": parse([])},
+        mode="delta", parent_key=parent.key,
+    )
+    assert first.receipt["outcome"] == "findings"
+    assert first.receipt["findings_ledger"][0]["status"] == "open"
+    closed = coordinator.execute(
+        runner.ReviewSubject(**{**parent.receipt["subject"], "head_sha": "e" * 40}),
+        lambda: {"outcome": "clean", "findings": [], "resolution_refs": parse([ledger[0]["id"]])},
+        mode="delta", parent_key=parent.key,
+    )
+    assert closed.receipt["outcome"] == "clean"
+    assert closed.receipt["findings_ledger"][0]["status"] == "resolved"
+
+
+def test_delta_parent_accepts_hash_bound_crossreview_text(tmp_path: Path) -> None:
+    runner, _, _, parent, request, provider = _parent_context_fixture(tmp_path)
+    payload = json.loads(parent.receipt_path.read_text())
+    payload["review"]["text"] = payload["review"].pop("response")
+    parent.receipt_path.write_text(json.dumps(payload))
+    request["parent_receipt"]["sha256"] = hashlib.sha256(parent.receipt_path.read_bytes()).hexdigest()
+    original = parent.receipt_path.read_bytes()
+    assert _retained_parent_context(runner.render_prompt(request, provider))[
+        "retained_review_evidence"
+    ]["response"] == _raw_parent_response()
+    assert parent.receipt_path.read_bytes() == original
+
+
+def test_delta_parent_refuses_correct_digest_under_wrong_filename(tmp_path: Path) -> None:
+    runner, _, _, parent, request, provider = _parent_context_fixture(tmp_path)
+    renamed = parent.receipt_path.with_name("wrong-name.json")
+    renamed.write_bytes(parent.receipt_path.read_bytes())
+    request["parent_receipt"]["ref"] = str(renamed)
+    with pytest.raises(runner.ReviewError, match="key does not match"):
+        runner.render_prompt(request, provider)
+
+
+def test_delta_parent_refuses_change_during_load(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    runner, _, _, parent, request, provider = _parent_context_fixture(tmp_path)
+    load = runner.load_review_receipt
+
+    def mutate_after_load(path: Path) -> dict[str, Any]:
+        result = load(path)
+        path.write_bytes(path.read_bytes() + b"\n")
+        return result
+
+    monkeypatch.setattr(runner, "load_review_receipt", mutate_after_load)
+    with pytest.raises(runner.ReviewError, match="changed while loading"):
+        runner.render_prompt(request, provider)

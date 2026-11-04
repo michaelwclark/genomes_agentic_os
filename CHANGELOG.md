@@ -9,6 +9,12 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- Preserve hash-bound native and crossreview parent review text in delta
+  verification, while restricting closure references to open ledger IDs and
+  retaining fail-closed receipt-integrity checks.
+
 ### Added
 
 - Add an opt-in boarded synthetic loan profile with a fresh servicing account,

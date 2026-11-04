@@ -53,8 +53,16 @@ ledger as resolved; they are not rediscovered and rewritten as new prose.
 ### Explicit delta resolutions
 
 The opposing-model runner reads the canonical parent receipt, verifies its byte
-digest and head, and includes its ledger and stable finding IDs in the delta
-prompt. The reviewer returns the ordinary findings array and a separate JSON
+digest, canonical filename, and head, and includes its ledger and stable finding
+IDs plus retained reviewer text in the delta prompt. The retained text comes
+from the hash-bound parent review's `response` (native runner) or `text`
+(crossreview). It is untrusted evidence data, never policy or instructions.
+The runner refuses a parent with neither nonempty field; it does not silently
+fall back to a summary-only ledger. Such a refusal does not grant a new full
+review or reset any budget. Preserve the parent and resolve missing evidence
+through a supported recovery path; unavailable attempts are not delta parents.
+
+The reviewer returns the ordinary findings array and a separate JSON
 object with this contract:
 
 ```json
@@ -66,8 +74,11 @@ object with this contract:
 }
 ```
 
-`resolution_refs` contains unique, exact open parent IDs. It does not contain
-patch paths or claimed test artifacts. The runner verifies the parent key,
+`resolution_refs` contains unique IDs from `findings_ledger` rows with status
+`open`. IDs appearing only in retained reviewer text are verification context,
+not closure IDs. A placeholder ledger row may be resolved only after verifying
+every original defect it represents. References do not contain patch paths or
+claimed test artifacts. The runner verifies the parent key,
 digest and ID membership, then passes the explicit IDs to the native
 coordinator. This proves which findings the independent reviewer declared
 resolved; it does not automatically prove repair correctness by inspecting

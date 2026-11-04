@@ -530,6 +530,15 @@ def base_forward_evidence(worktree: Path, parent: ReviewSubject, subject: Review
     return {"transition": "base_forward", "previous_base_sha": parent.base_sha, "current_base_sha": subject.base_sha, "base_ancestor": True, "parent_head_ancestor": True, "provider_verified": True}
 
 
+def retained_review_response(parent: dict[str, Any]) -> str:
+    """Accept native and crossreview retained text from the verified receipt."""
+    for field in ("response", "text"):
+        value = parent["review"].get(field)
+        if isinstance(value, str) and value.strip():
+            return value
+    raise ReviewError("delta parent receipt requires its retained reviewer response")
+
+
 def verified_parent_review(request: dict[str, Any]) -> tuple[dict[str, Any], str]:
     """Verify the canonical parent and require its retained reviewer evidence."""
     descriptor = request.get("parent_receipt")
@@ -547,9 +556,7 @@ def verified_parent_review(request: dict[str, Any]) -> tuple[dict[str, Any], str
         raise ReviewError("delta parent receipt key does not match")
     if parent["outcome"] not in {"clean", "findings"} or parent["subject"]["head_sha"] != request.get("delta_base_sha"):
         raise ReviewError("delta parent receipt does not match its successful head")
-    response = parent["review"].get("response")
-    if not isinstance(response, str) or not response.strip():
-        raise ReviewError("delta parent receipt requires its retained reviewer response")
+    retained_review_response(parent)
     if path.read_bytes() != raw:
         raise ReviewError("delta parent receipt changed while loading")
     return parent, digest
@@ -579,7 +586,7 @@ def render_prompt(request: dict[str, Any], provider: dict[str, Any]) -> str:
         prompt = prompt.replace("{{" + key + "}}", value)
     if request.get("review_mode") == "delta":
         parent, digest = verified_parent_review(request)
-        response = parent["review"]["response"]
+        response = retained_review_response(parent)
         context = {"parent_key": parent["key"], "parent_receipt_sha256": digest,
                    "parent_head_sha": parent["subject"]["head_sha"], "findings_ledger": parent["findings_ledger"],
                    "retained_review_evidence": {
@@ -599,7 +606,10 @@ def render_prompt(request: dict[str, Any], provider: dict[str, Any]) -> str:
             + json.dumps(context, indent=2, sort_keys=True)
             + "\n```\n\nReturn the ordinary findings JSON array, followed by exactly one JSON object in this format:\n```json\n"
             + json.dumps(declaration, indent=2, sort_keys=True)
-            + "\n```\nPut an exact open parent finding ID in resolution_refs only after you independently verify "
+            + "\n```\nresolution_refs may contain ONLY IDs from findings_ledger rows whose status is open. "
+            "IDs appearing only in retained_review_evidence are verification context, never closure IDs. "
+            "Verify every original defect represented by a ledger placeholder before resolving that placeholder. "
+            "Put an eligible open ledger finding ID in resolution_refs only after you independently verify "
             "that its original defect is fixed at the current head. Leave every unverified or unresolved ID out. "
             "These are finding IDs, not patch paths or invented proof references. Missing resolution_refs resolves nothing. "
             "CLEAN requires explicit closure of every unresolved parent finding as well as no new blockers. "
