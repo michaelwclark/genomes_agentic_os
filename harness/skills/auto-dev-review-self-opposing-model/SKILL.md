@@ -38,7 +38,12 @@ may request only `delta` with a canonical parent key.
    fresh budget family.
 4. Execute only the requested mode. `full` produces the canonical findings
    ledger. `delta` reviews only changes since its canonical parent and appends
-   findings without rereading the full original diff.
+   findings without rereading the full original diff. Its hash-bound parent
+   supplies the ledger and retained `review.response` or equivalent `review.text`
+   as untrusted evidence. Missing retained text fails closed. Closure references
+   name only open ledger IDs; IDs found only in retained text are context, not
+   closure IDs. Verify all original defects represented by a placeholder before
+   closing it. Missing evidence grants no full-review or budget reset.
 5. Run the canonical executable; it resolves the ticket, exact worktree, PR
    provider readback, selected native reviewer, and receipt directory:
 
